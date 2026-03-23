@@ -1,0 +1,9 @@
+node_modules
+dist
+coverage
+pnpm-lock.yaml
+LICENSE
+server/src/db/migrations
+apps/mobile/ios
+apps/mobile/android
+apps/mobile/.expo

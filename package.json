@@ -1,0 +1,50 @@
+{
+  "name": "hearth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted family location sharing. A family safety app you actually own.",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/hearth.git"
+  },
+  "engines": {
+    "node": ">=20.10.0",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {
+    "dev": "pnpm --filter @hearth/server dev",
+    "dev:mobile": "pnpm --filter hearth-mobile start",
+    "build": "pnpm --filter @hearth/shared build && pnpm --filter @hearth/server build",
+    "typecheck": "pnpm -r --no-bail typecheck",
+    "test": "pnpm --filter @hearth/shared test && pnpm --filter @hearth/server test && pnpm --filter hearth-mobile exec jest --ci --passWithNoTests",
+    "lint": "pnpm -r --no-bail lint",
+    "db:generate": "pnpm --filter @hearth/server db:generate",
+    "db:migrate": "pnpm --filter @hearth/server db:migrate",
+    "db:studio": "pnpm --filter @hearth/server db:studio",
+    "seed": "pnpm --filter @hearth/server seed",
+    "stack:up": "docker compose up -d --build",
+    "stack:down": "docker compose down",
+    "stack:logs": "docker compose logs -f api",
+    "stack:reset": "docker compose down -v",
+    "prepare": "lefthook install || true",
+    "lint:md": "markdownlint-cli2",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.6",
+    "lefthook": "^2.1.12",
+    "markdownlint-cli2": "^0.23.2",
+    "prettier": "^3.6.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.69.0"
+  }
+}

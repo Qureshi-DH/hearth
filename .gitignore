@@ -1,0 +1,33 @@
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!**/keys/.gitkeep
+
+# runtime data
+data/
+postgres-data/
+*.log
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# expo / native
+apps/mobile/.expo/
+apps/mobile/android/
+apps/mobile/ios/
+apps/mobile/expo-env.d.ts
+apps/mobile/dist/
+apps/mobile/web-build/
+apps/mobile/app-dependency-graph.*
