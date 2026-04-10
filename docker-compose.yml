@@ -1,0 +1,55 @@
+# Hearth — self-hosted family location sharing.
+#
+#   cp .env.example .env      # then edit JWT_SECRET and PUBLIC_URL at minimum
+#   docker compose up -d
+#
+# The API listens on ${HEARTH_PORT:-4000}. Put a TLS-terminating reverse proxy
+# (Caddy, Traefik, nginx) in front of it before exposing it to the internet;
+# see docs/SELF-HOSTING.md for a ready-made Caddy example.
+
+name: hearth
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hearth}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-please}
+      POSTGRES_DB: ${POSTGRES_DB:-hearth}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hearth} -d ${POSTGRES_DB:-hearth}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: hearth-api:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: "::"
+      PORT: 4000
+      DATABASE_URL: postgres://${POSTGRES_USER:-hearth}:${POSTGRES_PASSWORD:-change-me-please}@db:5432/${POSTGRES_DB:-hearth}
+      MIGRATE_ON_START: "true"
+    ports:
+      - "${HEARTH_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4000/readyz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  postgres-data:

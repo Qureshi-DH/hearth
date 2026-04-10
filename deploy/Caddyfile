@@ -1,0 +1,18 @@
+# Minimal production front door for Hearth.
+#
+#   caddy run --config deploy/Caddyfile
+#
+# Caddy obtains and renews TLS certificates automatically and proxies the
+# websocket upgrade without extra configuration. Replace the hostnames.
+
+hearth.example.com {
+    encode zstd gzip
+    reverse_proxy localhost:4000 {
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+
+# Only when using the ntfy overlay (docker-compose.ntfy.yml):
+# ntfy.example.com {
+#     reverse_proxy localhost:8093
+# }

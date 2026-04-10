@@ -1,0 +1,23 @@
+# Optional overlay: Redis-backed realtime bus, for running several api replicas.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.redis.yml up -d --scale api=3
+#
+# A single api instance does not need this; the in-process bus is the default.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379
