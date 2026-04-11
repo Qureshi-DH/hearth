@@ -1,0 +1,142 @@
+{
+  "name": "Hearth",
+  "slug": "hearth",
+  "scheme": "hearth",
+  "version": "0.1.0",
+  "orientation": "portrait",
+  "userInterfaceStyle": "automatic",
+  "icon": "./assets/images/app-icon-all.png",
+  "updates": {
+    "fallbackToCacheTimeout": 0
+  },
+  "newArchEnabled": true,
+  "jsEngine": "hermes",
+  "assetBundlePatterns": ["**/*"],
+  "android": {
+    "icon": "./assets/images/app-icon-android-legacy.png",
+    "package": "app.hearth.mobile",
+    "adaptiveIcon": {
+      "foregroundImage": "./assets/images/app-icon-android-adaptive-foreground.png",
+      "backgroundImage": "./assets/images/app-icon-android-adaptive-background.png"
+    },
+    "allowBackup": false,
+    "edgeToEdgeEnabled": true,
+    "permissions": [
+      "android.permission.ACCESS_COARSE_LOCATION",
+      "android.permission.ACCESS_FINE_LOCATION",
+      "android.permission.ACCESS_BACKGROUND_LOCATION",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_LOCATION",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.RECEIVE_BOOT_COMPLETED",
+      "android.permission.WAKE_LOCK",
+      "android.permission.VIBRATE",
+      "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.INTERNET"
+    ],
+    "intentFilters": [
+      {
+        "action": "VIEW",
+        "autoVerify": true,
+        "data": [
+          {
+            "scheme": "https",
+            "host": "*.hearth.example",
+            "pathPrefix": "/join"
+          }
+        ],
+        "category": ["BROWSABLE", "DEFAULT"]
+      }
+    ]
+  },
+  "ios": {
+    "icon": "./assets/images/app-icon-ios.png",
+    "supportsTablet": false,
+    "bundleIdentifier": "app.hearth.mobile",
+    "infoPlist": {
+      "UIBackgroundModes": ["location", "fetch", "processing", "remote-notification"],
+      "NSLocationWhenInUseUsageDescription": "Hearth shows your position to the circles you choose to share it with.",
+      "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow \"Always\" so your family can still see you when the app is closed. You can pause sharing at any time.",
+      "NSCameraUsageDescription": "Scan a circle's invite QR code.",
+      "BGTaskSchedulerPermittedIdentifiers": ["app.hearth.mobile.sync"],
+      "ITSAppUsesNonExemptEncryption": false,
+      "NSLocationAlwaysUsageDescription": "Allow \"Always\" so your family can still see you when the app is closed. You can pause sharing at any time.",
+      "NSLocalNetworkUsageDescription": "Hearth connects to the family server you specify, which may be on your home network.",
+      "NSBonjourServices": ["_http._tcp", "_https._tcp"],
+      "NSLocationDefaultAccuracyReduced": false
+    }
+  },
+  "web": {
+    "favicon": "./assets/images/app-icon-web-favicon.png",
+    "bundler": "metro"
+  },
+  "plugins": [
+    "expo-localization",
+    "expo-font",
+    "expo-secure-store",
+    "expo-image",
+    "expo-background-task",
+    [
+      "expo-location",
+      {
+        "locationAlwaysAndWhenInUsePermission": "Allow \"Always\" so your family can still see you when the app is closed. You can pause sharing at any time.",
+        "locationWhenInUsePermission": "Hearth shows your position to the circles you choose to share it with.",
+        "isAndroidBackgroundLocationEnabled": true,
+        "isAndroidForegroundServiceEnabled": true
+      }
+    ],
+    [
+      "expo-notifications",
+      {
+        "icon": "./assets/images/app-icon-android-adaptive-foreground.png",
+        "color": "#FF7A45",
+        "defaultChannel": "default"
+      }
+    ],
+    [
+      "expo-camera",
+      {
+        "cameraPermission": "Scan a circle's invite QR code."
+      }
+    ],
+    [
+      "expo-splash-screen",
+      {
+        "image": "./assets/images/app-icon-android-adaptive-foreground.png",
+        "imageWidth": 220,
+        "resizeMode": "contain",
+        "backgroundColor": "#171412"
+      }
+    ],
+    [
+      "react-native-edge-to-edge",
+      {
+        "android": {
+          "parentTheme": "Default",
+          "enforceNavigationBarContrast": false
+        }
+      }
+    ],
+    [
+      "expo-build-properties",
+      {
+        "android": {
+          "minSdkVersion": 26
+        },
+        "ios": {
+          "deploymentTarget": "16.0"
+        }
+      }
+    ],
+    "@maplibre/maplibre-react-native"
+  ],
+  "experiments": {
+    "tsconfigPaths": true
+  },
+  "extra": {
+    "ignite": {
+      "version": "11.5.0"
+    }
+  }
+}
