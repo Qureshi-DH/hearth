@@ -1,0 +1,17 @@
+# Development overlay: exposes Postgres on the host so you can seed, run
+# `psql`, or point Drizzle Studio at it.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   pnpm seed
+#
+# Never use this overlay on a public host: it puts the database on 0.0.0.0.
+
+services:
+  db:
+    ports:
+      # 5432 is usually taken by a local Postgres install; default to 55432.
+      - "${POSTGRES_PORT:-55432}:5432"
+
+  api:
+    environment:
+      LOG_LEVEL: debug
