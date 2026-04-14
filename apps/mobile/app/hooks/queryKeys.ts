@@ -1,0 +1,30 @@
+/** Centralised query keys so cache writes from the socket match cache reads from screens. */
+export const queryKeys = {
+  serverInfo: ["server-info"] as const,
+  me: ["me"] as const,
+  sessions: ["sessions"] as const,
+  circles: ["circles"] as const,
+  circle: (circleId: string) => ["circle", circleId] as const,
+  members: (circleId: string) => ["members", circleId] as const,
+  presence: (circleId: string) => ["presence", circleId] as const,
+  places: (circleId: string) => ["places", circleId] as const,
+  placeEvents: (circleId: string, placeId: string) => ["place-events", circleId, placeId] as const,
+  events: (circleId: string) => ["events", circleId] as const,
+  messages: (circleId: string) => ["messages", circleId] as const,
+  sos: (circleId: string) => ["sos", circleId] as const,
+  checkIns: (circleId: string) => ["check-ins", circleId] as const,
+  invites: (circleId: string) => ["invites", circleId] as const,
+  invitePreview: (code: string) => ["invite-preview", code] as const,
+  history: (circleId: string, userId: string, from: string, to: string) =>
+    ["history", circleId, userId, from, to] as const,
+  trips: (circleId: string, userId: string) => ["trips", circleId, userId] as const,
+  myTrips: ["my-trips"] as const,
+  trip: (tripId: string) => ["trip", tripId] as const,
+  myStats: ["my-stats"] as const,
+  pushConfig: ["push-config"] as const,
+  admin: {
+    settings: ["admin", "settings"] as const,
+    users: (q?: string) => ["admin", "users", q ?? ""] as const,
+    stats: ["admin", "stats"] as const,
+  },
+}
