@@ -1,0 +1,41 @@
+# Git hooks. Installed by `pnpm install` via the prepare script.
+#
+# Everything here runs on staged files only, so the hook stays fast enough that
+# nobody is tempted to reach for --no-verify.
+
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      glob: "*.{ts,tsx,js,json,md,yml,yaml}"
+      run: pnpm exec prettier --write {staged_files}
+      stage_fixed: true
+    lint-server:
+      root: "server/"
+      glob: "server/src/**/*.ts"
+      run: pnpm exec eslint --fix --max-warnings 0 {staged_files}
+      stage_fixed: true
+    lint-mobile:
+      root: "apps/mobile/"
+      glob: "apps/mobile/**/*.{ts,tsx}"
+      run: pnpm exec eslint --fix --max-warnings 0 {staged_files}
+      stage_fixed: true
+    secrets:
+      run: |
+        if git diff --cached --name-only | grep -qE '(^|/)\.env$'; then
+          echo "Refusing to commit a .env file."
+          exit 1
+        fi
+
+pre-push:
+  parallel: true
+  commands:
+    typecheck:
+      run: pnpm typecheck
+    test:
+      run: pnpm --filter @hearth/shared test
+
+commit-msg:
+  commands:
+    conventional:
+      run: pnpm exec commitlint --edit {1}

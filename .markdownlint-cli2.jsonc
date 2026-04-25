@@ -1,0 +1,13 @@
+{
+  "config": {
+    "default": true,
+    // Prose wraps at 100, but tables and code blocks legitimately run longer.
+    "MD013": { "line_length": 100, "tables": false, "code_blocks": false },
+    // Duplicate headings are fine across different sections of a long doc.
+    "MD024": { "siblings_only": true },
+    "MD033": false,
+    "MD041": false,
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["**/node_modules/**", "**/ios/**", "**/android/**", "**/CHANGELOG.md", "**/.expo/**"],
+}
