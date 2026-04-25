@@ -1,0 +1,57 @@
+name: Bug report
+description: Something is broken
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Please do not paste real coordinates,
+        invite codes, or tokens into this form.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Sign in as a circle owner
+        2. Open Places and tap Add
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen
+      options:
+        - Server
+        - iOS app
+        - Android app
+        - Both apps
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Server version from the app's You tab, plus OS and app version.
+      placeholder: "server 0.1.0, iOS 18.2, app 0.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server logs
+      description: Run with LOG_LEVEL=debug if you can. Redact anything identifying.
+      render: shell
