@@ -42,7 +42,7 @@ const en = {
   server: {
     title: "Connect to your server",
     subtitle:
-      "Hearth is self-hosted. Enter the address of the server your family runs — nothing ever goes anywhere else.",
+      "Hearth is self-hosted. Enter the address of the server your family runs. Nothing ever goes anywhere else.",
     urlLabel: "Server address",
     urlPlaceholder: "https://hearth.example.com",
     connect: "Connect",
@@ -86,7 +86,7 @@ const en = {
       "A few system permissions make the difference between a map that works and one that goes quiet the moment you lock your phone.",
     subtitle:
       'For your family to see you when the app is closed, Hearth needs "Always" location access. You stay in control: pause sharing any time.',
-    locationTitle: "Location — Always",
+    locationTitle: "Location, always",
     locationAlwaysBody: "Your family can see you even when the app is closed.",
     locationForegroundBody:
       'Only "While Using" was granted. Your position stops updating when Hearth leaves the screen. Change it to "Always" in Settings.',
@@ -94,8 +94,7 @@ const en = {
     preciseBody:
       "Approximate mode is on for Hearth. Turn on Precise Location so places and trips are accurate.",
     notificationsTitle: "Notifications",
-    notificationsBody:
-      "Arrivals, low battery and — most importantly — SOS alerts from your circle.",
+    notificationsBody: "Arrivals, low battery, and most importantly SOS alerts from your circle.",
     batteryTitle: "Battery optimisation",
     batteryBody:
       "Android pauses background apps to save power. Exempt Hearth so location keeps flowing when the screen is off.",
@@ -342,7 +341,7 @@ const en = {
     ntfyTitle: "Set up ntfy",
     ntfyBody: "Install the ntfy app and subscribe to this topic to receive alerts:",
     test: "Send a test notification",
-    testSent: "Test queued — it should arrive shortly.",
+    testSent: "Test queued. It should arrive shortly.",
   },
   settings: {
     title: "You",
