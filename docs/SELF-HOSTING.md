@@ -19,7 +19,7 @@ year if you switch retention off entirely.
 ## 1. Configure
 
 ```bash
-git clone https://github.com/your-org/hearth.git
+git clone https://github.com/Qureshi-DH/hearth.git
 cd hearth
 cp .env.example .env
 ```

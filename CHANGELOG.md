@@ -43,5 +43,5 @@ security audit and there are no store builds yet.
   trusting the token
 - Push payloads never carry coordinates
 
-[Unreleased]: https://github.com/your-org/hearth/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/your-org/hearth/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Qureshi-DH/hearth/releases/tag/v0.1.0

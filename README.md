@@ -8,7 +8,7 @@
 <p align="center">
   <a href="#status"><img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-orange"></a>
   <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
-  <a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/your-org/hearth/ci.yml?branch=main"></a>
+  <a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Qureshi-DH/hearth/ci.yml?branch=main"></a>
   <img alt="Expo SDK 55" src="https://img.shields.io/badge/Expo-SDK%2055-000020?logo=expo">
   <img alt="Node 20+" src="https://img.shields.io/badge/node-%E2%89%A520.10-5FA04E?logo=node.js&logoColor=white">
   <img alt="Postgres 14+" src="https://img.shields.io/badge/postgres-%E2%89%A514-336791?logo=postgresql&logoColor=white">
@@ -73,7 +73,7 @@ delete your account and watch it cascade through every table.
 You need Docker and about five minutes.
 
 ```bash
-git clone https://github.com/your-org/hearth.git
+git clone https://github.com/Qureshi-DH/hearth.git
 cd hearth
 cp .env.example .env
 ```
