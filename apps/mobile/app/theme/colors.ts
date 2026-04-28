@@ -1,5 +1,5 @@
 /**
- * Hearth — light palette.
+ * Hearth light palette.
  *
  * Warm, low-chroma neutrals so the map stays the star; a single ember accent
  * for anything interactive; restrained status colours. Every key here must

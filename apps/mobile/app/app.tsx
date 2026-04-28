@@ -3,8 +3,8 @@
  * Root of the Hearth mobile app.
  *
  * Boot sequence: fonts + i18n load, the keychain token vault hydrates, the
- * auth store derives its status, and only then does the navigator render —
- * so the first frame is already the right screen.
+ * auth store derives its status, and only then does the navigator render.
+ * The first frame is already the right screen.
  */
 if (__DEV__) {
   // Reactotron relies on metro's `inlineRequires` (see metro.config.js).

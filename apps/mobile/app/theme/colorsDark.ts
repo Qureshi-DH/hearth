@@ -1,9 +1,9 @@
 /**
- * Hearth — dark palette (the default for a map-first app).
+ * Hearth dark palette, the default for a map-first app.
  *
  * Near-neutral charcoal rather than brown. The accent is a warm ember, and a
- * warm-brown surface underneath it muddies the contrast between the two —
- * greys let the ember, the avatars and the map carry all the colour. A trace
+ * warm-brown surface underneath muddies both. Greys let the ember, the
+ * avatars and the map carry all the colour. A trace
  * of warmth remains in the mid tones so it does not read as clinical blue.
  * Keys mirror colors.ts exactly.
  */
