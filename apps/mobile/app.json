@@ -34,6 +34,11 @@
       "android.permission.ACCESS_NETWORK_STATE",
       "android.permission.INTERNET"
     ],
+    "blockedPermissions": [
+      "android.permission.RECORD_AUDIO",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE"
+    ],
     "intentFilters": [
       {
         "action": "VIEW",
@@ -129,7 +134,8 @@
       }
     ],
     "@maplibre/maplibre-react-native",
-    "./plugins/withAndroidReleaseSigning"
+    "./plugins/withAndroidReleaseSigning",
+    "./plugins/withAndroidReleaseManifest"
   ],
   "experiments": {
     "tsconfigPaths": true
