@@ -128,7 +128,8 @@
         }
       }
     ],
-    "@maplibre/maplibre-react-native"
+    "@maplibre/maplibre-react-native",
+    "./plugins/withAndroidReleaseSigning"
   ],
   "experiments": {
     "tsconfigPaths": true
