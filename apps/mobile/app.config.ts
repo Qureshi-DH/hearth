@@ -22,6 +22,18 @@ const allowInsecureHttp =
     process.env.EAS_BUILD_PROFILE !== "production" &&
     process.env.NODE_ENV !== "production")
 
+/**
+ * Android App Links need a concrete domain baked in at build time, and every
+ * family self-hosts on a different one, so a placeholder host can never
+ * verify. Ship none by default and let a self-hoster opt in:
+ *
+ *   HEARTH_APP_LINK_HOST=hearth.yourfamily.com npx expo prebuild
+ *
+ * The hearth:// scheme works regardless, and the server's own /join page
+ * hands off to it.
+ */
+const appLinkHost = process.env.HEARTH_APP_LINK_HOST?.trim()
+
 module.exports = ({ config }: ConfigContext): Partial<ExpoConfig> => {
   type Plugin = NonNullable<ExpoConfig["plugins"]>[number]
   const existingPlugins: Plugin[] = (config.plugins ?? []).map((plugin): Plugin => {
@@ -40,6 +52,22 @@ module.exports = ({ config }: ConfigContext): Partial<ExpoConfig> => {
 
   return {
     ...config,
+    android: {
+      ...config.android,
+      ...(appLinkHost
+        ? {
+            intentFilters: [
+              ...(config.android?.intentFilters ?? []),
+              {
+                action: "VIEW",
+                autoVerify: true,
+                data: [{ scheme: "https", host: appLinkHost, pathPrefix: "/join" }],
+                category: ["BROWSABLE", "DEFAULT"],
+              },
+            ],
+          }
+        : {}),
+    },
     ios: {
       ...config.ios,
       infoPlist: {
