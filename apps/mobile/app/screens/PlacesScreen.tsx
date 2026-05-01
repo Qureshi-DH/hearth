@@ -78,7 +78,6 @@ export const PlacesScreen: FC<MainTabScreenProps<"Places">> = ({ navigation }) =
               contentTx="places:emptyBody"
               buttonTx="places:add"
               buttonOnPress={() => navigation.navigate("PlaceEditor", { circleId: circle.id })}
-              imageSource={undefined}
               style={{ paddingTop: theme.spacing.xxl }}
             />
           )

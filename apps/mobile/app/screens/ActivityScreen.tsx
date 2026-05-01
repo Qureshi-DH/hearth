@@ -101,7 +101,6 @@ export const ActivityScreen: FC<MainTabScreenProps<"Activity">> = ({ navigation 
               contentTx="activity:emptyBody"
               button={undefined}
               style={{ paddingTop: theme.spacing.xxl }}
-              imageSource={undefined}
             />
           )
         }

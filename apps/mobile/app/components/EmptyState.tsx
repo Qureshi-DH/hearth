@@ -7,8 +7,6 @@ import type { ThemedStyle } from "@/theme/types"
 import { Button, ButtonProps } from "./Button"
 import { Text, TextProps } from "./Text"
 
-const sadFace = require("@assets/images/sad-face.png")
-
 interface EmptyStateProps {
   preset?: "generic"
   style?: StyleProp<ViewStyle>
@@ -35,13 +33,12 @@ interface EmptyStateProps {
 }
 
 interface EmptyStatePresetItem {
-  imageSource: ImageProps["source"]
+  imageSource?: ImageProps["source"]
   heading: TextProps["text"]
   content: TextProps["text"]
   button: TextProps["text"]
 }
 
-/** @see https://docs.infinite.red/ignite-cli/boilerplate/app/components/EmptyState/ */
 export function EmptyState(props: EmptyStateProps) {
   const {
     theme,
@@ -51,7 +48,6 @@ export function EmptyState(props: EmptyStateProps) {
 
   const EmptyStatePresets = {
     generic: {
-      imageSource: sadFace,
       heading: translate("emptyStateComponent:generic.heading"),
       content: translate("emptyStateComponent:generic.content"),
       button: translate("emptyStateComponent:generic.button"),
