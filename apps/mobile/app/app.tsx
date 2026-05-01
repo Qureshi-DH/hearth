@@ -15,6 +15,7 @@ import "./utils/gestureHandler"
 import { useEffect, useState } from "react"
 import { useFonts } from "expo-font"
 import * as Linking from "expo-linking"
+import * as SplashScreen from "expo-splash-screen"
 import { QueryClientProvider } from "@tanstack/react-query"
 import { KeyboardProvider } from "react-native-keyboard-controller"
 import { initialWindowMetrics, SafeAreaProvider } from "react-native-safe-area-context"
@@ -34,6 +35,14 @@ import { ThemeProvider } from "./theme/context"
 import { customFontsToLoad } from "./theme/typography"
 import { loadDateFnsLocale } from "./utils/formatDate"
 import * as storage from "./utils/storage"
+
+/**
+ * Hold the native splash until the first real screen can draw. Without this it
+ * disappears as soon as the bundle loads, so the user watches a blank frame
+ * while fonts, translations and the stored session come up.
+ */
+SplashScreen.preventAutoHideAsync().catch(() => {})
+SplashScreen.setOptions({ duration: 300, fade: true })
 
 export const NAVIGATION_PERSISTENCE_KEY = "NAVIGATION_STATE"
 
@@ -112,14 +121,17 @@ export function App() {
     }
   }, [])
 
-  if (
-    !isNavigationStateRestored ||
-    !isI18nInitialized ||
-    !isSessionHydrated ||
-    (!areFontsLoaded && !fontLoadError)
-  ) {
-    return null
-  }
+  const isReady =
+    isNavigationStateRestored &&
+    isI18nInitialized &&
+    isSessionHydrated &&
+    (areFontsLoaded || !!fontLoadError)
+
+  useEffect(() => {
+    if (isReady) void SplashScreen.hideAsync()
+  }, [isReady])
+
+  if (!isReady) return null
 
   const linking = { prefixes: [prefix, "hearth://"], config: linkingConfig }
 
