@@ -195,6 +195,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
     >
       <HearthMap
         cameraRef={cameraRef}
+        attributionPosition={{ bottom: COLLAPSED_BAR_HEIGHT + 12, left: 8 }}
         initialCenter={initialCenter}
         initialZoom={firstLocated ? 13 : 4}
         onDidFinishLoadingMap={() => setMapReady(true)}

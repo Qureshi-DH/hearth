@@ -47,7 +47,8 @@ export const HearthMap = forwardRef<MapRef, HearthMapProps>(function HearthMap(
         ref={ref}
         mapStyle={styleUrl}
         style={StyleSheet.absoluteFill}
-        attribution={false}
+        attribution
+        attributionPosition={{ bottom: 8, left: 8 }}
         logo={false}
         compass={false}
         touchPitch={false}
