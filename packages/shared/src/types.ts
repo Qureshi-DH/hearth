@@ -21,6 +21,8 @@ export interface ServerInfo {
   version: string
   apiVersion: string
   registrationMode: RegistrationMode
+  /** True while the user table is empty, when the first account skips the invite gate. */
+  setupRequired: boolean
   pushProvider: PushProvider
   /** Populated when pushProvider === "webpush". */
   webPushPublicKey?: string | null

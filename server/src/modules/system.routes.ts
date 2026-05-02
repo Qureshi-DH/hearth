@@ -3,11 +3,29 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
 import { getDb } from "../db/client"
+import { users } from "../db/schema"
 import { getConfig } from "../env"
 import { uptimeSeconds } from "../runtime"
 import { getServerSettings } from "../services/settings"
 
 const VERSION = process.env.npm_package_version ?? "0.1.0"
+
+/**
+ * The app has no way to know that the very first account skips the invite
+ * gate, so it has to be told. Latches once somebody registers, because
+ * server-info is the first call every launch makes and an unclaimed server
+ * is the only case that needs the query.
+ */
+let serverClaimed = false
+
+async function setupRequired(db: ReturnType<typeof getDb>): Promise<boolean> {
+  if (serverClaimed) return false
+  const [{ count } = { count: 0 }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(users)
+  serverClaimed = count > 0
+  return !serverClaimed
+}
 
 export const systemRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
@@ -33,6 +51,7 @@ export const systemRoutes: FastifyPluginAsyncZod = async (app) => {
         version: VERSION,
         apiVersion: "v1",
         registrationMode: settings.registrationMode,
+        setupRequired: await setupRequired(db),
         pushProvider: config.PUSH_PROVIDER,
         webPushPublicKey: config.PUSH_PROVIDER === "webpush" ? config.VAPID_PUBLIC_KEY : null,
         ntfyBaseUrl: config.PUSH_PROVIDER === "ntfy" ? config.NTFY_BASE_URL : null,
