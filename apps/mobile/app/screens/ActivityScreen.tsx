@@ -99,7 +99,6 @@ export const ActivityScreen: FC<MainTabScreenProps<"Activity">> = ({ navigation 
             <EmptyState
               headingTx="activity:empty"
               contentTx="activity:emptyBody"
-              button={undefined}
               style={{ paddingTop: theme.spacing.xxl }}
             />
           )

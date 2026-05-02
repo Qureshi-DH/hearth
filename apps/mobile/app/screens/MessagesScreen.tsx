@@ -77,7 +77,6 @@ export const MessagesScreen: FC<AppStackScreenProps<"Messages">> = ({ navigation
                 <EmptyState
                   headingTx="messages:empty"
                   contentTx="messages:emptyBody"
-                  button={undefined}
                   style={{ paddingTop: theme.spacing.xxl }}
                 />
               </View>

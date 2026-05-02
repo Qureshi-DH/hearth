@@ -54,20 +54,20 @@ export function EmptyState(props: EmptyStateProps) {
     } as EmptyStatePresetItem,
   } as const
 
-  const preset = EmptyStatePresets[props.preset ?? "generic"]
+  const preset = props.preset ? EmptyStatePresets[props.preset] : undefined
 
   const {
-    button = preset.button,
+    button = preset?.button,
     buttonTx,
     buttonOnPress,
     buttonTxOptions,
-    content = preset.content,
+    content = preset?.content,
     contentTx,
     contentTxOptions,
-    heading = preset.heading,
+    heading = preset?.heading,
     headingTx,
     headingTxOptions,
-    imageSource = preset.imageSource,
+    imageSource = preset?.imageSource,
     style: $containerStyleOverride,
     buttonStyle: $buttonStyleOverride,
     buttonTextStyle: $buttonTextStyleOverride,

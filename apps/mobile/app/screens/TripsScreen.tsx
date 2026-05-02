@@ -48,7 +48,6 @@ export const TripsScreen: FC<AppStackScreenProps<"Trips">> = ({ navigation, rout
             <EmptyState
               headingTx="member:noTrips"
               content=""
-              button={undefined}
               style={{ paddingTop: theme.spacing.xxl }}
             />
           )
