@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type FC } from "react"
+import { useEffect, useMemo, useRef, useState, type FC } from "react"
 import { Alert, Linking, Platform, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
@@ -10,6 +10,7 @@ import { ListGroup, ListRow } from "@/components/ListRow"
 import { MemberMarker } from "@/components/MemberMarker"
 import { ringFor, statusLine } from "@/components/MemberRow"
 import { Pill } from "@/components/Pill"
+import { PromptDialog } from "@/components/PromptDialog"
 import { PrimaryButton } from "@/components/PrimaryButton"
 import { Screen } from "@/components/Screen"
 import { SectionHeader } from "@/components/SectionHeader"
@@ -109,15 +110,8 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
     }
   }
 
-  const setNickname = () => {
-    Alert.prompt?.(
-      translate("member:nickname"),
-      undefined,
-      (value) => updateMember.mutate({ userId, nickname: value?.trim() || null }),
-      "plain-text",
-      member?.nickname ?? "",
-    )
-  }
+  const [nicknaming, setNicknaming] = useState(false)
+  const setNickname = () => setNicknaming(true)
 
   const changeRole = (role: "member" | "admin" | "owner") => {
     const confirm = () =>
@@ -345,6 +339,13 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
           />
         ) : null}
       </ListGroup>
+      <PromptDialog
+        visible={nicknaming}
+        titleTx="member:nickname"
+        initialValue={member?.nickname ?? ""}
+        onCancel={() => setNicknaming(false)}
+        onSubmit={(value) => updateMember.mutate({ userId, nickname: value || null })}
+      />
     </Screen>
   )
 }

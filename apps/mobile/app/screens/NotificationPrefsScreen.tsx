@@ -1,8 +1,9 @@
-import type { FC } from "react"
-import { Alert, View, type ViewStyle } from "react-native"
+import { useState, type FC } from "react"
+import { View, type ViewStyle } from "react-native"
 import { MUTABLE_EVENT_TYPES, type EventType } from "@hearth/shared"
 
 import { ListGroup, ListRow } from "@/components/ListRow"
+import { OptionSheet } from "@/components/OptionSheet"
 import { Screen } from "@/components/Screen"
 import { SectionHeader } from "@/components/SectionHeader"
 import { Text } from "@/components/Text"
@@ -68,24 +69,18 @@ export const NotificationPrefsScreen: FC<AppStackScreenProps<"NotificationPrefs"
     )
   }
 
+  const [muteOpen, setMuteOpen] = useState(false)
+
   const muteAll = (value: boolean) => {
     if (!value) {
       setNotifications.mutate({ mutedUntil: null })
       return
     }
-    const hour = new Date(Date.now() + 60 * 60 * 1000)
-    const day = new Date(Date.now() + 24 * 60 * 60 * 1000)
-    const week = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-    Alert.alert(translate("notifications:muteFor"), undefined, [
-      {
-        text: translate("sharing:oneHour"),
-        onPress: () => setNotifications.mutate({ mutedUntil: hour.toISOString() }),
-      },
-      { text: "24h", onPress: () => setNotifications.mutate({ mutedUntil: day.toISOString() }) },
-      { text: "7d", onPress: () => setNotifications.mutate({ mutedUntil: week.toISOString() }) },
-      { text: translate("common:cancel"), style: "cancel" },
-    ])
+    setMuteOpen(true)
   }
+
+  const muteFor = (ms: number) =>
+    setNotifications.mutate({ mutedUntil: new Date(Date.now() + ms).toISOString() })
 
   return (
     <Screen preset="scroll" safeAreaEdges={["bottom"]} contentContainerStyle={themed($container)}>
@@ -134,6 +129,16 @@ export const NotificationPrefsScreen: FC<AppStackScreenProps<"NotificationPrefs"
           paddingHorizontal: theme.spacing.md,
           paddingTop: theme.spacing.sm,
         }}
+      />
+      <OptionSheet
+        visible={muteOpen}
+        titleTx="notifications:muteFor"
+        onClose={() => setMuteOpen(false)}
+        options={[
+          { key: "hour", tx: "sharing:oneHour", onPress: () => muteFor(60 * 60 * 1000) },
+          { key: "day", label: "24h", onPress: () => muteFor(24 * 60 * 60 * 1000) },
+          { key: "week", label: "7d", onPress: () => muteFor(7 * 24 * 60 * 60 * 1000) },
+        ]}
       />
     </Screen>
   )

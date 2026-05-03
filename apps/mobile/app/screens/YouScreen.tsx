@@ -1,10 +1,11 @@
-import type { FC } from "react"
+import { useState, type FC } from "react"
 import { Alert, View, type ViewStyle } from "react-native"
 import Constants from "expo-constants"
 
 import { Avatar } from "@/components/Avatar"
 import { ListGroup, ListRow } from "@/components/ListRow"
 import { Pill } from "@/components/Pill"
+import { PromptDialog } from "@/components/PromptDialog"
 import { Screen } from "@/components/Screen"
 import { SectionHeader } from "@/components/SectionHeader"
 import { SegmentedControl } from "@/components/SegmentedControl"
@@ -40,17 +41,8 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
     setThemeContextOverride(mode === "system" ? undefined : mode)
   }
 
-  const rename = () => {
-    Alert.prompt?.(
-      translate("settings:name"),
-      undefined,
-      (value) => {
-        if (value?.trim()) updateMe.mutate({ displayName: value.trim() })
-      },
-      "plain-text",
-      user?.displayName,
-    )
-  }
+  const [renaming, setRenaming] = useState(false)
+  const rename = () => setRenaming(true)
 
   const signOut = () => {
     Alert.alert(translate("common:logOut"), translate("settings:signOutConfirm"), [
@@ -224,6 +216,15 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
       <ListGroup style={{ marginTop: theme.spacing.lg }}>
         <ListRow tx="common:logOut" icon="log-out-outline" destructive onPress={signOut} />
       </ListGroup>
+      <PromptDialog
+        visible={renaming}
+        titleTx="settings:name"
+        initialValue={user?.displayName}
+        onCancel={() => setRenaming(false)}
+        onSubmit={(value) => {
+          if (value) updateMe.mutate({ displayName: value })
+        }}
+      />
     </Screen>
   )
 }

@@ -1,9 +1,10 @@
-import type { FC } from "react"
-import { Alert, Pressable, View, type ViewStyle } from "react-native"
+import { useState, type FC } from "react"
+import { Pressable, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import type { SharingState } from "@hearth/shared"
 
 import { ListGroup, ListRow } from "@/components/ListRow"
+import { OptionSheet } from "@/components/OptionSheet"
 import { Screen } from "@/components/Screen"
 import { SectionHeader } from "@/components/SectionHeader"
 import { Text } from "@/components/Text"
@@ -99,31 +100,28 @@ function CircleSharing({
   const mine = members?.find((member) => member.userId === userId)
   const current = mine?.sharingState ?? "precise"
 
+  const [pauseOpen, setPauseOpen] = useState(false)
+
+  const pauseUntilTonight = () => {
+    const date = new Date()
+    date.setHours(23, 59, 0, 0)
+    return date.toISOString()
+  }
+
+  const pauseUntilTomorrow = () => {
+    const date = new Date()
+    date.setDate(date.getDate() + 1)
+    date.setHours(8, 0, 0, 0)
+    return date.toISOString()
+  }
+
   const choose = (value: SharingState) => {
     if (value === "paused") {
       if (!allowPause) {
         toast.error(translate("sharing:notAllowed"))
         return
       }
-      const hour = new Date(Date.now() + 60 * 60 * 1000)
-      const tonight = new Date()
-      tonight.setHours(23, 59, 0, 0)
-      const tomorrow = new Date()
-      tomorrow.setDate(tomorrow.getDate() + 1)
-      tomorrow.setHours(8, 0, 0, 0)
-      Alert.alert(translate("sharing:pauseFor"), undefined, [
-        { text: translate("sharing:oneHour"), onPress: () => apply("paused", hour.toISOString()) },
-        {
-          text: translate("sharing:untilTonight"),
-          onPress: () => apply("paused", tonight.toISOString()),
-        },
-        {
-          text: translate("sharing:untilTomorrow"),
-          onPress: () => apply("paused", tomorrow.toISOString()),
-        },
-        { text: translate("sharing:indefinitely"), onPress: () => apply("paused", null) },
-        { text: translate("common:cancel"), style: "cancel" },
-      ])
+      setPauseOpen(true)
       return
     }
     apply(value, null)
@@ -179,6 +177,33 @@ function CircleSharing({
           )
         })}
       </View>
+      <OptionSheet
+        visible={pauseOpen}
+        titleTx="sharing:pauseFor"
+        onClose={() => setPauseOpen(false)}
+        options={[
+          {
+            key: "hour",
+            tx: "sharing:oneHour",
+            onPress: () => apply("paused", new Date(Date.now() + 60 * 60 * 1000).toISOString()),
+          },
+          {
+            key: "tonight",
+            tx: "sharing:untilTonight",
+            onPress: () => apply("paused", pauseUntilTonight()),
+          },
+          {
+            key: "tomorrow",
+            tx: "sharing:untilTomorrow",
+            onPress: () => apply("paused", pauseUntilTomorrow()),
+          },
+          {
+            key: "indefinitely",
+            tx: "sharing:indefinitely",
+            onPress: () => apply("paused", null),
+          },
+        ]}
+      />
     </>
   )
 }
