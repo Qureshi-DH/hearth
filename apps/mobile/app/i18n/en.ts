@@ -76,6 +76,8 @@ const en = {
     inviteCode: "Invite code",
     inviteHint: "This server requires an invite code to join.",
     inviteOptional: "Have an invite code? Add it here to join a circle right away.",
+    firstAccount:
+      "You are the first account on this server, so you will be its administrator. No invite needed.",
     create: "Create account",
     haveAccount: "Already have an account?",
     signIn: "Sign in",
