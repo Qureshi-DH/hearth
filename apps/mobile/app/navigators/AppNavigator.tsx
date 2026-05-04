@@ -38,6 +38,7 @@ import { TripsScreen } from "@/screens/TripsScreen"
 import { endpoints } from "@/services/api"
 import { attachNotificationListeners, setupPush } from "@/services/notifications"
 import { useRealtimeConnection } from "@/services/realtime"
+import { usePushStore } from "@/stores/push"
 import { useAuthStore } from "@/stores/auth"
 import { useTrackingStore } from "@/stores/tracking"
 import { useAppTheme } from "@/theme/context"
@@ -79,9 +80,11 @@ const AppStack = () => {
   // and the transport may have changed since the last launch.
   useEffect(() => {
     if (status !== "signed_in" || !serverInfo) return
-    setupPush(serverInfo).catch(() => {
-      // Push is optional. The map and feed work without it.
-    })
+    setupPush(serverInfo)
+      .then(usePushStore.getState().setSetup)
+      .catch(() => {
+        // Push is optional. The map and feed work without it.
+      })
   }, [status, serverInfo])
 
   /**

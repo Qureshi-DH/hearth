@@ -342,6 +342,7 @@ const en = {
     none: "This server has no push transport configured. You'll see alerts when you open the app.",
     ntfyTitle: "Set up ntfy",
     ntfyBody: "Install the ntfy app and subscribe to this topic to receive alerts:",
+    denied: "Notifications are turned off for Hearth. Turn them on in Settings to get alerts.",
     test: "Send a test notification",
     testSent: "Test queued. It should arrive shortly.",
   },

@@ -1,16 +1,21 @@
 import { useState, type FC } from "react"
 import { View, type ViewStyle } from "react-native"
+import * as Clipboard from "expo-clipboard"
 import { MUTABLE_EVENT_TYPES, type EventType } from "@hearth/shared"
 
 import { ListGroup, ListRow } from "@/components/ListRow"
 import { OptionSheet } from "@/components/OptionSheet"
+import { PrimaryButton } from "@/components/PrimaryButton"
 import { Screen } from "@/components/Screen"
 import { SectionHeader } from "@/components/SectionHeader"
 import { Text } from "@/components/Text"
 import { useMembers, useSetNotifications } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
+import { endpoints } from "@/services/api"
+import { openAppSettings } from "@/services/permissions"
 import { useAuthStore } from "@/stores/auth"
+import { usePushStore } from "@/stores/push"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
@@ -88,6 +93,8 @@ export const NotificationPrefsScreen: FC<AppStackScreenProps<"NotificationPrefs"
         <Text tx="notifications:subtitle" size="sm" style={{ color: theme.colors.textDim }} />
       </View>
 
+      <PushTransport />
+
       <SectionHeader tx="notifications:muteAll" />
       <ListGroup>
         <ListRow
@@ -141,6 +148,89 @@ export const NotificationPrefsScreen: FC<AppStackScreenProps<"NotificationPrefs"
         ]}
       />
     </Screen>
+  )
+}
+
+/**
+ * Without this the app is silent about why alerts never arrive: the server may
+ * have no transport at all, ntfy needs the user to subscribe to a topic only
+ * the server knows, and a denied permission looks identical to all of them.
+ */
+function PushTransport() {
+  const { theme } = useAppTheme()
+  const setup = usePushStore((state) => state.setup)
+  const provider = useAuthStore((state) => state.serverInfo?.pushProvider)
+  const [testing, setTesting] = useState(false)
+
+  const sendTest = async () => {
+    setTesting(true)
+    try {
+      await endpoints.push.test()
+      toast.success(translate("notifications:testSent"))
+    } catch (error) {
+      toast.error((error as Error).message)
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const copyTopic = async (topic: string) => {
+    await Clipboard.setStringAsync(topic)
+    toast.success(translate("common:copied"))
+  }
+
+  const deliverable = setup?.kind === "registered" || setup?.kind === "ntfy"
+
+  return (
+    <View>
+      <SectionHeader tx="notifications:setupTitle" />
+      <View style={{ paddingHorizontal: theme.spacing.md, gap: theme.spacing.xs }}>
+        {setup?.kind === "ntfy" ? (
+          <>
+            <Text weight="semiBold" size="sm" tx="notifications:ntfyTitle" />
+            <Text size="xs" tx="notifications:ntfyBody" style={{ color: theme.colors.textDim }} />
+            <Text
+              weight="semiBold"
+              size="sm"
+              text={setup.topic}
+              onPress={() => copyTopic(setup.topic)}
+              style={{ color: theme.colors.tint }}
+            />
+            <Text size="xxs" text={setup.baseUrl} style={{ color: theme.colors.textDim }} />
+          </>
+        ) : setup?.kind === "denied" ? (
+          <>
+            <Text size="xs" tx="notifications:denied" style={{ color: theme.colors.textDim }} />
+            <PrimaryButton
+              variant="ghost"
+              tx="permissions:openSettings"
+              onPress={openAppSettings}
+            />
+          </>
+        ) : setup?.kind === "unsupported" ? (
+          <Text size="xs" text={setup.reason} style={{ color: theme.colors.textDim }} />
+        ) : setup?.kind === "none" || provider === "none" ? (
+          <Text size="xs" tx="notifications:none" style={{ color: theme.colors.textDim }} />
+        ) : (
+          <Text
+            size="xs"
+            tx="notifications:setupBody"
+            txOptions={{ provider: provider ?? "" }}
+            style={{ color: theme.colors.textDim }}
+          />
+        )}
+
+        {deliverable ? (
+          <PrimaryButton
+            variant="soft"
+            tx="notifications:test"
+            loading={testing}
+            onPress={sendTest}
+            style={{ marginTop: theme.spacing.xs }}
+          />
+        ) : null}
+      </View>
+    </View>
   )
 }
 
