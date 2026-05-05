@@ -33,6 +33,8 @@ POSTGRES_PASSWORD=some-long-random-string
 ADMIN_EMAIL=you@example.com                # required, your account
 ADMIN_PASSWORD=a-long-passphrase           # required, at least 10 characters
 ADMIN_NAME=Your Name                       # optional, defaults to the part before the @
+S3_ACCESS_KEY_ID=hearth                    # MinIO, for profile pictures
+S3_SECRET_ACCESS_KEY=another-long-random-string
 ```
 
 The server refuses to start in production without `ADMIN_EMAIL` and
@@ -131,6 +133,30 @@ docker compose -f docker-compose.yml -f docker-compose.ntfy.yml up -d
 
 then set `PUSH_PROVIDER=ntfy` and `NTFY_BASE_URL=https://ntfy.example.com`, a
 second hostname on your proxy pointed at port `8093`.
+
+### Profile pictures
+
+The compose stack runs MinIO for these. It is the only thing Hearth stores as a
+file, and the bucket is created on the first upload, so there is nothing to set
+up beyond the keys in `.env`:
+
+```bash
+S3_ACCESS_KEY_ID=hearth
+S3_SECRET_ACCESS_KEY=a-long-random-string
+```
+
+The bucket is never exposed. Images are streamed back through the API, so you
+secure one hostname rather than two, and object keys are random, which is what
+makes a picture unguessable rather than any access control.
+
+Any S3 compatible storage works instead. Point `S3_ENDPOINT` at it, set
+`S3_REGION`, and turn off `S3_FORCE_PATH_STYLE` if the provider serves buckets
+as subdomains. Leave `S3_ENDPOINT` empty and uploads switch off entirely, with
+avatars falling back to initials on a colour.
+
+The app resizes to 512 pixels before uploading, which re-encodes the file and
+so strips the EXIF. That matters more here than in most apps: a phone photo
+usually records where it was taken.
 
 ### Map tiles
 

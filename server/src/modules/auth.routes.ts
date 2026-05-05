@@ -22,6 +22,16 @@ import { loadCurrentUser, requireAuth } from "../plugins/auth"
 import { issueSession, revokeAllSessions, revokeSession, rotateSession } from "../services/auth"
 import { acceptInvite, previewInvite } from "../services/invites"
 import { registrationMode } from "../services/settings"
+import {
+  avatarKey,
+  avatarPath,
+  deleteObject,
+  keyFromAvatarPath,
+  MAX_AVATAR_BYTES,
+  putObject,
+  sniffImageType,
+  storageEnabled,
+} from "../services/storage"
 
 const DeviceSchema = z.object({
   deviceId: z.string().min(6).max(128),
@@ -199,7 +209,6 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "Update profile",
         body: z.object({
           displayName: z.string().trim().min(1).max(80).optional(),
-          avatarUrl: z.string().url().max(2048).nullish(),
           locale: z.string().max(16).nullish(),
           units: z.enum(["metric", "imperial"]).optional(),
         }),
@@ -213,6 +222,91 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(eq(users.id, auth.userId))
         .returning()
       if (!updated) throw notFound()
+      return toCurrentUser(updated)
+    },
+  )
+
+  app.post(
+    "/auth/me/avatar",
+    {
+      preHandler: app.authenticate,
+      schema: {
+        tags: ["auth"],
+        summary: "Upload a profile picture",
+        description:
+          "multipart/form-data with one image field. JPEG, PNG or WebP, at most 2 MB. " +
+          "The app resizes before uploading, which also drops the photo's EXIF.",
+        consumes: ["multipart/form-data"],
+      },
+      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    },
+    async (request) => {
+      if (!storageEnabled()) throw badRequest("This server has no image storage configured.")
+      const auth = requireAuth(request)
+
+      const upload = await request.file({ limits: { fileSize: MAX_AVATAR_BYTES } })
+      if (!upload) throw badRequest("No image was uploaded.")
+
+      let buffer: Buffer
+      try {
+        buffer = await upload.toBuffer()
+      } catch {
+        throw badRequest("That image is larger than 2 MB.")
+      }
+
+      // The declared content type is whatever the client felt like sending.
+      const contentType = sniffImageType(buffer)
+      if (!contentType) throw badRequest("That file is not a JPEG, PNG or WebP image.")
+
+      const [current] = await db
+        .select({ avatarUrl: users.avatarUrl })
+        .from(users)
+        .where(eq(users.id, auth.userId))
+        .limit(1)
+
+      const key = avatarKey(contentType)
+      await putObject(key, buffer, contentType)
+
+      const [updated] = await db
+        .update(users)
+        .set({ avatarUrl: avatarPath(key), updatedAt: new Date() })
+        .where(eq(users.id, auth.userId))
+        .returning()
+      if (!updated) throw notFound()
+
+      // Only once the row points at the new object, so a failure here leaves an
+      // orphan rather than an avatar that 404s.
+      const previous = keyFromAvatarPath(current?.avatarUrl ?? null)
+      if (previous) await deleteObject(previous)
+
+      return toCurrentUser(updated)
+    },
+  )
+
+  app.delete(
+    "/auth/me/avatar",
+    {
+      preHandler: app.authenticate,
+      schema: { tags: ["auth"], summary: "Remove the profile picture" },
+    },
+    async (request) => {
+      const auth = requireAuth(request)
+      const [current] = await db
+        .select({ avatarUrl: users.avatarUrl })
+        .from(users)
+        .where(eq(users.id, auth.userId))
+        .limit(1)
+
+      const [updated] = await db
+        .update(users)
+        .set({ avatarUrl: null, updatedAt: new Date() })
+        .where(eq(users.id, auth.userId))
+        .returning()
+      if (!updated) throw notFound()
+
+      const key = keyFromAvatarPath(current?.avatarUrl ?? null)
+      if (key) await deleteObject(key)
+
       return toCurrentUser(updated)
     },
   )

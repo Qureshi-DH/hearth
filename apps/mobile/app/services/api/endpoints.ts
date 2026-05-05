@@ -85,9 +85,15 @@ export function createEndpoints(api: ApiClient) {
         api.post<AuthResponse>("/auth/login", body, { auth: false }),
       logout: () => api.post<{ ok: true }>("/auth/logout"),
       me: () => api.get<CurrentUser>("/auth/me"),
-      updateMe: (
-        patch: Partial<Pick<CurrentUser, "displayName" | "avatarUrl" | "locale" | "units">>,
-      ) => api.patch<CurrentUser>("/auth/me", patch),
+      updateMe: (patch: Partial<Pick<CurrentUser, "displayName" | "locale" | "units">>) =>
+        api.patch<CurrentUser>("/auth/me", patch),
+      uploadAvatar: (file: { uri: string; name: string; type: string }) => {
+        const form = new FormData()
+        // React Native's FormData takes this shape for a file part.
+        form.append("file", file as unknown as Blob)
+        return api.post<CurrentUser>("/auth/me/avatar", form)
+      },
+      removeAvatar: () => api.delete<CurrentUser>("/auth/me/avatar"),
       changePassword: (body: { currentPassword: string; newPassword: string }) =>
         api.post<{ ok: true; revokedSessions: number }>("/auth/password", body),
       sessions: () => api.get<SessionSummary[]>("/auth/sessions"),

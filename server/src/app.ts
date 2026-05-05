@@ -1,3 +1,4 @@
+import multipart from "@fastify/multipart"
 import websocket from "@fastify/websocket"
 import { API_PREFIX } from "@hearth/shared"
 import Fastify, { type FastifyInstance } from "fastify"
@@ -10,6 +11,7 @@ import {
 } from "fastify-type-provider-zod"
 
 import { getConfig } from "./env"
+import { MAX_AVATAR_BYTES } from "./services/storage"
 import { AppError } from "./lib/errors"
 import { loggerOptions } from "./logger"
 import { adminRoutes } from "./modules/admin.routes"
@@ -17,6 +19,7 @@ import { authRoutes } from "./modules/auth.routes"
 import { circleRoutes } from "./modules/circles.routes"
 import { eventRoutes } from "./modules/events.routes"
 import { locationRoutes } from "./modules/locations.routes"
+import { mediaRoutes } from "./modules/media.routes"
 import { messageRoutes } from "./modules/messages.routes"
 import { placeRoutes } from "./modules/places.routes"
 import { pushRoutes } from "./modules/push.routes"
@@ -49,6 +52,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(securityPlugin)
   await app.register(websocket, {
     options: { maxPayload: 64 * 1024 },
+  })
+  await app.register(multipart, {
+    limits: { files: 1, fileSize: MAX_AVATAR_BYTES },
   })
 
   if (config.ENABLE_SWAGGER) {
@@ -157,6 +163,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(
     async (api) => {
       await api.register(systemRoutes)
+      await api.register(mediaRoutes)
       await api.register(authRoutes)
       await api.register(circleRoutes)
       await api.register(locationRoutes)

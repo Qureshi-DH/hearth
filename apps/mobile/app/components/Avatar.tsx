@@ -3,9 +3,11 @@ import { Image } from "expo-image"
 import type { PublicUser } from "@hearth/shared"
 
 import { Text } from "@/components/Text"
+import { useAuthStore } from "@/stores/auth"
 import { useAppTheme } from "@/theme/context"
 import { onColor } from "@/utils/color"
 import { initials } from "@/utils/format"
+import { resolveMediaUrl } from "@/utils/media"
 
 export type AvatarRing = "none" | "self" | "sos" | "stale" | "approximate"
 
@@ -22,6 +24,8 @@ export interface AvatarProps {
  */
 export function Avatar({ user, size = 44, ring = "none", style }: AvatarProps) {
   const { theme } = useAppTheme()
+  const serverUrl = useAuthStore((state) => state.serverUrl)
+  const avatarUri = resolveMediaUrl(user.avatarUrl, serverUrl)
   const ringWidth = ring === "none" ? 0 : Math.max(2, Math.round(size / 16))
   const ringColor =
     ring === "self"
@@ -54,9 +58,9 @@ export function Avatar({ user, size = 44, ring = "none", style }: AvatarProps) {
         style,
       ]}
     >
-      {user.avatarUrl ? (
+      {avatarUri ? (
         <Image
-          source={{ uri: user.avatarUrl }}
+          source={{ uri: avatarUri }}
           style={{ width: inner, height: inner, borderRadius: inner / 2 }}
           contentFit="cover"
           transition={150}

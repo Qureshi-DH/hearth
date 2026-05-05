@@ -73,6 +73,19 @@ const schema = z.object({
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().default("mailto:admin@example.com"),
 
+  /**
+   * S3 compatible object storage for avatars. MinIO is what the compose stack
+   * runs, but any S3 works. Leave S3_ENDPOINT empty and uploads stay off, in
+   * which case avatars fall back to initials on a colour.
+   */
+  S3_ENDPOINT: z.string().optional(),
+  S3_BUCKET: z.string().default("hearth"),
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  S3_REGION: z.string().default("us-east-1"),
+  /** MinIO serves buckets as a path, not a subdomain. */
+  S3_FORCE_PATH_STYLE: bool.default(true),
+
   MAP_STYLE_URL: z.string().default("https://tiles.openfreemap.org/styles/liberty"),
   MAP_STYLE_URL_DARK: z.string().default("https://tiles.openfreemap.org/styles/dark"),
   MAP_ATTRIBUTION: z.string().default("© OpenStreetMap contributors"),

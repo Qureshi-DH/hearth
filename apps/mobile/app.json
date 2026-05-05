@@ -85,6 +85,12 @@
       }
     ],
     [
+      "expo-image-picker",
+      {
+        "photosPermission": "Choose one photo to use as your profile picture."
+      }
+    ],
+    [
       "expo-camera",
       {
         "cameraPermission": "Scan a circle's invite QR code."

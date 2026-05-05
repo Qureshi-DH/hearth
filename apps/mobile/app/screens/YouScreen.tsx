@@ -1,16 +1,19 @@
 import { useState, type FC } from "react"
-import { Alert, View, type ViewStyle } from "react-native"
+import { Alert, Pressable, View, type ViewStyle } from "react-native"
+import * as ImagePicker from "expo-image-picker"
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator"
 import Constants from "expo-constants"
 
 import { Avatar } from "@/components/Avatar"
 import { ListGroup, ListRow } from "@/components/ListRow"
+import { OptionSheet } from "@/components/OptionSheet"
 import { Pill } from "@/components/Pill"
 import { PromptDialog } from "@/components/PromptDialog"
 import { Screen } from "@/components/Screen"
 import { SectionHeader } from "@/components/SectionHeader"
 import { SegmentedControl } from "@/components/SegmentedControl"
 import { Text } from "@/components/Text"
-import { useMe, useUpdateMe } from "@/hooks/queries"
+import { useMe, useRemoveAvatar, useUpdateMe, useUploadAvatar } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { MainTabScreenProps } from "@/navigators/navigationTypes"
 import { endpoints } from "@/services/api"
@@ -18,6 +21,7 @@ import { stopTracking } from "@/services/location/tracker"
 import { disablePush } from "@/services/notifications"
 import { queryClient } from "@/services/queryClient"
 import { useAuthStore } from "@/stores/auth"
+import { toast } from "@/stores/toast"
 import { useSettingsStore, type ThemeMode } from "@/stores/settings"
 import { tokenVault } from "@/stores/tokenVault"
 import { useTrackingStore } from "@/stores/tracking"
@@ -43,6 +47,32 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
 
   const [renaming, setRenaming] = useState(false)
   const rename = () => setRenaming(true)
+
+  const uploadAvatar = useUploadAvatar()
+  const removeAvatar = useRemoveAvatar()
+  const canUploadAvatar = useAuthStore((state) => state.serverInfo?.features.avatars === true)
+  const [photoOpen, setPhotoOpen] = useState(false)
+
+  const pickPhoto = async () => {
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 1,
+    })
+    const asset = picked.canceled ? null : picked.assets[0]
+    if (!asset) return
+    // Re-encoding at avatar size also drops the photo's EXIF, which on a phone
+    // picture includes where it was taken.
+    const resized = await manipulateAsync(asset.uri, [{ resize: { width: 512, height: 512 } }], {
+      compress: 0.85,
+      format: SaveFormat.JPEG,
+    })
+    uploadAvatar.mutate(
+      { uri: resized.uri, name: "avatar.jpg", type: "image/jpeg" },
+      { onError: (error) => toast.error((error as Error).message) },
+    )
+  }
 
   const signOut = () => {
     Alert.alert(translate("common:logOut"), translate("settings:signOutConfirm"), [
@@ -72,7 +102,15 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
   return (
     <Screen preset="scroll" safeAreaEdges={["top"]} contentContainerStyle={themed($container)}>
       <View style={themed($profile)}>
-        {user ? <Avatar user={user} size={72} /> : null}
+        {user ? (
+          canUploadAvatar ? (
+            <Pressable onPress={() => setPhotoOpen(true)} hitSlop={8}>
+              <Avatar user={user} size={72} />
+            </Pressable>
+          ) : (
+            <Avatar user={user} size={72} />
+          )
+        ) : null}
         <View style={{ flex: 1, gap: 2 }}>
           <Text preset="subheading" numberOfLines={1}>
             {user?.displayName}
@@ -216,6 +254,28 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
       <ListGroup style={{ marginTop: theme.spacing.lg }}>
         <ListRow tx="common:logOut" icon="log-out-outline" destructive onPress={signOut} />
       </ListGroup>
+      <OptionSheet
+        visible={photoOpen}
+        titleTx="settings:photo"
+        onClose={() => setPhotoOpen(false)}
+        options={[
+          { key: "choose", tx: "settings:choosePhoto", onPress: pickPhoto },
+          ...(user?.avatarUrl
+            ? [
+                {
+                  key: "remove",
+                  tx: "settings:removePhoto" as const,
+                  destructive: true,
+                  onPress: () =>
+                    removeAvatar.mutate(undefined, {
+                      onError: (error) => toast.error((error as Error).message),
+                    }),
+                },
+              ]
+            : []),
+        ]}
+      />
+
       <PromptDialog
         visible={renaming}
         titleTx="settings:name"

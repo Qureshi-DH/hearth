@@ -119,8 +119,11 @@ export class ApiClient {
       if (qs) url += `?${qs}`
     }
 
+    // FormData has to set its own content-type so the multipart boundary
+    // survives; naming it here produces a body the server cannot parse.
+    const isFormData = options.body instanceof FormData
     const headers: Record<string, string> = { accept: "application/json" }
-    if (options.body !== undefined) headers["content-type"] = "application/json"
+    if (options.body !== undefined && !isFormData) headers["content-type"] = "application/json"
     if (options.auth !== false) {
       const tokens = this.hooks.getTokens()
       if (tokens) headers.authorization = `Bearer ${tokens.accessToken}`
@@ -135,7 +138,12 @@ export class ApiClient {
       response = await fetch(url, {
         method,
         headers,
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        body:
+          options.body === undefined
+            ? undefined
+            : isFormData
+              ? (options.body as FormData)
+              : JSON.stringify(options.body),
         signal: controller.signal,
       })
     } catch (error) {

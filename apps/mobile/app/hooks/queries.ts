@@ -43,12 +43,39 @@ export function useUpdateMe() {
   const queryClient = useQueryClient()
   const updateUser = useAuthStore((state) => state.updateUser)
   return useMutation({
-    mutationFn: (
-      patch: Partial<Pick<CurrentUser, "displayName" | "avatarUrl" | "locale" | "units">>,
-    ) => endpoints.auth.updateMe(patch),
+    mutationFn: (patch: Partial<Pick<CurrentUser, "displayName" | "locale" | "units">>) =>
+      endpoints.auth.updateMe(patch),
     onSuccess: (user) => {
       updateUser(user)
       queryClient.setQueryData(queryKeys.me, user)
+    },
+  })
+}
+
+export function useUploadAvatar() {
+  const queryClient = useQueryClient()
+  const updateUser = useAuthStore((state) => state.updateUser)
+  return useMutation({
+    mutationFn: (file: { uri: string; name: string; type: string }) =>
+      endpoints.auth.uploadAvatar(file),
+    onSuccess: (user) => {
+      updateUser(user)
+      queryClient.setQueryData(queryKeys.me, user)
+      // Every circle roster carries a copy of the picture.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.circles })
+    },
+  })
+}
+
+export function useRemoveAvatar() {
+  const queryClient = useQueryClient()
+  const updateUser = useAuthStore((state) => state.updateUser)
+  return useMutation({
+    mutationFn: () => endpoints.auth.removeAvatar(),
+    onSuccess: (user) => {
+      updateUser(user)
+      queryClient.setQueryData(queryKeys.me, user)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.circles })
     },
   })
 }

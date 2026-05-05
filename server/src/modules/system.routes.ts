@@ -6,6 +6,7 @@ import { getDb } from "../db/client"
 import { getConfig } from "../env"
 import { uptimeSeconds } from "../runtime"
 import { getServerSettings } from "../services/settings"
+import { storageEnabled } from "../services/storage"
 
 const VERSION = process.env.npm_package_version ?? "0.1.0"
 
@@ -45,6 +46,7 @@ export const systemRoutes: FastifyPluginAsyncZod = async (app) => {
           trips: true,
           sos: true,
           checkIns: true,
+          avatars: storageEnabled(),
         },
       }
     },

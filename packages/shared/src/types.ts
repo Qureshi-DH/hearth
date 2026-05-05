@@ -36,6 +36,8 @@ export interface ServerInfo {
     trips: boolean
     sos: boolean
     checkIns: boolean
+    /** False when the server has no object storage, so uploads are hidden. */
+    avatars: boolean
   }
 }
 

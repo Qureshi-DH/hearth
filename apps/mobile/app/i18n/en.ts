@@ -102,7 +102,7 @@ const en = {
     refreshBody:
       "Keep it on for Hearth (Settings → General → Background App Refresh) so the offline queue can upload.",
     notRequested:
-      "Hearth never asks for your contacts, photos, microphone, Bluetooth or advertising ID. Invites use codes, not your address book.",
+      "Hearth never asks for your contacts, microphone, Bluetooth or advertising ID. A profile picture goes through the system picker, so the app only ever sees the one image you choose. Invites use codes, not your address book.",
     allow: "Allow",
     review: "Review",
     always: 'Allow "Always"',
@@ -349,6 +349,10 @@ const en = {
     profile: "Profile",
     name: "Name",
     email: "Email",
+    photo: "Profile picture",
+    choosePhoto: "Choose a photo",
+    removePhoto: "Remove photo",
+    photoTooBig: "That image is too large. Try a smaller one.",
     units: "Units",
     metric: "Metric",
     imperial: "Imperial",
