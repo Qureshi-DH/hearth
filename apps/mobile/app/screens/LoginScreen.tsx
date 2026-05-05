@@ -110,7 +110,7 @@ export const LoginScreen: FC<AppStackScreenProps<"Login">> = ({ navigation }) =>
         style={{ marginTop: theme.spacing.lg }}
       />
 
-      {serverInfo?.registrationMode !== "closed" || serverInfo?.setupRequired ? (
+      {serverInfo?.registrationMode !== "closed" ? (
         <View
           style={{
             flexDirection: "row",

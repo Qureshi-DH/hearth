@@ -30,14 +30,22 @@ Edit `.env` and set at least:
 JWT_SECRET=$(openssl rand -base64 48)      # paste the output
 PUBLIC_URL=https://hearth.example.com
 POSTGRES_PASSWORD=some-long-random-string
-ADMIN_EMAIL=you@example.com                # optional bootstrap admin
-ADMIN_PASSWORD=a-long-passphrase
+ADMIN_EMAIL=you@example.com                # required, your account
+ADMIN_PASSWORD=a-long-passphrase           # required, at least 10 characters
+ADMIN_NAME=Your Name                       # optional, defaults to the part before the @
 ```
 
+The server refuses to start in production without `ADMIN_EMAIL` and
+`ADMIN_PASSWORD`. That account is created once, while the database still has no
+users, and it is the only way in. Registration has no exemption for the first
+account, so a server you have not signed into yet cannot be claimed by whoever
+finds the URL first.
+
+Editing `ADMIN_PASSWORD` later does nothing, because the bootstrap only runs
+against an empty user table. Change the password from the app.
+
 Leave `REGISTRATION_MODE=invite` (the default) unless you want anyone who finds
-the URL to be able to sign up. Whatever the mode, the first account ever created
-becomes the server administrator, so create yours before you hand the URL to
-anyone else.
+the URL to be able to sign up. Everyone else joins with an invite you send them.
 
 ## 2. Start
 

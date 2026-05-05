@@ -84,6 +84,33 @@ describe("auth", () => {
     expect(second.user.isAdmin).toBe(false)
   })
 
+  it("has no first-account exemption from the invite gate", async () => {
+    const admin = await registerUser(ctx.app)
+    const set = await ctx.app.inject({
+      method: "PATCH",
+      url: "/api/v1/admin/settings",
+      headers: admin.headers,
+      payload: { registrationMode: "invite" },
+    })
+    expect(set.statusCode).toBe(200)
+
+    // An empty user table with invite mode still in force is exactly the state
+    // a freshly deployed server sits in, and it must not be claimable.
+    await getDb().execute(sql`truncate table users restart identity cascade`)
+
+    const blocked = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/auth/register",
+      payload: {
+        email: "claimer@example.com",
+        password: "correct-horse-battery",
+        displayName: "Claimer",
+        device: { deviceId: "device-claimer-1" },
+      },
+    })
+    expect(blocked.statusCode).toBe(400)
+  })
+
   it("rejects weak passwords and duplicate emails", async () => {
     const weak = await ctx.app.inject({
       method: "POST",

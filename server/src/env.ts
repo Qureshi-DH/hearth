@@ -51,9 +51,15 @@ const schema = z.object({
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).default(60),
 
   REGISTRATION_MODE: z.enum(REGISTRATION_MODES).default("invite"),
-  /** Bootstrap admin, created on first boot when the user table is empty. */
+  /**
+   * The one account that exists on first boot. Required in production, because
+   * registration never lets an account through without an invite and somebody
+   * has to be able to issue the first one.
+   */
   ADMIN_EMAIL: z.string().optional(),
   ADMIN_PASSWORD: z.string().optional(),
+  /** Defaults to the part of ADMIN_EMAIL before the @. */
+  ADMIN_NAME: z.string().trim().min(1).max(80).optional(),
 
   PUSH_PROVIDER: z.enum(PUSH_PROVIDERS).default("none"),
   EXPO_ACCESS_TOKEN: z.string().optional(),
@@ -116,6 +122,18 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     // An ephemeral secret keeps `pnpm dev` zero-config. Every restart
     // invalidates the tokens issued before it.
     jwtSecret = randomBytes(48).toString("base64url")
+  }
+
+  if (isProduction && (!env.ADMIN_EMAIL || !env.ADMIN_PASSWORD)) {
+    throw new Error(
+      "ADMIN_EMAIL and ADMIN_PASSWORD must both be set in production. They create the " +
+        "account that exists on first boot. Without them the server starts with no users " +
+        "and no way to make one, because registration always requires an invite.",
+    )
+  }
+
+  if (env.ADMIN_PASSWORD && env.ADMIN_PASSWORD.length < 10) {
+    throw new Error("ADMIN_PASSWORD must be at least 10 characters.")
   }
 
   if (env.PUSH_PROVIDER === "webpush" && (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY)) {

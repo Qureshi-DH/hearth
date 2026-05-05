@@ -20,10 +20,7 @@ export const RegisterScreen: FC<AppStackScreenProps<"Register">> = ({ navigation
   const pendingInvite = useAuthStore((state) => state.pendingInviteCode)
   const signedIn = useAuthStore((state) => state.signedIn)
   const setPendingInvite = useAuthStore((state) => state.setPendingInvite)
-  // The server lets the very first account through without an invite, and on a
-  // brand new server there is no circle to be invited to anyway.
-  const isFirstAccount = serverInfo?.setupRequired === true
-  const requiresInvite = serverInfo?.registrationMode === "invite" && !isFirstAccount
+  const requiresInvite = serverInfo?.registrationMode === "invite"
 
   const emailRef = useRef<ComponentRef<typeof TextField>>(null)
   const passwordRef = useRef<ComponentRef<typeof TextField>>(null)
@@ -109,27 +106,19 @@ export const RegisterScreen: FC<AppStackScreenProps<"Register">> = ({ navigation
         containerStyle={{ marginTop: theme.spacing.md }}
         inputWrapperStyle={themed($input)}
       />
-      {isFirstAccount ? (
-        <Text
-          size="xs"
-          tx="register:firstAccount"
-          style={{ color: theme.colors.textDim, marginTop: theme.spacing.md }}
-        />
-      ) : (
-        <TextField
-          value={inviteCode}
-          onChangeText={(value) => setInviteCode(value.toUpperCase())}
-          labelTx="register:inviteCode"
-          helperTx={requiresInvite ? "register:inviteHint" : "register:inviteOptional"}
-          autoCapitalize="characters"
-          autoCorrect={false}
-          maxLength={16}
-          returnKeyType="go"
-          onSubmitEditing={submit}
-          containerStyle={{ marginTop: theme.spacing.md }}
-          inputWrapperStyle={themed($input)}
-        />
-      )}
+      <TextField
+        value={inviteCode}
+        onChangeText={(value) => setInviteCode(value.toUpperCase())}
+        labelTx="register:inviteCode"
+        helperTx={requiresInvite ? "register:inviteHint" : "register:inviteOptional"}
+        autoCapitalize="characters"
+        autoCorrect={false}
+        maxLength={16}
+        returnKeyType="go"
+        onSubmitEditing={submit}
+        containerStyle={{ marginTop: theme.spacing.md }}
+        inputWrapperStyle={themed($input)}
+      />
 
       {error ? (
         <Text size="xs" style={{ color: theme.colors.error, marginTop: theme.spacing.sm }}>

@@ -48,8 +48,8 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["auth"],
         summary: "Create an account",
         description:
-          "Subject to the server's registration mode. The very first account created on a " +
-          "fresh server always succeeds and is granted the administrator flag.",
+          "Subject to the server's registration mode, with no exemption for the first " +
+          "account. The administrator is created from ADMIN_EMAIL at boot instead.",
         body: z.object({
           email: emailSchema,
           password: z.string().min(1).max(512),
@@ -71,16 +71,16 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         .limit(1)
       const isFirstUser = count === 0
 
-      if (!isFirstUser) {
-        const mode = await registrationMode(db)
-        if (mode === "closed") {
-          throw forbidden("This server is not accepting new accounts.")
-        }
-        if (mode === "invite") {
-          if (!inviteCode) throw badRequest("An invite code is required on this server.")
-          const preview = await previewInvite(db, inviteCode)
-          if (!preview.valid) throw badRequest("That invite code is not valid.")
-        }
+      // No exemption for the first account. The admin comes from ADMIN_EMAIL at
+      // boot, so an empty server is never claimable by whoever finds it first.
+      const mode = await registrationMode(db)
+      if (mode === "closed") {
+        throw forbidden("This server is not accepting new accounts.")
+      }
+      if (mode === "invite") {
+        if (!inviteCode) throw badRequest("An invite code is required on this server.")
+        const preview = await previewInvite(db, inviteCode)
+        if (!preview.valid) throw badRequest("That invite code is not valid.")
       }
 
       const emailNormalized = normalizeEmail(email)

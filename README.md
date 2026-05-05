@@ -93,8 +93,11 @@ curl localhost:4000/readyz     # {"ok":true}
 open http://localhost:4000/docs
 ```
 
-The first account you create becomes the server administrator. After that,
-registration is invite only unless you change it.
+Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` before the first boot. That account is
+created once, while the database has no users, and it is the only way in:
+registration never lets an account through without an invite, so a server you
+have not claimed yet cannot be claimed by whoever finds the URL. Set
+`ADMIN_NAME` too if you want something other than the part before the @.
 
 Phones won't talk to a plain HTTP server in the background, so put a TLS proxy
 in front before you invite anyone. [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)

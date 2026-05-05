@@ -14,9 +14,15 @@ import { createPushDriver } from "./services/push"
 
 /**
  * Only ever runs against an empty user table, so restarting a live server with
- * ADMIN_EMAIL still set cannot resurrect or overwrite an account.
+ * ADMIN_EMAIL still set cannot resurrect or overwrite an account. Editing
+ * ADMIN_PASSWORD later therefore does not rotate the password; change it from
+ * the app instead.
  */
-async function bootstrapAdmin(email: string, password: string): Promise<boolean> {
+async function bootstrapAdmin(
+  email: string,
+  password: string,
+  displayName?: string,
+): Promise<boolean> {
   const db = getDb()
   const [{ count } = { count: 0 }] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -28,7 +34,7 @@ async function bootstrapAdmin(email: string, password: string): Promise<boolean>
     email: email.trim(),
     emailNormalized: normalized,
     passwordHash: await hashPassword(password),
-    displayName: email.split("@")[0] ?? "Admin",
+    displayName: displayName ?? email.split("@")[0] ?? "Admin",
     avatarColor: avatarColorFor(normalized),
     isAdmin: true,
   })
@@ -51,7 +57,11 @@ async function main(): Promise<void> {
   const app = await buildApp()
 
   if (config.ADMIN_EMAIL && config.ADMIN_PASSWORD) {
-    const created = await bootstrapAdmin(config.ADMIN_EMAIL, config.ADMIN_PASSWORD)
+    const created = await bootstrapAdmin(
+      config.ADMIN_EMAIL,
+      config.ADMIN_PASSWORD,
+      config.ADMIN_NAME,
+    )
     if (created) {
       app.log.info({ email: config.ADMIN_EMAIL }, "created bootstrap administrator")
     }
