@@ -5,10 +5,11 @@ import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet"
 import type { MemberPresence } from "@hearth/shared"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { useFocusEffect } from "@react-navigation/native"
-import { GestureHandlerRootView } from "react-native-gesture-handler"
+import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler"
 import Animated, {
   FadeIn,
   FadeOut,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
 } from "react-native-reanimated"
@@ -145,6 +146,18 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   // Resting height is the handle plus the action row plus one member row.
   const restingSheetHeight = 176
   const snapPoints = useMemo(() => [restingSheetHeight, "55%", "92%"], [])
+
+  const expandSheet = useCallback(() => sheetRef.current?.snapToIndex(0), [])
+
+  // The collapsed bar draws a grabber, so it has to answer a swipe as well as a
+  // tap. A handle that only responds to tapping reads as a broken sheet.
+  const expandSheetGesture = useMemo(
+    () =>
+      Gesture.Pan().onEnd((event) => {
+        if (event.translationY < -8 || event.velocityY < -300) runOnJS(expandSheet)()
+      }),
+    [expandSheet],
+  )
 
   // The controls ride the sheet rather than jumping between two fixed offsets.
   // `animatedPosition` is the sheet's top edge as a shared value, so driving
@@ -401,22 +414,24 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
           exiting={FadeOut.duration(120)}
           style={themed($collapsedBar)}
         >
-          <Pressable
-            onPress={() => sheetRef.current?.snapToIndex(0)}
-            accessibilityRole="button"
-            accessibilityLabel={translate("map:members")}
-            style={{ alignItems: "center", gap: 6, paddingVertical: 4, width: "100%" }}
-          >
-            <View style={themed($collapsedHandle)} />
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Ionicons name="people" size={16} color={theme.colors.tint} />
-              <Text size="xs" weight="semiBold" tx="map:members" />
-              <Text size="xs" style={{ color: theme.colors.textDim }}>
-                {members?.length ?? 0}
-              </Text>
-              <Ionicons name="chevron-up" size={14} color={theme.colors.textFaint} />
-            </View>
-          </Pressable>
+          <GestureDetector gesture={expandSheetGesture}>
+            <Pressable
+              onPress={expandSheet}
+              accessibilityRole="button"
+              accessibilityLabel={translate("map:members")}
+              style={{ alignItems: "center", gap: 6, paddingVertical: 4, width: "100%" }}
+            >
+              <View style={themed($collapsedHandle)} />
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="people" size={16} color={theme.colors.tint} />
+                <Text size="xs" weight="semiBold" tx="map:members" />
+                <Text size="xs" style={{ color: theme.colors.textDim }}>
+                  {members?.length ?? 0}
+                </Text>
+                <Ionicons name="chevron-up" size={14} color={theme.colors.textFaint} />
+              </View>
+            </Pressable>
+          </GestureDetector>
         </Animated.View>
       ) : null}
 
