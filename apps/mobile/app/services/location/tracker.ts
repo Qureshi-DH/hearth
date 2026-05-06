@@ -3,7 +3,7 @@ import * as BackgroundTask from "expo-background-task"
 import * as Battery from "expo-battery"
 import * as Location from "expo-location"
 import * as TaskManager from "expo-task-manager"
-import type { LocationFixInput, LocationSource } from "@hearth/shared"
+import { haversineMeters, type LocationFixInput, type LocationSource } from "@hearth/shared"
 
 import { ApiError, endpoints } from "@/services/api"
 import { useAuthStore } from "@/stores/auth"
@@ -13,9 +13,27 @@ import { useTrackingStore, type PermissionLevel, type TrackingPolicy } from "@/s
 export const BACKGROUND_LOCATION_TASK = "hearth-background-location"
 /** Must match BGTaskSchedulerPermittedIdentifiers in app.json. */
 export const BACKGROUND_SYNC_TASK = "app.hearth.mobile.sync"
+/** Armed around wherever the phone stopped, so leaving wakes us back up. */
+export const STATIONARY_GEOFENCE_TASK = "hearth-stationary-geofence"
 
 const MAX_BATCH = 200
 const STALE_FIX_MS = 30 * 60 * 1000
+
+/**
+ * Android will not hand out continuous location without a foreground service,
+ * and a location foreground service must show a notification that cannot be
+ * hidden. Running one around the clock is what makes the notification
+ * permanent and what actually drains the battery, since the GPS never sleeps.
+ *
+ * So only run it while the phone is moving. Once it has sat still, stop the
+ * service and hand the waiting over to the OS geofence, which is cheap because
+ * it rides on the location the system is already computing for everything else.
+ * The notification then appears for a journey and disappears when you arrive.
+ */
+const STILL_RADIUS_METERS = 60
+const STILL_AFTER_MS = 5 * 60 * 1000
+/** Bigger than the still radius so GPS jitter at a standstill cannot trip it. */
+const STATIONARY_GEOFENCE_RADIUS_METERS = 150
 
 async function batterySnapshot(): Promise<{
   batteryLevel: number | null
@@ -160,6 +178,8 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
   )
   if (fixes.length === 0) return
   state.enqueue(fixes)
+  const newest = fixes[fixes.length - 1]
+  if (newest && source === "background") await evaluateStillness(newest)
   await flush()
 }
 
@@ -192,9 +212,51 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   await ingest(locations, "background")
 })
 
+/**
+ * The only thing listening while the phone is parked. Leaving the circle we
+ * drew around the stopping point means a journey started, so bring the service
+ * back and start reporting properly again.
+ */
+TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
+  if (error) {
+    useTrackingStore.getState().setError(error.message)
+    return
+  }
+  const event = data as { eventType?: Location.GeofencingEventType } | undefined
+  if (event?.eventType !== Location.GeofencingEventType.Exit) return
+  if (!useTrackingStore.getState().enabled) return
+  await enterMoving()
+  await reportNow("significant")
+})
+
 TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
   try {
-    const { lastFix, enabled } = useTrackingStore.getState()
+    const { lastFix, enabled, mode, stillAnchor } = useTrackingStore.getState()
+
+    // Android forgets geofences when the app process is killed, and expo's
+    // geofencing does not restart a terminated app the way iOS does. Rather
+    // than trust the fence to be the only thing that can wake us, this periodic
+    // pass re-arms it and independently checks whether the phone has left. A
+    // fence that quietly fails would otherwise mean going dark on a journey.
+    if (enabled && mode === "stationary" && stillAnchor) {
+      if (!(await geofenceRunning())) await enterStationary(stillAnchor.lat, stillAnchor.lon)
+      try {
+        const here = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        })
+        const drift = haversineMeters(
+          { lat: stillAnchor.lat, lon: stillAnchor.lon },
+          { lat: here.coords.latitude, lon: here.coords.longitude },
+        )
+        if (drift > STATIONARY_GEOFENCE_RADIUS_METERS) {
+          await enterMoving()
+          await ingest([here], "significant")
+        }
+      } catch {
+        // No fix available this wake. The fence is still armed.
+      }
+    }
+
     const stale = !lastFix || Date.now() - Date.parse(lastFix.recordedAt) > STALE_FIX_MS
     if (enabled && stale && (await currentPermission()) === "always") {
       await reportNow("significant")
@@ -239,7 +301,10 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
     // Let the OS batch deliveries while the phone is still. The server dedupes.
     deferredUpdatesInterval: Math.max(60_000, policy.minUpdateIntervalSeconds * 2000),
     deferredUpdatesDistance: policy.distanceFilterMeters * 2,
-    pausesUpdatesAutomatically: false,
+    // iOS does this natively: it parks the GPS when you stop and wakes on
+    // motion. Turning it off was throwing away the same saving we now build by
+    // hand on Android.
+    pausesUpdatesAutomatically: true,
     activityType: Location.ActivityType.Other,
     showsBackgroundLocationIndicator: true,
     foregroundService: {
@@ -251,31 +316,114 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
   }
 }
 
+async function locationUpdatesRunning(): Promise<boolean> {
+  return Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false)
+}
+
+async function geofenceRunning(): Promise<boolean> {
+  return Location.hasStartedGeofencingAsync(STATIONARY_GEOFENCE_TASK).catch(() => false)
+}
+
+/** Continuous updates on. This is the state that shows the Android notification. */
+export async function enterMoving(): Promise<void> {
+  const store = useTrackingStore.getState()
+  if (await geofenceRunning()) {
+    await Location.stopGeofencingAsync(STATIONARY_GEOFENCE_TASK).catch(() => {})
+  }
+  if (!(await locationUpdatesRunning())) {
+    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, updateOptions(store.policy))
+  }
+  store.setStillAnchor(null)
+  store.setMode("moving")
+  store.setBackgroundActive(true)
+}
+
+/** Updates off, geofence armed. This is where the notification goes away. */
+export async function enterStationary(lat: number, lon: number): Promise<void> {
+  const store = useTrackingStore.getState()
+  try {
+    await Location.startGeofencingAsync(STATIONARY_GEOFENCE_TASK, [
+      {
+        latitude: lat,
+        longitude: lon,
+        radius: STATIONARY_GEOFENCE_RADIUS_METERS,
+        notifyOnEnter: false,
+        notifyOnExit: true,
+      },
+    ])
+  } catch {
+    // With nothing armed to wake us there would be no way back, so it is safer
+    // to keep burning the service than to go silent.
+    await enterMoving()
+    return
+  }
+  if (await locationUpdatesRunning()) {
+    await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {})
+  }
+  store.setMode("stationary")
+  store.setBackgroundActive(true)
+}
+
+/**
+ * A phone that has not left a small circle for a few minutes has arrived
+ * somewhere. Anchoring on the first fix of the stretch rather than the previous
+ * one means slow drift cannot keep resetting the clock.
+ */
+export type StillnessDecision = "settle" | "reanchor" | "wait"
+
+export function stillnessDecision(
+  anchor: { lat: number; lon: number; since: string } | null,
+  fix: Pick<LocationFixInput, "lat" | "lon" | "recordedAt">,
+): StillnessDecision {
+  if (!anchor) return "reanchor"
+  const moved = haversineMeters(
+    { lat: anchor.lat, lon: anchor.lon },
+    { lat: fix.lat, lon: fix.lon },
+  )
+  if (moved > STILL_RADIUS_METERS) return "reanchor"
+  return Date.parse(fix.recordedAt) - Date.parse(anchor.since) >= STILL_AFTER_MS ? "settle" : "wait"
+}
+
+async function evaluateStillness(fix: LocationFixInput): Promise<void> {
+  const store = useTrackingStore.getState()
+  if (store.mode !== "moving") return
+
+  const anchor = store.stillAnchor
+  switch (stillnessDecision(anchor, fix)) {
+    case "reanchor":
+      store.setStillAnchor({ lat: fix.lat, lon: fix.lon, since: fix.recordedAt })
+      return
+    case "settle":
+      if (anchor) await enterStationary(anchor.lat, anchor.lon)
+      return
+    case "wait":
+      return
+  }
+}
+
 /** Foreground permission is enough to start, but only "always" keeps it running. */
 export async function startTracking(): Promise<boolean> {
   const permission = await currentPermission()
   useTrackingStore.getState().setPermission(permission)
   if (permission !== "always" && permission !== "foreground") return false
 
-  const policy = useTrackingStore.getState().policy
-  const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(
-    () => false,
-  )
-  if (!running) {
-    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, updateOptions(policy))
-  }
-  useTrackingStore.getState().setBackgroundActive(true)
+  await enterMoving()
   await registerBackgroundSync()
   void reportNow("foreground")
   return true
 }
 
 export async function stopTracking(): Promise<void> {
-  const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(
-    () => false,
-  )
-  if (running) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
-  useTrackingStore.getState().setBackgroundActive(false)
+  if (await locationUpdatesRunning()) {
+    await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {})
+  }
+  if (await geofenceRunning()) {
+    await Location.stopGeofencingAsync(STATIONARY_GEOFENCE_TASK).catch(() => {})
+  }
+  const store = useTrackingStore.getState()
+  store.setMode("off")
+  store.setStillAnchor(null)
+  store.setBackgroundActive(false)
 }
 
 let lastPolicyRestart = 0
@@ -283,10 +431,8 @@ let lastPolicyRestart = 0
 /** Throttled, so policy churn from the server cannot thrash the OS updates. */
 export async function applyPolicy(policy: TrackingPolicy): Promise<void> {
   if (Date.now() - lastPolicyRestart < 60_000) return
-  const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(
-    () => false,
-  )
-  if (!running) return
+  if (useTrackingStore.getState().mode !== "moving") return
+  if (!(await locationUpdatesRunning())) return
   lastPolicyRestart = Date.now()
   await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
   await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, updateOptions(policy))

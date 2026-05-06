@@ -6,6 +6,14 @@ import { mmkvStorage } from "./mmkv"
 
 export type PermissionLevel = "unknown" | "denied" | "foreground" | "always"
 
+/**
+ * "moving" runs the OS location service, which on Android means a permanent
+ * notification. "stationary" shuts it down and waits on a geofence around the
+ * spot the phone stopped, which is what makes the notification come and go
+ * instead of sitting there all day.
+ */
+export type TrackingMode = "off" | "moving" | "stationary"
+
 export interface TrackingPolicy {
   minUpdateIntervalSeconds: number
   distanceFilterMeters: number
@@ -20,6 +28,9 @@ interface TrackingState {
   batteryExemptionRequested: boolean
   onboardedPermissions: boolean
   policy: TrackingPolicy
+  mode: TrackingMode
+  /** Where the phone settled, and when it got there. Survives a process kill. */
+  stillAnchor: { lat: number; lon: number; since: string } | null
   lastFix: LocationFixInput | null
   lastUploadAt: string | null
   lastError: string | null
@@ -33,6 +44,8 @@ interface TrackingState {
   setBatteryExemptionRequested(value: boolean): void
   setOnboardedPermissions(value: boolean): void
   setPolicy(policy: TrackingPolicy): void
+  setMode(mode: TrackingMode): void
+  setStillAnchor(anchor: { lat: number; lon: number; since: string } | null): void
   enqueue(fixes: LocationFixInput[]): void
   dequeue(fixes: LocationFixInput[]): void
   recordUpload(accepted: number): void
@@ -52,6 +65,8 @@ export const useTrackingStore = create<TrackingState>()(
       batteryExemptionRequested: false,
       onboardedPermissions: false,
       policy: { minUpdateIntervalSeconds: 30, distanceFilterMeters: 60 },
+      mode: "off",
+      stillAnchor: null,
       lastFix: null,
       lastUploadAt: null,
       lastError: null,
@@ -65,6 +80,8 @@ export const useTrackingStore = create<TrackingState>()(
         set({ batteryExemptionRequested }),
       setOnboardedPermissions: (onboardedPermissions) => set({ onboardedPermissions }),
       setPolicy: (policy) => set({ policy }),
+      setMode: (mode) => set({ mode }),
+      setStillAnchor: (stillAnchor) => set({ stillAnchor }),
       enqueue: (fixes) => {
         const merged = [...get().queue, ...fixes]
         set({
@@ -89,6 +106,8 @@ export const useTrackingStore = create<TrackingState>()(
       reset: () =>
         set({
           backgroundActive: false,
+          mode: "off",
+          stillAnchor: null,
           lastFix: null,
           lastUploadAt: null,
           lastError: null,
@@ -105,6 +124,8 @@ export const useTrackingStore = create<TrackingState>()(
         batteryExemptionRequested: state.batteryExemptionRequested,
         onboardedPermissions: state.onboardedPermissions,
         policy: state.policy,
+        mode: state.mode,
+        stillAnchor: state.stillAnchor,
         queue: state.queue,
         lastFix: state.lastFix,
         lastUploadAt: state.lastUploadAt,
