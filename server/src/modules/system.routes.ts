@@ -8,7 +8,13 @@ import { uptimeSeconds } from "../runtime"
 import { getServerSettings } from "../services/settings"
 import { storageEnabled } from "../services/storage"
 
-const VERSION = process.env.npm_package_version ?? "0.1.0"
+declare const __HEARTH_VERSION__: string | undefined
+
+/** Baked in by tsup for the bundle; falls back to the package manager in dev. */
+const VERSION =
+  typeof __HEARTH_VERSION__ === "string"
+    ? __HEARTH_VERSION__
+    : (process.env.npm_package_version ?? "0.0.0-dev")
 
 export const systemRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
