@@ -120,6 +120,20 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
             })
             break
           }
+          case "message": {
+            const message = payload.message as
+              { author?: { id?: string }; toUser?: { id?: string } | null } | undefined
+            const to = message?.toUser?.id ?? null
+            // A directed message is between two people. Without this it would
+            // fan out to every socket in the circle.
+            if (to && to !== userId && message?.author?.id !== userId) break
+            send({
+              type: "message",
+              circleId: circleId!,
+              message: payload.message as never,
+            })
+            break
+          }
           case "sos": {
             const [alert] = await db
               .select({ alert: sosAlerts, user: users })

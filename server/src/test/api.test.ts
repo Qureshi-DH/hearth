@@ -219,6 +219,62 @@ describe("auth", () => {
   })
 })
 
+describe("messages", () => {
+  it("keeps a directed message between the two people it names", async () => {
+    const owner = await registerUser(ctx.app, { displayName: "Owner" })
+    const circle = await createCircle(owner.headers)
+    const join = async (headers: Record<string, string>) => {
+      const accepted = await ctx.app.inject({
+        method: "POST",
+        url: `/api/v1/invites/${circle.invite.code}/accept`,
+        headers,
+      })
+      expect(accepted.statusCode).toBe(200)
+    }
+    const driver = await registerUser(ctx.app, { displayName: "Driver" })
+    const bystander = await registerUser(ctx.app, { displayName: "Bystander" })
+    await join(driver.headers)
+    await join(bystander.headers)
+
+    const sent = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/messages`,
+      headers: owner.headers,
+      payload: { body: "Drive carefully", toUserId: driver.user.id },
+    })
+    expect(sent.statusCode).toBe(201)
+    expect(sent.json().toUser.id).toBe(driver.user.id)
+
+    const bodies = async (headers: Record<string, string>) => {
+      const list = await ctx.app.inject({
+        method: "GET",
+        url: `/api/v1/circles/${circle.id}/messages`,
+        headers,
+      })
+      expect(list.statusCode).toBe(200)
+      return (list.json().items as Array<{ body: string }>).map((item) => item.body)
+    }
+
+    expect(await bodies(driver.headers)).toContain("Drive carefully")
+    expect(await bodies(owner.headers)).toContain("Drive carefully")
+    expect(await bodies(bystander.headers)).not.toContain("Drive carefully")
+  })
+
+  it("refuses to aim a message at somebody outside the circle", async () => {
+    const owner = await registerUser(ctx.app)
+    const circle = await createCircle(owner.headers)
+    const outsider = await registerUser(ctx.app)
+
+    const sent = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/messages`,
+      headers: owner.headers,
+      payload: { body: "Hello", toUserId: outsider.user.id },
+    })
+    expect(sent.statusCode).toBe(400)
+  })
+})
+
 describe("circles and invites", () => {
   it("creates a circle, invites a second member, and lists both", async () => {
     const owner = await registerUser(ctx.app, { displayName: "Owner" })

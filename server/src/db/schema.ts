@@ -338,12 +338,17 @@ export const messages = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    /** Null addresses the whole circle. Set to aim the message at one member. */
+    toUserId: uuid("to_user_id").references(() => users.id, { onDelete: "cascade" }),
     body: text("body").notNull(),
     /** Set when the message came from a canned quick-reply. */
     quickKey: text("quick_key"),
     createdAt: createdAt(),
   },
-  (table) => [index("messages_circle_created_idx").on(table.circleId, table.createdAt.desc())],
+  (table) => [
+    index("messages_circle_created_idx").on(table.circleId, table.createdAt.desc()),
+    index("messages_to_user_idx").on(table.toUserId, table.createdAt.desc()),
+  ],
 )
 
 export const sosAlerts = pgTable(

@@ -1,5 +1,6 @@
 import { DEFAULTS, QUICK_MESSAGES } from "@hearth/shared"
-import { and, desc, eq, lt } from "drizzle-orm"
+import { and, desc, eq, lt, or, isNull } from "drizzle-orm"
+import { alias } from "drizzle-orm/pg-core"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
@@ -13,6 +14,8 @@ import { getBus } from "../runtime"
 import { enqueuePush } from "../services/push"
 
 const circleIdParam = z.object({ circleId: z.string().uuid() })
+/** Joined separately from the author so a directed message can name both. */
+const recipientUser = alias(users, "recipient")
 const QUICK_KEYS = QUICK_MESSAGES.map((entry) => entry.key)
 
 export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -34,14 +37,23 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request) => {
+      const auth = requireAuth(request)
       const membership = await requireMembership(request, request.params.circleId)
       const rows = await db
-        .select({ message: messages, author: users })
+        .select({ message: messages, author: users, recipient: recipientUser })
         .from(messages)
         .innerJoin(users, eq(users.id, messages.userId))
+        .leftJoin(recipientUser, eq(recipientUser.id, messages.toUserId))
         .where(
           and(
             eq(messages.circleId, membership.circleId),
+            // A directed message is between two people. Everyone sees the ones
+            // addressed to the whole circle.
+            or(
+              isNull(messages.toUserId),
+              eq(messages.toUserId, auth.userId),
+              eq(messages.userId, auth.userId),
+            ),
             request.query.cursor
               ? lt(messages.createdAt, new Date(request.query.cursor))
               : undefined,
@@ -56,6 +68,7 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
           id: row.message.id,
           circleId: row.message.circleId,
           author: toPublicUser(row.author),
+          toUser: row.recipient ? toPublicUser(row.recipient) : null,
           body: row.message.body,
           quickKey: row.message.quickKey,
           createdAt: row.message.createdAt.toISOString(),
@@ -76,13 +89,16 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["messages"],
         summary: "Send a message to the circle",
         description:
-          "Either free text or a canned quick-reply key. Delivered as a push to every " +
-          "other member and over the websocket to anyone with the app open.",
+          "Either free text or a canned quick-reply key. Without toUserId it goes to " +
+          "the whole circle. With it, only that member is notified and only the two of " +
+          "you can read it.",
         params: circleIdParam,
         body: z
           .object({
             body: z.string().trim().min(1).max(DEFAULTS.maxMessageLength).optional(),
             quickKey: z.enum(QUICK_KEYS as [string, ...string[]]).optional(),
+            /** Omit for the whole circle. Set to aim it at one member. */
+            toUserId: z.string().uuid().optional(),
           })
           .refine((value) => value.body || value.quickKey, {
             message: "Provide a body or a quickKey.",
@@ -95,6 +111,26 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
       const auth = requireAuth(request)
       const membership = await requireMembership(request, request.params.circleId)
 
+      // Aiming a message at somebody outside the circle would leak it.
+      let toUserId: string | null = null
+      if (request.body.toUserId) {
+        if (request.body.toUserId === auth.userId) {
+          throw badRequest("You cannot message yourself.")
+        }
+        const [target] = await db
+          .select({ userId: circleMembers.userId })
+          .from(circleMembers)
+          .where(
+            and(
+              eq(circleMembers.circleId, membership.circleId),
+              eq(circleMembers.userId, request.body.toUserId),
+            ),
+          )
+          .limit(1)
+        if (!target) throw badRequest("That person is not in this circle.")
+        toUserId = target.userId
+      }
+
       const canned = request.body.quickKey
         ? QUICK_MESSAGES.find((entry) => entry.key === request.body.quickKey)
         : undefined
@@ -106,6 +142,7 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
         .values({
           circleId: membership.circleId,
           userId: auth.userId,
+          toUserId,
           body,
           quickKey: canned?.key ?? null,
         })
@@ -123,10 +160,24 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(eq(users.id, auth.userId))
         .limit(1)
 
+      const [recipient] = toUserId
+        ? await db
+            .select({
+              id: users.id,
+              displayName: users.displayName,
+              avatarColor: users.avatarColor,
+              avatarUrl: users.avatarUrl,
+            })
+            .from(users)
+            .where(eq(users.id, toUserId))
+            .limit(1)
+        : []
+
       const dto = {
         id: created.id,
         circleId: created.circleId,
         author: author ? toPublicUser(author) : null,
+        toUser: recipient ? toPublicUser(recipient) : null,
         body: created.body,
         quickKey: created.quickKey,
         createdAt: created.createdAt.toISOString(),
@@ -138,14 +189,16 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
         message: dto,
       })
 
-      const recipients = (
-        await db
-          .select({ userId: circleMembers.userId })
-          .from(circleMembers)
-          .where(eq(circleMembers.circleId, membership.circleId))
-      )
-        .map((row) => row.userId)
-        .filter((userId) => userId !== auth.userId)
+      const recipients = toUserId
+        ? [toUserId]
+        : (
+            await db
+              .select({ userId: circleMembers.userId })
+              .from(circleMembers)
+              .where(eq(circleMembers.circleId, membership.circleId))
+          )
+            .map((row) => row.userId)
+            .filter((userId) => userId !== auth.userId)
 
       await enqueuePush(
         db,

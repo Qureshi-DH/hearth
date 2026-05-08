@@ -15,6 +15,13 @@
       "when": 1788687963416,
       "tag": "0001_adorable_switch",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788723128415,
+      "tag": "0002_mighty_wolverine",
+      "breakpoints": true
     }
   ]
 }

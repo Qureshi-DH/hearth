@@ -293,6 +293,8 @@ export interface FeedEvent {
 export interface CircleMessage {
   id: string
   circleId: string
+  /** Null for the whole family. Set when the message is aimed at one member. */
+  toUser?: PublicUser | null
   author: PublicUser
   body: string
   /** Set when the message came from a quick reply. */
