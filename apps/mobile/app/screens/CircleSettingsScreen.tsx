@@ -106,43 +106,16 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
         />
       </View>
 
-      <SectionHeader tx="circle:historyRetention" />
-      {chips(
-        RETENTION_OPTIONS,
-        circle.settings.historyRetentionDays,
-        (days) =>
-          days === 0
-            ? translate("circle:daysOff")
-            : days === 1
-              ? translate("circle:dayOne")
-              : translate("circle:days", { count: days }),
-        (days) => patchSettings({ historyRetentionDays: days }),
-      )}
-
-      <SectionHeader tx="circle:updateInterval" />
-      {chips(
-        INTERVAL_OPTIONS.map((option) => option.seconds),
-        circle.settings.minUpdateIntervalSeconds,
-        (seconds) =>
-          translate(
-            INTERVAL_OPTIONS.find((option) => option.seconds === seconds)?.tx ??
-              "circle:intervalNormal",
-          ),
-        (seconds) =>
-          patchSettings({
-            minUpdateIntervalSeconds: seconds,
-            distanceFilterMeters: seconds >= 300 ? 150 : seconds >= 60 ? 80 : 40,
-          }),
-      )}
-
-      <SectionHeader tx="circle:lowBattery" />
-      {chips(
-        BATTERY_OPTIONS,
-        circle.settings.lowBatteryThreshold,
-        (value) => `${Math.round(value * 100)}%`,
-        (value) => patchSettings({ lowBatteryThreshold: value }),
-      )}
-
+      <SectionHeader tx="circle:alerts" />
+      <Text
+        size="xxs"
+        tx="circle:alertsHint"
+        style={{
+          color: theme.colors.textFaint,
+          paddingHorizontal: theme.spacing.md,
+          paddingBottom: 4,
+        }}
+      />
       <SectionHeader tx="circle:speedAlert" />
       {chips(
         SPEED_OPTIONS,
@@ -160,7 +133,6 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
         }}
       />
 
-      <SectionHeader tx="circle:settings" />
       <ListGroup>
         <ListRow
           tx="circle:incidentDetection"
@@ -170,6 +142,48 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
           value={circle.settings.incidentDetection ?? false}
           onValueChange={(value) => patchSettings({ incidentDetection: value })}
         />
+      </ListGroup>
+
+      <SectionHeader tx="circle:lowBattery" />
+      {chips(
+        BATTERY_OPTIONS,
+        circle.settings.lowBatteryThreshold,
+        (value) => `${Math.round(value * 100)}%`,
+        (value) => patchSettings({ lowBatteryThreshold: value }),
+      )}
+
+      <SectionHeader tx="circle:location" />
+      <SectionHeader tx="circle:updateInterval" />
+      {chips(
+        INTERVAL_OPTIONS.map((option) => option.seconds),
+        circle.settings.minUpdateIntervalSeconds,
+        (seconds) =>
+          translate(
+            INTERVAL_OPTIONS.find((option) => option.seconds === seconds)?.tx ??
+              "circle:intervalNormal",
+          ),
+        (seconds) =>
+          patchSettings({
+            minUpdateIntervalSeconds: seconds,
+            distanceFilterMeters: seconds >= 300 ? 150 : seconds >= 60 ? 80 : 40,
+          }),
+      )}
+
+      <SectionHeader tx="circle:historyRetention" />
+      {chips(
+        RETENTION_OPTIONS,
+        circle.settings.historyRetentionDays,
+        (days) =>
+          days === 0
+            ? translate("circle:daysOff")
+            : days === 1
+              ? translate("circle:dayOne")
+              : translate("circle:days", { count: days }),
+        (days) => patchSettings({ historyRetentionDays: days }),
+      )}
+
+      <SectionHeader tx="circle:privacy" />
+      <ListGroup>
         <ListRow
           tx="circle:allowPause"
           icon="pause-circle-outline"
