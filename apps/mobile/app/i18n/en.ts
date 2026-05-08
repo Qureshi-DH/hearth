@@ -228,6 +228,9 @@ const en = {
   messages: {
     title: "Messages",
     empty: "No messages yet",
+    toYou: "To you",
+    toMember: "To {{name}}",
+    messageMember: "Send a message",
     emptyBody: "Send a quick note to everyone in this circle.",
     placeholder: "Message…",
     send: "Send",

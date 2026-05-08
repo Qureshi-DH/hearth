@@ -222,7 +222,7 @@ export function createEndpoints(api: ApiClient) {
     messages: {
       list: (circleId: string, query: { limit?: number; cursor?: string } = {}) =>
         api.get<Paginated<CircleMessage>>(`/circles/${circleId}/messages`, { query }),
-      send: (circleId: string, body: { body?: string; quickKey?: string }) =>
+      send: (circleId: string, body: { body?: string; quickKey?: string; toUserId?: string }) =>
         api.post<CircleMessage>(`/circles/${circleId}/messages`, body),
     },
 

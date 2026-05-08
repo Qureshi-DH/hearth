@@ -363,7 +363,7 @@ export function useMessages(circleId: string | null) {
 export function useSendMessage(circleId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: { body?: string; quickKey?: string }) =>
+    mutationFn: (body: { body?: string; quickKey?: string; toUserId?: string }) =>
       endpoints.messages.send(circleId, body),
     onSuccess: (message) => {
       // The websocket echoes this back too, so de-duplicate on id.

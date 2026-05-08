@@ -9,7 +9,7 @@ import { IconButton } from "@/components/IconButton"
 import { Screen } from "@/components/Screen"
 import { Text } from "@/components/Text"
 import { TextField } from "@/components/TextField"
-import { useCircle, useMessages, useSendMessage } from "@/hooks/queries"
+import { useCircle, useMembers, useMessages, useSendMessage } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { useAuthStore } from "@/stores/auth"
@@ -20,36 +20,56 @@ import { formatClock } from "@/utils/time"
 import { useHeader } from "@/utils/useHeader"
 
 /**
- * One short thread per circle. Not a chat app. The alerts Hearth raises ("Sami
- * was driving at 95 km/h") need an obvious reply, and "please slow down" should
- * be one tap rather than a keyboard. Free text is the fallback.
+ * Not a chat app. The alerts Hearth raises ("Sami was driving at 95 km/h") need
+ * an obvious reply, and "please slow down" should be one tap rather than a
+ * keyboard. Free text is the fallback.
+ *
+ * With toUserId the thread is a quiet word with one person, which is the usual
+ * way in: you saw something about them and you are answering it. Without it the
+ * thread is the whole family.
  */
 export const MessagesScreen: FC<AppStackScreenProps<"Messages">> = ({ navigation, route }) => {
-  const { circleId } = route.params
+  const { circleId, toUserId } = route.params
   const { themed, theme } = useAppTheme()
   const me = useAuthStore((state) => state.user)
   const circle = useCircle(circleId)
+  const { data: members } = useMembers(circleId)
   const messages = useMessages(circleId)
   const send = useSendMessage(circleId)
   const [draft, setDraft] = useState("")
 
+  const withMember = toUserId ? members?.find((member) => member.userId === toUserId) : undefined
+
   useHeader(
     {
-      title: circle ? `${circle.emoji ?? ""} ${circle.name}`.trim() : translate("messages:title"),
+      title: withMember
+        ? withMember.user.displayName
+        : circle
+          ? `${circle.emoji ?? ""} ${circle.name}`.trim()
+          : translate("messages:title"),
       leftIcon: "back",
       onLeftPress: () => navigation.goBack(),
     },
-    [circle?.name, navigation],
+    [circle?.name, withMember?.user.displayName, navigation],
   )
 
-  const items = useMemo(
-    () => messages.data?.pages.flatMap((page) => page.items) ?? [],
-    [messages.data],
-  )
+  const items = useMemo(() => {
+    const all = messages.data?.pages.flatMap((page) => page.items) ?? []
+    // The family thread still shows the directed ones you are party to, marked
+    // with who they were for. The server already filtered out everyone else's,
+    // and hiding them here would mean a message nobody ever finds.
+    if (!toUserId) return all
+    // Just the two of you, in either direction.
+    return all.filter(
+      (message) =>
+        (message.toUser?.id === toUserId && message.author.id === me?.id) ||
+        (message.author.id === toUserId && message.toUser?.id === me?.id),
+    )
+  }, [messages.data, toUserId, me?.id])
 
   const submit = async (body?: string, quickKey?: string) => {
     try {
-      await send.mutateAsync(quickKey ? { quickKey } : { body })
+      await send.mutateAsync(quickKey ? { quickKey, toUserId } : { body, toUserId })
       setDraft("")
     } catch (error) {
       toast.error((error as Error).message)
@@ -70,16 +90,16 @@ export const MessagesScreen: FC<AppStackScreenProps<"Messages">> = ({ navigation
             messages.hasNextPage && !messages.isFetchingNextPage && messages.fetchNextPage()
           }
           onEndReachedThreshold={0.4}
-          renderItem={({ item }) => <Bubble message={item} mine={item.author.id === me?.id} />}
+          renderItem={({ item }) => (
+            <Bubble message={item} mine={item.author.id === me?.id} meId={me?.id} />
+          )}
           ListEmptyComponent={
             messages.isLoading ? null : (
-              <View style={{ transform: [{ scaleY: -1 }] }}>
-                <EmptyState
-                  headingTx="messages:empty"
-                  contentTx="messages:emptyBody"
-                  style={{ paddingTop: theme.spacing.xxl }}
-                />
-              </View>
+              <EmptyState
+                headingTx="messages:empty"
+                contentTx="messages:emptyBody"
+                style={{ paddingTop: theme.spacing.xxl }}
+              />
             )
           }
         />
@@ -134,8 +154,13 @@ export const MessagesScreen: FC<AppStackScreenProps<"Messages">> = ({ navigation
   )
 }
 
-function Bubble({ message, mine }: { message: CircleMessage; mine: boolean }) {
+function Bubble({ message, mine, meId }: { message: CircleMessage; mine: boolean; meId?: string }) {
   const { theme } = useAppTheme()
+  const directedAt = message.toUser
+    ? message.toUser.id === meId
+      ? translate("messages:toYou")
+      : translate("messages:toMember", { name: message.toUser.displayName })
+    : null
   return (
     <View
       style={{
@@ -143,8 +168,6 @@ function Bubble({ message, mine }: { message: CircleMessage; mine: boolean }) {
         gap: 8,
         alignItems: "flex-end",
         justifyContent: mine ? "flex-end" : "flex-start",
-        // Counteract the inverted list so text is not upside down.
-        transform: [{ scaleY: -1 }],
       }}
     >
       {!mine ? <Avatar user={message.author} size={28} /> : null}
@@ -166,6 +189,19 @@ function Bubble({ message, mine }: { message: CircleMessage; mine: boolean }) {
             style={{ color: theme.colors.textDim, marginBottom: 2 }}
           >
             {message.author.displayName}
+          </Text>
+        ) : null}
+        {directedAt ? (
+          <Text
+            size="xxs"
+            weight="medium"
+            style={{
+              color: mine ? theme.colors.onTint : theme.colors.tint,
+              opacity: mine ? 0.85 : 1,
+              marginBottom: 2,
+            }}
+          >
+            {directedAt}
           </Text>
         ) : null}
         <Text size="sm" style={{ color: mine ? theme.colors.onTint : theme.colors.text }}>

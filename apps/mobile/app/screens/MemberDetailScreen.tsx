@@ -298,6 +298,14 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
 
       <SectionHeader tx="circle:title" />
       <ListGroup>
+        {!isSelf ? (
+          <ListRow
+            tx="messages:messageMember"
+            icon="chatbubble-ellipses-outline"
+            iconTone="tint"
+            onPress={() => navigation.navigate("Messages", { circleId, toUserId: userId })}
+          />
+        ) : null}
         {canManage || isSelf ? (
           <ListRow
             tx="member:nickname"
