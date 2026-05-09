@@ -523,11 +523,11 @@
       <!-- hero -->
       <div class="hero wrap">
         <span class="kicker"><span class="pip" aria-hidden="true"></span> Alpha · AGPL-3.0</span>
-        <h1>Family location sharing you <em>host yourself</em>.</h1>
+        <h1>Know where your family is. <em>Nobody else does.</em></h1>
         <p class="lede prose">
-          A family tracker where the map, the history and the alerts live on your server. Two
-          pieces: an API that runs in Docker next to Postgres, and an iOS and Android app that talks
-          only to it.
+          Every commercial family tracker keeps your positions on its own servers, under a privacy
+          policy you do not control and they can change. Hearth has no servers. It runs on yours,
+          and there is nobody on the other end to sell anything to.
         </p>
         <div class="actions">
           <a class="btn btn-solid" href="#self-host">
@@ -709,11 +709,11 @@
       <section id="privacy">
         <div class="wrap">
           <p class="eyebrow">Why bother</p>
-          <h2>Your server. Your data. Genuinely.</h2>
+          <h2>Untrackable by design.</h2>
           <p class="sub prose">
-            Commercial family trackers work well and cost you the thing you were trying to protect.
-            Every position, every arrival, every drive ends up on somebody else's servers, under a
-            privacy policy that can change next quarter.
+            A tracker is only as private as whoever runs it. There is no company running Hearth, no
+            account with us, and no analytics, ad network or crash reporter anywhere in the app.
+            When you stop running the server, the data is gone, because it was only ever yours.
           </p>
 
           <ul class="promises">
@@ -804,6 +804,14 @@
           </div>
 
           <div class="alpha prose">
+            <h3>The two places anything leaves your server</h3>
+            <p style="margin-bottom: 22px">
+              Map tiles are fetched from a public tile server by default, which sees roughly what
+              part of the world you are looking at. Point that setting at your own tiles and even
+              that stops. And if you turn on push through a hosted relay, notification payloads go
+              through it, which is why the default is no push at all rather than a convenient
+              default that quietly costs you something.
+            </p>
             <h3>It is alpha, and that means something</h3>
             <p>
               The features above are built and tested, and it runs a real family. It has not been

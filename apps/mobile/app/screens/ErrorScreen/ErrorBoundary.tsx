@@ -38,7 +38,8 @@ export class ErrorBoundary extends Component<Props, State> {
     })
 
     // You can also log error messages to an error reporting service here
-    // This is a great place to put BugSnag, Sentry, crashlytics, etc:
+    // Deliberately not wired to a crash reporter. Hearth ships no third party
+    // SDK, and a stack trace from a location app is not ours to collect.
     // reportCrash(error)
   }
 

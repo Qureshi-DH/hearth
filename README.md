@@ -2,7 +2,8 @@
 
 <p align="center">
   Family location sharing you host yourself.<br>
-  A family tracker where the map, the history and the alerts live on your server.
+  Know where your family is. Nobody else does.<br>
+  A family tracker with no company on the other end.
 </p>
 
 <p align="center">
@@ -16,9 +17,14 @@
 
 ---
 
-Commercial family trackers work well and cost you the thing you were trying to
-protect. Every position, every arrival, every drive ends up on somebody else's
-servers, under a privacy policy that can change next quarter.
+A tracker is only as private as whoever runs it. Commercial ones keep every
+position, arrival and drive on their own servers, under a privacy policy you do
+not control and they can change.
+
+Hearth has no servers. There is no company account, no analytics, no ad network
+and no crash reporter anywhere in it. The only things that ever leave your box
+are map tiles, from a provider you choose and can self-host, and push payloads
+if you deliberately turn on a hosted relay.
 
 Hearth does the same job on hardware you control. It's two pieces: an API server
 that runs in Docker next to Postgres, and an iOS and Android app that talks only

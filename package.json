@@ -2,7 +2,7 @@
   "name": "hearth",
   "version": "0.1.0",
   "private": true,
-  "description": "Self-hosted family location sharing. The family tracker you actually own.",
+  "description": "Self-hosted family location sharing with no company on the other end.",
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",

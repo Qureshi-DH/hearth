@@ -102,7 +102,7 @@ const en = {
     refreshBody:
       "Keep it on for Hearth (Settings → General → Background App Refresh) so the offline queue can upload.",
     notRequested:
-      "Hearth never asks for your contacts, microphone, Bluetooth or advertising ID. A profile picture goes through the system picker, so the app only ever sees the one image you choose. Invites use codes, not your address book.",
+      "Your location only ever goes to the server your family runs. There is no Hearth account, no analytics and no ad network in this app. It never asks for your contacts, microphone, Bluetooth or advertising ID, and a profile picture goes through the system picker so it only ever sees the one image you choose.",
     allow: "Allow",
     review: "Review",
     always: 'Allow "Always"',
