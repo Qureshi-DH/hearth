@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hearth</title>
+    <meta
+      name="description"
+      content="Family location sharing you host yourself. An open-source family tracker where the map, the history and the alerts live on your server."
+    />
+    <meta name="theme-color" content="#F5643A" />
+
+    <meta property="og:title" content="Hearth — family location sharing you host yourself" />
+    <meta
+      property="og:description"
+      content="An open-source family tracker. The map, the history and the alerts live on your server, not somebody else's."
+    />
+    <meta property="og:type" content="website" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      /* Palette is the app's own, so the site and the product agree. The
+         neutrals are pulled warm toward the ember rather than left grey. */
+      :root {
+        --ember: #f5643a;
+        --ember-soft: #ff8a5c;
+        --rose: #f04a6a;
+
+        --ground: #fbf7f2;
+        --raised: #ffffff;
+        --sunken: #f2ece4;
+        --ink: #1e1714;
+        --ink-soft: #6b6058;
+        --rule: #e4dacd;
+        --accent: #c9451f;
+        --on-accent: #ffffff;
+        --lift: 0 1px 2px rgba(30, 23, 20, 0.05), 0 18px 40px -20px rgba(30, 23, 20, 0.28);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --ground: #131114;
+          --raised: #1c191d;
+          --sunken: #232025;
+          --ink: #f5efe9;
+          --ink-soft: #a89c92;
+          --rule: #322d33;
+          --accent: #ff9a70;
+          --on-accent: #1e1714;
+          --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 18px 40px -20px rgba(0, 0, 0, 0.7);
+        }
+      }
+
+      :root[data-theme="dark"] {
+        --ground: #131114;
+        --raised: #1c191d;
+        --sunken: #232025;
+        --ink: #f5efe9;
+        --ink-soft: #a89c92;
+        --rule: #322d33;
+        --accent: #ff9a70;
+        --on-accent: #1e1714;
+        --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 18px 40px -20px rgba(0, 0, 0, 0.7);
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--ground);
+        color: var(--ink);
+        font:
+          400 18px/1.7 "Source Serif 4",
+          Georgia,
+          "Times New Roman",
+          serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      h1,
+      h2,
+      h3,
+      .ui {
+        font-family: "Space Grotesk", "Helvetica Neue", Arial, sans-serif;
+        letter-spacing: -0.02em;
+        text-wrap: balance;
+        margin: 0;
+      }
+
+      a {
+        color: var(--accent);
+        text-underline-offset: 3px;
+      }
+
+      :focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 3px;
+        border-radius: 4px;
+      }
+
+      .wrap {
+        width: 100%;
+        max-width: 1080px;
+        margin-inline: auto;
+        padding-inline: 26px;
+      }
+
+      .prose {
+        max-width: 64ch;
+      }
+
+      /* ---------- masthead ---------- */
+      header {
+        border-bottom: 1px solid var(--rule);
+        background: var(--ground);
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 26px;
+        height: 72px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 21px;
+        letter-spacing: -0.03em;
+        color: var(--ink);
+        text-decoration: none;
+        margin-right: auto;
+      }
+
+      .mark {
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        background: linear-gradient(140deg, var(--ember-soft), var(--rose));
+        display: grid;
+        place-items: center;
+        color: #fff;
+        flex: none;
+      }
+
+      .mark svg {
+        width: 19px;
+        height: 19px;
+      }
+
+      .nav a.link {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--ink-soft);
+        text-decoration: none;
+        transition: color 180ms ease;
+      }
+
+      .nav a.link:hover {
+        color: var(--ink);
+      }
+
+      @media (max-width: 760px) {
+        .nav a.link {
+          display: none;
+        }
+      }
+
+      /* ---------- buttons ---------- */
+      .btn {
+        font-family: "Space Grotesk", sans-serif;
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        min-height: 48px;
+        padding: 0 22px;
+        border-radius: 12px;
+        font-weight: 500;
+        font-size: 16px;
+        text-decoration: none;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition:
+          transform 180ms ease,
+          background 180ms ease,
+          border-color 180ms ease,
+          color 180ms ease;
+      }
+
+      .btn svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      .btn-solid {
+        background: var(--ink);
+        color: var(--ground);
+      }
+
+      .btn-solid:hover {
+        transform: translateY(-2px);
+      }
+
+      .btn-line {
+        border-color: var(--rule);
+        color: var(--ink);
+      }
+
+      .btn-line:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      /* ---------- hero ---------- */
+      .hero {
+        padding: 92px 0 76px;
+      }
+
+      .kicker {
+        font-family: "Space Grotesk", sans-serif;
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 12.5px;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .kicker .pip {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ember);
+        flex: none;
+      }
+
+      .hero h1 {
+        font-size: clamp(40px, 6.4vw, 72px);
+        line-height: 1.04;
+        font-weight: 700;
+        margin: 24px 0 0;
+        max-width: 14ch;
+      }
+
+      .hero h1 em {
+        font-style: normal;
+        background: linear-gradient(100deg, var(--ember), var(--rose));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      .lede {
+        font-size: 20px;
+        color: var(--ink-soft);
+        margin: 22px 0 0;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 34px;
+      }
+
+      .aside {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 14px;
+        color: var(--ink-soft);
+        margin-top: 18px;
+      }
+
+      /* ---------- sections ---------- */
+      section {
+        padding: 76px 0;
+        border-top: 1px solid var(--rule);
+      }
+
+      .eyebrow {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 12.5px;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin: 0 0 14px;
+      }
+
+      h2 {
+        font-size: clamp(30px, 4.2vw, 42px);
+        font-weight: 700;
+      }
+
+      .sub {
+        color: var(--ink-soft);
+        margin: 16px 0 0;
+      }
+
+      /* Features are a list with hairlines, not a grid of identical cards:
+         border and shadow are saved for the two blocks that really are
+         separate objects. */
+      .features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 0 46px;
+        margin-top: 50px;
+      }
+
+      .feature {
+        padding: 30px 0;
+        border-top: 1px solid var(--rule);
+      }
+
+      .feature h3 {
+        font-size: 20px;
+        font-weight: 700;
+        margin: 0 0 8px;
+        display: flex;
+        align-items: center;
+        gap: 11px;
+      }
+
+      .feature h3 svg {
+        width: 21px;
+        height: 21px;
+        color: var(--accent);
+        flex: none;
+      }
+
+      .feature p {
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: 17px;
+      }
+
+      /* ---------- promises ---------- */
+      .promises {
+        list-style: none;
+        padding: 0;
+        margin: 44px 0 0;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+        gap: 26px 46px;
+      }
+
+      .promises li {
+        color: var(--ink-soft);
+      }
+
+      .promises b {
+        font-family: "Space Grotesk", sans-serif;
+        display: block;
+        color: var(--ink);
+        font-size: 16px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+        margin-bottom: 5px;
+      }
+
+      /* ---------- self-host ---------- */
+      .panel {
+        background: var(--raised);
+        border: 1px solid var(--rule);
+        border-radius: 18px;
+        box-shadow: var(--lift);
+        padding: 30px;
+        margin-top: 44px;
+      }
+
+      .steps {
+        counter-reset: step;
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 20px;
+      }
+
+      .steps li {
+        counter-increment: step;
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+        color: var(--ink-soft);
+      }
+
+      .steps li::before {
+        font-family: "Space Grotesk", sans-serif;
+        content: counter(step);
+        flex: none;
+        width: 27px;
+        height: 27px;
+        border-radius: 8px;
+        background: var(--sunken);
+        color: var(--accent);
+        display: grid;
+        place-items: center;
+        font-weight: 500;
+        font-size: 14px;
+        margin-top: 2px;
+      }
+
+      .steps code,
+      p code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.88em;
+        background: var(--sunken);
+        padding: 1px 6px;
+        border-radius: 5px;
+      }
+
+      pre {
+        background: var(--sunken);
+        border: 1px solid var(--rule);
+        border-radius: 12px;
+        padding: 20px;
+        overflow-x: auto;
+        margin: 26px 0 0;
+        font:
+          400 14.5px/1.75 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        color: var(--ink);
+      }
+
+      /* ---------- alpha ---------- */
+      .alpha {
+        margin-top: 40px;
+        padding-top: 26px;
+        border-top: 2px solid var(--ember);
+      }
+
+      .alpha h3 {
+        font-size: 19px;
+        font-weight: 700;
+        margin-bottom: 10px;
+      }
+
+      .alpha p {
+        margin: 0;
+        color: var(--ink-soft);
+      }
+
+      /* ---------- footer ---------- */
+      footer {
+        border-top: 1px solid var(--rule);
+        padding: 40px 0 56px;
+      }
+
+      .foot {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: baseline;
+        justify-content: space-between;
+        color: var(--ink-soft);
+        font-size: 16px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <nav class="wrap nav" aria-label="Main">
+        <a class="brand" href="#top">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd">
+              <path
+                d="M12 2c.6 3.2-1.2 4.6-2.6 6C7.6 9.6 6 11.3 6 14a6 6 0 0 0 12 0c0-2.5-1.2-4.3-2.6-6C13.7 6 12.6 4.4 12 2Zm0 8.6c1.2 1.4 2 2.4 2 3.6a2 2 0 1 1-4 0c0-1.2.8-2.2 2-3.6Z"
+              />
+            </svg>
+          </span>
+          Hearth
+        </a>
+        <a class="link" href="#features">Features</a>
+        <a class="link" href="#privacy">Privacy</a>
+        <a class="link" href="#self-host">Self-host</a>
+        <a class="btn btn-line" href="https://github.com/Qureshi-DH/hearth">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path
+              d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7 0-.7 0-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5Z"
+            />
+          </svg>
+          GitHub
+        </a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <!-- hero -->
+      <div class="hero wrap">
+        <span class="kicker"><span class="pip" aria-hidden="true"></span> Alpha · AGPL-3.0</span>
+        <h1>Family location sharing you <em>host yourself</em>.</h1>
+        <p class="lede prose">
+          A family tracker where the map, the history and the alerts live on your server. Two
+          pieces: an API that runs in Docker next to Postgres, and an iOS and Android app that talks
+          only to it.
+        </p>
+        <div class="actions">
+          <a class="btn btn-solid" href="#self-host">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              aria-hidden="true"
+            >
+              <rect x="3" y="5" width="18" height="12" rx="2" />
+              <path d="M8 21h8M12 17v4" stroke-linecap="round" />
+            </svg>
+            Self-host it
+          </a>
+          <a class="btn btn-line" href="https://github.com/Qureshi-DH/hearth#build-the-app">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              aria-hidden="true"
+            >
+              <path d="M12 3v11m0 0 4-4m-4 4-4-4" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
+            </svg>
+            Get the app
+          </a>
+        </div>
+        <p class="aside">
+          Not on the App Store or Play Store yet, so for now you build it yourself.
+        </p>
+      </div>
+
+      <!-- features -->
+      <section id="features">
+        <div class="wrap">
+          <p class="eyebrow">What it does</p>
+          <h2>Everything a family tracker should do.</h2>
+          <p class="sub prose">
+            None of it phones home. Every feature below runs against the server you control.
+          </p>
+
+          <div class="features">
+            <article class="feature">
+              <h3>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  aria-hidden="true"
+                >
+                  <path d="M12 21s-7-5.5-7-11a7 7 0 1 1 14 0c0 5.5-7 11-7 11Z" />
+                  <circle cx="12" cy="10" r="2.6" />
+                </svg>
+                A live map
+              </h3>
+              <p>
+                Everyone's position with battery level, whether they're walking or driving, and how
+                long ago it arrived. Live over a websocket, by push when the app is closed.
+              </p>
+            </article>
+
+            <article class="feature">
+              <h3>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                Places
+              </h3>
+              <p>
+                Draw a circle around home, school or work and everyone is told on arrival and
+                departure. Leaving needs more distance than arriving, so a phone sitting on the
+                boundary doesn't spam the family.
+              </p>
+            </article>
+
+            <article class="feature">
+              <h3>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  aria-hidden="true"
+                >
+                  <path d="M4 18c3 0 3-9 8-9s5 9 8 9" stroke-linecap="round" />
+                  <circle cx="4" cy="18" r="1.9" />
+                  <circle cx="20" cy="18" r="1.9" />
+                </svg>
+                Trips and history
+              </h3>
+              <p>
+                Journeys are detected and drawn as a trail with distance, duration and top speed.
+                You choose how many days the server keeps, or none at all.
+              </p>
+            </article>
+
+            <article class="feature">
+              <h3>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  aria-hidden="true"
+                >
+                  <path d="M12 3 3 7v6c0 5 3.8 8.4 9 9 5.2-.6 9-4 9-9V7Z" stroke-linejoin="round" />
+                  <path d="M12 8.5v4.5" stroke-linecap="round" />
+                  <circle cx="12" cy="16.2" r="1" fill="currentColor" stroke="none" />
+                </svg>
+                SOS and check-ins
+              </h3>
+              <p>
+                Hold to raise an alert that reaches everyone at full volume with your position. Or
+                send a quiet "I got here safely" when that is all it needs to be.
+              </p>
+            </article>
+
+            <article class="feature">
+              <h3>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M12 4v2M12 18v2M4 12h2M18 12h2M6.3 6.3l1.5 1.5M16.2 16.2l1.5 1.5M17.7 6.3l-1.5 1.5M7.8 16.2l-1.5 1.5"
+                    stroke-linecap="round"
+                  />
+                  <circle cx="12" cy="12" r="3.2" />
+                </svg>
+                Alerts you configure
+              </h3>
+              <p>
+                Speeding, low battery, and a possible-incident prompt when someone stops hard from
+                driving speed. Every one is a family setting, and every one can be off.
+              </p>
+            </article>
+
+            <article class="feature">
+              <h3>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M20.5 11.6a7.5 7.5 0 0 1-10.8 6.7L4 20l1.8-5.5A7.5 7.5 0 1 1 20.5 11.6Z"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                A word, not a group chat
+              </h3>
+              <p>
+                See that someone was driving at 95 and send them "slow down" in one tap. Messages go
+                to one person, because that is how they actually get used.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- privacy -->
+      <section id="privacy">
+        <div class="wrap">
+          <p class="eyebrow">Why bother</p>
+          <h2>Your server. Your data. Genuinely.</h2>
+          <p class="sub prose">
+            Commercial family trackers work well and cost you the thing you were trying to protect.
+            Every position, every arrival, every drive ends up on somebody else's servers, under a
+            privacy policy that can change next quarter.
+          </p>
+
+          <ul class="promises">
+            <li>
+              <b>Three sharing modes</b>
+              Precise, approximate, or paused. Approximate snaps you to a 750 metre grid, chosen per
+              family rather than globally.
+            </li>
+            <li>
+              <b>No third parties in the path</b>
+              The app talks to your server and nothing else. No analytics, no ad network, no data
+              broker in the middle.
+            </li>
+            <li>
+              <b>It never asks for your contacts</b>
+              Invites are codes, not your address book. No microphone, no Bluetooth, no advertising
+              identifier.
+            </li>
+            <li>
+              <b>Delete means delete</b>
+              Export everything the server holds about you, or remove your account and its history
+              outright.
+            </li>
+            <li>
+              <b>The GPS sleeps when you do</b>
+              Tracking runs while you are moving and stops once you park, which is most of the
+              battery story on a phone.
+            </li>
+            <li>
+              <b>Read the code</b>
+              AGPL-3.0, so anyone who runs it as a service for other people has to keep their
+              changes open too.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- self-host -->
+      <section id="self-host">
+        <div class="wrap">
+          <p class="eyebrow">Self-host</p>
+          <h2>One compose file and a hostname.</h2>
+          <p class="sub prose">
+            Postgres and MinIO come with it, migrations run on first boot, and the bucket creates
+            itself. If you already run anything behind a reverse proxy, this will feel familiar.
+          </p>
+
+          <div class="panel">
+            <ol class="steps">
+              <li>
+                <span
+                  >Make a folder, add <code>docker-compose.yml</code> and <code>.env</code>, and set
+                  <code>JWT_SECRET</code>, <code>ADMIN_EMAIL</code> and
+                  <code>ADMIN_PASSWORD</code>.</span
+                >
+              </li>
+              <li>
+                <span
+                  >Bring it up. Your administrator account is created on that first boot, and it is
+                  the only way in, so nobody can claim a server you have not signed into.</span
+                >
+              </li>
+              <li>
+                <span
+                  >Put TLS in front, open the app, type your server address and sign in. Everyone
+                  else joins with an invite code you send them.</span
+                >
+              </li>
+            </ol>
+
+            <pre><code>services:
+  api:
+    image: dhqureshi/hearth-api:latest
+    env_file: [.env]
+    ports: ["4000:4000"]
+    depends_on: [db, minio]</code></pre>
+          </div>
+
+          <div class="actions">
+            <a
+              class="btn btn-solid"
+              href="https://github.com/Qureshi-DH/hearth/blob/main/docs/SELF-HOSTING.md"
+              >Self-hosting guide</a
+            >
+            <a class="btn btn-line" href="https://hub.docker.com/r/dhqureshi/hearth-api"
+              >Docker image</a
+            >
+          </div>
+
+          <div class="alpha prose">
+            <h3>It is alpha, and that means something</h3>
+            <p>
+              The features above are built and tested, and it runs a real family. It has not been
+              through a security audit, Android has had less device testing than iOS, and there is
+              no store build yet. Read SECURITY.md before you point it at the internet.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap foot">
+        <span>Built because the alternative was renting out my family's map.</span>
+        <a href="https://github.com/Qureshi-DH/hearth">github.com/Qureshi-DH/hearth</a>
+      </div>
+    </footer>
+  </body>
+</html>
