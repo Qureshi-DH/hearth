@@ -1,6 +1,6 @@
 # Push notifications in a self-hosted world
 
-Push is the one part of a family safety app you can't just run on your own box.
+Push is the one part of a family tracking app you can't just run on your own box.
 The last hop, waking a phone that's asleep in someone's pocket, belongs to Apple
 (APNs) and Google (FCM). This document covers what Hearth does about that, what
 your options are, and which one to pick.

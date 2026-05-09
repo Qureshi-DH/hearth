@@ -2,7 +2,7 @@
 
 <p align="center">
   Family location sharing you host yourself.<br>
-  A family safety app where the map, the history and the alerts live on your server.
+  A family tracker where the map, the history and the alerts live on your server.
 </p>
 
 <p align="center">

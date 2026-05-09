@@ -55,7 +55,7 @@ _You → Tracking status_.
 | Camera                         | `NSCameraUsageDescription`                                                    | `CAMERA` (via plugin)                                       | Scan an invite QR                                                                | Only when you tap _Scan_                      |
 | Local network                  | `NSLocalNetworkUsageDescription`, `NSBonjourServices`                         | n/a                                                         | Self-hosted servers on your LAN                                                  | Prompted by iOS on first LAN connection       |
 
-Other family apps ask for a pile of things Hearth deliberately doesn't. No contacts,
+Commercial trackers ask for a pile of things Hearth deliberately doesn't. No contacts,
 because invites are codes and QR. No photos, because there's no avatar upload
 in v1. No microphone, no Bluetooth (there's no hardware tag to talk to), no
 motion and fitness (the server derives activity from speed), and no advertising

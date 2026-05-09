@@ -23,7 +23,7 @@ export interface PermissionSnapshot {
  * same truth.
  *
  * Hearth never asks for contacts, photos, Bluetooth, motion, or the
- * advertising identifier, all of which other family apps ask for. Invites are codes
+ * advertising identifier, all of which commercial trackers do ask for. Invites are codes
  * and QR, there is no avatar upload in v1, no hardware tags, and activity is
  * derived from speed on the server.
  */
