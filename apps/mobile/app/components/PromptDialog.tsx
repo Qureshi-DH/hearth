@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Modal, Pressable, View, type ViewStyle } from "react-native"
+import { Modal, Pressable, View, type TextInputProps, type ViewStyle } from "react-native"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
 import { Text, type TextProps } from "@/components/Text"
@@ -13,6 +13,8 @@ export interface PromptDialogProps {
   title?: string
   initialValue?: string
   maxLength?: number
+  keyboardType?: TextInputProps["keyboardType"]
+  helper?: string
   confirmTx?: TextProps["tx"]
   onCancel: () => void
   onSubmit: (value: string) => void
@@ -28,6 +30,8 @@ export function PromptDialog({
   title,
   initialValue,
   maxLength = 60,
+  keyboardType,
+  helper,
   confirmTx = "common:save",
   onCancel,
   onSubmit,
@@ -56,6 +60,8 @@ export function PromptDialog({
             onChangeText={setValue}
             autoFocus
             maxLength={maxLength}
+            keyboardType={keyboardType}
+            helper={helper}
             returnKeyType="done"
             onSubmitEditing={submit}
             containerStyle={{ marginTop: theme.spacing.md }}

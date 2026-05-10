@@ -22,6 +22,7 @@ import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import type { IoniconName, Tone } from "@/utils/activity"
 import { withAlpha } from "@/utils/color"
+import { useHeader } from "@/utils/useHeader"
 
 type ItemState = "done" | "todo" | "blocked" | "info"
 
@@ -40,6 +41,11 @@ interface Item {
  */
 export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navigation }) => {
   const { themed, theme } = useAppTheme()
+
+  useHeader(
+    { titleTx: "permissions:title", leftIcon: "back", onLeftPress: () => navigation.goBack() },
+    [navigation],
+  )
   const [snapshot, setSnapshot] = useState<PermissionSnapshot | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const setOnboarded = useTrackingStore((state) => state.setOnboardedPermissions)

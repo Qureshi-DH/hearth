@@ -127,15 +127,19 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
                 onPress={() => updateSettings.mutate({ registrationMode: mode })}
                 style={{
                   flex: 1,
+                  minHeight: 44,
                   paddingVertical: 10,
+                  paddingHorizontal: 6,
                   borderRadius: 12,
                   alignItems: "center",
+                  justifyContent: "center",
                   backgroundColor: active ? theme.colors.tint : theme.colors.surfaceElevated,
                 }}
               >
                 <Text
                   size="xs"
                   weight="medium"
+                  numberOfLines={1}
                   tx={MODE_LABEL[mode]}
                   style={{ color: active ? theme.colors.onTint : theme.colors.text }}
                 />
