@@ -5,14 +5,8 @@ import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet"
 import type { MemberPresence } from "@hearth/shared"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { useFocusEffect } from "@react-navigation/native"
-import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler"
-import Animated, {
-  FadeIn,
-  FadeOut,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-} from "react-native-reanimated"
+import { GestureHandlerRootView } from "react-native-gesture-handler"
+import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { Avatar } from "@/components/Avatar"
@@ -62,7 +56,6 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [mapReady, setMapReady] = useState(false)
-  const [sheetIndex, setSheetIndex] = useState(0)
   const didFitRef = useRef(false)
 
   const presenceByUser = useMemo(
@@ -144,20 +137,10 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   // The tab navigator already insets this screen above the tab bar, so bottom:0
   // here is the top of the bar. Do not add its height again.
   // Resting height is the handle plus the action row plus one member row.
-  const restingSheetHeight = 176
-  const snapPoints = useMemo(() => [restingSheetHeight, "55%", "92%"], [])
-
-  const expandSheet = useCallback(() => sheetRef.current?.snapToIndex(0), [])
-
-  // The collapsed bar draws a grabber, so it has to answer a swipe as well as a
-  // tap. A handle that only responds to tapping reads as a broken sheet.
-  const expandSheetGesture = useMemo(
-    () =>
-      Gesture.Pan().onEnd((event) => {
-        if (event.translationY < -8 || event.velocityY < -300) runOnJS(expandSheet)()
-      }),
-    [expandSheet],
-  )
+  const restingSheetHeight = 210
+  // The lowest point is a real snap, not a separate bar pretending to be one.
+  // A grabber that only answers taps reads as a broken sheet.
+  const snapPoints = useMemo(() => [COLLAPSED_BAR_HEIGHT, restingSheetHeight, "55%", "92%"], [])
 
   // The controls ride the sheet rather than jumping between two fixed offsets.
   // `animatedPosition` is the sheet's top edge as a shared value, so driving
@@ -408,46 +391,23 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         />
       </Animated.View>
 
-      {sheetIndex === -1 ? (
-        <Animated.View
-          entering={FadeIn.duration(160)}
-          exiting={FadeOut.duration(120)}
-          style={themed($collapsedBar)}
-        >
-          <GestureDetector gesture={expandSheetGesture}>
-            <Pressable
-              onPress={expandSheet}
-              accessibilityRole="button"
-              accessibilityLabel={translate("map:members")}
-              style={{ alignItems: "center", gap: 6, paddingVertical: 4, width: "100%" }}
-            >
-              <View style={themed($collapsedHandle)} />
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Ionicons name="people" size={16} color={theme.colors.tint} />
-                <Text size="xs" weight="semiBold" tx="map:members" />
-                <Text size="xs" style={{ color: theme.colors.textDim }}>
-                  {members?.length ?? 0}
-                </Text>
-                <Ionicons name="chevron-up" size={14} color={theme.colors.textFaint} />
-              </View>
-            </Pressable>
-          </GestureDetector>
-        </Animated.View>
-      ) : null}
-
       <BottomSheet
         ref={sheetRef}
         index={0}
         snapPoints={snapPoints}
         enableDynamicSizing={false}
-        // Collapsing all the way is the point on a map screen. The floating
-        // Members pill brings it back.
-        enablePanDownToClose
         animatedPosition={sheetTop}
-        onChange={(index) => setSheetIndex(index)}
         backgroundStyle={{ backgroundColor: theme.colors.surface, borderRadius: 28 }}
         handleIndicatorStyle={{ backgroundColor: theme.colors.tintInactive, width: 44 }}
       >
+        <View style={themed($sheetHeading)}>
+          <Ionicons name="people" size={16} color={theme.colors.tint} />
+          <Text size="xs" weight="semiBold" tx="map:members" />
+          <Text size="xs" style={{ color: theme.colors.textDim }}>
+            {members?.length ?? 0}
+          </Text>
+        </View>
+
         <View
           style={{
             flexDirection: "row",
@@ -522,6 +482,14 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   )
 }
 
+const $sheetHeading: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  paddingBottom: spacing.sm,
+})
+
 const $top: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   position: "absolute",
   top: 0,
@@ -541,26 +509,6 @@ const $banner: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   paddingHorizontal: 12,
   paddingVertical: 10,
   borderRadius: 16,
-})
-const $collapsedBar: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
-  position: "absolute",
-  left: 0,
-  right: 0,
-  bottom: 0,
-  alignItems: "center",
-  gap: spacing.xs,
-  paddingTop: spacing.xs,
-  paddingBottom: spacing.sm,
-  borderTopLeftRadius: 28,
-  borderTopRightRadius: 28,
-  backgroundColor: colors.surface,
-})
-
-const $collapsedHandle: ThemedStyle<ViewStyle> = ({ colors }) => ({
-  width: 44,
-  height: 4,
-  borderRadius: 2,
-  backgroundColor: colors.tintInactive,
 })
 
 const $empty: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({

@@ -18,7 +18,7 @@ const palette = {
   neutral200: "#121214",
   neutral100: "#0A0A0B",
 
-  ember100: "#3A2018",
+  ember100: "#2F2521",
   ember200: "#6B3524",
   ember300: "#B05433",
   ember400: "#F0673B",
