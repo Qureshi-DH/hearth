@@ -33,7 +33,11 @@ import { fitBoundsFor } from "@/utils/map"
 const FALLBACK_CENTER: [number, number] = [-0.1276, 51.5072]
 /** Two 44 pt buttons plus the gap between them. */
 const CONTROLS_HEIGHT = 96
-const COLLAPSED_BAR_HEIGHT = 62
+/**
+ * Just the grabber and the members line. Any taller and the tops of the
+ * check in and SOS buttons peek out under it.
+ */
+const COLLAPSED_BAR_HEIGHT = 52
 
 export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const { themed, theme } = useAppTheme()

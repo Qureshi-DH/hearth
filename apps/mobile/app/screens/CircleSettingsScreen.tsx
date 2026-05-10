@@ -139,6 +139,18 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
     )
   }
 
+  /**
+   * A custom value has no preset to name it, and falling back to the nearest
+   * preset's label made the chip claim to be something it was not.
+   */
+  const intervalLabel = (seconds: number) => {
+    const preset = INTERVAL_OPTIONS.find((option) => option.seconds === seconds)
+    if (preset) return translate(preset.tx)
+    return seconds % 60 === 0
+      ? translate("circle:intervalMinutes", { count: seconds / 60 })
+      : translate("circle:intervalSeconds", { count: seconds })
+  }
+
   const currentCustom = (key: CustomKey) =>
     key === "retention"
       ? circle.settings.historyRetentionDays
@@ -232,11 +244,7 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
       {chips(
         INTERVAL_OPTIONS.map((option) => option.seconds),
         circle.settings.minUpdateIntervalSeconds,
-        (seconds) =>
-          translate(
-            INTERVAL_OPTIONS.find((option) => option.seconds === seconds)?.tx ??
-              "circle:intervalNormal",
-          ),
+        intervalLabel,
         (seconds) =>
           patchSettings({
             minUpdateIntervalSeconds: seconds,

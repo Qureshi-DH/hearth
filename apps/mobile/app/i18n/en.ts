@@ -309,6 +309,8 @@ const en = {
     intervalFast: "Frequent (30 s)",
     intervalNormal: "Normal (1 min)",
     intervalSaver: "Battery saver (5 min)",
+    intervalSeconds: "{{count}} s",
+    intervalMinutes: "{{count}} min",
     danger: "Danger zone",
     deleteCircle: "Delete circle",
     deleteConfirm: "Delete {{name}} for everyone? This cannot be undone.",
