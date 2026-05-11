@@ -148,11 +148,24 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
           })}
         </View>
         <ListRow
-          text={`${translate("admin:queue", { count: stats.data?.pushQueueDepth ?? 0 })} · ${stats.data?.pushProvider ?? "none"}`}
+          tx="admin:queueTitle"
+          subtitle={translate("admin:queueStatus", {
+            count: stats.data?.pushQueueDepth ?? 0,
+            provider: stats.data?.pushProvider ?? "none",
+          })}
           icon="notifications-outline"
           iconTone="warning"
           right={
-            <Pressable onPress={drain} hitSlop={8}>
+            <Pressable
+              onPress={drain}
+              accessibilityRole="button"
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderRadius: 999,
+                backgroundColor: theme.colors.tintSoft,
+              }}
+            >
               <Text
                 size="xs"
                 weight="medium"
@@ -180,7 +193,8 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
                 {!user.isActive ? <Pill text="off" tone="error" /> : null}
               </View>
             }
-            icon={undefined}
+            icon={user.isAdmin ? "shield-checkmark-outline" : "person-outline"}
+            iconTone={user.isAdmin ? "tint" : "neutral"}
             onPress={() =>
               Alert.alert(user.displayName, user.email, [
                 {
