@@ -194,19 +194,19 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
           icon="key-outline"
           onPress={() => navigation.navigate("ChangePassword")}
         />
-        <View style={{ padding: theme.spacing.sm }}>
-          <SegmentedControl
-            value={settings.units}
-            onChange={(next) => {
-              settings.setUnits(next)
-              updateMe.mutate({ units: next })
-            }}
-            options={[
-              { value: "metric", tx: "settings:metric" },
-              { value: "imperial", tx: "settings:imperial" },
-            ]}
-          />
-        </View>
+        <ListRow
+          tx="settings:imperialUnits"
+          subtitleTx={
+            settings.units === "imperial" ? "settings:imperialOn" : "settings:imperialOff"
+          }
+          icon="speedometer-outline"
+          value={settings.units === "imperial"}
+          onValueChange={(on) => {
+            const next = on ? "imperial" : "metric"
+            settings.setUnits(next)
+            updateMe.mutate({ units: next })
+          }}
+        />
       </ListGroup>
 
       <SectionHeader tx="settings:appearance" />

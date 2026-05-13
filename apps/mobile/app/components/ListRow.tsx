@@ -57,7 +57,7 @@ export function ListRow({
           flexDirection: "row",
           alignItems: "center",
           gap: theme.spacing.sm,
-          paddingHorizontal: theme.spacing.md,
+          paddingHorizontal: theme.spacing.md + theme.spacing.xxs,
           paddingVertical: theme.spacing.sm,
           minHeight: 56,
           opacity: disabled ? 0.5 : pressed ? 0.7 : 1,
