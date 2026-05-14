@@ -37,6 +37,9 @@ export function MainTabNavigator() {
           borderTopWidth: Platform.OS === "android" ? 0.5 : 0,
           height: 58 + insets.bottom,
           paddingTop: 6,
+          // Without this the items lay out across the home indicator area too,
+          // which floats them up the bar and leaves a gap underneath.
+          paddingBottom: insets.bottom,
         },
         tabBarLabelStyle: {
           fontFamily: theme.typography.primary.medium,

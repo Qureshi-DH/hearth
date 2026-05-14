@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { Pressable, Switch, View, type StyleProp, type ViewStyle } from "react-native"
+import { Pressable, StyleSheet, Switch, View, type StyleProp, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 
 import { Text, type TextProps } from "@/components/Text"
@@ -123,6 +123,11 @@ export function ListGroup({
           marginHorizontal: theme.spacing.md,
           borderRadius: 20,
           backgroundColor: theme.colors.surface,
+          // In dark mode the card sits nine values above the page, which is
+          // close enough to invisible that rows read as floating against the
+          // screen edge. The hairline is what makes the inset legible.
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.colors.border,
           overflow: "hidden",
         },
         style,

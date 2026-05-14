@@ -6,7 +6,12 @@ import type { MemberPresence } from "@hearth/shared"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
-import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated"
+import Animated, {
+  FadeInUp,
+  FadeOutUp,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { Avatar } from "@/components/Avatar"
@@ -267,54 +272,56 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         </View>
 
         {switcherOpen ? (
-          <GlassPanel radius={20} style={{ marginTop: theme.spacing.xs, paddingVertical: 6 }}>
-            {circles.map((candidate) => (
-              <Pressable
-                key={candidate.id}
-                onPress={() => {
-                  setActiveCircle(candidate.id)
-                  setSwitcherOpen(false)
-                  setSelectedUserId(null)
-                }}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 10,
-                  paddingHorizontal: 14,
-                  paddingVertical: 10,
-                }}
-              >
-                <Text size="md">{candidate.emoji ?? "🏠"}</Text>
-                <Text
-                  weight={candidate.id === circle?.id ? "semiBold" : "normal"}
-                  size="sm"
-                  style={{ flex: 1 }}
+          <Animated.View entering={FadeInUp.duration(180)} exiting={FadeOutUp.duration(140)}>
+            <GlassPanel radius={20} style={{ marginTop: theme.spacing.xs, paddingVertical: 6 }}>
+              {circles.map((candidate) => (
+                <Pressable
+                  key={candidate.id}
+                  onPress={() => {
+                    setActiveCircle(candidate.id)
+                    setSwitcherOpen(false)
+                    setSelectedUserId(null)
+                  }}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 10,
+                    paddingHorizontal: 14,
+                    paddingVertical: 10,
+                  }}
                 >
-                  {candidate.name}
-                </Text>
-                {candidate.unreadEventCount > 0 ? (
-                  <Pill text={String(candidate.unreadEventCount)} tone="tint" />
-                ) : null}
-                {candidate.id === circle?.id ? (
-                  <Ionicons name="checkmark" size={16} color={theme.colors.tint} />
-                ) : null}
-              </Pressable>
-            ))}
-            <View style={{ flexDirection: "row", gap: 8, padding: 10 }}>
-              <PrimaryButton
-                tx="circles:create"
-                variant="soft"
-                onPress={() => navigation.navigate("CreateCircle")}
-                style={{ flex: 1 }}
-              />
-              <PrimaryButton
-                tx="circles:join"
-                variant="soft"
-                onPress={() => navigation.navigate("JoinCircle")}
-                style={{ flex: 1 }}
-              />
-            </View>
-          </GlassPanel>
+                  <Text size="md">{candidate.emoji ?? "🏠"}</Text>
+                  <Text
+                    weight={candidate.id === circle?.id ? "semiBold" : "normal"}
+                    size="sm"
+                    style={{ flex: 1 }}
+                  >
+                    {candidate.name}
+                  </Text>
+                  {candidate.unreadEventCount > 0 ? (
+                    <Pill text={String(candidate.unreadEventCount)} tone="tint" />
+                  ) : null}
+                  {candidate.id === circle?.id ? (
+                    <Ionicons name="checkmark" size={16} color={theme.colors.tint} />
+                  ) : null}
+                </Pressable>
+              ))}
+              <View style={{ flexDirection: "row", gap: 8, padding: 10 }}>
+                <PrimaryButton
+                  tx="circles:create"
+                  variant="soft"
+                  onPress={() => navigation.navigate("CreateCircle")}
+                  style={{ flex: 1 }}
+                />
+                <PrimaryButton
+                  tx="circles:join"
+                  variant="soft"
+                  onPress={() => navigation.navigate("JoinCircle")}
+                  style={{ flex: 1 }}
+                />
+              </View>
+            </GlassPanel>
+          </Animated.View>
         ) : null}
 
         {activeSos && activeSos.length > 0 ? (
