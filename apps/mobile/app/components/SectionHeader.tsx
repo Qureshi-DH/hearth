@@ -20,7 +20,9 @@ export function SectionHeader({ tx, text, txOptions, action, style }: SectionHea
           flexDirection: "row",
           alignItems: "baseline",
           justifyContent: "space-between",
-          paddingHorizontal: theme.spacing.md,
+          // Matches the card margin plus the row inset so the label sits over
+          // the row content rather than floating between the two.
+          paddingHorizontal: theme.spacing.md + theme.spacing.xxs,
           paddingTop: theme.spacing.lg,
           paddingBottom: theme.spacing.xs,
         },

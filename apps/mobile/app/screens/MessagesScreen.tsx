@@ -204,20 +204,23 @@ function Bubble({ message, mine, meId }: { message: CircleMessage; mine: boolean
             {directedAt}
           </Text>
         ) : null}
-        <Text size="sm" style={{ color: mine ? theme.colors.onTint : theme.colors.text }}>
-          {message.body}
-        </Text>
-        <Text
-          size="xxs"
-          style={{
-            color: mine ? theme.colors.onTint : theme.colors.textFaint,
-            opacity: 0.7,
-            alignSelf: "flex-end",
-            marginTop: 2,
-          }}
-        >
-          {formatClock(message.createdAt)}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8 }}>
+          <Text
+            size="sm"
+            style={{ color: mine ? theme.colors.onTint : theme.colors.text, flexShrink: 1 }}
+          >
+            {message.body}
+          </Text>
+          <Text
+            size="xxs"
+            style={{
+              color: mine ? theme.colors.onTint : theme.colors.textFaint,
+              opacity: 0.7,
+            }}
+          >
+            {formatClock(message.createdAt)}
+          </Text>
+        </View>
       </View>
     </View>
   )
