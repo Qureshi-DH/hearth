@@ -213,7 +213,6 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
                 { text: translate("common:cancel"), style: "cancel" },
               ])
             }
-            style={{ paddingLeft: 0 }}
           />
         ))}
       </ListGroup>
