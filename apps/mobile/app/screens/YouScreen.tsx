@@ -104,7 +104,12 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
       <View style={themed($profile)}>
         {user ? (
           canUploadAvatar ? (
-            <Pressable onPress={() => setPhotoOpen(true)} hitSlop={8}>
+            <Pressable
+              // With no picture there is only one thing to do, and a sheet
+              // offering a single option is just a worse button.
+              onPress={() => (user.avatarUrl ? setPhotoOpen(true) : pickPhoto())}
+              hitSlop={8}
+            >
               <Avatar user={user} size={72} />
             </Pressable>
           ) : (

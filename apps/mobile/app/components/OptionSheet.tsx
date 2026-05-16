@@ -1,6 +1,13 @@
-import { useRef } from "react"
-import { Modal, Platform, Pressable, type ViewStyle } from "react-native"
-import Animated, { SlideInDown } from "react-native-reanimated"
+import { useEffect, useRef } from "react"
+import { Modal, Platform, Pressable, View, type ViewStyle } from "react-native"
+import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler"
+import Animated, {
+  runOnJS,
+  SlideInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated"
 
 import { Text, type TextProps } from "@/components/Text"
 import { useAppTheme } from "@/theme/context"
@@ -24,8 +31,11 @@ export interface OptionSheetProps {
 
 /**
  * Android's Alert keeps at most three buttons and silently drops the rest, so
- * a four or five way chooser loses its last options, Cancel included. A list
- * has no such limit and reads the same on both platforms.
+ * a four or five way chooser loses its last options. A list has no such limit
+ * and reads the same on both platforms.
+ *
+ * There is no Cancel row. The grabber and the backdrop both dismiss it, and a
+ * row that only means "never mind" is noise next to the real choices.
  */
 export function OptionSheet({ visible, titleTx, title, options, onClose }: OptionSheetProps) {
   const { themed, theme } = useAppTheme()
@@ -41,6 +51,23 @@ export function OptionSheet({ visible, titleTx, title, options, onClose }: Optio
     pending.current = null
     action?.()
   }
+
+  // The grabber promises the sheet can be dragged away, so it has to be true.
+  const drag = useSharedValue(0)
+  useEffect(() => {
+    if (visible) drag.value = 0
+  }, [visible, drag])
+
+  const swipeAway = Gesture.Pan()
+    .onUpdate((event) => {
+      drag.value = Math.max(0, event.translationY)
+    })
+    .onEnd((event) => {
+      if (event.translationY > 90 || event.velocityY > 700) runOnJS(onClose)()
+      else drag.value = withTiming(0, { duration: 160 })
+    })
+
+  const dragStyle = useAnimatedStyle(() => ({ transform: [{ translateY: drag.value }] }))
 
   const choose = (action: () => void) => {
     pending.current = action
@@ -59,34 +86,35 @@ export function OptionSheet({ visible, titleTx, title, options, onClose }: Optio
       onRequestClose={onClose}
       onDismiss={runPending}
     >
-      <Pressable style={themed($backdrop)} onPress={onClose}>
-        <Animated.View entering={SlideInDown.duration(220)}>
-          {/* Keeps a tap on the sheet body from reaching the backdrop. */}
-          <Pressable style={themed($sheet)} onPress={() => {}}>
-            {titleTx || title ? (
-              <Text preset="subheading" tx={titleTx} text={title} style={themed($title)} />
-            ) : null}
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <Pressable style={themed($backdrop)} onPress={onClose}>
+          <GestureDetector gesture={swipeAway}>
+            <Animated.View entering={SlideInDown.duration(220)} style={dragStyle}>
+              {/* Keeps a tap on the sheet body from reaching the backdrop. */}
+              <Pressable style={themed($sheet)} onPress={() => {}}>
+                <View style={themed($grabber)} />
+                {titleTx || title ? (
+                  <Text preset="subheading" tx={titleTx} text={title} style={themed($title)} />
+                ) : null}
 
-            {options.map((option) => (
-              <Pressable
-                key={option.key}
-                style={themed($row)}
-                onPress={() => choose(option.onPress)}
-              >
-                <Text
-                  tx={option.tx}
-                  text={option.label}
-                  style={{ color: option.destructive ? theme.colors.error : theme.colors.text }}
-                />
+                {options.map((option) => (
+                  <Pressable
+                    key={option.key}
+                    style={themed($row)}
+                    onPress={() => choose(option.onPress)}
+                  >
+                    <Text
+                      tx={option.tx}
+                      text={option.label}
+                      style={{ color: option.destructive ? theme.colors.error : theme.colors.text }}
+                    />
+                  </Pressable>
+                ))}
               </Pressable>
-            ))}
-
-            <Pressable style={themed($row)} onPress={onClose}>
-              <Text tx="common:cancel" style={{ color: theme.colors.textDim }} />
-            </Pressable>
-          </Pressable>
-        </Animated.View>
-      </Pressable>
+            </Animated.View>
+          </GestureDetector>
+        </Pressable>
+      </GestureHandlerRootView>
     </Modal>
   )
 }
@@ -95,6 +123,15 @@ const $backdrop: ThemedStyle<ViewStyle> = () => ({
   flex: 1,
   backgroundColor: "rgba(0,0,0,0.45)",
   justifyContent: "flex-end",
+})
+
+const $grabber: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
+  alignSelf: "center",
+  width: 44,
+  height: 4,
+  borderRadius: 2,
+  backgroundColor: colors.tintInactive,
+  marginBottom: spacing.sm,
 })
 
 const $sheet: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
