@@ -238,6 +238,14 @@ const en = {
     placeholder: "Message…",
     send: "Send",
   },
+  incident: {
+    title: "Are you okay?",
+    body: "Your phone felt something that looked like a collision. If we don't hear from you, your circle will be alerted with your location.",
+    imOk: "I'm okay",
+    sendNow: "Alert my circle now",
+    autoNote: "Possible collision detected automatically. No answer from the phone.",
+    raised: "Your circle has been alerted",
+  },
   sos: {
     title: "SOS",
     holdToSend: "Hold to send SOS",

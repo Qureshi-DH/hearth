@@ -8,6 +8,8 @@ import { haversineMeters, type LocationFixInput, type LocationSource } from "@he
 import { ApiError, endpoints } from "@/services/api"
 import { useAuthStore } from "@/stores/auth"
 import { startMotion, stopMotion, type MotionActivity } from "@/services/location/motion"
+import { startDriveSensors, stopDriveSensors } from "@/services/location/driveSensors"
+import { useIncidentStore } from "@/stores/incident"
 import { tokenVault } from "@/stores/tokenVault"
 import { useTrackingStore, type PermissionLevel, type TrackingPolicy } from "@/stores/tracking"
 
@@ -350,6 +352,18 @@ async function onMotion(activity: MotionActivity, confidence: number): Promise<v
   const store = useTrackingStore.getState()
   if (!store.enabled || confidence < MOTION_MIN_CONFIDENCE) return
 
+  // Impact sensing is only worth its battery inside a vehicle, and only there
+  // can its signals be read honestly: a spike while walking is a dropped phone.
+  if (activity === "automotive") {
+    void startDriveSensors((event) => {
+      // Harsh braking is a driving quality signal with nowhere to go yet, so
+      // only a possible impact is acted on.
+      if (event.kind === "possibleImpact") useIncidentStore.getState().raise(event)
+    })
+  } else if (activity !== "unknown") {
+    stopDriveSensors()
+  }
+
   if (activity === "still") {
     if (store.mode !== "moving") return
     motionStillSince ??= Date.now()
@@ -507,6 +521,7 @@ export async function stopTracking(): Promise<void> {
     await Location.stopGeofencingAsync(STATIONARY_GEOFENCE_TASK).catch(() => {})
   }
   await stopMotionWatch()
+  stopDriveSensors()
   const store = useTrackingStore.getState()
   store.setMode("off")
   store.setStillAnchor(null)
