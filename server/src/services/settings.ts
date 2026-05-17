@@ -18,6 +18,7 @@ export async function getServerSettings(db: Database): Promise<ServerSettings> {
     registrationMode: config.REGISTRATION_MODE,
     maxHistoryRetentionDays: config.MAX_HISTORY_RETENTION_DAYS,
     allowPublicInvites: true,
+    nativeMotion: false,
   }
 
   const [row] = await db

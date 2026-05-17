@@ -7,6 +7,7 @@ import { haversineMeters, type LocationFixInput, type LocationSource } from "@he
 
 import { ApiError, endpoints } from "@/services/api"
 import { useAuthStore } from "@/stores/auth"
+import { startMotion, stopMotion, type MotionActivity } from "@/services/location/motion"
 import { tokenVault } from "@/stores/tokenVault"
 import { useTrackingStore, type PermissionLevel, type TrackingPolicy } from "@/stores/tracking"
 
@@ -18,6 +19,13 @@ export const STATIONARY_GEOFENCE_TASK = "hearth-stationary-geofence"
 
 const MAX_BATCH = 200
 const STALE_FIX_MS = 30 * 60 * 1000
+
+/**
+ * The OS classifier is more certain than a distance heuristic, so it can call
+ * a stop sooner than five minutes of watching the phone not move.
+ */
+const MOTION_STILL_CONFIRM_MS = 90_000
+const MOTION_MIN_CONFIDENCE = 50
 
 /**
  * Android will not hand out continuous location without a foreground service,
@@ -316,6 +324,52 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
   }
 }
 
+let motionSubscription: { remove: () => void } | null = null
+let motionStillSince: number | null = null
+
+/**
+ * Play Services and Core Motion already classify movement for the system, so
+ * asking them costs far less than waking the GPS to work it out from position.
+ * Opt in per server while it is being compared against the GPS only path.
+ */
+async function startMotionWatch(): Promise<void> {
+  if (motionSubscription) return
+  if (!useAuthStore.getState().serverInfo?.nativeMotion) return
+  motionSubscription = await startMotion((activity, confidence) => {
+    void onMotion(activity, confidence)
+  })
+}
+
+async function stopMotionWatch(): Promise<void> {
+  await stopMotion(motionSubscription)
+  motionSubscription = null
+  motionStillSince = null
+}
+
+async function onMotion(activity: MotionActivity, confidence: number): Promise<void> {
+  const store = useTrackingStore.getState()
+  if (!store.enabled || confidence < MOTION_MIN_CONFIDENCE) return
+
+  if (activity === "still") {
+    if (store.mode !== "moving") return
+    motionStillSince ??= Date.now()
+    if (Date.now() - motionStillSince < MOTION_STILL_CONFIRM_MS) return
+    const fix = store.lastFix
+    if (fix) await enterStationary(fix.lat, fix.lon)
+    return
+  }
+
+  if (activity === "unknown") return
+
+  // Movement of any kind ends a stop, and the OS knew before a geofence or the
+  // periodic wake would have.
+  motionStillSince = null
+  if (store.mode === "stationary") {
+    await enterMoving()
+    await reportNow("significant")
+  }
+}
+
 async function locationUpdatesRunning(): Promise<boolean> {
   return Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false)
 }
@@ -439,6 +493,7 @@ export async function startTracking(): Promise<boolean> {
   if (permission !== "always" && permission !== "foreground") return false
 
   await enterMoving()
+  await startMotionWatch()
   await registerBackgroundSync()
   void reportNow("foreground")
   return true
@@ -451,6 +506,7 @@ export async function stopTracking(): Promise<void> {
   if (await geofenceRunning()) {
     await Location.stopGeofencingAsync(STATIONARY_GEOFENCE_TASK).catch(() => {})
   }
+  await stopMotionWatch()
   const store = useTrackingStore.getState()
   store.setMode("off")
   store.setStillAnchor(null)

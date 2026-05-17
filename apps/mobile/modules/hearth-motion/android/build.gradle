@@ -1,0 +1,32 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.hearthmotion'
+version = '0.1.0'
+
+android {
+  namespace 'expo.modules.hearthmotion'
+  compileSdk safeExtGet('compileSdkVersion', 35)
+  defaultConfig {
+    minSdk safeExtGet('minSdkVersion', 26)
+  }
+  kotlinOptions { jvmTarget = '17' }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
+
+repositories { mavenCentral(); google() }
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation "org.jetbrains.kotlin:kotlin-stdlib:${safeExtGet('kotlinVersion', '2.0.21')}"
+  // Already present transitively through expo-location, pinned here so the
+  // module builds on its own too.
+  implementation 'com.google.android.gms:play-services-location:21.3.0'
+}

@@ -56,6 +56,7 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         body: z.object({
           serverName: z.string().trim().min(1).max(80).optional(),
           registrationMode: z.enum(REGISTRATION_MODES).optional(),
+          nativeMotion: z.boolean().optional(),
           maxHistoryRetentionDays: z.number().int().min(1).max(3650).nullish(),
           allowPublicInvites: z.boolean().optional(),
         }),

@@ -39,6 +39,8 @@ export interface ServerInfo {
     /** False when the server has no object storage, so uploads are hidden. */
     avatars: boolean
   }
+  /** Mirrors the server setting, so tracking can pick a strategy at launch. */
+  nativeMotion: boolean
 }
 
 /* ------------------------------------------------------------------ */
@@ -381,6 +383,11 @@ export interface ServerSettings {
   /** Hard cap on stored history, overriding per-circle settings. Null = no cap. */
   maxHistoryRetentionDays: number | null
   allowPublicInvites: boolean
+  /**
+   * Opt in to the OS motion classifier for deciding when a phone has stopped.
+   * Off by default while it is being compared against the GPS only path.
+   */
+  nativeMotion: boolean
 }
 
 export interface AdminUserSummary extends PublicUser {

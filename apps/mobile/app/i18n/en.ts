@@ -432,6 +432,9 @@ const en = {
     circles: "{{count}} circles",
     points: "{{count}} location points",
     queue: "{{count}} notifications queued",
+    nativeMotion: "Use the phone's motion sensor",
+    nativeMotionHint:
+      "Lets the operating system say when someone has stopped moving instead of watching their position. Should save battery. Off while it is being compared against the old way.",
     queueTitle: "Notification queue",
     queueStatus: "{{count}} waiting · sent via {{provider}}",
     dbSize: "Database {{size}}",

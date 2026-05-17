@@ -54,7 +54,8 @@
       "NSLocationAlwaysUsageDescription": "Allow \"Always\" so your family can still see you when the app is closed. You can pause sharing at any time.",
       "NSLocalNetworkUsageDescription": "Hearth connects to the family server you specify, which may be on your home network.",
       "NSBonjourServices": ["_http._tcp", "_https._tcp"],
-      "NSLocationDefaultAccuracyReduced": false
+      "NSLocationDefaultAccuracyReduced": false,
+      "NSMotionUsageDescription": "Hearth reads what your phone is already doing, so it can keep the GPS asleep while you are not moving."
     }
   },
   "web": {

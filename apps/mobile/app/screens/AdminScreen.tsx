@@ -148,6 +148,19 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
           })}
         </View>
         <ListRow
+          tx="admin:nativeMotion"
+          subtitleTx="admin:nativeMotionHint"
+          icon="walk-outline"
+          iconTone="info"
+          value={settings.data?.nativeMotion ?? false}
+          onValueChange={(value) =>
+            updateSettings.mutate(
+              { nativeMotion: value },
+              { onError: (error) => toast.error((error as Error).message) },
+            )
+          }
+        />
+        <ListRow
           tx="admin:queueTitle"
           subtitle={translate("admin:queueStatus", {
             count: stats.data?.pushQueueDepth ?? 0,
