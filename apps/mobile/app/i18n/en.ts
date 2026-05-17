@@ -108,6 +108,9 @@ const en = {
     always: 'Allow "Always"',
     foregroundOnly: "Only while using the app",
     later: "Not now",
+    servicesOffTitle: "Location is turned off on this phone",
+    servicesOffBody:
+      "Turn Location Services back on in Settings, otherwise nobody in your circle can see where you are.",
     deniedTitle: "Location access is off",
     deniedBody: "Turn it on in Settings to share your location with your circle.",
     openSettings: "Open Settings",

@@ -51,6 +51,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const units = useSettingsStore((state) => state.units)
   const showTrails = useSettingsStore((state) => state.showTrails)
   const permission = useTrackingStore((state) => state.permission)
+  const servicesEnabled = useTrackingStore((state) => state.servicesEnabled)
   const trackingEnabled = useTrackingStore((state) => state.enabled)
   const { circle, circles, isLoading, setActiveCircle } = useActiveCircle()
   const circleId = circle?.id ?? null
@@ -340,7 +341,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
           </Pressable>
         ) : null}
 
-        {trackingEnabled && permission !== "always" ? (
+        {trackingEnabled && (permission !== "always" || !servicesEnabled) ? (
           <Pressable onPress={() => navigation.navigate("Permissions")}>
             <GlassPanel
               radius={16}
@@ -351,13 +352,19 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
                 <Text
                   size="xs"
                   style={{ flex: 1 }}
-                  tx={permission === "denied" ? "permissions:deniedTitle" : "permissions:whyTitle"}
+                  tx={
+                    !servicesEnabled
+                      ? "permissions:servicesOffTitle"
+                      : permission === "denied"
+                        ? "permissions:deniedTitle"
+                        : "permissions:whyTitle"
+                  }
                 />
                 <Text
                   size="xs"
                   weight="semiBold"
                   style={{ color: theme.colors.tint }}
-                  tx="permissions:always"
+                  tx={!servicesEnabled ? "permissions:openSettings" : "permissions:always"}
                 />
               </View>
             </GlassPanel>

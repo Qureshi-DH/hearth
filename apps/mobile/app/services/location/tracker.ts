@@ -401,6 +401,37 @@ async function evaluateStillness(fix: LocationFixInput): Promise<void> {
   }
 }
 
+/**
+ * Permission and the OS location switch can both change while the app is in
+ * the background, and nothing told us. Without re-reading them on the way back
+ * the app keeps claiming to share a location it can no longer read.
+ */
+export async function refreshLocationStatus(): Promise<{
+  permission: PermissionLevel
+  servicesEnabled: boolean
+}> {
+  const store = useTrackingStore.getState()
+  const permission = await currentPermission()
+  store.setPermission(permission)
+
+  let servicesEnabled = true
+  try {
+    servicesEnabled = await Location.hasServicesEnabledAsync()
+  } catch {
+    // Treat an unreadable switch as on rather than nagging about a state we
+    // could not confirm.
+  }
+  store.setServicesEnabled(servicesEnabled)
+
+  // Keeping a dead foreground service alive would show a notification claiming
+  // to share a position we cannot get.
+  if (store.enabled && store.mode !== "off" && (permission === "denied" || !servicesEnabled)) {
+    await stopTracking()
+  }
+
+  return { permission, servicesEnabled }
+}
+
 /** Foreground permission is enough to start, but only "always" keeps it running. */
 export async function startTracking(): Promise<boolean> {
   const permission = await currentPermission()

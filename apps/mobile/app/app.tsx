@@ -13,6 +13,7 @@ if (__DEV__) {
 import "./utils/gestureHandler"
 
 import { useEffect, useState } from "react"
+import { AppState } from "react-native"
 import { useFonts } from "expo-font"
 import * as Linking from "expo-linking"
 import * as SplashScreen from "expo-splash-screen"
@@ -26,7 +27,7 @@ import { AppNavigator } from "./navigators/AppNavigator"
 import { useNavigationPersistence } from "./navigators/navigationUtilities"
 // Importing this module also registers the OS background tasks, which have to
 // be defined at module scope before the app finishes launching.
-import { resumeIfEnabled } from "./services/location/tracker"
+import { refreshLocationStatus, resumeIfEnabled } from "./services/location/tracker"
 import { setupChannels } from "./services/notifications"
 import { queryClient } from "./services/queryClient"
 import { useAuthStore } from "./stores/auth"
@@ -101,6 +102,16 @@ export function App() {
     }
     void Linking.getInitialURL().then(capture)
     const subscription = Linking.addEventListener("url", (event) => capture(event.url))
+    return () => subscription.remove()
+  }, [])
+
+  // Permission and the OS location switch can both be turned off while the app
+  // is away, and nothing tells us. Re-read them every time we come back.
+  useEffect(() => {
+    void refreshLocationStatus()
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void refreshLocationStatus()
+    })
     return () => subscription.remove()
   }, [])
 

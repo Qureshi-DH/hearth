@@ -23,6 +23,8 @@ interface TrackingState {
   /** The user's master switch. Off means no location leaves the phone. */
   enabled: boolean
   permission: PermissionLevel
+  /** The OS location switch, separate from whether we were granted access. */
+  servicesEnabled: boolean
   backgroundActive: boolean
   /** Android only. Records that the dialog was shown, not that it was granted. */
   batteryExemptionRequested: boolean
@@ -40,6 +42,7 @@ interface TrackingState {
 
   setEnabled(enabled: boolean): void
   setPermission(level: PermissionLevel): void
+  setServicesEnabled(enabled: boolean): void
   setBackgroundActive(active: boolean): void
   setBatteryExemptionRequested(value: boolean): void
   setOnboardedPermissions(value: boolean): void
@@ -61,6 +64,7 @@ export const useTrackingStore = create<TrackingState>()(
     (set, get) => ({
       enabled: true,
       permission: "unknown",
+      servicesEnabled: true,
       backgroundActive: false,
       batteryExemptionRequested: false,
       onboardedPermissions: false,
@@ -75,6 +79,7 @@ export const useTrackingStore = create<TrackingState>()(
 
       setEnabled: (enabled) => set({ enabled }),
       setPermission: (permission) => set({ permission }),
+      setServicesEnabled: (servicesEnabled) => set({ servicesEnabled }),
       setBackgroundActive: (backgroundActive) => set({ backgroundActive }),
       setBatteryExemptionRequested: (batteryExemptionRequested) =>
         set({ batteryExemptionRequested }),
