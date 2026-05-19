@@ -84,7 +84,7 @@ export const EVENT_TYPES = [
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
-export const MUTABLE_EVENT_TYPES: EventType[] = [
+export const MUTABLE_EVENT_TYPES = [
   "place_arrive",
   "place_leave",
   "check_in",
@@ -93,7 +93,10 @@ export const MUTABLE_EVENT_TYPES: EventType[] = [
   "sharing_paused",
   "trip_completed",
   "speed_alert",
-]
+] as const satisfies readonly EventType[]
+
+/** Narrower than EventType, so anything keyed by it must cover every case. */
+export type MutableEventType = (typeof MUTABLE_EVENT_TYPES)[number]
 
 export const PLACE_ICONS = [
   "home",

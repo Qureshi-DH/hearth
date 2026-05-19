@@ -1,7 +1,7 @@
 import { useState, type FC } from "react"
 import { View, type ViewStyle } from "react-native"
 import * as Clipboard from "expo-clipboard"
-import { MUTABLE_EVENT_TYPES, type EventType } from "@hearth/shared"
+import { MUTABLE_EVENT_TYPES, type EventType, type MutableEventType } from "@hearth/shared"
 
 import { ListGroup, ListRow } from "@/components/ListRow"
 import { OptionSheet } from "@/components/OptionSheet"
@@ -23,17 +23,20 @@ import { eventVisual } from "@/utils/activity"
 import { formatWhen } from "@/utils/time"
 import { useHeader } from "@/utils/useHeader"
 
-const LABELS: Partial<
-  Record<
-    EventType,
-    | "notifications:placeArrive"
-    | "notifications:placeLeave"
-    | "notifications:checkIn"
-    | "notifications:lowBattery"
-    | "notifications:deviceOffline"
-    | "notifications:sharingPaused"
-    | "notifications:tripCompleted"
-  >
+/**
+ * Total on purpose. This was Partial, so speed alerts had no label and rendered
+ * as a switch with an icon and no words. A missing label is now a build error.
+ */
+const LABELS: Record<
+  MutableEventType,
+  | "notifications:placeArrive"
+  | "notifications:placeLeave"
+  | "notifications:checkIn"
+  | "notifications:lowBattery"
+  | "notifications:deviceOffline"
+  | "notifications:sharingPaused"
+  | "notifications:tripCompleted"
+  | "notifications:speedAlert"
 > = {
   place_arrive: "notifications:placeArrive",
   place_leave: "notifications:placeLeave",
@@ -42,6 +45,7 @@ const LABELS: Partial<
   device_offline: "notifications:deviceOffline",
   sharing_paused: "notifications:sharingPaused",
   trip_completed: "notifications:tripCompleted",
+  speed_alert: "notifications:speedAlert",
 }
 
 export const NotificationPrefsScreen: FC<AppStackScreenProps<"NotificationPrefs">> = ({

@@ -542,10 +542,7 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "Mute specific alerts from this circle",
         params: circleIdParam,
         body: z.object({
-          muted: z
-            .array(z.enum(MUTABLE_EVENT_TYPES as [string, ...string[]]))
-            .max(32)
-            .optional(),
+          muted: z.array(z.enum(MUTABLE_EVENT_TYPES)).max(32).optional(),
           mutedUntil: z.string().datetime().nullish(),
         }),
       },
