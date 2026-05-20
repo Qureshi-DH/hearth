@@ -116,7 +116,7 @@ const en = {
     openSettings: "Open Settings",
     motionTitle: "Motion & Fitness",
     motionBody:
-      "Lets your phone say when you have stopped moving, so Hearth can rest the GPS instead of checking. Improves battery life.",
+      "Lets your phone say when you have stopped, so the GPS can rest. Improves battery life.",
     whyTitle: 'Why "Always"?',
     whyBody:
       "Without it, your position only updates while Hearth is open on screen. Arrive/leave alerts for places need background access.",
@@ -317,7 +317,7 @@ const en = {
     speedAlertHint: "Tell the circle when someone is driving faster than this.",
     incidentDetection: "Possible-incident alerts",
     incidentHint:
-      "Raises a high-priority alert when someone stops hard from driving speed and does not move again. GPS cannot tell a crash from parking abruptly, so treat it as a prompt to check on them.",
+      "Tells the circle when a phone stops hard and does not move again. A prompt to check on someone, not proof.",
     lowBattery: "Low battery alert at",
     updateInterval: "Update frequency",
     intervalFast: "Frequent (30 s)",
