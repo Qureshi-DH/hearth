@@ -114,6 +114,9 @@ const en = {
     deniedTitle: "Location access is off",
     deniedBody: "Turn it on in Settings to share your location with your circle.",
     openSettings: "Open Settings",
+    motionTitle: "Motion & Fitness",
+    motionBody:
+      "Lets your phone say when you have stopped moving, so Hearth can rest the GPS instead of checking. Improves battery life.",
     whyTitle: 'Why "Always"?',
     whyBody:
       "Without it, your position only updates while Hearth is open on screen. Arrive/leave alerts for places need background access.",

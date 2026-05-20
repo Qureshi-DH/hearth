@@ -1,6 +1,10 @@
 import type { EventSubscription } from "expo-modules-core"
 
-import type { MotionActivity, MotionChangeEvent } from "../../../modules/hearth-motion"
+import type {
+  MotionActivity,
+  MotionChangeEvent,
+  MotionPermission,
+} from "../../../modules/hearth-motion"
 
 type MotionModule = typeof import("../../../modules/hearth-motion").default
 
@@ -23,6 +27,17 @@ export async function motionUsable(): Promise<boolean> {
     return await native.isAvailableAsync()
   } catch {
     return false
+  }
+}
+
+/** "unavailable" covers a simulator, an old device, or a build without the module. */
+export async function motionPermission(): Promise<MotionPermission | "unavailable"> {
+  if (!native) return "unavailable"
+  if (!(await motionUsable())) return "unavailable"
+  try {
+    return await native.getPermissionAsync()
+  } catch {
+    return "unavailable"
   }
 }
 

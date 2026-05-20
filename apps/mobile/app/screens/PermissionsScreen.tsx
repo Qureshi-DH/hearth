@@ -10,6 +10,8 @@ import { Text } from "@/components/Text"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { requestPermissions, startTracking } from "@/services/location/tracker"
+import { ensureMotionPermission, motionPermission } from "@/services/location/motion"
+import { useAuthStore } from "@/stores/auth"
 import {
   getPermissionSnapshot,
   openAppSettings,
@@ -47,6 +49,10 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
     [navigation],
   )
   const [snapshot, setSnapshot] = useState<PermissionSnapshot | null>(null)
+  // Only asked for when the server has turned the motion path on, so the
+  // checklist must not demand it otherwise.
+  const nativeMotion = useAuthStore((state) => state.serverInfo?.nativeMotion === true)
+  const [motion, setMotion] = useState<Awaited<ReturnType<typeof motionPermission>>>("unavailable")
   const [busy, setBusy] = useState<string | null>(null)
   const setOnboarded = useTrackingStore((state) => state.setOnboardedPermissions)
 
@@ -54,6 +60,7 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
     const next = await getPermissionSnapshot()
     setSnapshot(next)
     useTrackingStore.getState().setPermission(next.location)
+    setMotion(await motionPermission())
   }, [])
 
   // Users flip toggles in Settings and come straight back, so re-read on focus.
@@ -121,6 +128,35 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
                 action: { label: translate("permissions:openSettings"), onPress: openAppSettings },
               },
             ]) as Item[]),
+        ...((nativeMotion && motion !== "unavailable"
+          ? [
+              {
+                key: "motion",
+                icon: "walk" as IoniconName,
+                title: translate("permissions:motionTitle"),
+                body: translate("permissions:motionBody"),
+                state: (motion === "granted"
+                  ? "done"
+                  : motion === "denied"
+                    ? "blocked"
+                    : "todo") as ItemState,
+                action:
+                  motion === "granted"
+                    ? undefined
+                    : motion === "denied"
+                      ? {
+                          label: translate("permissions:openSettings"),
+                          onPress: openAppSettings,
+                        }
+                      : {
+                          label: translate("permissions:allow"),
+                          onPress: async () => {
+                            await ensureMotionPermission()
+                          },
+                        },
+              },
+            ]
+          : []) as Item[]),
         {
           key: "notifications",
           icon: "notifications",
