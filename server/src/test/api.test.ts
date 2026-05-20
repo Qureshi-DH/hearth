@@ -931,6 +931,33 @@ describe("trips and background jobs", () => {
     const second = await runJobs(getDb(), getConfig(), ctx.app.log)
     expect(second.prunedPoints).toBe(1)
   })
+
+  it("applies the admin's history cap to the sweep, not just to the settings row", async () => {
+    // The cap was readable, writable and persisted, and the job that enforces
+    // retention read the value the process booted with instead. Changing it
+    // from the app looked like it worked and swept nothing.
+    const admin = await registerUser(ctx.app)
+    await createCircle(admin.headers)
+
+    // Six days old, which the circle's own 30-day retention keeps.
+    await uploadFixes(admin.headers, [
+      { ...HOME, recordedAt: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString() },
+    ])
+    const before = await runJobs(getDb(), getConfig(), ctx.app.log)
+    expect(before.prunedPoints).toBe(0)
+
+    const patch = await ctx.app.inject({
+      method: "PATCH",
+      url: "/api/v1/admin/settings",
+      headers: admin.headers,
+      payload: { maxHistoryRetentionDays: 1 },
+    })
+    expect(patch.statusCode).toBe(200)
+
+    // Server-wide, so it overrides the circle's looser setting.
+    const after = await runJobs(getDb(), getConfig(), ctx.app.log)
+    expect(after.prunedPoints).toBe(1)
+  })
 })
 
 describe("account ownership", () => {

@@ -8,6 +8,7 @@ import type { AppConfig } from "../env"
 import { getPushDriver } from "../runtime"
 import { recordEvent } from "../services/feed"
 import { drainOutbox, pruneOutbox, requeueStuckSends } from "../services/push"
+import { getServerSettings } from "../services/settings"
 import { detectTripsForUser } from "../services/trips"
 
 export interface JobReport {
@@ -28,6 +29,11 @@ export interface JobReport {
  * at all falls back to the default window rather than being kept forever.
  */
 async function pruneLocationHistory(db: Database, config: AppConfig): Promise<number> {
+  // The ceiling an admin set through the API, not the one the process booted
+  // with. Reading the env value here meant changing the cap from the app
+  // persisted a number that then swept nothing.
+  const settings = await getServerSettings(db)
+  const ceilingDays = settings.maxHistoryRetentionDays ?? config.MAX_HISTORY_RETENTION_DAYS
   // Bounded batches. One unbounded DELETE over months of breadcrumbs holds
   // locks for minutes and starves everything queued behind it.
   const BATCH = 5000
@@ -40,7 +46,7 @@ async function pruneLocationHistory(db: Database, config: AppConfig): Promise<nu
           u.id as user_id,
           least(
             coalesce(max((c.settings ->> 'historyRetentionDays')::int), ${DEFAULTS.historyRetentionDays}),
-            ${config.MAX_HISTORY_RETENTION_DAYS}
+            ${ceilingDays}
           ) as days
         from users u
         left join circle_members cm on cm.user_id = u.id
