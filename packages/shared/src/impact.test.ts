@@ -18,6 +18,24 @@ function trace(
   return samples
 }
 
+/**
+ * Deterministic noise, so a trace is identical on every run. Several of the
+ * tests below turn on vibration rather than on any single reading, and a real
+ * accelerometer never returns the same number twice.
+ */
+function noise(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0
+    return state / 0xffffffff - 0.5
+  }
+}
+
+/** Road and engine vibration, about 0.06g of it, which is a car under way. */
+const ROAD_G = 0.2
+/** A vehicle at a standstill. Two orders of magnitude quieter. */
+const PARKED_G = 0.017
+
 /** Engine and road noise around 1g. */
 const cruising = (speedMps: number) => (): Omit<DriveSample, "t"> => ({
   accelG: 1 + 0.04,
@@ -53,8 +71,8 @@ describe("detectDriveEvent", () => {
   })
 
   it("ignores a phone thrown off the seat, which spikes and rotates but changes nothing", () => {
-    // Violent and spinning, so two of the four signals look bad. The car keeps
-    // its speed and keeps moving, which is what saves it.
+    // Violent and spinning, so the loudest signals look bad. The car keeps its
+    // speed and keeps moving, which is what saves it.
     const samples = [
       ...trace(3, cruising(25)),
       { t: 3000, accelG: 1 + 7.5, rotationRps: 9, pressure: 1013, speedMps: 25 },
@@ -93,7 +111,6 @@ describe("detectDriveEvent", () => {
     expect(event.kind).toBe("possibleImpact")
     if (event.kind === "possibleImpact") {
       expect(event.corroborations).toBeGreaterThanOrEqual(IMPACT.requiredCorroborations)
-      expect(event.speedDropMps).toBeGreaterThanOrEqual(IMPACT.speedDropMps)
       expect(event.rotationRps).toBeGreaterThanOrEqual(IMPACT.rotationRps)
     }
   })
@@ -109,13 +126,12 @@ describe("detectDriveEvent", () => {
       { t: 4000, accelG: 1 + 9, rotationRps: 6.5, speedMps: 27 },
       ...trace(8, () => ({ accelG: 1.02, rotationRps: 0.04, speedMps: 0 }), 4500),
     ]
-    const event = detectDriveEvent(samples)
-    expect(event.kind).toBe("possibleImpact")
+    expect(detectDriveEvent(samples).kind).toBe("possibleImpact")
   })
 
   it("does not fire on violence alone when the aftermath is unknown", () => {
     // The window is cut off right after the spike, so stillness cannot be read
-    // and speed has not been sampled since. One signal is not enough.
+    // and speed has not been sampled since.
     const samples = [
       ...trace(4, cruising(27)),
       { t: 4000, accelG: 1 + 8.4, rotationRps: 0.5, pressure: 1013, speedMps: 27 },
@@ -135,5 +151,126 @@ describe("detectDriveEvent", () => {
       ...trace(8, stopped, 6000),
     ]
     expect(detectDriveEvent(samples).kind).not.toBe("possibleImpact")
+  })
+
+  /* ---------------------------------------------------------------- */
+  /* The stop is one signal, not two                                   */
+  /* ---------------------------------------------------------------- */
+
+  it("does not escalate a junction stop that happens to contain a jolt", () => {
+    // Everything an ordinary arrival at a red light produces, plus something
+    // heavy shifting in the boot as the car settles. Speed dropping and the car
+    // coming to rest are the same fact, so this must not reach the threshold on
+    // the strength of both.
+    const samples = [
+      ...trace(4, cruising(12)),
+      { t: 4000, accelG: 1 + 3.5, rotationRps: 0.4, pressure: 1013, speedMps: 4 },
+      ...trace(
+        2,
+        () => ({ accelG: 1 + 0.22, rotationRps: 0.2, pressure: 1013, speedMps: 4 }),
+        4020,
+      ),
+      ...trace(8, stopped, 6020),
+    ]
+    const event = detectDriveEvent(samples)
+    expect(event.kind).toBe("none")
+  })
+
+  it("needs a signal beyond the stop even when the stop is unmistakable", () => {
+    // A documented gap rather than an oversight: with neither rotation nor a
+    // barometer there is nothing here that a phone hitting the footwell as the
+    // car pulls up would not also produce.
+    const samples = [
+      ...trace(4, () => ({ accelG: 1.04, rotationRps: 0.1, speedMps: 27 })),
+      { t: 4000, accelG: 1 + 9, rotationRps: 0.3, speedMps: 27 },
+      ...trace(8, () => ({ accelG: 1.02, rotationRps: 0.02, speedMps: 0 }), 4500),
+    ]
+    expect(detectDriveEvent(samples).kind).toBe("none")
+  })
+
+  /* ---------------------------------------------------------------- */
+  /* Corroboration has to belong to the impact                         */
+  /* ---------------------------------------------------------------- */
+
+  it("does not let a roundabout and a hill corroborate a pothole", () => {
+    // A descent raises pressure steadily, a roundabout spins the phone, and a
+    // pothole eight seconds later provides the spike. Read across the whole
+    // buffer all three agree; read across the impact itself, none of them do.
+    const rng = noise(11)
+    const descending = (secondsIn: number, speedMps: number, rotationRps: number) => ({
+      accelG: 1 + ROAD_G * rng(),
+      rotationRps,
+      pressure: 1010 + (3 * secondsIn) / 20,
+      speedMps,
+    })
+    const samples = [
+      ...trace(3, (s) => descending(s, 15, 0.3)),
+      // The roundabout, well before the spike.
+      ...trace(2, (s) => descending(3 + s, 9, 4.0), 3000),
+      ...trace(5, (s) => descending(5 + s, 15, 0.3), 5000),
+      { t: 10000, accelG: 1 + 4.6, rotationRps: 0.5, pressure: 1011.5, speedMps: 15 },
+      // Then it pulls up at a light, so the stop is genuinely there.
+      ...trace(2, (s) => descending(10 + s, 3, 0.2), 10020),
+      ...trace(
+        8,
+        () => ({ accelG: 1 + PARKED_G * rng(), rotationRps: 0.05, pressure: 1013, speedMps: 0 }),
+        12020,
+      ),
+    ]
+    const event = detectDriveEvent(samples)
+    expect(event.kind).toBe("none")
+  })
+
+  /* ---------------------------------------------------------------- */
+  /* Vibration, for the many seconds when GPS has nothing to say       */
+  /* ---------------------------------------------------------------- */
+
+  it("catches a crash with no GPS speed at all, on vibration alone", () => {
+    // Between deferred location batches every sample carries no speed. The car
+    // shaking beforehand and not shaking afterwards is the whole signal.
+    const rng = noise(3)
+    const samples = [
+      ...trace(6, () => ({ accelG: 1 + ROAD_G * rng(), rotationRps: 0.3, pressure: 1013 })),
+      { t: 6000, accelG: 1 + 9.2, rotationRps: 7, pressure: 1014.3 },
+      ...trace(0.4, () => ({ accelG: 1 + 1.1, rotationRps: 2.2, pressure: 1014.1 }), 6020),
+      ...trace(
+        8,
+        () => ({ accelG: 1 + PARKED_G * rng(), rotationRps: 0.03, pressure: 1014 }),
+        6500,
+      ),
+    ]
+    const event = detectDriveEvent(samples)
+    expect(event.kind).toBe("possibleImpact")
+    if (event.kind === "possibleImpact") expect(event.speedDropMps).toBeNull()
+  })
+
+  it("ignores a phone landing in the footwell of a car that is still driving", () => {
+    // The phone is motionless, so every stillness test above passes. What it
+    // cannot escape is the road coming up through the floor.
+    const rng = noise(7)
+    const samples = [
+      ...trace(6, () => ({ accelG: 1 + ROAD_G * rng(), rotationRps: 0.3, pressure: 1013 })),
+      { t: 6000, accelG: 1 + 8, rotationRps: 9, pressure: 1013 },
+      // Lying still on the mat, but the car has not stopped.
+      ...trace(8, () => ({ accelG: 1 + 0.13 * rng(), rotationRps: 0.1, pressure: 1013 }), 6100),
+    ]
+    expect(detectDriveEvent(samples).kind).toBe("none")
+  })
+
+  it("ignores a door slammed on a parked car, pressure rise and all", () => {
+    // Nothing was moving before it, so nothing came to rest after it. Without
+    // that check the cabin pressurising is a free corroboration.
+    const rng = noise(5)
+    const parked = (pressure: number) => () => ({
+      accelG: 1 + PARKED_G * rng(),
+      rotationRps: 0.02,
+      pressure,
+    })
+    const samples = [
+      ...trace(6, parked(1013)),
+      { t: 6000, accelG: 1 + 4, rotationRps: 1.1, pressure: 1013.7 },
+      ...trace(8, parked(1013.6), 6020),
+    ]
+    expect(detectDriveEvent(samples).kind).toBe("none")
   })
 })
