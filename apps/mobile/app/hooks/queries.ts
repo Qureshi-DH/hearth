@@ -1,3 +1,4 @@
+import { useEffect } from "react"
 import type {
   CircleInvite,
   CircleMember,
@@ -21,6 +22,7 @@ import {
 
 import { endpoints } from "@/services/api"
 import { useAuthStore } from "@/stores/auth"
+import { useSettingsStore } from "@/stores/settings"
 
 import { queryKeys } from "./queryKeys"
 
@@ -98,12 +100,25 @@ export function useMyStats() {
 
 export function useCircles() {
   const signedIn = useAuthStore((state) => state.status === "signed_in")
-  return useQuery({
+  const query = useQuery({
     queryKey: queryKeys.circles,
     queryFn: endpoints.circles.list,
     enabled: signedIn,
     staleTime: 60_000,
   })
+
+  // Crash detection samples at 50Hz and can raise an SOS, so it may only run
+  // where a circle has actually asked for it. The tracker reads this from the
+  // background, long after any of this is mounted.
+  const circles = query.data
+  useEffect(() => {
+    if (!circles) return
+    useSettingsStore
+      .getState()
+      .setIncidentDetection(circles.some((circle) => circle.settings.incidentDetection))
+  }, [circles])
+
+  return query
 }
 
 export function useCircle(circleId: string | null) {

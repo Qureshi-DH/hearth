@@ -12,6 +12,12 @@ interface SettingsState {
   activeCircleId: string | null
   showTrails: boolean
   reduceMotion: boolean
+  /**
+   * Mirrors whether any circle the user belongs to has incident alerts on. The
+   * detector runs from a background task where the query cache may be cold, so
+   * the answer has to survive a process kill on its own.
+   */
+  incidentDetection: boolean
 
   setThemeMode(mode: ThemeMode): void
   setUnits(units: "metric" | "imperial"): void
@@ -19,6 +25,7 @@ interface SettingsState {
   setActiveCircle(circleId: string | null): void
   setShowTrails(show: boolean): void
   setReduceMotion(reduce: boolean): void
+  setIncidentDetection(enabled: boolean): void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -30,6 +37,7 @@ export const useSettingsStore = create<SettingsState>()(
       activeCircleId: null,
       showTrails: true,
       reduceMotion: false,
+      incidentDetection: false,
 
       setThemeMode: (themeMode) => set({ themeMode }),
       setUnits: (units) => set({ units }),
@@ -37,6 +45,7 @@ export const useSettingsStore = create<SettingsState>()(
       setActiveCircle: (activeCircleId) => set({ activeCircleId }),
       setShowTrails: (showTrails) => set({ showTrails }),
       setReduceMotion: (reduceMotion) => set({ reduceMotion }),
+      setIncidentDetection: (incidentDetection) => set({ incidentDetection }),
     }),
     { name: "hearth.settings.v1", storage: createJSONStorage(() => mmkvStorage) },
   ),

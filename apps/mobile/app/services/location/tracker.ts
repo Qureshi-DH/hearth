@@ -5,11 +5,14 @@ import * as Location from "expo-location"
 import * as TaskManager from "expo-task-manager"
 import { haversineMeters, type LocationFixInput, type LocationSource } from "@hearth/shared"
 
+import { translate } from "@/i18n/translate"
 import { ApiError, endpoints } from "@/services/api"
+import { presentIncidentAlarm } from "@/services/incidentAlarm"
 import { useAuthStore } from "@/stores/auth"
 import { startMotion, stopMotion, type MotionActivity } from "@/services/location/motion"
 import { startDriveSensors, stopDriveSensors } from "@/services/location/driveSensors"
 import { useIncidentStore } from "@/stores/incident"
+import { useSettingsStore } from "@/stores/settings"
 import { tokenVault } from "@/stores/tokenVault"
 import { useTrackingStore, type PermissionLevel, type TrackingPolicy } from "@/stores/tracking"
 
@@ -354,11 +357,14 @@ async function onMotion(activity: MotionActivity, confidence: number): Promise<v
 
   // Impact sensing is only worth its battery inside a vehicle, and only there
   // can its signals be read honestly: a spike while walking is a dropped phone.
-  if (activity === "automotive") {
+  if (activity === "automotive" && useSettingsStore.getState().incidentDetection) {
     void startDriveSensors((event) => {
       // Harsh braking is a driving quality signal with nowhere to go yet, so
       // only a possible impact is acted on.
-      if (event.kind === "possibleImpact") useIncidentStore.getState().raise(event)
+      if (event.kind !== "possibleImpact") return
+      useIncidentStore.getState().raise(event)
+      // The modal only helps someone already looking at the screen.
+      void presentIncidentAlarm(translate("incident:alarmTitle"), translate("incident:alarmBody"))
     })
   } else if (activity !== "unknown") {
     stopDriveSensors()
@@ -428,6 +434,9 @@ export async function enterStationary(lat: number, lon: number): Promise<void> {
   if (await locationUpdatesRunning()) {
     await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {})
   }
+  // 50Hz of accelerometer is only worth its battery inside a moving vehicle.
+  // A verdict already scheduled survives this; see stopDriveSensors.
+  stopDriveSensors()
   store.setMode("stationary")
   store.setBackgroundActive(true)
 }
