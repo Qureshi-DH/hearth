@@ -15,6 +15,14 @@ import { Text } from "@/components/Text"
 import { useAppTheme } from "@/theme/context"
 import { withAlpha } from "@/utils/color"
 
+/**
+ * Height of the name pill below the pointer: 2 margin + 2 padding + an 18pt
+ * xxs line + 2 padding. It sits below the tip, so a marker anchored by its
+ * bottom edge is pushed this far up and the pill, not the pointer, lands on
+ * the coordinate. Callers pass it back as the marker's pixel offset.
+ */
+export const MEMBER_MARKER_LABEL_HEIGHT = 24
+
 export interface MemberMarkerProps {
   user: Pick<PublicUser, "displayName" | "avatarColor" | "avatarUrl">
   label: string

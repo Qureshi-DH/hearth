@@ -7,7 +7,7 @@ import { Avatar } from "@/components/Avatar"
 import { BatteryPill } from "@/components/BatteryPill"
 import { HearthMap, PlaceLayers, TrailLayer } from "@/components/HearthMap"
 import { ListGroup, ListRow } from "@/components/ListRow"
-import { MemberMarker } from "@/components/MemberMarker"
+import { MemberMarker, MEMBER_MARKER_LABEL_HEIGHT } from "@/components/MemberMarker"
 import { ringFor, statusLine } from "@/components/MemberRow"
 import { Pill } from "@/components/Pill"
 import { PromptDialog } from "@/components/PromptDialog"
@@ -218,7 +218,12 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
           <PlaceLayers places={places ?? []} highlightId={entry?.atPlace?.id} />
           {trail && trail.length > 1 ? <TrailLayer id="member-trail" points={trail} /> : null}
           {entry?.lat != null && entry.lon != null ? (
-            <Marker lngLat={[entry.lon, entry.lat]} anchor="bottom">
+            <Marker
+              lngLat={[entry.lon, entry.lat]}
+              anchor="bottom"
+              // Puts the pointer tip on the coordinate instead of the name pill.
+              offset={[0, MEMBER_MARKER_LABEL_HEIGHT]}
+            >
               <MemberMarker
                 user={member.user}
                 label={name}

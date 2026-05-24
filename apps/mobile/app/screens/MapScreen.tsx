@@ -18,7 +18,7 @@ import { Avatar } from "@/components/Avatar"
 import { GlassPanel } from "@/components/GlassPanel"
 import { HearthMap, PlaceLayers, TrailLayer } from "@/components/HearthMap"
 import { IconButton } from "@/components/IconButton"
-import { MemberMarker } from "@/components/MemberMarker"
+import { MemberMarker, MEMBER_MARKER_LABEL_HEIGHT } from "@/components/MemberMarker"
 import { MemberRow, ringFor } from "@/components/MemberRow"
 import { Pill } from "@/components/Pill"
 import { PrimaryButton } from "@/components/PrimaryButton"
@@ -217,7 +217,13 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
           if (!entry || entry.lat == null || entry.lon == null) return null
           const isSelf = member.userId === me?.id
           return (
-            <Marker key={member.userId} lngLat={[entry.lon, entry.lat]} anchor="bottom">
+            <Marker
+              key={member.userId}
+              lngLat={[entry.lon, entry.lat]}
+              anchor="bottom"
+              // Puts the pointer tip on the coordinate instead of the name pill.
+              offset={[0, MEMBER_MARKER_LABEL_HEIGHT]}
+            >
               <MemberMarker
                 user={member.user}
                 label={isSelf ? translate("map:you") : (member.nickname ?? member.user.displayName)}
