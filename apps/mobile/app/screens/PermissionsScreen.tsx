@@ -15,10 +15,12 @@ import { useAuthStore } from "@/stores/auth"
 import {
   getPermissionSnapshot,
   openAppSettings,
+  openLocationSettings,
   requestBatteryExemption,
   requestNotifications,
   type PermissionSnapshot,
 } from "@/services/permissions"
+import { useSettingsStore } from "@/stores/settings"
 import { useTrackingStore } from "@/stores/tracking"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
@@ -52,6 +54,9 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
   // Only asked for when the server has turned the motion path on, so the
   // checklist must not demand it otherwise.
   const nativeMotion = useAuthStore((state) => state.serverInfo?.nativeMotion === true)
+  // Mirrors whether any circle asked for incident alerts, which is the only
+  // condition under which the sensors below are read at all.
+  const incidentDetection = useSettingsStore((state) => state.incidentDetection)
   const [motion, setMotion] = useState<Awaited<ReturnType<typeof motionPermission>>>("unavailable")
   const [busy, setBusy] = useState<string | null>(null)
   const setOnboarded = useTrackingStore((state) => state.setOnboardedPermissions)
@@ -85,23 +90,31 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
         {
           key: "location",
           icon: "navigate",
-          title: translate("permissions:locationTitle"),
-          body:
-            snapshot.location === "always"
+          // Being granted access to a switched-off sensor is not a working
+          // state, and saying "On" while the phone reports nothing is how this
+          // screen ends up lying to someone whose family cannot see them.
+          title: !snapshot.servicesEnabled
+            ? translate("permissions:servicesOffTitle")
+            : translate("permissions:locationTitle"),
+          body: !snapshot.servicesEnabled
+            ? translate("permissions:servicesOffBody")
+            : snapshot.location === "always"
               ? translate("permissions:locationAlwaysBody")
               : snapshot.location === "foreground"
                 ? translate("permissions:locationForegroundBody")
                 : snapshot.location === "denied"
                   ? translate("permissions:deniedBody")
                   : translate("permissions:subtitle"),
-          state:
-            snapshot.location === "always"
+          state: !snapshot.servicesEnabled
+            ? "blocked"
+            : snapshot.location === "always"
               ? "done"
               : snapshot.location === "denied"
                 ? "blocked"
                 : "todo",
-          action:
-            snapshot.location === "always"
+          action: !snapshot.servicesEnabled
+            ? { label: translate("permissions:openSettings"), onPress: openLocationSettings }
+            : snapshot.location === "always"
               ? undefined
               : snapshot.location === "denied" || snapshot.location === "foreground"
                 ? { label: translate("permissions:openSettings"), onPress: openAppSettings }
@@ -154,6 +167,21 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
                             await ensureMotionPermission()
                           },
                         },
+              },
+            ]
+          : []) as Item[]),
+        // Not a permission, which is exactly why it is worth saying. Crash
+        // detection reads the accelerometer, gyroscope and barometer, and at
+        // the rates Hearth samples them neither platform asks the person
+        // anything — so without a line here it would run unannounced.
+        ...((incidentDetection
+          ? [
+              {
+                key: "sensors",
+                icon: "pulse" as IoniconName,
+                title: translate("permissions:sensorsTitle"),
+                body: translate("permissions:sensorsBody"),
+                state: "info" as ItemState,
               },
             ]
           : []) as Item[]),

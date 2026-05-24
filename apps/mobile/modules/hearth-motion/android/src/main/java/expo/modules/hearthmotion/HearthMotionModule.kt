@@ -22,6 +22,8 @@ import expo.modules.kotlin.modules.ModuleDefinition
 private const val ACTION = "expo.modules.hearthmotion.ACTIVITY"
 private const val REQUEST_CODE = 8021
 private const val DETECTION_INTERVAL_MS = 30_000L
+private const val PREFS = "expo.modules.hearthmotion"
+private const val KEY_ASKED = "activityRecognitionAsked"
 
 /**
  * Google Play Services already runs this classifier for the system, so asking
@@ -61,14 +63,27 @@ class HearthMotionModule : Module() {
     GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) ==
       ConnectionResult.SUCCESS
 
-  /** The permission only exists from Android 10, and is implicit before it. */
+  /**
+   * The permission only exists from Android 10, and is implicit before it.
+   *
+   * Android cannot tell "refused" from "never asked" by inspection: both read
+   * back as not granted. Reporting the first for the second is not a cosmetic
+   * difference — callers treat a refusal as final and stop, so the request is
+   * never made and the feature is dead on a device that would have said yes.
+   * So the fact that we asked is recorded when we ask.
+   */
   private fun permissionState(): String {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return "granted"
     val granted =
       ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) ==
         PackageManager.PERMISSION_GRANTED
-    return if (granted) "granted" else "denied"
+    if (granted) return "granted"
+    return if (hasBeenAsked()) "denied" else "undetermined"
   }
+
+  private fun prefs() = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+  private fun hasBeenAsked(): Boolean = prefs().getBoolean(KEY_ASKED, false)
 
   private fun requestPermission(promise: Promise) {
     val current = permissionState()
@@ -81,6 +96,10 @@ class HearthMotionModule : Module() {
       promise.resolve("denied")
       return
     }
+    // Written before the dialog, not after: the process can be killed while it
+    // is up, and a flag that only lands on the happy path would re-prompt for
+    // ever on a device that has already refused once.
+    prefs().edit().putBoolean(KEY_ASKED, true).apply()
     permissions.askForPermissions(
       { promise.resolve(permissionState()) },
       Manifest.permission.ACTIVITY_RECOGNITION,

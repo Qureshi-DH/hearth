@@ -19,11 +19,7 @@ public class HearthMotionModule: Module {
     }
 
     AsyncFunction("getPermissionAsync") { () -> String in
-      switch CMMotionActivityManager.authorizationStatus() {
-      case .authorized: return "granted"
-      case .denied, .restricted: return "denied"
-      default: return "undetermined"
-      }
+      Self.state(for: CMMotionActivityManager.authorizationStatus())
     }
 
     // iOS has no request call. Asking for updates is what raises the prompt,
@@ -38,17 +34,25 @@ public class HearthMotionModule: Module {
         from: now.addingTimeInterval(-60),
         to: now,
         to: OperationQueue.main
-      ) { _, error in
-        if error != nil {
-          promise.resolve("denied")
-        } else {
-          promise.resolve("granted")
-        }
+      ) { _, _ in
+        // The error channel says whether this one query worked, not what the
+        // person chose. A query can fail on a device with no recorded activity
+        // while the permission is granted, and reading "denied" off that turns
+        // an empty afternoon into a refusal. Ask the OS instead.
+        promise.resolve(Self.state(for: CMMotionActivityManager.authorizationStatus()))
       }
     }
 
     AsyncFunction("startUpdatesAsync") {
-      guard CMMotionActivityManager.isActivityAvailable(), !self.running else { return }
+      // Resolving quietly here would leave the caller holding a subscription
+      // that can never fire, and believing motion tracking was running.
+      guard CMMotionActivityManager.isActivityAvailable() else {
+        throw Exception(
+          name: "ERR_MOTION_UNAVAILABLE",
+          description: "Motion activity is not available on this device"
+        )
+      }
+      guard !self.running else { return }
       self.running = true
       self.manager.startActivityUpdates(to: OperationQueue.main) { [weak self] activity in
         guard let self, let activity else { return }
@@ -70,6 +74,14 @@ public class HearthMotionModule: Module {
 
     OnDestroy {
       if self.running { self.manager.stopActivityUpdates() }
+    }
+  }
+
+  private static func state(for status: CMAuthorizationStatus) -> String {
+    switch status {
+    case .authorized: return "granted"
+    case .denied, .restricted: return "denied"
+    default: return "undetermined"
     }
   }
 
