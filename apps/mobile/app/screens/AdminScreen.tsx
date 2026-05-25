@@ -1,10 +1,11 @@
-import type { FC } from "react"
-import { Alert, Pressable, View, type ViewStyle } from "react-native"
-import { REGISTRATION_MODES, type RegistrationMode } from "@hearth/shared"
+import { useState, type FC } from "react"
+import { Pressable, View, type ViewStyle } from "react-native"
+import { REGISTRATION_MODES, type AdminUserSummary, type RegistrationMode } from "@hearth/shared"
 
-import { Avatar } from "@/components/Avatar"
 import { ListGroup, ListRow } from "@/components/ListRow"
+import { OptionSheet } from "@/components/OptionSheet"
 import { Pill } from "@/components/Pill"
+import { PromptDialog } from "@/components/PromptDialog"
 import { PrimaryButton } from "@/components/PrimaryButton"
 import { Screen } from "@/components/Screen"
 import { SectionHeader } from "@/components/SectionHeader"
@@ -51,6 +52,12 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
     navigation,
   ])
 
+  const [editing, setEditing] = useState<"serverName" | "retention" | null>(null)
+  const [managing, setManaging] = useState<AdminUserSummary | null>(null)
+
+  const save = (patch: Parameters<typeof updateSettings.mutate>[0]) =>
+    updateSettings.mutate(patch, { onError: (error) => toast.error((error as Error).message) })
+
   const drain = async () => {
     try {
       const result = await endpoints.admin.drainPush()
@@ -73,29 +80,29 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
           />
           <StatTile
             icon="pulse-outline"
-            label="Active 24h"
+            label={translate("admin:active24h")}
             value={String(stats.data?.activeUsers24h ?? "—")}
           />
           <StatTile
             icon="ellipse-outline"
-            label="Circles"
+            label={translate("admin:circles")}
             value={String(stats.data?.circles ?? "—")}
           />
         </View>
         <View style={{ flexDirection: "row", gap: theme.spacing.xs }}>
           <StatTile
             icon="footsteps-outline"
-            label="Points"
+            label={translate("admin:points")}
             value={stats.data ? stats.data.locationPoints.toLocaleString() : "—"}
           />
           <StatTile
             icon="server-outline"
-            label="Database"
+            label={translate("admin:dbSize")}
             value={formatBytes(stats.data?.databaseSizeBytes)}
           />
           <StatTile
             icon="time-outline"
-            label="Uptime"
+            label={translate("admin:uptime")}
             value={stats.data ? formatDuration(stats.data.uptimeSeconds) : "—"}
           />
         </View>
@@ -147,6 +154,29 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
             )
           })}
         </View>
+        <ListRow
+          tx="admin:serverName"
+          subtitle={settings.data?.serverName}
+          icon="pricetag-outline"
+          onPress={() => setEditing("serverName")}
+        />
+        <ListRow
+          tx="admin:maxRetention"
+          subtitle={
+            // Undefined while it loads. Saying "no limit" before the answer
+            // arrives is a claim about someone's data, not a placeholder.
+            !settings.data
+              ? undefined
+              : settings.data.maxHistoryRetentionDays == null
+                ? translate("admin:retentionNone")
+                : translate("admin:retentionDays", {
+                    count: settings.data.maxHistoryRetentionDays,
+                  })
+          }
+          icon="hourglass-outline"
+          iconTone="warning"
+          onPress={() => setEditing("retention")}
+        />
         <ListRow
           tx="admin:nativeMotion"
           subtitleTx="admin:nativeMotionHint"
@@ -208,24 +238,7 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
             }
             icon={user.isAdmin ? "shield-checkmark-outline" : "person-outline"}
             iconTone={user.isAdmin ? "tint" : "neutral"}
-            onPress={() =>
-              Alert.alert(user.displayName, user.email, [
-                {
-                  text: translate(user.isActive ? "admin:deactivate" : "admin:activate"),
-                  style: user.isActive ? "destructive" : "default",
-                  onPress: () => updateUser.mutate({ userId: user.id, isActive: !user.isActive }),
-                },
-                {
-                  text: translate(user.isAdmin ? "admin:removeAdmin" : "admin:makeAdmin"),
-                  onPress: () =>
-                    updateUser.mutate(
-                      { userId: user.id, isAdmin: !user.isAdmin },
-                      { onError: (error) => toast.error((error as Error).message) },
-                    ),
-                },
-                { text: translate("common:cancel"), style: "cancel" },
-              ])
-            }
+            onPress={() => setManaging(user)}
           />
         ))}
       </ListGroup>
@@ -236,7 +249,69 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
         onPress={() => navigation.goBack()}
         style={{ marginHorizontal: theme.spacing.md }}
       />
-      <View style={{ display: "none" }}>{me ? <Avatar user={me} /> : null}</View>
+
+      <PromptDialog
+        visible={editing === "serverName"}
+        titleTx="admin:serverName"
+        helper={translate("admin:serverNameHint")}
+        initialValue={settings.data?.serverName}
+        maxLength={80}
+        onCancel={() => setEditing(null)}
+        onSubmit={(value) => {
+          if (value) save({ serverName: value })
+        }}
+      />
+
+      <PromptDialog
+        visible={editing === "retention"}
+        titleTx="admin:maxRetention"
+        helper={translate("admin:retentionHelper")}
+        initialValue={settings.data?.maxHistoryRetentionDays?.toString() ?? ""}
+        keyboardType="number-pad"
+        maxLength={4}
+        onCancel={() => setEditing(null)}
+        onSubmit={(value) => {
+          // Empty means no cap, which is a real answer here rather than a
+          // refusal to answer, so it is sent as null instead of ignored.
+          if (value === "") return save({ maxHistoryRetentionDays: null })
+          const days = Number(value)
+          if (!Number.isInteger(days) || days < 1 || days > 3650) {
+            return toast.error(translate("admin:retentionHelper"))
+          }
+          save({ maxHistoryRetentionDays: days })
+        }}
+      />
+
+      <OptionSheet
+        visible={managing !== null}
+        title={managing?.displayName}
+        onClose={() => setManaging(null)}
+        options={
+          managing
+            ? [
+                {
+                  key: "active",
+                  label: translate(managing.isActive ? "admin:deactivate" : "admin:activate"),
+                  destructive: managing.isActive,
+                  onPress: () =>
+                    updateUser.mutate(
+                      { userId: managing.id, isActive: !managing.isActive },
+                      { onError: (error) => toast.error((error as Error).message) },
+                    ),
+                },
+                {
+                  key: "admin",
+                  label: translate(managing.isAdmin ? "admin:removeAdmin" : "admin:makeAdmin"),
+                  onPress: () =>
+                    updateUser.mutate(
+                      { userId: managing.id, isAdmin: !managing.isAdmin },
+                      { onError: (error) => toast.error((error as Error).message) },
+                    ),
+                },
+              ]
+            : []
+        }
+      />
     </Screen>
   )
 }

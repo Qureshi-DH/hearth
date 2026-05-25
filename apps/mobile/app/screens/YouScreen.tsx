@@ -199,19 +199,6 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
           icon="key-outline"
           onPress={() => navigation.navigate("ChangePassword")}
         />
-        <ListRow
-          tx="settings:imperialUnits"
-          subtitleTx={
-            settings.units === "imperial" ? "settings:imperialOn" : "settings:imperialOff"
-          }
-          icon="speedometer-outline"
-          value={settings.units === "imperial"}
-          onValueChange={(on) => {
-            const next = on ? "imperial" : "metric"
-            settings.setUnits(next)
-            updateMe.mutate({ units: next })
-          }}
-        />
       </ListGroup>
 
       <SectionHeader tx="settings:appearance" />
@@ -233,15 +220,23 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
           value={settings.hapticsEnabled}
           onValueChange={settings.setHaptics}
         />
+        <ListRow
+          tx="settings:imperialUnits"
+          subtitleTx={
+            settings.units === "imperial" ? "settings:imperialOn" : "settings:imperialOff"
+          }
+          icon="speedometer-outline"
+          value={settings.units === "imperial"}
+          onValueChange={(on) => {
+            const next = on ? "imperial" : "metric"
+            settings.setUnits(next)
+            updateMe.mutate({ units: next })
+          }}
+        />
       </ListGroup>
 
       <SectionHeader tx="settings:server" />
       <ListGroup>
-        <ListRow
-          text={serverInfo?.serverName ?? "Hearth"}
-          subtitle={serverUrl ?? undefined}
-          icon="server-outline"
-        />
         {user?.isAdmin ? (
           <ListRow
             tx="settings:admin"
@@ -250,6 +245,11 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
             onPress={() => navigation.navigate("Admin")}
           />
         ) : null}
+        <ListRow
+          text={serverInfo?.serverName ?? "Hearth"}
+          subtitle={serverUrl ?? undefined}
+          icon="server-outline"
+        />
         <ListRow
           tx="settings:version"
           subtitle={`${version} · server ${serverInfo?.version ?? "?"}`}
