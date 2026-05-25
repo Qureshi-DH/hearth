@@ -1,5 +1,4 @@
-// TODO: write documentation about fonts and typography along with guides on how to add custom fonts in own
-// markdown file and add links from here
+// Fonts are registered in app/app.tsx and referenced through the presets below.
 
 import { Platform } from "react-native"
 import {

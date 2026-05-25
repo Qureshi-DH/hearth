@@ -201,7 +201,9 @@ badly, restore a backup.
 
 Breadcrumb history is pruned every minute by a background job. Each circle sets
 its own window (default 30 days), and `MAX_HISTORY_RETENTION_DAYS` caps all of
-them at 90 by default. Set a circle's retention to 0 and only the live position
+them at 90 by default. That cap is the floor an operator sets; an admin can
+tighten or lift it from the app under _Server admin → History retention_
+without a redeploy, and the sweep picks the change up on its next run. Set a circle's retention to 0 and only the live position
 is kept. Trips survive pruning as aggregates: distance, duration, endpoints.
 
 ### Health
