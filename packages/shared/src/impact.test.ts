@@ -5,7 +5,7 @@ import { detectDriveEvent, IMPACT, type DriveSample } from "./impact"
 const HZ = 50
 const STEP = 1000 / HZ
 
-/** Builds a trace at 50Hz so the shapes below read like the drive they describe. */
+/** Builds a trace so the shapes below read like the drive they describe. */
 function trace(
   seconds: number,
   at: (secondsIn: number) => Omit<DriveSample, "t">,
@@ -31,12 +31,10 @@ function noise(seed: number): () => number {
   }
 }
 
-/** Road and engine vibration, about 0.06g of it, which is a car under way. */
+/** Road and engine vibration, which is a car under way. */
 const ROAD_G = 0.2
-/** A vehicle at a standstill. Two orders of magnitude quieter. */
 const PARKED_G = 0.017
 
-/** Engine and road noise around 1g. */
 const cruising = (speedMps: number) => (): Omit<DriveSample, "t"> => ({
   accelG: 1 + 0.04,
   rotationRps: 0.2,
@@ -195,7 +193,7 @@ describe("detectDriveEvent", () => {
   it("does not let a roundabout and a hill corroborate a pothole", () => {
     // A descent raises pressure steadily, a roundabout spins the phone, and a
     // pothole eight seconds later provides the spike. Read across the whole
-    // buffer all three agree; read across the impact itself, none of them do.
+    // buffer all three agree. Read across the impact itself, none of them do.
     const rng = noise(11)
     const descending = (secondsIn: number, speedMps: number, rotationRps: number) => ({
       accelG: 1 + ROAD_G * rng(),

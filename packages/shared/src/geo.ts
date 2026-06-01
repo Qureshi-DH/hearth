@@ -140,7 +140,7 @@ export function metersPerSecondToMph(mps: number): number {
 }
 
 export function formatDistance(meters: number, units: "metric" | "imperial" = "metric"): string {
-  if (!Number.isFinite(meters)) return "—"
+  if (!Number.isFinite(meters)) return "–"
   if (units === "imperial") {
     const feet = meters * 3.28084
     if (feet < 1000) return `${Math.round(feet)} ft`

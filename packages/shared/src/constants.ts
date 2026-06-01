@@ -95,7 +95,6 @@ export const MUTABLE_EVENT_TYPES = [
   "speed_alert",
 ] as const satisfies readonly EventType[]
 
-/** Narrower than EventType, so anything keyed by it must cover every case. */
 export type MutableEventType = (typeof MUTABLE_EVENT_TYPES)[number]
 
 export const PLACE_ICONS = [
@@ -158,7 +157,7 @@ export const DEFAULTS = {
   maxMessageLength: 500,
   /** Off until a circle opts in. A motorway commute would alert every day. */
   defaultSpeedAlertKmh: 0,
-  /** Several in a row, so one GPS spike cannot raise an alert. */
+  /** So one GPS spike cannot raise an alert. */
   speedAlertConsecutiveFixes: 2,
   speedAlertCooldownSeconds: 30 * 60,
   /**

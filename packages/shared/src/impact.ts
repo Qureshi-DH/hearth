@@ -15,18 +15,18 @@
  *   3. and something other than the spike itself agrees that it was a collision
  *
  * The first two are necessary, not corroborating. Both are read from the same
- * fact — whether the car is moving — so counting them separately is how a hard
+ * fact (whether the car is moving), so counting them separately is how a hard
  * stop at a junction with a jolt in it turns into an SOS. They are one signal,
  * and on their own they describe every ordinary arrival at a red light.
  *
  * The deliberate gap: a collision with neither rotation nor a pressure rise,
- * on a phone with no barometer, is not reported. That combination is rare — a
- * loose phone tumbles and most phones have a barometer — and the alternative is
- * promoting the spike itself to its own corroboration, which cannot tell a
+ * on a phone with no barometer, is not reported. That combination is rare (a
+ * loose phone tumbles and most phones have a barometer), and the alternative
+ * is promoting the spike itself to its own corroboration, which cannot tell a
  * crash from a phone hitting the footwell as the car pulls up.
  */
 
-/** One moment of a drive. Sampling and units are the caller's problem. */
+/** Sampling and units are the caller's problem. */
 export interface DriveSample {
   /** Milliseconds since epoch. */
   t: number
@@ -56,7 +56,7 @@ export type DriveEvent =
       pressureJumpHpa: number | null
       /** Reported for the record. Never counted, see the note above. */
       speedDropMps: number | null
-      /** Signals agreeing beyond "the vehicle stopped". One is the threshold. */
+      /** Signals agreeing beyond "the vehicle stopped". */
       corroborations: number
     }
 
@@ -69,9 +69,9 @@ export const IMPACT = {
   harshBrakeG: 0.35,
   /** Below this a spike is road noise, not a candidate for anything. */
   impactG: 3,
-  /** Roughly 20 km/h lost, which no pothole causes. */
+  /** A loss of speed no pothole causes. */
   speedDropMps: 5.5,
-  /** About 200 degrees per second. A spin, not a swerve. */
+  /** A spin, not a swerve. */
   rotationRps: 3.5,
   /** An airbag firing pressurises the cabin. */
   pressureJumpHpa: 0.25,
@@ -85,8 +85,8 @@ export const IMPACT = {
    * Vibration, as the standard deviation of accelerometer magnitude. A vehicle
    * under way shakes even when its speed is steady, and that shaking is what
    * separates "stopped" from "cruising smoothly" on a phone whose GPS has not
-   * reported for a minute. Below the first figure the surroundings are at rest;
-   * above it something is running.
+   * reported for a minute. Below restNoiseG the surroundings are at rest.
+   * Above it, something is running.
    */
   restNoiseG: 0.05,
   driveNoiseG: 0.02,
@@ -94,7 +94,7 @@ export const IMPACT = {
   restNoiseRatio: 0.35,
   /** How long after the peak the corroborating signals are allowed to arrive. */
   aftermathMs: 2500,
-  /** One signal beyond the stop. Anything less is the stop counted twice. */
+  /** Without a signal beyond the stop, the stop is counted twice. */
   requiredCorroborations: 1,
 } as const
 
@@ -103,7 +103,7 @@ const IMPACT_LEAD_MS = 500
 /** An airbag pressurises the cabin in milliseconds. Climbing a hill does not. */
 const PRESSURE_BASELINE_MS = 1000
 const PRESSURE_STEP_MS = 600
-/** The run up, less the half second in which the impact is already happening. */
+/** The run up, less RUN_UP_GAP_MS, in which the impact is already happening. */
 const RUN_UP_MS = 6000
 const RUN_UP_GAP_MS = 500
 
