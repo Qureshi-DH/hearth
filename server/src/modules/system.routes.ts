@@ -11,7 +11,7 @@ import { storageEnabled } from "../services/storage"
 declare const __HEARTH_VERSION__: string | undefined
 
 /** Baked in by tsup for the bundle; falls back to the package manager in dev. */
-const VERSION =
+export const VERSION =
   typeof __HEARTH_VERSION__ === "string"
     ? __HEARTH_VERSION__
     : (process.env.npm_package_version ?? "0.0.0-dev")
@@ -54,7 +54,6 @@ export const systemRoutes: FastifyPluginAsyncZod = async (app) => {
           checkIns: true,
           avatars: storageEnabled(),
         },
-        nativeMotion: settings.nativeMotion,
       }
     },
   )
@@ -139,12 +138,15 @@ export const healthRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { tags: ["system"], summary: "Readiness probe (checks the database)" },
       logLevel: "warn",
     },
-    async (_request, reply) => {
+    async (request, reply) => {
       try {
         await db.execute(sql`select 1`)
         return { ok: true }
       } catch (error) {
-        return reply.code(503).send({ ok: false, error: (error as Error).message })
+        // The probe is unauthenticated, and a driver message names the host,
+        // the role and why it was refused. Operators read it from the log.
+        request.log.error({ err: error }, "readiness probe failed")
+        return reply.code(503).send({ ok: false })
       }
     },
   )

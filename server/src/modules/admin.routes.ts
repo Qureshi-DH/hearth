@@ -1,5 +1,5 @@
 import { REGISTRATION_MODES } from "@hearth/shared"
-import { desc, eq, gte, sql } from "drizzle-orm"
+import { and, desc, eq, gte, ne, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
@@ -17,11 +17,11 @@ import {
 import { getConfig } from "../env"
 import { badRequest, notFound } from "../lib/errors"
 import { requireAuth } from "../plugins/auth"
+import { revokeAllSessions } from "../services/auth"
 import { drainOutbox } from "../services/push"
 import { getServerSettings, updateServerSettings } from "../services/settings"
 import { getPushDriver, uptimeSeconds } from "../runtime"
-
-const VERSION = process.env.npm_package_version ?? "0.1.0"
+import { VERSION } from "./system.routes"
 
 export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
@@ -56,7 +56,6 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         body: z.object({
           serverName: z.string().trim().min(1).max(80).optional(),
           registrationMode: z.enum(REGISTRATION_MODES).optional(),
-          nativeMotion: z.boolean().optional(),
           maxHistoryRetentionDays: z.number().int().min(1).max(3650).nullish(),
         }),
       },
@@ -152,12 +151,31 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
       if (request.params.userId === auth.userId && request.body.isAdmin === false) {
         throw badRequest("You cannot remove your own administrator access.")
       }
+      if (request.params.userId === auth.userId && request.body.isActive === false) {
+        throw badRequest("You cannot deactivate your own account.")
+      }
       if (request.body.isAdmin === false) {
         const [{ count } = { count: 0 }] = await db
           .select({ count: sql<number>`count(*)::int` })
           .from(users)
           .where(eq(users.isAdmin, true))
         if (count <= 1) throw badRequest("The server must keep at least one administrator.")
+      }
+      // A deactivated administrator cannot sign in, so deactivating the last
+      // one locks the server out just as thoroughly as demoting them, and only
+      // a hand-edit of the database gets it back.
+      if (request.body.isActive === false) {
+        const [{ count } = { count: 0 }] = await db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(users)
+          .where(
+            and(
+              eq(users.isAdmin, true),
+              eq(users.isActive, true),
+              ne(users.id, request.params.userId),
+            ),
+          )
+        if (count === 0) throw badRequest("The server must keep at least one administrator.")
       }
 
       const [updated] = await db
@@ -166,6 +184,10 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(eq(users.id, request.params.userId))
         .returning()
       if (!updated) throw notFound("No such account.")
+
+      // Deactivation has to end the sessions too, or the account keeps its
+      // access token and its websocket until they expire.
+      if (request.body.isActive === false) await revokeAllSessions(db, updated.id)
 
       await db.insert(auditLog).values({
         actorUserId: auth.userId,

@@ -1,3 +1,5 @@
+import { lookup } from "node:dns/promises"
+
 import { PUSH_PROVIDERS } from "@hearth/shared"
 import { eq } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
@@ -70,6 +72,8 @@ export const pushRoutes: FastifyPluginAsyncZod = async (app) => {
         token = `${config.NTFY_TOPIC_PREFIX}-${sha256(`${config.jwtSecret}:${auth.sessionId}`).slice(0, 32)}`
       } else if (!token) {
         throw badRequest("A push token is required for this provider.")
+      } else if (config.PUSH_PROVIDER === "webpush") {
+        await assertReachableSubscription(token)
       }
 
       await db
@@ -127,4 +131,55 @@ export const pushRoutes: FastifyPluginAsyncZod = async (app) => {
       return { ok: true, queued: true }
     },
   )
+}
+
+/**
+ * A stored web push subscription becomes an outbound request from the server,
+ * so an unchecked endpoint turns any signed-in member into a probe of whatever
+ * the host can reach. On a home LAN that is the router, the NAS and everything
+ * else on the compose network.
+ */
+async function assertReachableSubscription(token: string): Promise<void> {
+  let subscription: { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } }
+  let endpoint: URL
+  try {
+    subscription = JSON.parse(token)
+    endpoint = new URL(String(subscription.endpoint))
+  } catch {
+    throw badRequest("That is not a valid web push subscription.")
+  }
+
+  if (endpoint.protocol !== "https:") {
+    throw badRequest("A web push endpoint must be an https URL.")
+  }
+  if (typeof subscription.keys?.p256dh !== "string" || typeof subscription.keys.auth !== "string") {
+    throw badRequest("That web push subscription is missing its keys.")
+  }
+
+  let addresses: { address: string }[]
+  try {
+    addresses = await lookup(endpoint.hostname, { all: true })
+  } catch {
+    throw badRequest("That web push endpoint does not resolve.")
+  }
+  if (addresses.some((entry) => isPrivateAddress(entry.address))) {
+    throw badRequest("That web push endpoint is not a public address.")
+  }
+}
+
+function isPrivateAddress(address: string): boolean {
+  const value = address.toLowerCase().replace(/^::ffff:/, "")
+  const octets = value.split(".").map(Number)
+  if (octets.length === 4 && octets.every((octet) => Number.isInteger(octet))) {
+    const [first = -1, second = -1] = octets
+    if (first === 0 || first === 10 || first === 127) return true
+    if (first === 169 && second === 254) return true
+    if (first === 172 && second >= 16 && second <= 31) return true
+    if (first === 192 && second === 168) return true
+    if (first === 100 && second >= 64 && second <= 127) return true
+    return false
+  }
+  if (value === "::" || value === "::1") return true
+  // Unique local (fc00::/7) and link local (fe80::/10).
+  return /^f[cd]/.test(value) || /^fe[89ab]/.test(value)
 }

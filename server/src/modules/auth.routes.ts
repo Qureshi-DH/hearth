@@ -4,6 +4,7 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
 import { getDb } from "../db/client"
+import { getConfig } from "../env"
 import {
   checkIns,
   circleMembers,
@@ -14,7 +15,14 @@ import {
   trips,
   users,
 } from "../db/schema"
-import { badRequest, conflict, forbidden, notFound, unauthorized } from "../lib/errors"
+import {
+  badRequest,
+  conflict,
+  forbidden,
+  notFound,
+  tooManyRequests,
+  unauthorized,
+} from "../lib/errors"
 import { avatarColorFor, normalizeEmail } from "../lib/ids"
 import { hashPassword, validatePasswordStrength, verifyPassword } from "../lib/password"
 import { toCurrentUser, toSessionSummary } from "../lib/serialize"
@@ -50,10 +58,38 @@ const emailSchema = z
 
 export const authRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
+  const config = getConfig()
+
+  // A password check runs a full scrypt, which costs orders of magnitude more
+  // than an ordinary request, so the credential routes get their own budget.
+  // The floor is what matters: these routes are keyed by address, and behind a
+  // reverse proxy that is one bucket for the whole household, so a fraction of
+  // RATE_LIMIT_MAX alone would turn a sensible tightening of the global dial
+  // into one login a minute for everyone. It still scales upward for anyone
+  // who raises the global figure.
+  const credentialLimit = {
+    max: Math.max(30, Math.floor(config.RATE_LIMIT_MAX / 20)),
+    timeWindow: "1 minute",
+  }
+
+  // Keyed by account AND address together. Keyed by account alone, anyone who
+  // knows a member's email could hold them locked out for ever without a
+  // credential. Keyed by address alone, one guessed account would exhaust the
+  // budget for everyone behind the same router.
+  const loginAttempts = app.createRateLimit({
+    max: 8,
+    timeWindow: "5 minutes",
+    keyGenerator: (request) => {
+      const body = request.body as { email?: unknown } | undefined
+      const email = typeof body?.email === "string" ? normalizeEmail(body.email) : ""
+      return `login:${email}:${request.ip}`
+    },
+  })
 
   app.post(
     "/auth/register",
     {
+      config: { rateLimit: credentialLimit },
       schema: {
         tags: ["auth"],
         summary: "Create an account",
@@ -111,9 +147,12 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           avatarColor: avatarColorFor(emailNormalized),
           isAdmin: isFirstUser,
         })
+        .onConflictDoNothing({ target: users.emailNormalized })
         .returning()
 
-      if (!created) throw badRequest("Could not create the account.")
+      // Two signups racing on the same address both clear the check above, and
+      // the loser would otherwise surface the unique violation as a 500.
+      if (!created) throw conflict("An account with that email already exists.")
 
       if (inviteCode) {
         // A bad code must not strand an account that was just created.
@@ -136,6 +175,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     "/auth/login",
     {
+      config: { rateLimit: credentialLimit },
       schema: {
         tags: ["auth"],
         summary: "Sign in and bind a device",
@@ -148,6 +188,12 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (request) => {
       const { email, password, device } = request.body
+
+      const attempt = await loginAttempts(request)
+      if (!attempt.isAllowed && attempt.isExceeded) {
+        throw tooManyRequests("Too many sign-in attempts for this account. Try again shortly.")
+      }
+
       const [user] = await db
         .select()
         .from(users)
@@ -171,6 +217,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     "/auth/refresh",
     {
+      config: { rateLimit: credentialLimit },
       schema: {
         tags: ["auth"],
         summary: "Exchange a refresh token for a new pair",
@@ -315,6 +362,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     "/auth/password",
     {
       preHandler: app.authenticate,
+      config: { rateLimit: credentialLimit },
       schema: {
         tags: ["auth"],
         summary: "Change password",
@@ -449,6 +497,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     "/me",
     {
       preHandler: app.authenticate,
+      config: { rateLimit: credentialLimit },
       schema: {
         tags: ["account"],
         summary: "Delete your account and all of your data",

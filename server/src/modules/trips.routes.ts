@@ -1,3 +1,4 @@
+import { DEFAULTS } from "@hearth/shared"
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
@@ -20,8 +21,8 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "Journeys derived from a member's breadcrumbs",
         description:
           "Trips are detected server-side by splitting history wherever the device stayed " +
-          "put for five minutes. Visible only to members of a circle the person shares " +
-          "precise location with.",
+          "put long enough to count as a stop. Visible only to members of a circle the " +
+          "person shares precise location with.",
         params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
         querystring: z.object({
           from: z.string().datetime().optional(),
@@ -35,9 +36,11 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
       const { circleId, userId } = request.params
       await requireMembership(request, circleId)
 
+      let earliestVisible: Date | null = null
+
       if (userId !== auth.userId) {
         const [target] = await db
-          .select({ sharingState: circleMembers.sharingState })
+          .select({ sharingState: circleMembers.sharingState, joinedAt: circleMembers.joinedAt })
           .from(circleMembers)
           .where(and(eq(circleMembers.circleId, circleId), eq(circleMembers.userId, userId)))
           .limit(1)
@@ -53,7 +56,19 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
         if (circle && !circle.settings.allowHistory) {
           throw forbidden("This circle has location history turned off.")
         }
+        // The same bound the breadcrumb history uses: nothing from before this
+        // person joined, and nothing older than the circle's own retention.
+        const retentionDays = circle?.settings.historyRetentionDays ?? DEFAULTS.historyRetentionDays
+        earliestVisible = new Date(
+          Math.max(target.joinedAt.getTime(), Date.now() - retentionDays * 24 * 60 * 60 * 1000),
+        )
       }
+
+      const requestedFrom = request.query.from ? new Date(request.query.from) : null
+      const from =
+        earliestVisible && (!requestedFrom || requestedFrom < earliestVisible)
+          ? earliestVisible
+          : requestedFrom
 
       const rows = await db
         .select()
@@ -61,7 +76,7 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(
           and(
             eq(trips.userId, userId),
-            request.query.from ? gte(trips.startedAt, new Date(request.query.from)) : undefined,
+            from ? gte(trips.startedAt, from) : undefined,
             request.query.to ? lte(trips.endedAt, new Date(request.query.to)) : undefined,
           ),
         )

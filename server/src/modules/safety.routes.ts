@@ -1,5 +1,6 @@
 import { haversineMeters } from "@hearth/shared"
 import { and, desc, eq, isNull } from "drizzle-orm"
+import { alias } from "drizzle-orm/pg-core"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
@@ -14,6 +15,8 @@ import { recordEvent } from "../services/feed"
 import { enqueuePush } from "../services/push"
 
 const circleIdParam = z.object({ circleId: z.string().uuid() })
+
+const resolver = alias(users, "resolver")
 
 export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
@@ -39,39 +42,46 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
       const auth = requireAuth(request)
       const membership = await requireMembership(request, request.params.circleId)
 
-      const [existing] = await db
-        .select({ id: sosAlerts.id })
-        .from(sosAlerts)
-        .where(
-          and(
-            eq(sosAlerts.circleId, membership.circleId),
-            eq(sosAlerts.userId, auth.userId),
-            isNull(sosAlerts.resolvedAt),
-          ),
-        )
-        .limit(1)
-      if (existing) throw conflict("You already have an active alert in this circle.")
+      const alert = await db.transaction(async (tx) => {
+        // An emergency is not the moment to respect ghost mode. Taking this row
+        // first also serialises two alerts racing from the same person, which
+        // the duplicate check below cannot do on its own: a panicked double tap
+        // would otherwise raise two, and resolving the one the app shows would
+        // leave the other lit with nothing able to clear it.
+        await tx
+          .update(circleMembers)
+          .set({ sharingState: "precise", pausedUntil: null })
+          .where(
+            and(
+              eq(circleMembers.circleId, membership.circleId),
+              eq(circleMembers.userId, auth.userId),
+            ),
+          )
 
-      // An emergency is not the moment to respect ghost mode.
-      await db
-        .update(circleMembers)
-        .set({ sharingState: "precise", pausedUntil: null })
-        .where(
-          and(
-            eq(circleMembers.circleId, membership.circleId),
-            eq(circleMembers.userId, auth.userId),
-          ),
-        )
+        const [existing] = await tx
+          .select({ id: sosAlerts.id })
+          .from(sosAlerts)
+          .where(
+            and(
+              eq(sosAlerts.circleId, membership.circleId),
+              eq(sosAlerts.userId, auth.userId),
+              isNull(sosAlerts.resolvedAt),
+            ),
+          )
+          .limit(1)
+        if (existing) throw conflict("You already have an active alert in this circle.")
 
-      const [alert] = await db
-        .insert(sosAlerts)
-        .values({
-          circleId: membership.circleId,
-          userId: auth.userId,
-          note: request.body.note ?? null,
-        })
-        .returning()
-      if (!alert) throw badRequest("Could not raise the alert.")
+        const [created] = await tx
+          .insert(sosAlerts)
+          .values({
+            circleId: membership.circleId,
+            userId: auth.userId,
+            note: request.body.note ?? null,
+          })
+          .returning()
+        if (!created) throw badRequest("Could not raise the alert.")
+        return created
+      })
 
       const [actor] = await db
         .select({
@@ -233,9 +243,10 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
       const membership = await requireMembership(request, request.params.circleId)
 
       const rows = await db
-        .select({ alert: sosAlerts, user: users, presence: userPresence })
+        .select({ alert: sosAlerts, user: users, resolver, presence: userPresence })
         .from(sosAlerts)
         .innerJoin(users, eq(users.id, sosAlerts.userId))
+        .leftJoin(resolver, eq(resolver.id, sosAlerts.resolvedBy))
         .leftJoin(userPresence, eq(userPresence.userId, sosAlerts.userId))
         .where(
           and(
@@ -252,7 +263,7 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         user: toPublicUser(row.user),
         startedAt: row.alert.startedAt.toISOString(),
         resolvedAt: row.alert.resolvedAt?.toISOString() ?? null,
-        resolvedBy: null,
+        resolvedBy: row.resolver ? toPublicUser(row.resolver) : null,
         note: row.alert.note,
         lastLat: row.alert.resolvedAt ? null : (row.presence?.lat ?? null),
         lastLon: row.alert.resolvedAt ? null : (row.presence?.lon ?? null),

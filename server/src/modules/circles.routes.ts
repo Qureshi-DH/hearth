@@ -480,7 +480,7 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["circles"],
         summary: "Change how you share your location with this circle",
         description:
-          "`precise` shares exact coordinates, `approximate` snaps them to a ~750 m grid, " +
+          "`precise` shares exact coordinates, `approximate` snaps them to a coarse grid, " +
           "and `paused` shares nothing. A pause may carry an expiry so it lapses on its own.",
         params: circleIdParam,
         body: z.object({
@@ -508,9 +508,16 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
           ? new Date(request.body.pausedUntil)
           : null
 
+      // Postgres evaluates SET expressions against the pre-update row, so this
+      // captures the state being replaced without a second read. The coalesce
+      // makes pausing twice keep the original rather than recording "paused".
+      const resumeToState =
+        request.body.sharingState === "paused"
+          ? sql`coalesce(${circleMembers.resumeToState}, ${circleMembers.sharingState})`
+          : null
       await db
         .update(circleMembers)
-        .set({ sharingState: request.body.sharingState, pausedUntil })
+        .set({ sharingState: request.body.sharingState, pausedUntil, resumeToState })
         .where(
           and(
             eq(circleMembers.circleId, request.params.circleId),

@@ -137,6 +137,7 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
       await requireMembership(request, circleId)
 
       const isSelf = auth.userId === userId
+      let earliestVisible: Date | null = null
 
       if (!isSelf) {
         const [circle] = await db
@@ -149,7 +150,7 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         }
 
         const [target] = await db
-          .select({ sharingState: circleMembers.sharingState })
+          .select({ sharingState: circleMembers.sharingState, joinedAt: circleMembers.joinedAt })
           .from(circleMembers)
           .where(and(eq(circleMembers.circleId, circleId), eq(circleMembers.userId, userId)))
           .limit(1)
@@ -157,13 +158,21 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         if (target.sharingState !== "precise") {
           throw forbidden("That member is not sharing precise location with this circle.")
         }
+        // Accepting an invite does not hand the circle everything from before
+        // you joined, and a circle never sees further back than its own
+        // retention even when another circle's setting kept the points alive.
+        const retentionDays = circle?.settings.historyRetentionDays ?? DEFAULTS.historyRetentionDays
+        earliestVisible = new Date(
+          Math.max(target.joinedAt.getTime(), Date.now() - retentionDays * 24 * 60 * 60 * 1000),
+        )
       }
 
       const to = request.query.to ? new Date(request.query.to) : new Date()
-      const from = request.query.from
+      let from = request.query.from
         ? new Date(request.query.from)
         : new Date(to.getTime() - 24 * 60 * 60 * 1000)
       if (from.getTime() > to.getTime()) throw badRequest("`from` must be before `to`.")
+      if (earliestVisible && from < earliestVisible) from = earliestVisible
 
       const rows = await db
         .select({
@@ -222,18 +231,25 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
       // Trips are derived from breadcrumbs, so erasing history has to take them
       // too. Otherwise the route just deleted is still readable as a trip.
       const deleted = await db.transaction(async (tx) => {
+        // The driver reports the affected rows, so a full erase does not
+        // materialise every deleted id just to count them.
         const points = await tx
           .delete(locationPoints)
           .where(
             and(eq(locationPoints.userId, auth.userId), lte(locationPoints.recordedAt, before)),
           )
-          .returning({ id: locationPoints.id })
         await tx.delete(trips).where(and(eq(trips.userId, auth.userId), lte(trips.endedAt, before)))
+        // The trip watermark never moves backwards. Rewinding it would make the
+        // detector re-segment the breadcrumbs that survived the cutoff and
+        // insert a second copy of every trip they already belong to.
         await tx
           .update(userPresence)
-          .set({ lastPointId: null, tripsProcessedUntil: null })
+          .set({
+            lastPointId: null,
+            tripsProcessedUntil: sql`greatest(${userPresence.tripsProcessedUntil}, ${before.toISOString()}::timestamptz)`,
+          })
           .where(eq(userPresence.userId, auth.userId))
-        return points.length
+        return points.count
       })
 
       return { ok: true, deleted }

@@ -1,9 +1,10 @@
 import type { WsClientMessage, WsServerMessage } from "@hearth/shared"
 import { eq } from "drizzle-orm"
+import { alias } from "drizzle-orm/pg-core"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 
 import { getDb } from "../db/client"
-import { circleMembers, sosAlerts, users } from "../db/schema"
+import { circleMembers, sessions, sosAlerts, userPresence, users } from "../db/schema"
 import { circleTopic, userTopic, type BusEnvelope } from "../lib/bus"
 import { toPublicUser } from "../lib/serialize"
 import { extractToken, type AccessTokenClaims } from "../plugins/auth"
@@ -17,6 +18,8 @@ import {
 const HEARTBEAT_MS = 30_000
 const REAUTH_MS = 60_000
 
+const resolver = alias(users, "resolver")
+
 /**
  * The bus carries word that something changed, never a rendered payload. What a
  * member may see depends on the viewer, so each socket re-projects presence for
@@ -26,11 +29,12 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
   const db = getDb()
 
   app.get("/ws", { websocket: true }, async (socket, request: FastifyRequest) => {
-    const token = extractToken(request)
-    let claims: AccessTokenClaims
+    // Empty rather than null, so the same verify below rejects a missing token
+    // and the value stays a string for the re-check on the timer.
+    const token = extractToken(request) ?? ""
 
+    let claims: AccessTokenClaims
     try {
-      if (!token) throw new Error("missing token")
       claims = app.jwt.verify<AccessTokenClaims>(token)
     } catch {
       socket.close(4401, "unauthorized")
@@ -38,6 +42,7 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
     }
 
     const userId = claims.sub
+    const sessionId = claims.sid
     const bus = getBus()
 
     const loadMemberships = async () =>
@@ -76,9 +81,39 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
     })
 
     async function reauthorise(): Promise<void> {
+      // Revocation is checked against the session row rather than by
+      // re-verifying the connect-time token. The token expires in minutes and
+      // the socket has no way to be handed a new one, so re-verifying it would
+      // close every healthy connection on a timer. The session row is what
+      // signing out, changing a password or deactivating an account updates,
+      // and it is the thing that has to stop the feed.
+      const [session] = await db
+        .select({ revokedAt: sessions.revokedAt, isActive: users.isActive })
+        .from(sessions)
+        .innerJoin(users, eq(users.id, sessions.userId))
+        .where(eq(sessions.id, sessionId))
+        .limit(1)
+      if (!session || session.revokedAt || !session.isActive) {
+        socket.close(4401, "unauthorized")
+        return
+      }
+
+      const previous = memberOf
       memberOf = await loadMemberships()
       for (const circleId of [...subscribed]) {
         if (!memberOf.has(circleId)) subscribed.delete(circleId)
+      }
+
+      // Only circles gained since the last pass are added, so a client that
+      // narrowed its own subscription keeps that choice.
+      const gained = [...memberOf].filter((circleId) => !previous.has(circleId))
+      if (gained.length === 0) return
+
+      for (const circleId of gained) subscribed.add(circleId)
+      send({ type: "subscribed", circleIds: [...subscribed] })
+      for (const circleId of gained) {
+        const presences = await getCirclePresence(db, circleId, userId)
+        send({ type: "presence", circleId, presences })
       }
     }
 
@@ -136,9 +171,16 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
           }
           case "sos": {
             const [alert] = await db
-              .select({ alert: sosAlerts, user: users })
+              .select({
+                alert: sosAlerts,
+                user: users,
+                resolver,
+                presence: userPresence,
+              })
               .from(sosAlerts)
               .innerJoin(users, eq(users.id, sosAlerts.userId))
+              .leftJoin(resolver, eq(resolver.id, sosAlerts.resolvedBy))
+              .leftJoin(userPresence, eq(userPresence.userId, sosAlerts.userId))
               .where(eq(sosAlerts.id, payload.alertId as string))
               .limit(1)
             if (!alert) break
@@ -151,11 +193,11 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
                 user: toPublicUser(alert.user),
                 startedAt: alert.alert.startedAt.toISOString(),
                 resolvedAt: alert.alert.resolvedAt?.toISOString() ?? null,
-                resolvedBy: null,
+                resolvedBy: alert.resolver ? toPublicUser(alert.resolver) : null,
                 note: alert.alert.note,
-                lastLat: null,
-                lastLon: null,
-                lastFixAt: null,
+                lastLat: alert.alert.resolvedAt ? null : (alert.presence?.lat ?? null),
+                lastLon: alert.alert.resolvedAt ? null : (alert.presence?.lon ?? null),
+                lastFixAt: alert.presence?.recordedAt?.toISOString() ?? null,
               },
             })
             break
