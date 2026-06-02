@@ -45,6 +45,7 @@ class MemoryBus implements RealtimeBus {
 }
 
 const REDIS_CHANNEL = "hearth:realtime"
+const PUBLISH_TIMEOUT_MS = 2000
 
 class RedisBus implements RealtimeBus {
   readonly kind = "redis" as const
@@ -66,14 +67,27 @@ class RedisBus implements RealtimeBus {
 
   static async connect(url: string): Promise<RedisBus> {
     const { Redis } = await import("ioredis")
-    const pub = new Redis(url, { maxRetriesPerRequest: null, lazyConnect: false })
+    // Publishing is awaited on the request path, so the publisher has to fail
+    // fast rather than queue commands for as long as Redis is unreachable. The
+    // subscriber has no caller waiting on it and keeps retrying so that it
+    // resubscribes after an outage.
+    const pub = new Redis(url, {
+      maxRetriesPerRequest: 1,
+      commandTimeout: PUBLISH_TIMEOUT_MS,
+      lazyConnect: false,
+    })
     const sub = new Redis(url, { maxRetriesPerRequest: null, lazyConnect: false })
     await sub.subscribe(REDIS_CHANNEL)
     return new RedisBus(pub, sub)
   }
 
   async publish(topic: string, payload: unknown): Promise<void> {
-    await this.pub.publish(REDIS_CHANNEL, JSON.stringify({ topic, payload }))
+    try {
+      await this.pub.publish(REDIS_CHANNEL, JSON.stringify({ topic, payload }))
+    } catch {
+      // Fan-out is best effort. Losing a frame while Redis is down is far
+      // better than failing the write that produced it.
+    }
   }
 
   onMessage(handler: (envelope: BusEnvelope) => void): () => void {

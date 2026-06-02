@@ -1,11 +1,11 @@
 import fastifyJwt from "@fastify/jwt"
 import { roleAtLeast, type CircleRole } from "@hearth/shared"
-import { and, eq } from "drizzle-orm"
+import { and, eq, isNull } from "drizzle-orm"
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import fp from "fastify-plugin"
 
 import { getDb } from "../db/client"
-import { circleMembers, users } from "../db/schema"
+import { circleMembers, sessions, users } from "../db/schema"
 import { getConfig } from "../env"
 import { forbidden, unauthorized } from "../lib/errors"
 
@@ -90,6 +90,21 @@ export const authPlugin = fp(async (app: FastifyInstance) => {
     } catch {
       throw unauthorized("Invalid or expired token.")
     }
+
+    // The signature alone says nothing about the session behind it, so a
+    // signed-out device or a deactivated account would keep working until the
+    // access token expired.
+    const db = getDb()
+    const [session] = await db
+      .select({ isActive: users.isActive })
+      .from(sessions)
+      .innerJoin(users, eq(users.id, sessions.userId))
+      .where(and(eq(sessions.id, claims.sid), isNull(sessions.revokedAt)))
+      .limit(1)
+
+    if (!session) throw unauthorized("This session is no longer valid.")
+    if (!session.isActive) throw forbidden("This account has been deactivated.")
+
     request.auth = { userId: claims.sub, sessionId: claims.sid, isAdmin: claims.adm === true }
   })
 
