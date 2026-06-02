@@ -1,5 +1,5 @@
 import { DEFAULTS, coarsenLocation, type MemberPresence, type SharingState } from "@hearth/shared"
-import { and, eq, isNull } from "drizzle-orm"
+import { and, eq, inArray, isNull } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import { circleMembers, placeMemberships, places, sosAlerts, userPresence } from "../db/schema"
@@ -107,7 +107,6 @@ export interface RawCirclePresence {
 export async function loadRawCirclePresence(
   db: Database,
   circleId: string,
-  onlyUserId?: string,
 ): Promise<RawCirclePresence> {
   const rows = await db
     .select({
@@ -126,12 +125,7 @@ export async function loadRawCirclePresence(
     })
     .from(circleMembers)
     .leftJoin(userPresence, eq(userPresence.userId, circleMembers.userId))
-    .where(
-      and(
-        eq(circleMembers.circleId, circleId),
-        onlyUserId ? eq(circleMembers.userId, onlyUserId) : undefined,
-      ),
-    )
+    .where(eq(circleMembers.circleId, circleId))
 
   const insideRows = await db
     .select({
@@ -142,13 +136,7 @@ export async function loadRawCirclePresence(
     })
     .from(placeMemberships)
     .innerJoin(places, eq(places.id, placeMemberships.placeId))
-    .where(
-      and(
-        eq(places.circleId, circleId),
-        eq(placeMemberships.isInside, true),
-        onlyUserId ? eq(placeMemberships.userId, onlyUserId) : undefined,
-      ),
-    )
+    .where(and(eq(places.circleId, circleId), eq(placeMemberships.isInside, true)))
 
   const atPlaceByUser: Record<string, MemberPresence["atPlace"]> = {}
   for (const row of insideRows) {
@@ -160,17 +148,107 @@ export async function loadRawCirclePresence(
   const activeSos = await db
     .select({ id: sosAlerts.id, userId: sosAlerts.userId })
     .from(sosAlerts)
-    .where(
-      and(
-        eq(sosAlerts.circleId, circleId),
-        isNull(sosAlerts.resolvedAt),
-        onlyUserId ? eq(sosAlerts.userId, onlyUserId) : undefined,
-      ),
-    )
+    .where(and(eq(sosAlerts.circleId, circleId), isNull(sosAlerts.resolvedAt)))
   const sosByUser: Record<string, string> = {}
   for (const row of activeSos) sosByUser[row.userId] = row.id
 
   return { rows, atPlaceByUser, sosByUser }
+}
+
+/**
+ * One member across every circle they are in, in three queries rather than
+ * three per circle. A location upload publishes to all of their circles at
+ * once, and that is the most frequent write the server takes.
+ */
+export async function loadRawPresenceByCircle(
+  db: Database,
+  userId: string,
+  circleIds: string[],
+): Promise<Map<string, RawCirclePresence>> {
+  const byCircle = new Map<string, RawCirclePresence>()
+  if (circleIds.length === 0) return byCircle
+
+  const rows = await db
+    .select({
+      circleId: circleMembers.circleId,
+      userId: circleMembers.userId,
+      sharingState: circleMembers.sharingState,
+      pausedUntil: circleMembers.pausedUntil,
+      lat: userPresence.lat,
+      lon: userPresence.lon,
+      accuracyMeters: userPresence.accuracyMeters,
+      recordedAt: userPresence.recordedAt,
+      batteryLevel: userPresence.batteryLevel,
+      isCharging: userPresence.isCharging,
+      activity: userPresence.activity,
+      speedMps: userPresence.speedMps,
+      headingDegrees: userPresence.headingDegrees,
+    })
+    .from(circleMembers)
+    .leftJoin(userPresence, eq(userPresence.userId, circleMembers.userId))
+    .where(and(eq(circleMembers.userId, userId), inArray(circleMembers.circleId, circleIds)))
+
+  const insideRows = await db
+    .select({
+      circleId: places.circleId,
+      placeId: places.id,
+      placeName: places.name,
+      placeIcon: places.icon,
+    })
+    .from(placeMemberships)
+    .innerJoin(places, eq(places.id, placeMemberships.placeId))
+    .where(
+      and(
+        eq(placeMemberships.userId, userId),
+        eq(placeMemberships.isInside, true),
+        inArray(places.circleId, circleIds),
+      ),
+    )
+
+  const activeSos = await db
+    .select({ id: sosAlerts.id, circleId: sosAlerts.circleId })
+    .from(sosAlerts)
+    .where(
+      and(
+        eq(sosAlerts.userId, userId),
+        isNull(sosAlerts.resolvedAt),
+        inArray(sosAlerts.circleId, circleIds),
+      ),
+    )
+
+  for (const circleId of circleIds) {
+    byCircle.set(circleId, { rows: [], atPlaceByUser: {}, sosByUser: {} })
+  }
+
+  for (const row of rows) {
+    byCircle.get(row.circleId)?.rows.push({
+      userId: row.userId,
+      sharingState: row.sharingState,
+      pausedUntil: row.pausedUntil,
+      lat: row.lat,
+      lon: row.lon,
+      accuracyMeters: row.accuracyMeters,
+      recordedAt: row.recordedAt,
+      batteryLevel: row.batteryLevel,
+      isCharging: row.isCharging,
+      activity: row.activity,
+      speedMps: row.speedMps,
+      headingDegrees: row.headingDegrees,
+    })
+  }
+
+  for (const row of insideRows) {
+    const entry = byCircle.get(row.circleId)
+    if (!entry || entry.atPlaceByUser[userId]) continue
+    entry.atPlaceByUser[userId] = { id: row.placeId, name: row.placeName, icon: row.placeIcon }
+  }
+
+  for (const row of activeSos) {
+    const entry = byCircle.get(row.circleId)
+    if (entry) entry.sosByUser[userId] = row.id
+  }
+
+  return byCircle
 }
 
 /** Pure, so it is safe to call once per connected socket. */

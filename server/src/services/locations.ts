@@ -16,12 +16,13 @@ import {
   sosAlerts,
   userPresence,
   users,
+  type CircleSettingsJson,
 } from "../db/schema"
 import { circleTopic } from "../lib/bus"
 import { getBus } from "../runtime"
 import { recordEvent } from "./feed"
 import { evaluateGeofenceBatch } from "./geofence"
-import { effectiveSharingState, loadRawCirclePresence } from "./presence"
+import { effectiveSharingState, loadRawPresenceByCircle } from "./presence"
 
 /** Fixes older than this are almost certainly a buggy client clock. */
 const MAX_BACKDATE_MS = 7 * 24 * 60 * 60 * 1000
@@ -41,6 +42,20 @@ export interface IngestResult {
   accepted: number
   rejected: number
   placeEvents: number
+}
+
+interface AlertCircle {
+  id: string
+  settings: CircleSettingsJson
+}
+
+/** The alert bookkeeping as it stood before this batch touched presence. */
+interface AlertPresence {
+  recordedAt: Date | null
+  speedAlertedAt: Date | null
+  overSpeedCount: number
+  incidentFlaggedAt: Date | null
+  lowBatteryNotifiedAt: Date | null
 }
 
 interface NormalizedFix {
@@ -147,6 +162,21 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
   const idByTime = new Map(inserted.map((row) => [row.recordedAt.getTime(), row.id]))
   const latest = fixes[fixes.length - 1]!
 
+  // Read before the upsert below overwrites it. The alerts need the state as
+  // it stood when this batch arrived, and the stored timestamp is what tells
+  // them whether this batch is the newest one.
+  const [presence] = await db
+    .select({
+      recordedAt: userPresence.recordedAt,
+      speedAlertedAt: userPresence.speedAlertedAt,
+      overSpeedCount: userPresence.overSpeedCount,
+      incidentFlaggedAt: userPresence.incidentFlaggedAt,
+      lowBatteryNotifiedAt: userPresence.lowBatteryNotifiedAt,
+    })
+    .from(userPresence)
+    .where(eq(userPresence.userId, options.userId))
+    .limit(1)
+
   await db
     .insert(userPresence)
     .values({
@@ -206,15 +236,37 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
     },
   )
 
-  await maybeRaiseDrivingAlerts(db, options.userId, fixes, now, sharing)
-  await maybeRaiseBatteryAlert(
-    db,
-    options.userId,
-    latest,
-    now,
-    [...sharing.entries()].filter(([, s]) => s !== "paused").map(([id]) => id),
-  )
-  await broadcastPresence(db, options.userId)
+  // A buffered or retried upload can be older than the presence row it lost
+  // to. The upsert already refuses to rewind, and the alerts have to refuse
+  // too, or a stale 4% reading raises "low battery" about a phone that has
+  // been on the charger for hours.
+  const isCurrent =
+    !presence?.recordedAt || presence.recordedAt.getTime() < latest.recordedAt.getTime()
+
+  if (isCurrent) {
+    const alertCircleIds = [...sharing.entries()]
+      .filter(([, state]) => state !== "paused")
+      .map(([id]) => id)
+    const alertCircles: AlertCircle[] =
+      alertCircleIds.length > 0
+        ? await db
+            .select({ id: circles.id, settings: circles.settings })
+            .from(circles)
+            .where(inArray(circles.id, alertCircleIds))
+        : []
+
+    await maybeRaiseDrivingAlerts(
+      db,
+      options.userId,
+      freshFixes,
+      now,
+      alertCircles.filter((circle) => sharing.get(circle.id) === "precise"),
+      presence,
+    )
+    await maybeRaiseBatteryAlert(db, options.userId, latest, now, alertCircles, presence)
+  }
+
+  await broadcastPresence(db, options.userId, [...sharing.keys()])
 
   return { accepted: inserted.length, rejected, placeEvents: transitions.length }
 }
@@ -224,20 +276,28 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
  * projects it for its own viewer, so precise, approximate and paused all come
  * out of one query no matter how many sockets are listening.
  */
-export async function broadcastPresence(db: Database, userId: string): Promise<void> {
+export async function broadcastPresence(
+  db: Database,
+  userId: string,
+  circleIds?: string[],
+): Promise<void> {
   const bus = getBus()
   if (!bus) return
 
-  const memberships = await db
-    .select({ circleId: circleMembers.circleId })
-    .from(circleMembers)
-    .where(eq(circleMembers.userId, userId))
+  const ids =
+    circleIds ??
+    (
+      await db
+        .select({ circleId: circleMembers.circleId })
+        .from(circleMembers)
+        .where(eq(circleMembers.userId, userId))
+    ).map((row) => row.circleId)
 
-  for (const membership of memberships) {
-    const raw = await loadRawCirclePresence(db, membership.circleId, userId)
-    await bus.publish(circleTopic(membership.circleId), {
+  const byCircle = await loadRawPresenceByCircle(db, userId, ids)
+  for (const [circleId, raw] of byCircle) {
+    await bus.publish(circleTopic(circleId), {
       type: "location",
-      circleId: membership.circleId,
+      circleId,
       userId,
       raw,
     })
@@ -258,29 +318,14 @@ async function maybeRaiseDrivingAlerts(
   userId: string,
   fixes: NormalizedFix[],
   now: Date,
-  sharing: Map<string, "precise" | "approximate" | "paused">,
+  preciseCircles: AlertCircle[],
+  presence: AlertPresence | undefined,
 ): Promise<void> {
-  const preciseCircles = [...sharing.entries()].filter(([, s]) => s === "precise").map(([id]) => id)
-  if (preciseCircles.length === 0) return
+  if (fixes.length === 0) return
 
-  const circleRows = await db
-    .select({ id: circles.id, settings: circles.settings })
-    .from(circles)
-    .where(inArray(circles.id, preciseCircles))
-
-  const speedCircles = circleRows.filter((row) => (row.settings.speedAlertKmh ?? 0) > 0)
-  const incidentCircles = circleRows.filter((row) => row.settings.incidentDetection)
+  const speedCircles = preciseCircles.filter((row) => (row.settings.speedAlertKmh ?? 0) > 0)
+  const incidentCircles = preciseCircles.filter((row) => row.settings.incidentDetection)
   if (speedCircles.length === 0 && incidentCircles.length === 0) return
-
-  const [presence] = await db
-    .select({
-      speedAlertedAt: userPresence.speedAlertedAt,
-      overSpeedCount: userPresence.overSpeedCount,
-      incidentFlaggedAt: userPresence.incidentFlaggedAt,
-    })
-    .from(userPresence)
-    .where(eq(userPresence.userId, userId))
-    .limit(1)
 
   const [actor] = await db
     .select({ displayName: users.displayName })
@@ -308,15 +353,22 @@ async function maybeRaiseDrivingAlerts(
       !presence?.speedAlertedAt ||
       now.getTime() - presence.speedAlertedAt.getTime() > DEFAULTS.speedAlertCooldownSeconds * 1000
 
-    if (streak >= DEFAULTS.speedAlertConsecutiveFixes && cooledDown) {
+    // The emit test uses the same un-rounded speed as the streak, and the
+    // cooldown is only spent when a circle is actually told. Otherwise
+    // 50.4 km/h against a 50 km/h threshold buys half an hour of silence and
+    // notifies nobody.
+    const overThreshold = speedCircles.filter(
+      (circle) => peakMps * 3.6 > circle.settings.speedAlertKmh,
+    )
+
+    if (streak >= DEFAULTS.speedAlertConsecutiveFixes && cooledDown && overThreshold.length > 0) {
       const peakKmh = Math.round(peakMps * 3.6)
       await db
         .update(userPresence)
         .set({ speedAlertedAt: now, overSpeedCount: 0 })
         .where(eq(userPresence.userId, userId))
 
-      for (const circle of speedCircles) {
-        if (peakKmh <= circle.settings.speedAlertKmh) continue
+      for (const circle of overThreshold) {
         await recordEvent(db, {
           circleId: circle.id,
           type: "speed_alert",
@@ -433,22 +485,24 @@ async function maybeRaiseBatteryAlert(
   userId: string,
   latest: NormalizedFix,
   now: Date,
-  circleIds: string[],
+  activeCircles: AlertCircle[],
+  presence: AlertPresence | undefined,
 ): Promise<void> {
-  if (circleIds.length === 0) return
-  if (latest.batteryLevel == null) return
+  if (activeCircles.length === 0) return
+  const level = latest.batteryLevel
+  if (level == null) return
 
-  const [presence] = await db
-    .select({ notifiedAt: userPresence.lowBatteryNotifiedAt })
-    .from(userPresence)
-    .where(eq(userPresence.userId, userId))
-    .limit(1)
+  const thresholdFor = (circle: AlertCircle) =>
+    circle.settings.lowBatteryThreshold ?? DEFAULTS.lowBatteryThreshold
+  const lowCircles =
+    latest.isCharging === true
+      ? []
+      : activeCircles.filter((circle) => level <= thresholdFor(circle))
 
-  const isLow = latest.batteryLevel <= DEFAULTS.lowBatteryThreshold && latest.isCharging !== true
-
-  if (!isLow) {
+  if (lowCircles.length === 0) {
     // Reset only after a real recovery, so the next drain can alert again.
-    if (presence?.notifiedAt && latest.batteryLevel > DEFAULTS.lowBatteryThreshold + 0.1) {
+    const recovered = activeCircles.every((circle) => level > thresholdFor(circle) + 0.1)
+    if (presence?.lowBatteryNotifiedAt && recovered) {
       await db
         .update(userPresence)
         .set({ lowBatteryNotifiedAt: null })
@@ -457,7 +511,7 @@ async function maybeRaiseBatteryAlert(
     return
   }
 
-  const lastNotified = presence?.notifiedAt?.getTime() ?? 0
+  const lastNotified = presence?.lowBatteryNotifiedAt?.getTime() ?? 0
   if (now.getTime() - lastNotified < LOW_BATTERY_COOLDOWN_MS) return
 
   await db
@@ -465,13 +519,13 @@ async function maybeRaiseBatteryAlert(
     .set({ lowBatteryNotifiedAt: now })
     .where(eq(userPresence.userId, userId))
 
-  const percent = Math.round(latest.batteryLevel * 100)
-  for (const circleId of circleIds) {
+  const percent = Math.round(level * 100)
+  for (const circle of lowCircles) {
     await recordEvent(db, {
-      circleId,
+      circleId: circle.id,
       type: "low_battery",
       actorUserId: userId,
-      payload: { batteryLevel: latest.batteryLevel },
+      payload: { batteryLevel: level },
       summary: `Battery at ${percent}%`,
       notify: {
         title: "Low battery",
@@ -485,7 +539,11 @@ async function maybeRaiseBatteryAlert(
 export async function resumeExpiredPauses(db: Database, userId: string, now: Date): Promise<void> {
   const expired = await db
     .update(circleMembers)
-    .set({ sharingState: "precise", pausedUntil: null })
+    .set({
+      sharingState: sql`coalesce(${circleMembers.resumeToState}, 'precise')`,
+      pausedUntil: null,
+      resumeToState: null,
+    })
     .where(
       and(
         eq(circleMembers.userId, userId),

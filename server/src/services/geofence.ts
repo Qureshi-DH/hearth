@@ -1,9 +1,9 @@
-import { DEFAULTS, evaluateGeofence } from "@hearth/shared"
+import { DEFAULTS, evaluateGeofence, type FeedEvent } from "@hearth/shared"
 import { and, eq, inArray, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import { circleMembers, placeEvents, placeMemberships, places, users } from "../db/schema"
-import { recordEvent } from "./feed"
+import { broadcastEvent, recordEvent } from "./feed"
 
 export interface GeofenceFix {
   lat: number
@@ -54,17 +54,27 @@ export async function evaluateGeofenceBatch(
 
   if (usable.length === 0) return []
 
-  const memberships = await db
-    .select({ circleId: circleMembers.circleId })
-    .from(circleMembers)
-    .where(eq(circleMembers.userId, userId))
-  const allowed = options.visibleCircleIds ? new Set(options.visibleCircleIds) : null
-  const circleIds = memberships
-    .map((row) => row.circleId)
-    .filter((id) => !allowed || allowed.has(id))
-  if (circleIds.length === 0) return []
+  const visible = options.visibleCircleIds
+  if (visible && visible.length === 0) return []
 
-  const placeRows = await db.select().from(places).where(inArray(places.circleId, circleIds))
+  // The membership join is what keeps a caller from writing arrivals into a
+  // circle this user does not belong to. Joining it here also spares the
+  // upload path a second read of the rows it already has.
+  const placeRows = await db
+    .select({
+      id: places.id,
+      circleId: places.circleId,
+      name: places.name,
+      lat: places.lat,
+      lon: places.lon,
+      radiusMeters: places.radiusMeters,
+    })
+    .from(places)
+    .innerJoin(
+      circleMembers,
+      and(eq(circleMembers.circleId, places.circleId), eq(circleMembers.userId, userId)),
+    )
+    .where(visible ? inArray(places.circleId, visible) : undefined)
   if (placeRows.length === 0) return []
 
   const existing = await db
@@ -137,71 +147,87 @@ export async function evaluateGeofenceBatch(
   }
 
   const lastFixAt = usable[usable.length - 1]!.recordedAt
-
-  for (const [placeId, state] of finalState) {
-    await db
-      .insert(placeMemberships)
-      .values({
-        placeId,
-        userId,
-        isInside: state.isInside,
-        since: state.since,
-        lastEvaluatedAt: lastFixAt,
-      })
-      .onConflictDoUpdate({
-        target: [placeMemberships.placeId, placeMemberships.userId],
-        set: { isInside: state.isInside, since: state.since, lastEvaluatedAt: lastFixAt },
-      })
-  }
-
   const untouched = placeRows
     .map((place) => place.id)
     .filter((id) => !finalState.has(id) && seenBefore.has(id))
-  if (untouched.length > 0) {
-    await db
-      .update(placeMemberships)
-      .set({ lastEvaluatedAt: lastFixAt })
-      .where(and(eq(placeMemberships.userId, userId), inArray(placeMemberships.placeId, untouched)))
-  }
 
-  if (transitions.length === 0) return []
+  // The new state and the events it produced commit together. If
+  // `lastEvaluatedAt` moved on its own and the process then died, every fix in
+  // this batch would be skipped as a straggler on the retry, and the arrival
+  // nobody was told about could never be recovered.
+  const broadcasts: Array<{ circleId: string; event: FeedEvent }> = []
 
-  await db.insert(placeEvents).values(
-    transitions.map((transition) => ({
-      placeId: transition.placeId,
-      circleId: transition.circleId,
-      userId,
-      type: transition.type,
-      occurredAt: transition.occurredAt,
-      pointId: transition.pointId,
-    })),
-  )
+  await db.transaction(async (tx) => {
+    for (const [placeId, state] of finalState) {
+      await tx
+        .insert(placeMemberships)
+        .values({
+          placeId,
+          userId,
+          isInside: state.isInside,
+          since: state.since,
+          lastEvaluatedAt: lastFixAt,
+        })
+        .onConflictDoUpdate({
+          target: [placeMemberships.placeId, placeMemberships.userId],
+          set: { isInside: state.isInside, since: state.since, lastEvaluatedAt: lastFixAt },
+        })
+    }
 
-  const [actor] = await db
-    .select({ displayName: users.displayName })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1)
-  const name = actor?.displayName ?? "Someone"
+    if (untouched.length > 0) {
+      await tx
+        .update(placeMemberships)
+        .set({ lastEvaluatedAt: lastFixAt })
+        .where(
+          and(eq(placeMemberships.userId, userId), inArray(placeMemberships.placeId, untouched)),
+        )
+    }
 
-  for (const transition of transitions) {
-    const verb = transition.type === "arrive" ? "arrived at" : "left"
-    await recordEvent(db, {
-      circleId: transition.circleId,
-      type: transition.type === "arrive" ? "place_arrive" : "place_leave",
-      actorUserId: userId,
-      payload: {
+    if (transitions.length === 0) return
+
+    await tx.insert(placeEvents).values(
+      transitions.map((transition) => ({
         placeId: transition.placeId,
-        placeName: transition.placeName,
-        occurredAt: transition.occurredAt.toISOString(),
-      },
-      summary: `${name} ${verb} ${transition.placeName}`,
-      notify: {
-        title: transition.placeName,
-        body: `${name} ${verb} ${transition.placeName}`,
-        data: { placeId: transition.placeId, userId },
-      },
-    })
+        circleId: transition.circleId,
+        userId,
+        type: transition.type,
+        occurredAt: transition.occurredAt,
+        pointId: transition.pointId,
+      })),
+    )
+
+    const [actor] = await tx
+      .select({ displayName: users.displayName })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
+    const name = actor?.displayName ?? "Someone"
+
+    for (const transition of transitions) {
+      const verb = transition.type === "arrive" ? "arrived at" : "left"
+      const dto = await recordEvent(tx as unknown as Database, {
+        deferBroadcast: true,
+        circleId: transition.circleId,
+        type: transition.type === "arrive" ? "place_arrive" : "place_leave",
+        actorUserId: userId,
+        payload: {
+          placeId: transition.placeId,
+          placeName: transition.placeName,
+          occurredAt: transition.occurredAt.toISOString(),
+        },
+        summary: `${name} ${verb} ${transition.placeName}`,
+        notify: {
+          title: transition.placeName,
+          body: `${name} ${verb} ${transition.placeName}`,
+          data: { placeId: transition.placeId, userId },
+        },
+      })
+      broadcasts.push({ circleId: transition.circleId, event: dto })
+    }
+  })
+
+  for (const { circleId, event } of broadcasts) {
+    await broadcastEvent(circleId, event)
   }
 
   return transitions

@@ -147,7 +147,7 @@ export async function deleteObject(key: string): Promise<void> {
   }
 }
 
-/** Two megabytes is generous for a 512 pixel square; the app resizes first. */
+/** Generous for a 512 pixel square. The app resizes before uploading. */
 export const MAX_AVATAR_BYTES = 2 * 1024 * 1024
 
 /**

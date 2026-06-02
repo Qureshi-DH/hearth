@@ -78,6 +78,10 @@ class ExpoDriver implements PushDriver {
           body: message.body,
           data: message.data ?? {},
           sound: message.channel === "sos" ? "default" : null,
+          // Without this iOS files an SOS as an ordinary alert, so Focus or Do
+          // Not Disturb silences the one notification that must not be
+          // silenced. Android's equivalent is the channel's bypassDnd.
+          interruptionLevel: message.channel === "sos" ? "time-sensitive" : undefined,
           priority: message.priority === "high" ? "high" : "default",
           channelId: message.channel ?? "default",
           // SOS must survive Doze / low-power mode on Android.

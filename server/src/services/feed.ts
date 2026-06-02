@@ -25,6 +25,19 @@ export interface RecordEventInput {
     onlyUserIds?: string[]
     data?: Record<string, unknown>
   }
+  /**
+   * Hold the websocket fan-out back and let the caller send it after its
+   * transaction commits. The push queue still goes in the transaction, because
+   * an outbox row is a write and must roll back with the event. A publish
+   * cannot be unsent, so a frame sent inside a transaction that later aborts
+   * announces something that never happened.
+   */
+  deferBroadcast?: boolean
+}
+
+/** Sends the fan-out a deferred recordEvent held back. Safe to call twice. */
+export async function broadcastEvent(circleId: string, event: FeedEvent): Promise<void> {
+  await getBus()?.publish(circleTopic(circleId), { type: "event", circleId, event })
 }
 
 /**
@@ -61,11 +74,7 @@ export async function recordEvent(db: Database, input: RecordEventInput): Promis
   }
 
   const dto = toFeedEvent(row, actor)
-  await getBus()?.publish(circleTopic(input.circleId), {
-    type: "event",
-    circleId: input.circleId,
-    event: dto,
-  })
+  if (!input.deferBroadcast) await broadcastEvent(input.circleId, dto)
 
   if (input.notify) {
     const exclude =
