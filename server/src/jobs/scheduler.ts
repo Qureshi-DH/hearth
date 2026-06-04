@@ -7,6 +7,7 @@ import { circleMembers, sessions, userPresence, users } from "../db/schema"
 import type { AppConfig } from "../env"
 import { getPushDriver } from "../runtime"
 import { recordEvent } from "../services/feed"
+import { effectiveSharingState } from "../services/presence"
 import { drainOutbox, pruneOutbox, requeueStuckSends } from "../services/push"
 import { getServerSettings } from "../services/settings"
 import { detectTripsForUser } from "../services/trips"
@@ -121,18 +122,41 @@ async function flagOfflineDevices(db: Database): Promise<number> {
   if (stale.length === 0) return 0
 
   const staleIds = stale.map((row) => row.userId)
-  await db
-    .update(userPresence)
-    .set({ offlineNotifiedAt: new Date() })
-    .where(inArray(userPresence.userId, staleIds))
-
   const memberships = await db
-    .select({ userId: circleMembers.userId, circleId: circleMembers.circleId })
+    .select({
+      userId: circleMembers.userId,
+      circleId: circleMembers.circleId,
+      sharingState: circleMembers.sharingState,
+      pausedUntil: circleMembers.pausedUntil,
+    })
     .from(circleMembers)
     .where(inArray(circleMembers.userId, staleIds))
 
+  const now = new Date()
+  let flagged = 0
+
   for (const row of stale) {
-    for (const membership of memberships.filter((m) => m.userId === row.userId)) {
+    // A circle the member paused sharing with hears nothing. "Their phone went
+    // quiet" is still a presence signal about someone who opted out of sharing
+    // with them, the way low-battery alerts skip paused circles.
+    const visible = memberships.filter(
+      (m) =>
+        m.userId === row.userId &&
+        effectiveSharingState(m.sharingState, m.pausedUntil, now) !== "paused",
+    )
+
+    // Claim one user at a time rather than the whole batch up front. The claim
+    // is the once-per-outage latch, so a send that throws part-way leaves
+    // everyone after this user unclaimed for the next tick to alert on.
+    const claimed = await db
+      .update(userPresence)
+      .set({ offlineNotifiedAt: now })
+      .where(and(eq(userPresence.userId, row.userId), isNull(userPresence.offlineNotifiedAt)))
+      .returning({ userId: userPresence.userId })
+    if (claimed.length === 0) continue
+    flagged += 1
+
+    for (const membership of visible) {
       await recordEvent(db, {
         circleId: membership.circleId,
         type: "device_offline",
@@ -147,13 +171,17 @@ async function flagOfflineDevices(db: Database): Promise<number> {
     }
   }
 
-  return stale.length
+  return flagged
 }
 
 async function resumeExpiredPauses(db: Database): Promise<number> {
   const expired = await db
     .update(circleMembers)
-    .set({ sharingState: "precise", pausedUntil: null })
+    .set({
+      sharingState: sql`coalesce(${circleMembers.resumeToState}, 'precise')`,
+      pausedUntil: null,
+      resumeToState: null,
+    })
     .where(
       and(
         eq(circleMembers.sharingState, "paused"),

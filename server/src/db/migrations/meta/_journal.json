@@ -22,6 +22,20 @@
       "when": 1788723128415,
       "tag": "0002_mighty_wolverine",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788786806395,
+      "tag": "0003_flimsy_killraven",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788788853184,
+      "tag": "0004_resume_to_state",
+      "breakpoints": true
     }
   ]
 }

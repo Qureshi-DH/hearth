@@ -179,8 +179,8 @@ async function main() {
         lowBatteryThreshold: 0.15,
         allowSharingPause: true,
         allowHistory: true,
-        // Bristol demo drive peaks around 5 km/h walking, so a 100 km/h alert
-        // stays quiet unless you deliberately test it.
+        // The demo route never leaves walking pace, so the speed alert stays
+        // quiet unless you deliberately test it.
         speedAlertKmh: 100,
         incidentDetection: false,
       },

@@ -33,6 +33,9 @@ import {
  * - String unions are stored as `text` rather than PG enums, so adding a new
  *   event type is a code change rather than a migration and a lock.
  * - Deleting a user or circle cascades. Self-hosters expect "delete" to mean it.
+ * - Foreign keys that cascade or null on delete carry a single-column index no
+ *   query here reads. It is there for the referential action itself, which
+ *   otherwise scans the whole referencing table every time a parent row goes.
  */
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
@@ -137,6 +140,12 @@ export const circleMembers = pgTable(
     sharingState: text("sharing_state").$type<SharingState>().notNull().default("precise"),
     /** When sharingState is "paused", sharing auto-resumes at this time. */
     pausedUntil: timestamp("paused_until", { withTimezone: true }),
+    /**
+     * What to restore when a pause ends. Without it a pause always resumed to
+     * "precise", so someone who was deliberately sharing an approximate
+     * location was silently upgraded to an exact one by waiting.
+     */
+    resumeToState: text("resume_to_state").$type<SharingState>(),
     notifications: jsonb("notifications")
       .$type<MemberNotificationPrefsJson>()
       .notNull()
@@ -206,7 +215,6 @@ export const locationPoints = pgTable(
   },
   (table) => [
     index("location_points_user_recorded_idx").on(table.userId, table.recordedAt.desc()),
-    index("location_points_recorded_idx").on(table.recordedAt),
     index("location_points_trip_idx").on(table.tripId),
     // Devices retry batches after a flaky upload. Dedupe rather than double-count.
     uniqueIndex("location_points_dedupe_key").on(table.userId, table.deviceId, table.recordedAt),
@@ -302,6 +310,7 @@ export const placeEvents = pgTable(
   (table) => [
     index("place_events_circle_occurred_idx").on(table.circleId, table.occurredAt.desc()),
     index("place_events_place_idx").on(table.placeId, table.occurredAt.desc()),
+    index("place_events_user_idx").on(table.userId),
   ],
 )
 
@@ -318,7 +327,10 @@ export const events = pgTable(
     summary: text("summary").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("events_circle_occurred_idx").on(table.circleId, table.occurredAt.desc())],
+  (table) => [
+    index("events_circle_occurred_idx").on(table.circleId, table.occurredAt.desc()),
+    index("events_actor_idx").on(table.actorUserId),
+  ],
 )
 
 /**
@@ -348,6 +360,7 @@ export const messages = pgTable(
   (table) => [
     index("messages_circle_created_idx").on(table.circleId, table.createdAt.desc()),
     index("messages_to_user_idx").on(table.toUserId, table.createdAt.desc()),
+    index("messages_user_idx").on(table.userId),
   ],
 )
 
@@ -388,7 +401,11 @@ export const checkIns = pgTable(
     placeId: uuid("place_id").references(() => places.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
-  (table) => [index("check_ins_circle_idx").on(table.circleId, table.createdAt.desc())],
+  (table) => [
+    index("check_ins_circle_idx").on(table.circleId, table.createdAt.desc()),
+    index("check_ins_user_idx").on(table.userId),
+    index("check_ins_place_idx").on(table.placeId),
+  ],
 )
 
 export const trips = pgTable(
@@ -412,7 +429,11 @@ export const trips = pgTable(
     endPlaceId: uuid("end_place_id").references(() => places.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
-  (table) => [index("trips_user_started_idx").on(table.userId, table.startedAt.desc())],
+  (table) => [
+    index("trips_user_started_idx").on(table.userId, table.startedAt.desc()),
+    index("trips_start_place_idx").on(table.startPlaceId),
+    index("trips_end_place_idx").on(table.endPlaceId),
+  ],
 )
 
 /**
@@ -447,6 +468,7 @@ export const notificationOutbox = pgTable(
   (table) => [
     index("notification_outbox_pending_idx").on(table.status, table.nextAttemptAt),
     index("notification_outbox_user_idx").on(table.userId),
+    index("notification_outbox_session_idx").on(table.sessionId),
   ],
 )
 
@@ -462,7 +484,10 @@ export const auditLog = pgTable(
     ip: text("ip"),
     createdAt: createdAt(),
   },
-  (table) => [index("audit_log_created_idx").on(table.createdAt.desc())],
+  (table) => [
+    index("audit_log_created_idx").on(table.createdAt.desc()),
+    index("audit_log_actor_idx").on(table.actorUserId),
+  ],
 )
 
 /** Settings an admin can change at runtime, without a restart. */
