@@ -486,6 +486,35 @@ describe("roles", () => {
 })
 
 describe("privacy of derived data", () => {
+  it("a timed pause resumes to the state it replaced, not to precise", async () => {
+    // Waiting out a pause must not silently upgrade someone who had chosen to
+    // share only an approximate location.
+    const user = await registerUser(ctx.app)
+    const circle = await createCircle(user.headers)
+
+    const setSharing = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        method: "PATCH",
+        url: `/api/v1/circles/${circle.id}/sharing`,
+        headers: user.headers,
+        payload,
+      })
+
+    expect((await setSharing({ sharingState: "approximate" })).statusCode).toBe(200)
+    const paused = await setSharing({
+      sharingState: "paused",
+      pausedUntil: new Date(Date.now() - 1000).toISOString(),
+    })
+    expect(paused.statusCode).toBe(200)
+
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    const [row] = await getDb().execute(
+      sql`select sharing_state, resume_to_state from circle_members where circle_id = ${circle.id}`,
+    )
+    expect(row).toMatchObject({ sharing_state: "approximate", resume_to_state: null })
+  })
+
   it("does not announce arrivals or expose trips for a member sharing approximately", async () => {
     const parent = await registerUser(ctx.app, { displayName: "Parent" })
     const teen = await registerUser(ctx.app, { displayName: "Teen" })
@@ -679,7 +708,7 @@ describe("locations, presence and privacy", () => {
       payload: {
         points: [
           { ...HOME, recordedAt: iso(-5) },
-          { ...HOME, recordedAt: iso(60 * 60) }, // an hour in the future
+          { ...HOME, recordedAt: iso(60 * 60) },
           { ...HOME, recordedAt: "not-a-date" },
         ],
       },
@@ -744,7 +773,7 @@ describe("places and geofencing", () => {
     })
     expect(school.statusCode).toBe(201)
 
-    // Drift to 170 m from home, inside radius plus buffer (190 m), so still "home".
+    // Drift outside the radius but still inside the exit buffer, so still "home".
     const drift = { lat: HOME.lat + 0.00153, lon: HOME.lon }
     let result = await uploadFixes(kid.headers, [
       { ...drift, recordedAt: iso(-240), accuracyMeters: 10 },
@@ -768,7 +797,7 @@ describe("places and geofencing", () => {
       true,
     )
 
-    // A hopeless fix (1 km accuracy) must not move anyone.
+    // A hopeless fix must not move anyone.
     result = await uploadFixes(kid.headers, [
       { ...HOME, recordedAt: iso(-60), accuracyMeters: 1000 },
     ])
@@ -897,7 +926,7 @@ describe("trips and background jobs", () => {
     })
     await uploadFixes(user.headers, points)
 
-    // An ancient breadcrumb that retention must remove (circle default is 30 days).
+    // An old breadcrumb, kept by the circle's own retention until it is tightened below.
     await uploadFixes(user.headers, [
       { ...HOME, recordedAt: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString() },
     ])
@@ -921,7 +950,6 @@ describe("trips and background jobs", () => {
     expect(trip!.distanceMeters).toBeGreaterThan(1000)
     expect(trip!.durationSeconds).toBe(20 * 60)
 
-    // Tighten retention to one day and confirm the old point is swept.
     await ctx.app.inject({
       method: "PATCH",
       url: `/api/v1/circles/${circle.id}`,
@@ -939,7 +967,7 @@ describe("trips and background jobs", () => {
     const admin = await registerUser(ctx.app)
     await createCircle(admin.headers)
 
-    // Six days old, which the circle's own 30-day retention keeps.
+    // Old, but still inside the circle's own retention window.
     await uploadFixes(admin.headers, [
       { ...HOME, recordedAt: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString() },
     ])
@@ -1039,5 +1067,76 @@ describe("admin", () => {
       },
     })
     expect(blocked.statusCode).toBe(403)
+  })
+})
+
+describe("history bounds", () => {
+  it("hides breadcrumbs recorded before the member joined the circle", async () => {
+    const owner = await registerUser(ctx.app, { displayName: "Owner" })
+    const newcomer = await registerUser(ctx.app, { displayName: "Newcomer" })
+    const circle = await createCircle(owner.headers)
+
+    await uploadFixes(newcomer.headers, [{ ...HOME, recordedAt: iso(-3600) }])
+
+    const accepted = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/invites/${circle.invite.code}/accept`,
+      headers: newcomer.headers,
+    })
+    expect(accepted.statusCode).toBe(200)
+
+    await uploadFixes(newcomer.headers, [{ ...SCHOOL, recordedAt: iso(60) }])
+
+    const history = await ctx.app.inject({
+      method: "GET",
+      url:
+        `/api/v1/circles/${circle.id}/members/${newcomer.user.id}/history` +
+        `?from=1970-01-01T00:00:00.000Z&to=${encodeURIComponent(iso(600))}`,
+      headers: owner.headers,
+    })
+    expect(history.statusCode).toBe(200)
+    const points = history.json() as { lat: number }[]
+    expect(points).toHaveLength(1)
+    expect(points[0]!.lat).toBe(SCHOOL.lat)
+  })
+})
+
+describe("admin account state", () => {
+  it("keeps an administrator and ends a deactivated account's sessions", async () => {
+    const admin = await registerUser(ctx.app)
+    const member = await registerUser(ctx.app)
+
+    const self = await ctx.app.inject({
+      method: "PATCH",
+      url: `/api/v1/admin/users/${admin.user.id}`,
+      headers: admin.headers,
+      payload: { isActive: false },
+    })
+    expect(self.statusCode).toBe(400)
+
+    const deactivated = await ctx.app.inject({
+      method: "PATCH",
+      url: `/api/v1/admin/users/${member.user.id}`,
+      headers: admin.headers,
+      payload: { isActive: false },
+    })
+    expect(deactivated.statusCode).toBe(200)
+
+    const refresh = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      payload: { refreshToken: member.refreshToken },
+    })
+    expect(refresh.statusCode).toBe(401)
+
+    const listed = await ctx.app.inject({
+      method: "GET",
+      url: "/api/v1/admin/users",
+      headers: admin.headers,
+    })
+    const row = (listed.json() as { id: string; deviceCount: number }[]).find(
+      (entry) => entry.id === member.user.id,
+    )!
+    expect(row.deviceCount).toBe(0)
   })
 })
