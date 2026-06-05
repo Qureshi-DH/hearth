@@ -29,11 +29,11 @@ jest.mock("expo-sensors", () => {
 
 const STEP_MS = 20
 
-/** The accelerometer reports a vector; the detector only reads its magnitude. */
+/** The accelerometer reports a vector. The detector only reads its magnitude. */
 const push = (g: number) => mockState.accel?.({ x: 0, y: 0, z: g })
 const spin = (rps: number) => mockState.gyro?.({ x: 0, y: 0, z: rps })
 
-/** Feeds `seconds` of samples at 50Hz, advancing the clock as it goes. */
+/** Feeds `seconds` of samples, advancing the clock as it goes. */
 function drive(seconds: number, g: () => number) {
   for (let elapsed = 0; elapsed < seconds * 1000; elapsed += STEP_MS) {
     push(g())
@@ -90,7 +90,7 @@ describe("drive sensor lifecycle", () => {
 
   it("delivers a verdict for the samples it holds even after it has been stopped", async () => {
     // A crashed car reads as "still" to the OS classifier, which stops the
-    // sensors — inside the very window the verdict is waiting on.
+    // sensors inside the very window the verdict is waiting on.
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))
 
@@ -105,6 +105,26 @@ describe("drive sensor lifecycle", () => {
 
     expect(events).toEqual([])
     stopDriveSensors()
+    jest.advanceTimersByTime(IMPACT.aftermathMs + IMPACT.stillnessMs + 1000)
+
+    expect(events).toEqual(["possibleImpact"])
+  })
+
+  it("judges an impact after the window has been rolling for minutes", async () => {
+    // Clear of the cooldown left behind by the verdict above, which is module
+    // state that outlives the test that set it.
+    jest.setSystemTime(Date.parse("2026-01-01T12:10:00.000Z"))
+    const events: string[] = []
+    await startDriveSensors((event) => events.push(event.kind))
+
+    // Several windows worth of driving, so the samples the verdict is read from
+    // have been through the compaction the buffer does as it rolls.
+    drive(90, road)
+    spin(7)
+    push(1 + 9.2)
+    jest.advanceTimersByTime(STEP_MS)
+    spin(0.05)
+    drive(7, parked)
     jest.advanceTimersByTime(IMPACT.aftermathMs + IMPACT.stillnessMs + 1000)
 
     expect(events).toEqual(["possibleImpact"])

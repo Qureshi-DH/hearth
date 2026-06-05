@@ -92,8 +92,12 @@ class RealtimeClient {
     }
 
     socket.onclose = (event) => {
+      // A socket that was already replaced closes late, after its successor is
+      // open. Letting it run on would clear the live socket's ping timer and
+      // schedule a second connection on top of it.
+      if (this.socket !== socket) return
+      this.socket = null
       this.clearTimers()
-      if (this.socket === socket) this.socket = null
       // 4401 means the server considers the token dead. A refresh happens on the
       // next REST call and `refresh()` reconnects us, so do not hammer it here.
       if (!this.wanted || event.code === 4401) return

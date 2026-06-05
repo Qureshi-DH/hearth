@@ -31,7 +31,7 @@ Notifications.setNotificationHandler({
   },
 })
 
-/** Android channels map to the server's three notification classes. */
+/** Android channels map to the server's notification classes. */
 export async function setupChannels(): Promise<void> {
   if (Platform.OS !== "android") return
   await Notifications.setNotificationChannelAsync("default", {
@@ -74,7 +74,7 @@ export async function setupPush(serverInfo: ServerInfo): Promise<PushSetupResult
   if (serverInfo.pushProvider === "webpush") {
     return {
       kind: "unsupported",
-      reason: "Web Push is for browsers; use the app's built-in transport instead.",
+      reason: "Web Push is for browsers. Use the app's built-in transport instead.",
     }
   }
 
@@ -150,6 +150,7 @@ export async function presentLocalSos(name: string, note: string | null): Promis
       body: note ?? "Tap to see their location.",
       sound: "default",
       data: { type: "sos_started" },
+      interruptionLevel: "timeSensitive",
       ...(Platform.OS === "android" ? { channelId: "sos" } : {}),
     },
     trigger: null,

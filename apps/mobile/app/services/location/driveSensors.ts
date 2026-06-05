@@ -7,9 +7,9 @@ import { useTrackingStore } from "@/stores/tracking"
  * Samples the sensors that can tell a crash from a pothole, and only while the
  * OS says the phone is in a vehicle. Parked or walking, none of this runs.
  *
- * 50Hz on the accelerometer is the cost of catching an impact at all, since a
- * collision is over in well under a tenth of a second. Everything else samples
- * far slower because pressure and rotation change on human timescales.
+ * The accelerometer has to sample fast enough to catch an impact at all, since
+ * a collision is over in well under a tenth of a second. Everything else
+ * samples far slower because pressure and rotation change on human timescales.
  */
 const ACCEL_INTERVAL_MS = 20
 const GYRO_INTERVAL_MS = 100
@@ -24,7 +24,7 @@ const COOLDOWN_MS = 60_000
 /**
  * Beyond this a fix describes where the phone was, not how fast it is going
  * now. Location arrives in deferred batches that can be a minute apart, so most
- * samples have no speed at all — which is the honest answer. Carrying the last
+ * samples have no speed at all, which is the honest answer. Carrying the last
  * one forward would stamp a confident 27 m/s across the seconds after a crash
  * and a confident 0 across the seconds before one.
  */
@@ -38,6 +38,8 @@ let baroSub: Subscription | null = null
 let starting = false
 
 let window: DriveSample[] = []
+/** Where the samples still inside the window start. */
+let windowStart = 0
 let latestRotation = 0
 let latestPressure: number | undefined
 let verdictTimer: ReturnType<typeof setTimeout> | null = null
@@ -45,11 +47,22 @@ let lastVerdictAt = 0
 
 let onEvent: ((event: DriveEvent) => void) | null = null
 
+/**
+ * Expired samples are skipped past rather than filtered out. Once the window is
+ * full, filtering rebuilds the whole thing on every sample for the length of a
+ * drive, so the array is compacted a window at a time instead.
+ */
 function trim(now: number): void {
   const cutoff = now - WINDOW_MS
-  if (window.length > 0 && window[0]!.t >= cutoff) return
-  window = window.filter((sample) => sample.t >= cutoff)
+  while (windowStart < window.length && window[windowStart]!.t < cutoff) windowStart++
+  if (windowStart >= WINDOW_MS / ACCEL_INTERVAL_MS) {
+    window = window.slice(windowStart)
+    windowStart = 0
+  }
 }
+
+/** The live part of the window, which is what the detector is asked about. */
+const liveSamples = (): DriveSample[] => (windowStart === 0 ? window : window.slice(windowStart))
 
 /** The last fix, but only while it still describes this instant. */
 export function contemporaneousSpeed(
@@ -65,7 +78,7 @@ export function contemporaneousSpeed(
 const freshSpeed = (now: number): number | undefined =>
   contemporaneousSpeed(useTrackingStore.getState().lastFix, now)
 
-/** Everything sensor related released; the window and handler are separate. */
+/** Everything sensor related released. The window and the handler are separate. */
 function unsubscribe(): void {
   accelSub?.remove()
   gyroSub?.remove()
@@ -77,6 +90,7 @@ function unsubscribe(): void {
 
 function forget(): void {
   window = []
+  windowStart = 0
   latestRotation = 0
   latestPressure = undefined
   onEvent = null
@@ -89,7 +103,7 @@ function forget(): void {
  */
 function judge(): void {
   verdictTimer = null
-  const event = detectDriveEvent(window)
+  const event = detectDriveEvent(liveSamples())
   const suppressed = event.kind === "possibleImpact" && Date.now() - lastVerdictAt < COOLDOWN_MS
   if (event.kind !== "none" && !suppressed) {
     if (event.kind === "possibleImpact") lastVerdictAt = Date.now()
@@ -137,6 +151,7 @@ export async function startDriveSensors(handler: (event: DriveEvent) => void): P
     // A verdict still outstanding is holding the only copy of the evidence.
     if (verdictTimer === null) {
       window = []
+      windowStart = 0
       latestRotation = 0
       latestPressure = undefined
     }
@@ -168,7 +183,7 @@ export async function startDriveSensors(handler: (event: DriveEvent) => void): P
 
 /**
  * Stops sampling, but never abandons a verdict that is already scheduled. The
- * reclassification that usually stops us — a crashed car reads as "still" —
+ * reclassification that usually stops us (a crashed car reads as "still")
  * arrives inside the very window we are waiting on, and dropping it there would
  * throw away the incident at exactly the moment it happened.
  */

@@ -18,6 +18,7 @@ export async function presentIncidentAlarm(title: string, body: string): Promise
       body,
       sound: "default",
       data: { type: "incident" },
+      interruptionLevel: "timeSensitive",
       ...(Platform.OS === "android" ? { channelId: "sos" } : {}),
     },
     trigger: null,

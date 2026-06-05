@@ -33,4 +33,5 @@ export const toast = {
   show: (message: string) => useToastStore.getState().show(message, "neutral"),
   success: (message: string) => useToastStore.getState().show(message, "success"),
   error: (message: string) => useToastStore.getState().show(message, "error"),
+  info: (message: string) => useToastStore.getState().show(message, "neutral"),
 }

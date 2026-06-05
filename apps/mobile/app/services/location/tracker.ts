@@ -27,7 +27,7 @@ const STALE_FIX_MS = 30 * 60 * 1000
 
 /**
  * The OS classifier is more certain than a distance heuristic, so it can call
- * a stop sooner than five minutes of watching the phone not move.
+ * a stop sooner than STILL_AFTER_MS of watching the phone not move.
  */
 const MOTION_STILL_CONFIRM_MS = 90_000
 const MOTION_MIN_CONFIDENCE = 50
@@ -166,7 +166,7 @@ async function doFlush(): Promise<void> {
           return
         }
         if (error.status === 401) {
-          useTrackingStore.getState().setError("Signed out; sharing paused.")
+          useTrackingStore.getState().setError("Signed out. Sharing paused.")
           return
         }
         // Validation or permission failure, so this batch will never succeed.
@@ -242,6 +242,10 @@ TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
   await reportNow("significant")
 })
 
+/** Waking the location stack is the one thing "stationary" exists to avoid. */
+const DRIFT_CHECK_MS = 60 * 60 * 1000
+let lastDriftCheck = 0
+
 TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
   try {
     const { lastFix, enabled, mode, stillAnchor } = useTrackingStore.getState()
@@ -252,21 +256,44 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
     // pass re-arms it and independently checks whether the phone has left. A
     // fence that quietly fails would otherwise mean going dark on a journey.
     if (enabled && mode === "stationary" && stillAnchor) {
-      if (!(await geofenceRunning())) await enterStationary(stillAnchor.lat, stillAnchor.lon)
+      const rearmed = !(await geofenceRunning())
+      if (rearmed) await enterStationary(stillAnchor.lat, stillAnchor.lon)
+      if (rearmed || Date.now() - lastDriftCheck > DRIFT_CHECK_MS) {
+        lastDriftCheck = Date.now()
+        try {
+          const here = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          })
+          const drift = haversineMeters(
+            { lat: stillAnchor.lat, lon: stillAnchor.lon },
+            { lat: here.coords.latitude, lon: here.coords.longitude },
+          )
+          if (drift > STATIONARY_GEOFENCE_RADIUS_METERS) {
+            await enterMoving()
+            await ingest([here], "significant")
+          }
+        } catch {
+          // No fix available this wake. The fence is still armed.
+        }
+      }
+    }
+
+    // The OS stops delivering while the phone sits inside the distance filter,
+    // so a journey that ends in the background produces no fix to judge and
+    // nothing else would ever call the stop. Without this pass the service, and
+    // its notification, stay on for good.
+    if (enabled && mode === "moving") {
       try {
         const here = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         })
-        const drift = haversineMeters(
-          { lat: stillAnchor.lat, lon: stillAnchor.lon },
-          { lat: here.coords.latitude, lon: here.coords.longitude },
-        )
-        if (drift > STATIONARY_GEOFENCE_RADIUS_METERS) {
-          await enterMoving()
-          await ingest([here], "significant")
-        }
+        await evaluateStillness({
+          lat: here.coords.latitude,
+          lon: here.coords.longitude,
+          recordedAt: new Date(here.timestamp).toISOString(),
+        })
       } catch {
-        // No fix available this wake. The fence is still armed.
+        // No fix available this wake, so it stays moving until the next one.
       }
     }
 
@@ -312,8 +339,10 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
     timeInterval: policy.minUpdateIntervalSeconds * 1000,
     distanceInterval: policy.distanceFilterMeters,
     // Let the OS batch deliveries while the phone is still. The server dedupes.
+    // No distance alongside it: Android requires both conditions, so a distance
+    // holds back the fixes from the end of a journey, which are the ones that
+    // say the phone has parked.
     deferredUpdatesInterval: Math.max(60_000, policy.minUpdateIntervalSeconds * 2000),
-    deferredUpdatesDistance: policy.distanceFilterMeters * 2,
     // iOS does this natively: it parks the GPS when you stop and wakes on
     // motion. Turning it off was throwing away the same saving we now build by
     // hand on Android.
@@ -330,6 +359,7 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
 }
 
 let motionSubscription: { remove: () => void } | null = null
+let motionStarting = false
 let motionStillSince: number | null = null
 
 /**
@@ -338,11 +368,30 @@ let motionStillSince: number | null = null
  * Opt in per server while it is being compared against the GPS only path.
  */
 async function startMotionWatch(): Promise<void> {
-  if (motionSubscription) return
-  if (!useAuthStore.getState().serverInfo?.nativeMotion) return
-  motionSubscription = await startMotion((activity, confidence) => {
-    void onMotion(activity, confidence)
-  })
+  // The resume path and the device toggle can call this at once, and each await
+  // below is a chance for the second to walk past a null subscription and add a
+  // native listener whose handle we then lose.
+  if (motionSubscription || motionStarting) return
+  if (!useSettingsStore.getState().nativeMotion) return
+  motionStarting = true
+  try {
+    motionSubscription = await startMotion((activity, confidence) => {
+      void onMotion(activity, confidence)
+    })
+  } finally {
+    motionStarting = false
+  }
+}
+
+/**
+ * Called when the device toggle changes. Whether the phone works out that it
+ * has stopped from the OS classifier or from GPS is invisible to the server,
+ * the same fixes arrive either way, so this is purely a battery choice and it
+ * takes effect without restarting tracking.
+ */
+export async function refreshMotionWatch(): Promise<void> {
+  if (useSettingsStore.getState().nativeMotion) await startMotionWatch()
+  else await stopMotionWatch()
 }
 
 async function stopMotionWatch(): Promise<void> {
@@ -434,8 +483,9 @@ export async function enterStationary(lat: number, lon: number): Promise<void> {
   if (await locationUpdatesRunning()) {
     await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {})
   }
-  // 50Hz of accelerometer is only worth its battery inside a moving vehicle.
-  // A verdict already scheduled survives this; see stopDriveSensors.
+  // Sampling the accelerometer that hard is only worth its battery inside a
+  // moving vehicle. A verdict already scheduled survives this, see
+  // stopDriveSensors.
   stopDriveSensors()
   store.setMode("stationary")
   store.setBackgroundActive(true)
@@ -461,7 +511,9 @@ export function stillnessDecision(
   return Date.parse(fix.recordedAt) - Date.parse(anchor.since) >= STILL_AFTER_MS ? "settle" : "wait"
 }
 
-async function evaluateStillness(fix: LocationFixInput): Promise<void> {
+async function evaluateStillness(
+  fix: Pick<LocationFixInput, "lat" | "lon" | "recordedAt">,
+): Promise<void> {
   const store = useTrackingStore.getState()
   if (store.mode !== "moving") return
 
@@ -509,16 +561,39 @@ export async function refreshLocationStatus(): Promise<{
   return { permission, servicesEnabled }
 }
 
+/**
+ * The fix the OS already has, so asking costs nothing. It is the only thing
+ * that can tell us the anchor went stale while the process was dead, taking
+ * the geofence with it.
+ */
+async function hasLeft(anchor: { lat: number; lon: number }): Promise<boolean> {
+  const last = await Location.getLastKnownPositionAsync().catch(() => null)
+  if (!last) return false
+  const away = haversineMeters(
+    { lat: anchor.lat, lon: anchor.lon },
+    { lat: last.coords.latitude, lon: last.coords.longitude },
+  )
+  return away > STATIONARY_GEOFENCE_RADIUS_METERS
+}
+
 /** Foreground permission is enough to start, but only "always" keeps it running. */
 export async function startTracking(): Promise<boolean> {
   const permission = await currentPermission()
   useTrackingStore.getState().setPermission(permission)
   if (permission !== "always" && permission !== "foreground") return false
 
-  await enterMoving()
+  // mode and stillAnchor outlive the process, so a launch while parked picks the
+  // stop back up. enterMoving here would restart the foreground service and set
+  // the stillness clock back to zero for a phone that has not moved.
+  const { mode, stillAnchor } = useTrackingStore.getState()
+  const anchor = mode === "stationary" ? stillAnchor : null
+  const parkedAt = anchor && !(await hasLeft(anchor)) ? anchor : null
+  if (parkedAt) await enterStationary(parkedAt.lat, parkedAt.lon)
+  else await enterMoving()
+
   await startMotionWatch()
   await registerBackgroundSync()
-  void reportNow("foreground")
+  if (!parkedAt) void reportNow("foreground")
   return true
 }
 

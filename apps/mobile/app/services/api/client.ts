@@ -1,4 +1,4 @@
-import type { ApiErrorBody, AuthTokens } from "@hearth/shared"
+import { API_PREFIX, type ApiErrorBody, type AuthTokens } from "@hearth/shared"
 
 export class ApiError extends Error {
   readonly status: number
@@ -86,7 +86,7 @@ export class ApiClient {
   url(path: string): string {
     const base = this.hooks.getBaseUrl()
     if (!base) throw new ApiError(0, "no_server", "No server configured.")
-    return `${base.replace(/\/+$/, "")}/api/v1${path.startsWith("/") ? path : `/${path}`}`
+    return `${base.replace(/\/+$/, "")}${API_PREFIX}${path.startsWith("/") ? path : `/${path}`}`
   }
 
   websocketUrl(): string | null {
@@ -94,7 +94,7 @@ export class ApiClient {
     const tokens = this.hooks.getTokens()
     if (!base || !tokens) return null
     const wsBase = base.replace(/^http/, "ws").replace(/\/+$/, "")
-    return `${wsBase}/api/v1/ws?access_token=${encodeURIComponent(tokens.accessToken)}`
+    return `${wsBase}${API_PREFIX}/ws?access_token=${encodeURIComponent(tokens.accessToken)}`
   }
 
   private async send<T>(
@@ -120,7 +120,7 @@ export class ApiClient {
     }
 
     // FormData has to set its own content-type so the multipart boundary
-    // survives; naming it here produces a body the server cannot parse.
+    // survives. Naming it here produces a body the server cannot parse.
     const isFormData = options.body instanceof FormData
     const headers: Record<string, string> = { accept: "application/json" }
     if (options.body !== undefined && !isFormData) headers["content-type"] = "application/json"
