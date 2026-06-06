@@ -10,19 +10,12 @@
     />
     <meta name="theme-color" content="#F5643A" />
 
-    <meta property="og:title" content="Hearth — family location sharing you host yourself" />
+    <meta property="og:title" content="Hearth: family location sharing you host yourself" />
     <meta
       property="og:description"
       content="An open-source family tracker. The map, the history and the alerts live on your server, not somebody else's."
     />
     <meta property="og:type" content="website" />
-
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap"
-      rel="stylesheet"
-    />
 
     <style>
       /* Palette is the app's own, so the site and the product agree. The
@@ -79,6 +72,8 @@
         scroll-behavior: smooth;
       }
 
+      /* No webfont is fetched. This page tells visitors no third party sits in
+         the path, and a font CDN would be the very first request it made. */
       body {
         margin: 0;
         background: var(--ground);
@@ -675,8 +670,9 @@
                 Alerts you configure
               </h3>
               <p>
-                Speeding, low battery, and a possible-incident prompt when someone stops hard from
-                driving speed. Every one is a family setting, and every one can be off.
+                Speeding, low battery, and a crash the phone works out from its own accelerometer,
+                gyroscope and barometer. It asks you first, and only silence raises the alarm. Every
+                one is a family setting, and every one can be off.
               </p>
             </article>
 
@@ -697,8 +693,8 @@
                 A word, not a group chat
               </h3>
               <p>
-                See that someone was driving at 95 and send them "slow down" in one tap. Messages go
-                to one person, because that is how they actually get used.
+                See that someone was driving at 95 and send them "slow down" in one tap. Say it to
+                the whole family, or quietly to one person, which is how it usually gets used.
               </p>
             </article>
           </div>
@@ -758,7 +754,8 @@
           <h2>One compose file and a hostname.</h2>
           <p class="sub prose">
             Postgres and MinIO come with it, migrations run on first boot, and the bucket creates
-            itself. If you already run anything behind a reverse proxy, this will feel familiar.
+            itself. The server is a published image, so upgrading is a pull, not a rebuild. If you
+            already run anything behind a reverse proxy, this will feel familiar.
           </p>
 
           <div class="panel">

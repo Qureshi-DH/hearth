@@ -6,7 +6,8 @@ Hearth is a monorepo with three packages:
 hearth/
 ├── server/            Fastify 5 + Drizzle + Postgres, the self-hosted API
 ├── apps/mobile/       Expo SDK 55 / React Native, the iOS & Android app (Ignite-based)
-└── packages/shared/   Dependency-free TypeScript: API contract types, constants, geo math
+└── packages/shared/   Dependency-free TypeScript: API contract types, constants,
+                    geo math, and the crash heuristic both sides reason about
 ```
 
 `packages/shared` is consumed as raw TypeScript by both sides (bundled by tsup
@@ -29,7 +30,7 @@ Every route lives under `/api/v1`. Routes are thin: validate, authorise via
 `requireMembership(circleId, minRole)`, call a service, serialise. Services hold
 the domain logic and are unit-testable with a real database.
 
-### Data model (17 tables)
+### Data model (18 tables)
 
 - `users` and `sessions` hold one session row per (user, device). Refresh
   tokens are hashed and rotated, and push tokens hang off the session, so
@@ -46,11 +47,22 @@ the domain logic and are unit-testable with a real database.
 - `places`, `place_memberships` and `place_events` cover geofences, who is
   currently inside each one, and the arrive/leave log.
 - `events` is the activity feed. Everything the family sees as a line item.
+- `messages` is the short thread per circle. A row with `to_user_id` set is a
+  quiet word with one member, and the list query filters on that rather than
+  trusting the client to hide it.
 - `sos_alerts`, `check_ins` and `trips` are the safety features and derived
   journeys.
 - `notification_outbox` is the durable push queue (see below).
 - `audit_log` and `server_settings` record admin actions and runtime-editable
-  settings.
+  settings. A `server_settings` value wins over the environment variable it
+  shadows, so an admin can change the server name, the registration mode and the
+  history ceiling without a redeploy.
+
+Profile pictures are the one thing that is not a row. They live in S3 compatible
+object storage (`services/storage.ts`), the bucket is created on first upload,
+and `modules/media.routes.ts` streams them back out under a random key so the
+bucket itself never faces the internet. With no storage configured the whole
+feature switches off and `/server-info` says so.
 
 A user has _one_ location stream shared into all their circles, and the circle
 decides how much of it a viewer may see. That mirrors how people think about it
@@ -119,9 +131,13 @@ drain push → lapse pauses → flag offline devices (>1 h silent, once per
 outage, and skipped entirely when more than half of all reporting phones went
 quiet at once, which means the outage was the server's) → detect trips (paged
 over active users, one advisory lock per user so replicas never double-detect)
-→ prune history (per-circle retention, server cap, in 5 000-row batches so a big
-sweep never holds locks for minutes) → prune outbox → prune dead sessions. Each
-step is isolated. One failure never stops the rest.
+→ prune history (per-circle retention under the server-wide ceiling, in
+5 000-row batches so a big sweep never holds locks for minutes) → prune outbox →
+prune dead sessions. Each step is isolated. One failure never stops the rest.
+
+The sweep reads the ceiling from `server_settings` on every tick, falling back to
+`MAX_HISTORY_RETENTION_DAYS`. Reading the env value instead was the bug: changing
+the cap from the app stored a number that then swept nothing.
 
 ### Trip detection (`services/trips.ts`)
 
@@ -135,14 +151,16 @@ are tagged with the trip id. Start and end are matched to places for
 
 Ignite conventions with a few deliberate substitutions:
 
-| Concern             | Choice                                     | Why                                                              |
-| ------------------- | ------------------------------------------ | ---------------------------------------------------------------- |
-| Server state        | TanStack Query                             | cache is written directly by the websocket                       |
-| Client state        | zustand + MMKV                             | synchronous hydration, no flash of empty UI                      |
-| Secrets             | expo-secure-store (`stores/tokenVault.ts`) | refresh tokens never touch MMKV                                  |
-| Map                 | MapLibre RN + OpenFreeMap style            | no Google key, swappable to self-hosted tiles                    |
-| Background location | expo-location + expo-task-manager          | `startLocationUpdatesAsync` with a foreground service on Android |
-| Periodic sync       | expo-background-task                       | flushes the offline queue when the OS allows                     |
+| Concern             | Choice                                                 | Why                                                              |
+| ------------------- | ------------------------------------------------------ | ---------------------------------------------------------------- |
+| Server state        | TanStack Query                                         | cache is written directly by the websocket                       |
+| Client state        | zustand + MMKV                                         | synchronous hydration, no flash of empty UI                      |
+| Secrets             | expo-secure-store (`stores/tokenVault.ts`)             | refresh tokens never touch MMKV                                  |
+| Map                 | MapLibre RN + OpenFreeMap style                        | no Google key, swappable to self-hosted tiles                    |
+| Background location | expo-location + expo-task-manager                      | `startLocationUpdatesAsync` with a foreground service on Android |
+| Periodic sync       | expo-background-task                                   | flushes the offline queue when the OS allows                     |
+| Motion class        | a small native module over Core Motion / Play Services | a device-level opt-in, so the GPS can sleep without polling      |
+| Crash sensing       | expo-sensors + `shared/impact.ts`                      | the verdict is testable against recorded traces, off the device  |
 
 ### Location pipeline on the phone (`services/location/tracker.ts`)
 
@@ -154,6 +172,13 @@ carries the tracking policy (interval / distance), which is applied live.
 
 `reportNow(source)` takes an immediate high-accuracy fix for check-ins, SOS
 (every 20 s while active), and _nudges_ arriving via websocket or push.
+
+The tracker is a two-state machine. Moving means continuous updates and, on
+Android, the foreground-service notification that comes with them. Once the
+phone has held still for a few minutes it goes stationary: updates stop, the
+notification disappears, and an exit geofence around the stopping point is what
+brings it back. That is where most of the battery saving is, and the OS motion
+classifier, if this phone opted into it, only makes the switch happen sooner.
 
 ### Realtime on the phone (`services/realtime.ts`)
 

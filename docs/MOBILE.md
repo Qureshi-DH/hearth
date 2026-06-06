@@ -54,20 +54,28 @@ _You → Tracking status_.
 | Background refresh / tasks     | `UIBackgroundModes: fetch, processing`, `BGTaskSchedulerPermittedIdentifiers` | `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`                       | Flush the offline queue when the OS allows                                       | Declared, checklist explains the iOS toggle    |
 | Camera                         | `NSCameraUsageDescription`                                                    | `CAMERA` (via plugin)                                       | Scan an invite QR                                                                | Only when you tap _Scan_                       |
 | Local network                  | `NSLocalNetworkUsageDescription`, `NSBonjourServices`                         | n/a                                                         | Self-hosted servers on your LAN                                                  | Prompted by iOS on first LAN connection        |
-| Motion and activity            | `NSMotionUsageDescription`                                                    | `ACTIVITY_RECOGNITION` (+ the Play Services variant)        | Let the OS say when you are driving or still, so the GPS can sleep               | Only where the server turns the motion path on |
+| Motion and activity            | `NSMotionUsageDescription`                                                    | `ACTIVITY_RECOGNITION` (+ the Play Services variant)        | Let the OS say when you are driving or still, so the GPS can sleep               | Only if this phone turns the motion setting on |
 | Photo library                  | `NSPhotoLibraryUsageDescription` (picker plugin)                              | system picker, no permission                                | Choose one profile picture                                                       | Only when you tap your avatar                  |
+
+_Use the phone's motion sensor_ lives under _You → Tracking status_ and belongs
+to the handset, not to the server and not to the circle. The server receives the same
+fixes either way. All that changes is whether this phone works out that it has
+stopped from Core Motion and Play Services, which have already classified the
+movement for the system, or from watching its own position, which costs GPS.
+Turning it on is what triggers the permission prompt, so a phone that leaves it
+off is never asked.
 
 The accelerometer, gyroscope and barometer need no permission on either
 platform at the rates Hearth samples them, which is what makes crash detection
-possible without asking for anything.
+possible without asking for anything. It appears on the setup checklist for
+exactly that reason: unannounced, it would be a sensor nobody agreed to.
 
 Commercial trackers ask for a pile of things Hearth deliberately doesn't. No
 contacts, because invites are codes and QR. No microphone. No Bluetooth, because
 there is no hardware tag to talk to. No advertising identifier, and no tracking
 of any kind. The photo library is reached through the system picker, which hands
-back the one file you chose rather than access to the album. Motion is asked for
-only where the server has turned that path on, and it is there to let the GPS
-sleep rather than to collect a fitness feed.
+back the one file you chose rather than access to the album. Motion is there to
+let the GPS sleep, never to collect a fitness feed.
 
 ### Plain-HTTP servers on a LAN
 
@@ -78,6 +86,10 @@ The two platforms differ here, and you tend to find out at release time.
 | Development                           | any HTTP host (`NSAllowsArbitraryLoads`)                         | any HTTP host (`usesCleartextTraffic`) |
 | Production                            | **private ranges and `.local` only** (`NSAllowsLocalNetworking`) | **no HTTP at all**                     |
 | Production with `HEARTH_ALLOW_HTTP=1` | any HTTP host                                                    | any HTTP host                          |
+
+Both are decided at prebuild time, from `EAS_BUILD_PROFILE` and `NODE_ENV`.
+`HEARTH_ALLOW_HTTP=0` forces the strict behaviour into a development build,
+which is how you check a TLS-only setup before you ship it.
 
 iOS ignores `NSAllowsArbitraryLoads` whenever `NSAllowsLocalNetworking` is also
 present, so Hearth emits exactly one of the two.
@@ -91,9 +103,17 @@ and neither caveat applies.
 
 The API serves `https://your-server/join/ABCD1234` itself. It shows the code,
 hands off to `hearth://join/ABCD1234` when the app is installed, and explains
-itself when it isn't. The Android intent filter in `app.json` is set to
-`*.hearth.example`. Change it to your own domain before shipping, or the link
-will open a browser rather than the app.
+itself when it isn't. That handoff works in every build, because the
+`hearth://` scheme is registered unconditionally.
+
+Android App Links, where tapping the link opens the app directly rather than a
+browser page that then offers to, need a concrete domain compiled in and
+verified against a file on that host. Every family self-hosts somewhere
+different, so no build ships one. Opt in at prebuild time:
+
+```bash
+HEARTH_APP_LINK_HOST=hearth.yourfamily.com npx expo prebuild --platform android
+```
 
 ## How background location works
 
@@ -114,6 +134,50 @@ All of this lives in `app/services/location/tracker.ts`.
 Turning off _Share my location_ in the app stops the OS updates entirely. No
 fixes are captured or queued.
 
+### Moving and stationary
+
+Continuous location on Android requires a foreground service, and a location
+foreground service must show a notification the user cannot dismiss. Running one
+around the clock is what makes that notification permanent and what actually
+drains the battery, because the GPS never sleeps.
+
+So the tracker has two states. **Moving** is continuous updates, and it is the
+state that shows the notification. Once the phone has stayed inside a 60 m
+circle for five minutes, it switches to **stationary**: updates stop, the
+notification disappears, and an exit geofence is armed around where it stopped.
+Leaving that circle wakes the app and puts it back into moving. The geofence is
+cheap because it rides on the location the system computes anyway.
+
+With _Use the phone's motion sensor_ on, the OS classifier can call a stop
+sooner than the position watch can, and can end one the instant you start
+moving. That is the whole difference the setting makes.
+
+### Crash detection
+
+`app/services/location/driveSensors.ts` samples the accelerometer fast enough to
+catch an impact, the gyroscope and barometer far more slowly, and keeps a
+rolling window. The verdict comes from `detectDriveEvent()` in
+`packages/shared/src/impact.ts`, which is where the reasoning about what the
+sensors can and cannot claim is written down.
+
+Two switches gate it, and it samples only between them. The circle has to have
+_Possible-incident alerts_ on, which the app mirrors into device storage because
+the detector runs from a background task where the query cache may be cold. The
+phone has to have the motion setting on, because sampling that hard is only
+worth its battery inside a vehicle and the OS classifier is what says you are in
+one. Leave the motion setting off and the sensors are never read.
+
+A verdict does not alert anybody. It goes into a persisted store and the app
+asks the person, with a countdown. Answering dismisses it. Silence escalates to
+a real SOS, because someone hurt badly enough not to answer is the case the
+feature exists for. The store survives a process kill on purpose: the phone that
+just took the impact is the one most likely to be restarted by it.
+
+The server runs its own, unrelated check on the breadcrumbs it receives, and it
+needs no sensors and no settings on the phone. Fixes half a minute apart cannot
+tell a collision from parking hard, so all it claims is that somebody stopped
+suddenly after driving fast, and it posts that to the circle as a prompt.
+
 ## Realtime
 
 `app/services/realtime.ts` holds a single websocket while the app is in the
@@ -125,18 +189,20 @@ back-off.
 
 ```text
 app/
-  components/   Avatar, GlassPanel, MemberMarker, SosHoldButton, ListRow, HearthMap…
+  components/   Avatar, GlassPanel, MemberMarker, SosHoldButton, IncidentPrompt, ListRow,
+                HearthMap and the rest
   screens/      Server, Login, Register, Permissions, Map, MemberDetail, Places,
-                PlaceEditor, PlaceDetail, Activity, Circle, CircleSettings, Invites,
-                Sharing, NotificationPrefs, You, Devices, PrivacyData,
+                PlaceEditor, PlaceDetail, Activity, Messages, Circle, CircleSettings,
+                Invites, Sharing, NotificationPrefs, You, Devices, PrivacyData,
                 ChangePassword, Sos, CheckIn, Trips, TripDetail, Admin,
                 CreateCircle, JoinCircle
   navigators/   AppNavigator (auth gate + stack), MainTabNavigator (Map / Places / Activity / You)
   hooks/        queries.ts (TanStack Query), queryKeys.ts, useActiveCircle.ts
-  services/     api/ (fetch client + typed endpoints), realtime.ts, notifications.ts, location/tracker.ts
-  stores/       zustand: auth, settings, tracking, toast; tokenVault (SecureStore)
+  services/     api/ (fetch client + typed endpoints), realtime.ts, notifications.ts,
+                location/ (tracker.ts, motion.ts, driveSensors.ts)
+  stores/       zustand: auth, settings, tracking, incident, toast. tokenVault (SecureStore)
   theme/        Ignite theming with Hearth's light/dark palettes
-  i18n/         en.ts (v1 is English-only; add a locale by typing a file as `Translations`)
+  i18n/         en.ts. v1 is English only, and a locale is a file typed as `Translations`
 ```
 
 ## Design notes
@@ -152,7 +218,7 @@ app/
 
 ```bash
 pnpm --filter hearth-mobile compile      # tsc
-pnpm --filter hearth-mobile lint:check
+pnpm --filter hearth-mobile lint
 pnpm --filter hearth-mobile test         # jest-expo unit tests
 ```
 

@@ -1,8 +1,8 @@
 # Self-hosting Hearth
 
-Hearth runs as two containers, the API and Postgres, behind any reverse proxy
-that can terminate TLS. A Raspberry Pi 4 or the smallest VPS you can rent is
-plenty for a family.
+Hearth runs as three containers behind any reverse proxy that can terminate
+TLS: the API, Postgres, and MinIO for profile pictures. A Raspberry Pi 4 or the
+smallest VPS you can rent is plenty for a family.
 
 ## Requirements
 
@@ -18,17 +18,71 @@ year if you switch retention off entirely.
 
 ## 1. Configure
 
-```bash
-git clone https://github.com/Qureshi-DH/hearth.git
-cd hearth
-cp .env.example .env
+The server is published as a Docker image, `dhqureshi/hearth-api`, built for
+amd64 and arm64. You do not need the repository to run Hearth. Make a folder,
+put this in `docker-compose.yml`, and put a `.env` beside it:
+
+```yaml
+name: hearth
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hearth
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: hearth
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hearth -d hearth"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    image: dhqureshi/hearth-api:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file: [.env]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://hearth:${POSTGRES_PASSWORD}@db:5432/hearth
+      S3_ENDPOINT: http://minio:9000
+    ports:
+      - "4000:4000"
+
+volumes:
+  postgres-data:
+  minio-data:
 ```
 
-Edit `.env` and set at least:
+The `.env` needs at least these. Compose reads it twice: once to substitute the
+variables above, and once to hand the whole file to the API.
 
 ```bash
-JWT_SECRET=$(openssl rand -base64 48)      # paste the output
-PUBLIC_URL=https://hearth.example.com
+JWT_SECRET=                                # openssl rand -base64 48, paste the output
+PUBLIC_URL=https://hearth.example.com      # where phones will reach you
 POSTGRES_PASSWORD=some-long-random-string
 ADMIN_EMAIL=you@example.com                # required, your account
 ADMIN_PASSWORD=a-long-passphrase           # required, at least 10 characters
@@ -36,6 +90,9 @@ ADMIN_NAME=Your Name                       # optional, defaults to the part befo
 S3_ACCESS_KEY_ID=hearth                    # MinIO, for profile pictures
 S3_SECRET_ACCESS_KEY=another-long-random-string
 ```
+
+`.env.example` in the repository lists every remaining variable with its
+default, and none of them have to be set to boot.
 
 The server refuses to start in production without `ADMIN_EMAIL` and
 `ADMIN_PASSWORD`. That account is created once, while the database still has no
@@ -48,6 +105,22 @@ against an empty user table. Change the password from the app.
 
 Leave `REGISTRATION_MODE=invite` (the default) unless you want anyone who finds
 the URL to be able to sign up. Everyone else joins with an invite you send them.
+An admin can change this later from the app without a redeploy, under
+_You → Server admin → Who can sign up_.
+
+### Building from the repository instead
+
+If you want to change the code, clone it and let Compose build the image:
+
+```bash
+git clone https://github.com/Qureshi-DH/hearth.git
+cd hearth
+cp .env.example .env
+```
+
+The `docker-compose.yml` in the repository is the same stack with `build:` in
+place of the published image, so `docker compose up -d --build` compiles the
+server from your working tree.
 
 ## 2. Start
 
@@ -117,15 +190,15 @@ labels:
 ## 4. Connect a phone
 
 Install the Hearth app (see [MOBILE.md](MOBILE.md) for building it), enter
-`https://hearth.example.com`, create your account, create a circle, and share
-the invite code or QR with the family.
+`https://hearth.example.com`, sign in as the admin account you configured,
+create a circle, and share the invite code or QR with the family.
 
 ## Optional pieces
 
 ### Push notifications
 
 Read [PUSH-NOTIFICATIONS.md](PUSH-NOTIFICATIONS.md). For the fully self-hosted
-route:
+route, take the `docker-compose.ntfy.yml` overlay from the repository and run:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.ntfy.yml up -d
@@ -152,59 +225,109 @@ makes a picture unguessable rather than any access control.
 Any S3 compatible storage works instead. Point `S3_ENDPOINT` at it, set
 `S3_REGION`, and turn off `S3_FORCE_PATH_STYLE` if the provider serves buckets
 as subdomains. Leave `S3_ENDPOINT` empty and uploads switch off entirely, with
-avatars falling back to initials on a colour.
+avatars falling back to initials on a colour. The app hides the upload button
+when the server reports no storage, so this degrades quietly.
 
 The app resizes to 512 pixels before uploading, which re-encodes the file and
 so strips the EXIF. That matters more here than in most apps: a phone photo
 usually records where it was taken.
+
+Whatever you point it at, it needs backing up separately. See below.
 
 ### Map tiles
 
 By default the app loads a MapLibre style from OpenFreeMap. No key, no tracking,
 community-run. To be fully independent, host your own tiles with
 [Martin](https://martin.maplibre.org/) or [TileServer GL](https://github.com/maptiler/tileserver-gl)
-and point `MAP_STYLE_URL` at your style JSON. The app reads it from
-`/api/v1/server-info` on launch, so nothing has to be rebuilt.
+and point `MAP_STYLE_URL` at your style JSON, plus `MAP_STYLE_URL_DARK` for the
+app's dark theme and `MAP_ATTRIBUTION` for the credit line. The app reads all
+three from `/api/v1/server-info` on launch, so nothing has to be rebuilt.
 
 ### Several API replicas
+
+Redis carries realtime events between replicas. Its overlay lives in the
+repository as `docker-compose.redis.yml`.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.redis.yml up -d --scale api=3
 ```
 
-Redis carries realtime events between replicas. One replica is plenty for a
-household several times over, so most installs never need this.
+Drop the `ports:` mapping from the `api` service before you scale it, or the
+second replica fails to start because host port 4000 is already taken, and
+point your reverse proxy at the service instead. One replica is plenty for a
+household several times over, so most installs never need any of this.
 
 ## Operations
 
 ### Backups
 
-Everything lives in Postgres.
+There are two stores, and a Postgres dump alone is not a complete backup.
+
+Postgres holds accounts, circles, positions, places, trips, messages and the
+activity feed:
 
 ```bash
 docker compose exec -T db pg_dump -U hearth hearth | gzip > hearth-$(date +%F).sql.gz
 ```
 
-Restore into a fresh stack with `gunzip -c file.sql.gz | docker compose exec -T db psql -U hearth hearth`.
+MinIO holds the profile pictures. They are files rather than rows, so `pg_dump`
+never sees them, and a restore from the dump alone leaves every avatar as a
+broken link. Copy the volume too:
+
+```bash
+docker run --rm -v hearth_minio-data:/data -v "$PWD:/backup" alpine \
+  tar czf /backup/hearth-avatars-$(date +%F).tar.gz -C /data .
+```
+
+`hearth_minio-data` is the compose project name joined to the volume name, so
+it matches the file above. Objects are written once under a random key and never
+rewritten, so the copy does not need the stack stopped. If you pointed `S3_ENDPOINT` at storage you
+run elsewhere, back it up there instead and skip this step.
+
+Restoring both into a fresh stack:
+
+```bash
+gunzip -c hearth-2026-09-07.sql.gz | docker compose exec -T db psql -U hearth hearth
+docker run --rm -v hearth_minio-data:/data -v "$PWD:/backup" alpine \
+  tar xzf /backup/hearth-avatars-2026-09-07.tar.gz -C /data
+```
 
 ### Upgrades
 
 ```bash
-git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-Migrations run automatically. Downgrades aren't supported, so if an upgrade goes
-badly, restore a backup.
+Migrations run automatically on boot. Downgrades aren't supported, so if an
+upgrade goes badly, restore a backup. Pin a tag instead of `latest` if you would
+rather choose your moment.
+
+Working from a clone, where Compose builds the image rather than pulling it,
+that becomes `git pull && docker compose up -d --build`.
 
 ### Data retention
 
-Breadcrumb history is pruned every minute by a background job. Each circle sets
-its own window (default 30 days), and `MAX_HISTORY_RETENTION_DAYS` caps all of
-them at 90 by default. That cap is the floor an operator sets; an admin can
-tighten or lift it from the app under _Server admin → History retention_
-without a redeploy, and the sweep picks the change up on its next run. Set a circle's retention to 0 and only the live position
-is kept. Trips survive pruning as aggregates: distance, duration, endpoints.
+Breadcrumb history is pruned by a background job, which runs every
+`JOB_INTERVAL_SECONDS` (60 by default). Each circle sets its own window, 30 days
+out of the box, and a user's breadcrumbs live as long as the most generous
+circle they belong to asks for. Set a circle's retention to 0 and only the live
+position is kept. Trips survive pruning as aggregates: distance, duration,
+endpoints.
+
+A server-wide ceiling applies on top of whatever the circles ask for.
+`MAX_HISTORY_RETENTION_DAYS` (90 by default) sets the ceiling the server boots
+with, and an admin can change it from the app under _You → Server admin →
+History retention_. The value stored there overrides the environment variable
+from that point on, in both directions: the app can raise the ceiling as well as
+lower it, and the next sweep uses the new number without a redeploy. Clear the
+field in the app and the environment value is back in charge.
+
+One wrinkle worth knowing before you touch anything on that screen: saving any
+server setting writes the whole set, so renaming the server also stores whatever
+ceiling was in force at that moment. From then on, editing
+`MAX_HISTORY_RETENTION_DAYS` in `.env` changes nothing until you clear the field
+in the app.
 
 ### Health
 
@@ -232,7 +355,10 @@ Rate limits are per account, falling back to per IP, so one chatty phone on a
 home NAT doesn't throttle the whole household.
 
 All tables cascade from `users` and `circles`. Deleting an account deletes every
-breadcrumb, place, alert and notification tied to it.
+breadcrumb, place, alert and notification tied to it. The one thing that outlives
+it is the profile picture in the bucket, which the cascade cannot reach. Nothing
+links to it any more and its key is random, so it is unreachable rather than
+exposed, but an operator who wants it gone has to remove the object.
 
 `CORS_ORIGINS` is empty by default, which grants no cross-origin access at all.
 Native apps don't send an `Origin` header and don't need one. Add your web
@@ -249,4 +375,5 @@ pnpm --filter @hearth/server build
 DATABASE_URL=postgres://... JWT_SECRET=... pnpm --filter @hearth/server start
 ```
 
-You'll need Node 20.10+ and Postgres 14+.
+You'll need Node 20.10+ and Postgres 14+. Object storage is optional: leave
+`S3_ENDPOINT` unset and profile pictures are simply switched off.

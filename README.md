@@ -27,8 +27,8 @@ are map tiles, from a provider you choose and can self-host, and push payloads
 if you deliberately turn on a hosted relay.
 
 Hearth does the same job on hardware you control. It's two pieces: an API server
-that runs in Docker next to Postgres, and an iOS and Android app that talks only
-to it.
+that runs in Docker, next to Postgres and a small object store for profile
+pictures, and an iOS and Android app that talks only to it.
 
 ## Status
 
@@ -63,20 +63,30 @@ down" and "On my way". It's there so the alerts have an obvious answer, not to
 replace your group chat.
 
 **Driving alerts, if you want them.** Off by default. Turn on a speed threshold
-and the circle hears about it. Turn on incident alerts and a hard stop from
-driving speed raises a check-on-them notification.
+and the circle hears about it. Turn on incident alerts and the phone watches its
+own accelerometer, gyroscope and barometer while you're in a vehicle, looking for
+the shape of a collision: travelling, a violent spike, then a car that has
+stopped. Those sensors need no permission on either platform. It asks you before
+it tells anyone, and silence is what raises the alarm. Even then it is a prompt
+to go and check on someone, never a claim to have detected a crash.
 
 **Trips and history.** Journeys are worked out from breadcrumbs on the server:
 distance, duration, top speed, and where they started and ended. History is kept
-for as long as each circle asks for and then deleted, with a server-wide cap on
-top.
+for as long as each circle asks for and then deleted, with a server-wide ceiling
+on top that an admin can change from the app.
 
 **Your data stays yours.** Export everything as JSON, wipe your history, or
 delete your account and watch it cascade through every table.
 
 ## Try it
 
-You need Docker and about five minutes.
+You need Docker and about five minutes. The server is published as
+`dhqureshi/hearth-api` for amd64 and arm64, so running Hearth needs no clone at
+all. [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) has the compose file and the
+`.env` to paste.
+
+From a clone, which builds the image from your working tree instead of pulling
+it:
 
 ```bash
 git clone https://github.com/Qureshi-DH/hearth.git
@@ -84,12 +94,19 @@ cd hearth
 cp .env.example .env
 ```
 
-Open `.env` and set two things:
+Open `.env` and set six things:
 
 ```bash
 JWT_SECRET=$(openssl rand -base64 48)   # paste the output
 PUBLIC_URL=https://hearth.example.com   # where phones will reach you
+ADMIN_EMAIL=you@example.com             # your account
+ADMIN_PASSWORD=a-long-passphrase        # at least 10 characters
+POSTGRES_PASSWORD=$(openssl rand -base64 24)
+S3_SECRET_ACCESS_KEY=$(openssl rand -base64 24)
 ```
+
+Compose refuses to start until the last two are set, so there is no default
+database password to forget about.
 
 Then:
 
@@ -99,11 +116,11 @@ curl localhost:4000/readyz     # {"ok":true}
 open http://localhost:4000/docs
 ```
 
-Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` before the first boot. That account is
-created once, while the database has no users, and it is the only way in:
-registration never lets an account through without an invite, so a server you
-have not claimed yet cannot be claimed by whoever finds the URL. Set
-`ADMIN_NAME` too if you want something other than the part before the @.
+The admin account has to be set before the first boot. It is created once,
+while the database has no users, and it is the only way in: registration never
+lets an account through without an invite, so a server you have not claimed yet
+cannot be claimed by whoever finds the URL. Set `ADMIN_NAME` too if you want
+something other than the part before the @.
 
 Phones won't talk to a plain HTTP server in the background, so put a TLS proxy
 in front before you invite anyone. [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)
@@ -159,7 +176,10 @@ TEST_DATABASE_URL=postgres://localhost:5432/hearth_test pnpm test
 ```text
 server/            Fastify 5, Drizzle, Postgres. The whole API.
 apps/mobile/       Expo SDK 55, React Native, based on Ignite.
-packages/shared/   Types, constants and geo maths. No runtime dependencies.
+packages/shared/   Types, constants, geo maths and the crash heuristic.
+                   No runtime dependencies.
+deploy/            Reverse-proxy examples.
+web/               The landing page. Static, no build step.
 docs/              Everything below.
 .claude/skills/    Conventions, for humans and agents alike.
 ```

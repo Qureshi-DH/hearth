@@ -23,19 +23,35 @@ access token as `Authorization: Bearer <token>`. It's good for 15 minutes.
 
 ## Endpoint map
 
-| Area      | Endpoints                                                                                                                                                                                                   |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| System    | `GET /server-info` (public capabilities), `GET /healthz`, `GET /readyz` (root, not under `/api/v1`)                                                                                                         |
-| Account   | `GET/PATCH /auth/me`, `POST /auth/password`, `GET /auth/sessions`, `DELETE /auth/sessions/:id`, `POST /auth/sessions/revoke-all`, `GET /me/export`, `DELETE /me`, `GET /me/stats`, `DELETE /me/history`     |
-| Circles   | `GET/POST /circles`, `GET/PATCH/DELETE /circles/:id`, `GET /circles/:id/members`, `PATCH/DELETE /circles/:id/members/:userId`, `PATCH /circles/:id/sharing`, `PATCH /circles/:id/notifications`             |
-| Invites   | `GET/POST /circles/:id/invites` (list omits revoked, `expiresInHours: null` = never expires), `DELETE /circles/:id/invites/:inviteId`, `GET /invites/:code` (public preview), `POST /invites/:code/accept`  |
-| Locations | `POST /locations/batch`, `GET /circles/:id/locations`, `GET /circles/:id/members/:userId/history`                                                                                                           |
-| Places    | `GET/POST /circles/:id/places`, `PATCH/DELETE /circles/:id/places/:placeId`, `GET /circles/:id/places/:placeId/events`                                                                                      |
-| Events    | `GET /circles/:id/events?limit&cursor`, `POST /circles/:id/events/read`, `GET /circles/:id/events/unread-count`                                                                                             |
-| Safety    | `POST /circles/:id/sos` (3 per 10 min), `POST /sos/:alertId/resolve`, `GET /circles/:id/sos?activeOnly=true`, `POST /circles/:id/check-in`, `GET /circles/:id/check-ins`, `POST /circles/:id/nudge/:userId` |
-| Trips     | `GET /circles/:id/members/:userId/trips`, `GET /me/trips`, `GET /trips/:tripId`                                                                                                                             |
-| Push      | `GET /push/config`, `POST/DELETE /push/register`, `POST /push/test`                                                                                                                                         |
-| Admin     | `GET/PATCH /admin/settings`, `GET /admin/users`, `PATCH /admin/users/:id`, `GET /admin/stats`, `GET /admin/push/queue`, `POST /admin/push/drain`, `GET /admin/audit`                                        |
+| Area      | Endpoints                                                                                                                                                                                                                              |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| System    | `GET /server-info` (public capabilities), `GET /media/*` (stored images), `GET /healthz`, `GET /readyz` and `GET /join/:code` (root, not under `/api/v1`)                                                                              |
+| Account   | `GET/PATCH /auth/me`, `POST/DELETE /auth/me/avatar`, `POST /auth/password`, `GET /auth/sessions`, `DELETE /auth/sessions/:id`, `POST /auth/sessions/revoke-all`, `GET /me/export`, `DELETE /me`, `GET /me/stats`, `DELETE /me/history` |
+| Circles   | `GET/POST /circles`, `GET/PATCH/DELETE /circles/:id`, `GET /circles/:id/members`, `PATCH/DELETE /circles/:id/members/:userId`, `PATCH /circles/:id/sharing`, `PATCH /circles/:id/notifications`                                        |
+| Invites   | `GET/POST /circles/:id/invites` (list omits revoked, `expiresInHours: null` = never expires), `DELETE /circles/:id/invites/:inviteId`, `GET /invites/:code` (public preview), `POST /invites/:code/accept`                             |
+| Locations | `POST /locations/batch`, `GET /circles/:id/locations`, `GET /circles/:id/members/:userId/history`                                                                                                                                      |
+| Places    | `GET/POST /circles/:id/places`, `PATCH/DELETE /circles/:id/places/:placeId`, `GET /circles/:id/places/:placeId/events`                                                                                                                 |
+| Events    | `GET /circles/:id/events?limit&cursor`, `POST /circles/:id/events/read`, `GET /circles/:id/events/unread-count`                                                                                                                        |
+| Messages  | `GET /circles/:id/messages?limit&cursor`, `POST /circles/:id/messages`                                                                                                                                                                 |
+| Safety    | `POST /circles/:id/sos` (3 per 10 min), `POST /sos/:alertId/resolve`, `GET /circles/:id/sos?activeOnly=true`, `POST /circles/:id/check-in`, `GET /circles/:id/check-ins`, `POST /circles/:id/nudge/:userId`                            |
+| Trips     | `GET /circles/:id/members/:userId/trips`, `GET /me/trips`, `GET /trips/:tripId`                                                                                                                                                        |
+| Push      | `GET /push/config`, `POST/DELETE /push/register`, `POST /push/test`                                                                                                                                                                    |
+| Admin     | `GET/PATCH /admin/settings`, `GET /admin/users`, `PATCH /admin/users/:id`, `GET /admin/stats`, `GET /admin/push/queue`, `POST /admin/push/drain`, `GET /admin/audit`                                                                   |
+
+`PATCH /admin/settings` takes `serverName`, `registrationMode` and
+`maxHistoryRetentionDays`. Whatever it stores overrides the matching environment
+variable from then on, with no redeploy. It writes the whole set rather than the
+fields you sent, so saving one field pins the current value of the others.
+
+Avatar uploads are `multipart/form-data` with one image field: JPEG, PNG or
+WebP, at most 2 MB, and the content type is decided by sniffing the bytes rather
+than by trusting the part header. They return `404` on a server with no object
+storage configured, which `GET /server-info` reports as `features.avatars`.
+
+A message carries either `body` or `quickKey` (one of the canned replies in
+`packages/shared`). Omit `toUserId` and it goes to the whole circle. Set it and
+only the two of you can read it, which the list query enforces in SQL rather
+than in the client.
 
 ## Uploading location
 
@@ -96,7 +112,9 @@ Server → client messages (`WsServerMessage` in the shared package):
 | `event`      | `{ circleId, event }`, new activity-feed entry               |
 | `sos`        | `{ circleId, alert }`                                        |
 | `nudge`      | `{ circleId, fromUserId }`, the device should report a fix   |
+| `message`    | `{ circleId, message }`, a new message in the thread         |
 | `pong`       | `{ serverTime }`                                             |
+| `error`      | `{ message }`, the socket could not honour what you sent     |
 
 Client → server: `{ type: "ping" }` and `{ type: "subscribe", circleIds }`,
 which may only narrow to circles the user belongs to. The server pings every
@@ -113,11 +131,25 @@ a `404` and changes nothing.
 
 ## Rate limits
 
-Default is 300 requests/minute per account. The limiter decodes the bearer
-token itself, so a shared NAT doesn't throttle a whole household, and
-unauthenticated calls are counted per IP. `/locations/batch` has its own
-240/minute budget. Nudges are limited to 6 per 10 minutes, SOS to 3 per 10
-minutes, and `/push/test` to 5 per 5 minutes. Exceeding a limit returns `429`.
+Default is 300 requests/minute per account, set by `RATE_LIMIT_MAX`. The
+limiter decodes the bearer token itself, so a shared NAT doesn't throttle a
+whole household, and unauthenticated calls are counted per IP. `/healthz` and
+`/readyz` are exempt, so an uptime check can poll as hard as it likes.
+
+Routes with their own budget:
+
+| Route                        | Limit          |
+| ---------------------------- | -------------- |
+| `POST /locations/batch`      | 240 per minute |
+| `GET /media/*`               | 600 per minute |
+| `GET /join/:code`            | 60 per minute  |
+| `POST /auth/me/avatar`       | 10 per minute  |
+| `POST /circles/:id/messages` | 30 per 5 min   |
+| `POST /circles/:id/nudge/*`  | 6 per 10 min   |
+| `POST /circles/:id/sos`      | 3 per 10 min   |
+| `POST /push/test`            | 5 per 5 min    |
+
+Exceeding a limit returns `429`.
 
 The `access_token` query parameter is honoured **only** on the websocket
 upgrade, and it's redacted from request logs. Every other route requires the

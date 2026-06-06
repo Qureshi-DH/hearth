@@ -5,7 +5,7 @@ The last hop, waking a phone that's asleep in someone's pocket, belongs to Apple
 (APNs) and Google (FCM). This document covers what Hearth does about that, what
 your options are, and which one to pick.
 
-## TL;DR
+## In short
 
 | Provider (`PUSH_PROVIDER`) | Works on                                       | Needs a third party?            | Effort | Privacy                        | Reliability on a sleeping phone                                                            |
 | -------------------------- | ---------------------------------------------- | ------------------------------- | ------ | ------------------------------ | ------------------------------------------------------------------------------------------ |
@@ -42,9 +42,9 @@ anyone is. If that's still too much for your threat model, use `ntfy`.
 ## Option 1: `none` (no background push)
 
 Set nothing. The app still holds a websocket to your server while it's in the
-foreground, so the map and activity feed update in real time. It polls presence
-every 60 s as a fallback, and shows arrive/leave/SOS as in-app banners while
-open.
+foreground, so the map and activity feed update in real time. It also polls
+presence on a slow timer in case that socket is dead, and shows
+arrive/leave/SOS as in-app banners while open.
 
 What you lose is alerts while the phone is locked. For a household that mostly
 opens the app to _check_ where people are, that's often fine.
@@ -69,9 +69,11 @@ How Hearth uses it:
 
 Lock it down. Run ntfy with `NTFY_AUTH_DEFAULT_ACCESS=deny-all`, create a user
 for Hearth with write access to `hearth-*`, and give the phones read-only access
-tokens. The compose overlay `docker-compose.ntfy.yml` starts ntfy with auth
-enabled, and its comments carry the `ntfy user add` and `ntfy access` commands.
-Put `NTFY_TOKEN` in `.env` so the server authenticates when publishing.
+tokens. The compose overlay `docker-compose.ntfy.yml` in the repository starts
+ntfy with auth enabled, and its comments carry the `ntfy user add` and
+`ntfy access` commands. Put `NTFY_TOKEN` in `.env` so the server authenticates
+when publishing. `NTFY_TOPIC_PREFIX` renames the `hearth-` part if you are
+sharing an ntfy instance with something else.
 
 Android is the good case here. UnifiedPush is battery-friendly and instant. iOS
 works through the ntfy iOS app, which itself uses APNs via ntfy's public
