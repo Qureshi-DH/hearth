@@ -5,7 +5,6 @@ import { useSettingsStore } from "@/stores/settings"
 
 const enabled = () => Platform.OS !== "web" && useSettingsStore.getState().hapticsEnabled
 
-/** Wrappers so call sites read as intent and honour the user's toggle. */
 export const haptics = {
   tap: () => enabled() && void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
   select: () => enabled() && void Haptics.selectionAsync(),

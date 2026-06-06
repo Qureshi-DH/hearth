@@ -68,7 +68,7 @@ class HearthMotionModule : Module() {
    *
    * Android cannot tell "refused" from "never asked" by inspection: both read
    * back as not granted. Reporting the first for the second is not a cosmetic
-   * difference — callers treat a refusal as final and stop, so the request is
+   * difference. Callers treat a refusal as final and stop, so the request is
    * never made and the feature is dead on a device that would have said yes.
    * So the fact that we asked is recorded when we ask.
    */

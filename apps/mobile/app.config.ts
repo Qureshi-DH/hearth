@@ -12,7 +12,7 @@ import "tsx/cjs"
  * Plain-HTTP servers.
  *
  * Both platforms block cleartext traffic by default, which is right for a
- * public deployment (put TLS in front — see docs/SELF-HOSTING.md). Families
+ * public deployment (put TLS in front, see docs/SELF-HOSTING.md). Families
  * trying Hearth on a LAN at http://192.168.x.x need it allowed, so development
  * builds allow it and production builds can opt in with HEARTH_ALLOW_HTTP=1.
  */

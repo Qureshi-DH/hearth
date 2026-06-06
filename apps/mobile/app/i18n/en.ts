@@ -106,7 +106,10 @@ const en = {
     openSettings: "Open Settings",
     sensorsTitle: "Crash detection",
     sensorsBody:
-      "Reads the accelerometer while you are driving. No permission is needed for it, and nothing is sent unless you confirm an alert.",
+      "Reads the accelerometer while you drive, with no permission needed. If it thinks you have crashed it asks, and alerts your circle if you do not answer.",
+    wifiTitle: "Wi-Fi scanning",
+    wifiBody:
+      "Leaving Wi-Fi on, even when not connected, makes location noticeably more accurate and costs less battery than GPS alone.",
     motionTitle: "Motion & Fitness",
     motionBody:
       "Lets your phone say when you have stopped, so the GPS can rest. Improves battery life.",
@@ -352,9 +355,13 @@ const en = {
     title: "You",
     profile: "Profile",
     name: "Name",
+    photoUnavailable:
+      "This server has no object storage set up, so profile pictures are off. Your admin can enable it.",
     photo: "Profile picture",
     choosePhoto: "Choose a photo",
     removePhoto: "Remove photo",
+    nativeMotion: "Use the phone's motion sensor",
+    nativeMotionHint: "Improves battery life.",
     imperialUnits: "Imperial units",
     imperialOn: "Miles and Fahrenheit",
     imperialOff: "Kilometres and Celsius",
@@ -413,8 +420,6 @@ const en = {
     active24h: "Active 24h",
     circles: "Circles",
     points: "Points",
-    nativeMotion: "Use the phone's motion sensor",
-    nativeMotionHint: "Improves battery life.",
     queueTitle: "Notification queue",
     queueStatus: "{{count}} waiting · sent via {{provider}}",
     dbSize: "Database",

@@ -50,19 +50,15 @@ const palette = {
 export const colors = {
   palette,
   transparent: "rgba(0, 0, 0, 0)",
-  /** Default body text. */
   text: palette.neutral800,
-  /** Secondary, de-emphasised text. */
   textDim: palette.neutral600,
   /** Placeholder and disabled text. */
   textFaint: palette.neutral500,
   /** Text drawn on top of `tint`. */
   onTint: palette.neutral100,
-  /** Screen background. */
   background: palette.neutral200,
   /** Cards and sheets. */
   surface: palette.neutral100,
-  /** A surface stacked on another surface. */
   surfaceElevated: palette.neutral300,
   /** Frosted panels floating over the map. */
   glass: palette.glass,

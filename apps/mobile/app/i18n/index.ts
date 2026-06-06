@@ -15,7 +15,6 @@ const systemLocales = Localization.getLocales()
 const resources = { en }
 const supportedTags = Object.keys(resources)
 
-// Checks to see if the device locale matches any of the supported locales
 // Device locale may be more specific and still match (e.g., en-US matches en)
 const systemTagMatchesSupportedTags = (deviceTag: string) => {
   const primaryTag = deviceTag.split("-")[0]
@@ -52,10 +51,6 @@ export const initI18n = async () => {
 
   return i18n
 }
-
-/**
- * Builds up valid keypaths for translations.
- */
 
 export type TxKeyPath = RecursiveKeyOf<Translations>
 

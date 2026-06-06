@@ -56,6 +56,9 @@
       "NSBonjourServices": ["_http._tcp", "_https._tcp"],
       "NSLocationDefaultAccuracyReduced": false,
       "NSMotionUsageDescription": "Hearth reads what your phone is already doing, so it can keep the GPS asleep while you are not moving."
+    },
+    "entitlements": {
+      "com.apple.developer.usernotifications.time-sensitive": true
     }
   },
   "web": {
@@ -140,6 +143,10 @@
   "extra": {
     "ignite": {
       "version": "11.5.0"
+    },
+    "eas": {
+      "projectId": "2b631a51-2e44-45a9-a848-20cc1b0e1c2f"
     }
-  }
+  },
+  "owner": "qureshi-dh"
 }

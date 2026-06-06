@@ -1,4 +1,3 @@
-/** Anything that is not a hex string comes back unchanged. */
 export function withAlpha(hex: string, alpha: number): string {
   if (!hex.startsWith("#")) return hex
   const clean = hex.slice(1)

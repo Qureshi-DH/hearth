@@ -147,7 +147,16 @@ const AppStack = () => {
     })
   }, [])
 
-  const modal = { presentation: "modal" as const, headerShown: false }
+  /**
+   * A route drawn as a bottom sheet. Transparent so the screen underneath stays
+   * visible, and un-animated because the sheet does its own entrance.
+   */
+  const sheet = {
+    presentation: "transparentModal" as const,
+    headerShown: false,
+    animation: "none" as const,
+    contentStyle: { backgroundColor: "transparent" },
+  }
 
   return (
     <Stack.Navigator
@@ -171,11 +180,11 @@ const AppStack = () => {
       ) : (
         <>
           <Stack.Screen name="Main" component={MainTabNavigator} />
-          <Stack.Screen name="Permissions" component={PermissionsScreen} options={modal} />
-          <Stack.Screen name="CreateCircle" component={CreateCircleScreen} options={modal} />
-          <Stack.Screen name="JoinCircle" component={JoinCircleScreen} options={modal} />
+          <Stack.Screen name="Permissions" component={PermissionsScreen} />
+          <Stack.Screen name="CreateCircle" component={CreateCircleScreen} options={sheet} />
+          <Stack.Screen name="JoinCircle" component={JoinCircleScreen} options={sheet} />
           <Stack.Screen name="MemberDetail" component={MemberDetailScreen} />
-          <Stack.Screen name="PlaceEditor" component={PlaceEditorScreen} options={modal} />
+          <Stack.Screen name="PlaceEditor" component={PlaceEditorScreen} />
           <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
           <Stack.Screen name="Circle" component={CircleScreen} />
           <Stack.Screen name="CircleSettings" component={CircleSettingsScreen} />
@@ -184,14 +193,14 @@ const AppStack = () => {
           <Stack.Screen name="NotificationPrefs" component={NotificationPrefsScreen} />
           <Stack.Screen name="Devices" component={DevicesScreen} />
           <Stack.Screen name="PrivacyData" component={PrivacyDataScreen} />
-          <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} options={modal} />
+          <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} options={sheet} />
           <Stack.Screen name="Messages" component={MessagesScreen} />
           <Stack.Screen
             name="Sos"
             component={SosScreen}
-            options={{ ...modal, presentation: "fullScreenModal" }}
+            options={{ presentation: "fullScreenModal", headerShown: false }}
           />
-          <Stack.Screen name="CheckIn" component={CheckInScreen} options={modal} />
+          <Stack.Screen name="CheckIn" component={CheckInScreen} options={sheet} />
           <Stack.Screen name="Trips" component={TripsScreen} />
           <Stack.Screen name="TripDetail" component={TripDetailScreen} />
           <Stack.Screen name="Admin" component={AdminScreen} />

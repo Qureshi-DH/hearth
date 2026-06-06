@@ -18,6 +18,7 @@ import { useFonts } from "expo-font"
 import * as Linking from "expo-linking"
 import * as SplashScreen from "expo-splash-screen"
 import { QueryClientProvider } from "@tanstack/react-query"
+import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { KeyboardProvider } from "react-native-keyboard-controller"
 import { initialWindowMetrics, SafeAreaProvider } from "react-native-safe-area-context"
 
@@ -48,7 +49,6 @@ SplashScreen.setOptions({ duration: 300, fade: true })
 
 export const NAVIGATION_PERSISTENCE_KEY = "NAVIGATION_STATE"
 
-/** Pull an invite code out of a join link; null for anything else. */
 export function extractInviteCode(url: string | null): string | null {
   if (!url) return null
   const match = url.match(/\/join\/([A-Za-z0-9]{4,16})/)
@@ -148,20 +148,22 @@ export function App() {
   const linking = { prefixes: [prefix, "hearth://"], config: linkingConfig }
 
   return (
-    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-      <KeyboardProvider>
-        <QueryClientProvider client={queryClient}>
-          <ThemeProvider>
-            <AppNavigator
-              linking={linking}
-              initialState={initialNavigationState}
-              onStateChange={onNavigationStateChange}
-            />
-            <IncidentPrompt />
-            <ToastHost />
-          </ThemeProvider>
-        </QueryClientProvider>
-      </KeyboardProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+        <KeyboardProvider>
+          <QueryClientProvider client={queryClient}>
+            <ThemeProvider>
+              <AppNavigator
+                linking={linking}
+                initialState={initialNavigationState}
+                onStateChange={onNavigationStateChange}
+              />
+              <IncidentPrompt />
+              <ToastHost />
+            </ThemeProvider>
+          </QueryClientProvider>
+        </KeyboardProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   )
 }

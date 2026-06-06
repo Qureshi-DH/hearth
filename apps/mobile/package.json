@@ -2,6 +2,7 @@
   "name": "hearth-mobile",
   "version": "0.0.1",
   "private": true,
+  "license": "AGPL-3.0-only",
   "main": "index.tsx",
   "scripts": {
     "start": "expo start --dev-client",
@@ -12,14 +13,13 @@
     "serve:web": "npx serve dist",
     "prebuild:clean": "npx expo prebuild --clean",
     "compile": "tsc --noEmit -p . --pretty",
-    "lint": "eslint . --fix",
-    "lint:check": "eslint . --max-warnings 0",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
     "depcruise": "depcruise app --config .dependency-cruiser.js",
     "depcruise:graph": "depcruise app --include-only \"^app\" --config .dependency-cruiser.js --output-type dot > app-dependency-graph.dot && dot -T svg app-dependency-graph.dot -o app-dependency-graph.svg && dot -T png app-dependency-graph.dot -o app-dependency-graph.png && rm app-dependency-graph.dot",
     "align-deps": "npx expo install --fix",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:maestro": "maestro test -e MAESTRO_APP_ID=app.hearth.mobile .maestro/flows",
     "adb": "adb reverse tcp:9090 tcp:9090 && adb reverse tcp:3000 tcp:3000 && adb reverse tcp:9001 tcp:9001 && adb reverse tcp:8081 tcp:8081",
     "build:ios:sim": "eas build --profile development --platform ios --local",
     "build:ios:device": "eas build --profile development:device --platform ios --local",
@@ -117,6 +117,6 @@
     "typescript": "~5.9.2"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.18.0"
   }
 }

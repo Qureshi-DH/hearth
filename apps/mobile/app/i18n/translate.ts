@@ -4,10 +4,6 @@ import type { TOptions } from "i18next"
 import { TxKeyPath } from "."
 
 /**
- * Translates text.
- * @param {TxKeyPath} key - The i18n key.
- * @param {TOptions} options - The i18n options.
- * @returns {string} - The translated text.
  * @example
  * Translations:
  *
