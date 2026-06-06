@@ -76,24 +76,24 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
           <StatTile
             icon="people-outline"
             label={translate("admin:users")}
-            value={String(stats.data?.users ?? "—")}
+            value={String(stats.data?.users ?? "–")}
           />
           <StatTile
             icon="pulse-outline"
             label={translate("admin:active24h")}
-            value={String(stats.data?.activeUsers24h ?? "—")}
+            value={String(stats.data?.activeUsers24h ?? "–")}
           />
           <StatTile
             icon="ellipse-outline"
             label={translate("admin:circles")}
-            value={String(stats.data?.circles ?? "—")}
+            value={String(stats.data?.circles ?? "–")}
           />
         </View>
         <View style={{ flexDirection: "row", gap: theme.spacing.xs }}>
           <StatTile
             icon="footsteps-outline"
             label={translate("admin:points")}
-            value={stats.data ? stats.data.locationPoints.toLocaleString() : "—"}
+            value={stats.data ? stats.data.locationPoints.toLocaleString() : "–"}
           />
           <StatTile
             icon="server-outline"
@@ -103,7 +103,7 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
           <StatTile
             icon="time-outline"
             label={translate("admin:uptime")}
-            value={stats.data ? formatDuration(stats.data.uptimeSeconds) : "—"}
+            value={stats.data ? formatDuration(stats.data.uptimeSeconds) : "–"}
           />
         </View>
       </View>
@@ -131,7 +131,12 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
             return (
               <Pressable
                 key={mode}
-                onPress={() => updateSettings.mutate({ registrationMode: mode })}
+                onPress={() =>
+                  updateSettings.mutate(
+                    { registrationMode: mode },
+                    { onError: (error) => toast.error((error as Error).message) },
+                  )
+                }
                 style={{
                   flex: 1,
                   minHeight: 44,
@@ -176,19 +181,6 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
           icon="hourglass-outline"
           iconTone="warning"
           onPress={() => setEditing("retention")}
-        />
-        <ListRow
-          tx="admin:nativeMotion"
-          subtitleTx="admin:nativeMotionHint"
-          icon="walk-outline"
-          iconTone="info"
-          value={settings.data?.nativeMotion ?? false}
-          onValueChange={(value) =>
-            updateSettings.mutate(
-              { nativeMotion: value },
-              { onError: (error) => toast.error((error as Error).message) },
-            )
-          }
         />
         <ListRow
           tx="admin:queueTitle"

@@ -31,7 +31,7 @@ export interface SosHoldButtonProps {
 }
 
 /**
- * A plain tap is far too easy to hit by accident in a pocket. Three seconds of
+ * A plain tap is far too easy to hit by accident in a pocket. A hold with
  * visible progress is the standard pattern for something that wakes up your
  * whole family.
  */

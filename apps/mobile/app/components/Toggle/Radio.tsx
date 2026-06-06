@@ -15,11 +15,7 @@ export interface RadioToggleProps extends Omit<ToggleProps<RadioInputProps>, "To
 
 interface RadioInputProps extends BaseToggleInputProps<RadioToggleProps> {}
 
-/**
- * @param {RadioToggleProps} props - The props for the `Radio` component.
- * @see [Documentation and Examples]{@link https://docs.infinite.red/ignite-cli/boilerplate/app/components/Radio}
- * @returns {JSX.Element} The rendered `Radio` component.
- */
+/** @see https://docs.infinite.red/ignite-cli/boilerplate/app/components/Radio */
 export function Radio(props: RadioToggleProps) {
   return <Toggle accessibilityRole="radio" {...props} ToggleInput={RadioInput} />
 }

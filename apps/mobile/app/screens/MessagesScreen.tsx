@@ -59,7 +59,6 @@ export const MessagesScreen: FC<AppStackScreenProps<"Messages">> = ({ navigation
     // with who they were for. The server already filtered out everyone else's,
     // and hiding them here would mean a message nobody ever finds.
     if (!toUserId) return all
-    // Just the two of you, in either direction.
     return all.filter(
       (message) =>
         (message.toUser?.id === toUserId && message.author.id === me?.id) ||

@@ -1,5 +1,6 @@
-import { useState, type FC } from "react"
+import { useCallback, useState, type FC } from "react"
 import { Alert, Pressable, View, type ViewStyle } from "react-native"
+import { useFocusEffect } from "@react-navigation/native"
 import * as ImagePicker from "expo-image-picker"
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator"
 import Constants from "expo-constants"
@@ -17,7 +18,7 @@ import { useMe, useRemoveAvatar, useUpdateMe, useUploadAvatar } from "@/hooks/qu
 import { translate } from "@/i18n/translate"
 import type { MainTabScreenProps } from "@/navigators/navigationTypes"
 import { endpoints } from "@/services/api"
-import { stopTracking } from "@/services/location/tracker"
+import { refreshMotionWatch, stopTracking } from "@/services/location/tracker"
 import { disablePush } from "@/services/notifications"
 import { queryClient } from "@/services/queryClient"
 import { useAuthStore } from "@/stores/auth"
@@ -32,16 +33,44 @@ import { relativeTime } from "@/utils/time"
 export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
   const { themed, theme, setThemeContextOverride } = useAppTheme()
   useMe()
+
+  // serverInfo is persisted and otherwise only refetched at launch, so an
+  // operator turning on object storage would not reach an already-installed
+  // app until it was killed and reopened.
+  useFocusEffect(
+    useCallback(() => {
+      endpoints.system
+        .info()
+        .then(useAuthStore.getState().setServerInfo)
+        .catch(() => {
+          // Offline. The cached copy is still the best answer available.
+        })
+    }, []),
+  )
   const user = useAuthStore((state) => state.user)
   const serverInfo = useAuthStore((state) => state.serverInfo)
   const serverUrl = useAuthStore((state) => state.serverUrl)
   const signedOut = useAuthStore((state) => state.signedOut)
-  const settings = useSettingsStore()
-  const tracking = useTrackingStore()
+  // Per-field selectors, not the whole store: the tracking store writes on
+  // every fix and every upload attempt, and this screen stays mounted.
+  const themeMode = useSettingsStore((state) => state.themeMode)
+  const setThemeMode = useSettingsStore((state) => state.setThemeMode)
+  const units = useSettingsStore((state) => state.units)
+  const setUnits = useSettingsStore((state) => state.setUnits)
+  const hapticsEnabled = useSettingsStore((state) => state.hapticsEnabled)
+  const setHaptics = useSettingsStore((state) => state.setHaptics)
+  const nativeMotion = useSettingsStore((state) => state.nativeMotion)
+  const setNativeMotion = useSettingsStore((state) => state.setNativeMotion)
+  const backgroundActive = useTrackingStore((state) => state.backgroundActive)
+  const permission = useTrackingStore((state) => state.permission)
+  const queuedCount = useTrackingStore((state) => state.queue.length)
+  const lastUploadAt = useTrackingStore((state) => state.lastUploadAt)
+  const lastError = useTrackingStore((state) => state.lastError)
+  const resetTracking = useTrackingStore((state) => state.reset)
   const updateMe = useUpdateMe()
 
   const setTheme = (mode: ThemeMode) => {
-    settings.setThemeMode(mode)
+    setThemeMode(mode)
     setThemeContextOverride(mode === "system" ? undefined : mode)
   }
 
@@ -54,6 +83,14 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
   const [photoOpen, setPhotoOpen] = useState(false)
 
   const pickPhoto = async () => {
+    try {
+      await launchPicker()
+    } catch (error) {
+      toast.error((error as Error).message)
+    }
+  }
+
+  const launchPicker = async () => {
     const picked = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
       allowsEditing: true,
@@ -89,7 +126,7 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
             // Session may already be dead. Local cleanup below still has to run.
           }
           await tokenVault.set(null)
-          tracking.reset()
+          resetTracking()
           queryClient.clear()
           signedOut()
         },
@@ -103,18 +140,19 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
     <Screen preset="scroll" safeAreaEdges={["top"]} contentContainerStyle={themed($container)}>
       <View style={themed($profile)}>
         {user ? (
-          canUploadAvatar ? (
-            <Pressable
-              // With no picture there is only one thing to do, and a sheet
-              // offering a single option is just a worse button.
-              onPress={() => (user.avatarUrl ? setPhotoOpen(true) : pickPhoto())}
-              hitSlop={8}
-            >
-              <Avatar user={user} size={72} />
-            </Pressable>
-          ) : (
+          <Pressable
+            // Tapping always does something. An avatar that silently ignores
+            // the tap when the server has no object storage is
+            // indistinguishable from a broken one.
+            onPress={() => {
+              if (!canUploadAvatar) return toast.info(translate("settings:photoUnavailable"))
+              if (user.avatarUrl) return setPhotoOpen(true)
+              void pickPhoto()
+            }}
+            hitSlop={8}
+          >
             <Avatar user={user} size={72} />
-          )
+          </Pressable>
         ) : null}
         <View style={{ flex: 1, gap: 2 }}>
           <Text preset="subheading" numberOfLines={1}>
@@ -137,21 +175,29 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
       <SectionHeader tx="settings:tracking" />
       <ListGroup>
         <ListRow
-          tx={tracking.backgroundActive ? "settings:trackingActive" : "settings:trackingInactive"}
+          tx={backgroundActive ? "settings:trackingActive" : "settings:trackingInactive"}
           subtitle={[
-            translate("settings:permission", { level: tracking.permission }),
-            tracking.queue.length
-              ? translate("settings:queued", { count: tracking.queue.length })
-              : null,
-            translate("settings:lastUpload", { time: relativeTime(tracking.lastUploadAt) }),
+            translate("settings:permission", { level: permission }),
+            queuedCount ? translate("settings:queued", { count: queuedCount }) : null,
+            translate("settings:lastUpload", { time: relativeTime(lastUploadAt) }),
           ]
             .filter(Boolean)
             .join(" · ")}
-          icon={tracking.backgroundActive ? "radio-outline" : "radio-button-off-outline"}
-          iconTone={tracking.backgroundActive ? "success" : "warning"}
+          icon={backgroundActive ? "radio-outline" : "radio-button-off-outline"}
+          iconTone={backgroundActive ? "success" : "warning"}
           onPress={() => navigation.navigate("Permissions")}
         />
-        {tracking.lastError ? (
+        <ListRow
+          tx="settings:nativeMotion"
+          subtitleTx="settings:nativeMotionHint"
+          icon="walk-outline"
+          value={nativeMotion}
+          onValueChange={(on) => {
+            setNativeMotion(on)
+            void refreshMotionWatch()
+          }}
+        />
+        {lastError ? (
           <Text
             size="xxs"
             style={{
@@ -160,7 +206,7 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
               paddingBottom: theme.spacing.sm,
             }}
           >
-            {tracking.lastError}
+            {lastError}
           </Text>
         ) : null}
       </ListGroup>
@@ -205,7 +251,7 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
       <ListGroup>
         <View style={{ padding: theme.spacing.sm }}>
           <SegmentedControl
-            value={settings.themeMode}
+            value={themeMode}
             onChange={setTheme}
             options={[
               { value: "system", tx: "settings:system" },
@@ -217,19 +263,17 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
         <ListRow
           tx="settings:haptics"
           icon="phone-portrait-outline"
-          value={settings.hapticsEnabled}
-          onValueChange={settings.setHaptics}
+          value={hapticsEnabled}
+          onValueChange={setHaptics}
         />
         <ListRow
           tx="settings:imperialUnits"
-          subtitleTx={
-            settings.units === "imperial" ? "settings:imperialOn" : "settings:imperialOff"
-          }
+          subtitleTx={units === "imperial" ? "settings:imperialOn" : "settings:imperialOff"}
           icon="speedometer-outline"
-          value={settings.units === "imperial"}
+          value={units === "imperial"}
           onValueChange={(on) => {
             const next = on ? "imperial" : "metric"
-            settings.setUnits(next)
+            setUnits(next)
             updateMe.mutate({ units: next })
           }}
         />

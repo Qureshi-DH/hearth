@@ -25,11 +25,7 @@ interface SwitchInputProps extends BaseToggleInputProps<SwitchToggleProps> {
   accessibilityMode?: SwitchToggleProps["accessibilityMode"]
 }
 
-/**
- * @param {SwitchToggleProps} props - The props for the `Switch` component.
- * @see [Documentation and Examples]{@link https://docs.infinite.red/ignite-cli/boilerplate/app/components/Switch}
- * @returns {JSX.Element} The rendered `Switch` component.
- */
+/** @see https://docs.infinite.red/ignite-cli/boilerplate/app/components/Switch */
 export function Switch(props: SwitchToggleProps) {
   const { accessibilityMode, ...rest } = props
   const switchInput = useCallback(
@@ -56,14 +52,14 @@ function SwitchInput(props: SwitchInputProps) {
     themed,
   } = useAppTheme()
 
-  const animate = useRef(new Animated.Value(on ? 1 : 0)) // Initial value is set based on isActive
+  const animate = useRef(new Animated.Value(on ? 1 : 0))
   const opacity = useRef(new Animated.Value(0))
 
   useEffect(() => {
     Animated.timing(animate.current, {
       toValue: on ? 1 : 0,
       duration: 300,
-      useNativeDriver: true, // Enable native driver for smoother animations
+      useNativeDriver: true,
     }).start()
   }, [on])
 
@@ -169,10 +165,6 @@ function SwitchInput(props: SwitchInputProps) {
   )
 }
 
-/**
- * @param {ToggleInputProps & { role: "on" | "off" }} props - The props for the `SwitchAccessibilityLabel` component.
- * @returns {JSX.Element} The rendered `SwitchAccessibilityLabel` component.
- */
 function SwitchAccessibilityLabel(props: SwitchInputProps & { role: "on" | "off" }) {
   const { on, disabled, status, accessibilityMode, role, innerStyle, detailStyle } = props
 

@@ -123,9 +123,9 @@ export function ListGroup({
           marginHorizontal: theme.spacing.md,
           borderRadius: 20,
           backgroundColor: theme.colors.surface,
-          // In dark mode the card sits nine values above the page, which is
-          // close enough to invisible that rows read as floating against the
-          // screen edge. The hairline is what makes the inset legible.
+          // In dark mode the card barely separates from the page, so rows read
+          // as floating against the screen edge. The hairline is what makes
+          // the inset legible.
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: theme.colors.border,
           overflow: "hidden",

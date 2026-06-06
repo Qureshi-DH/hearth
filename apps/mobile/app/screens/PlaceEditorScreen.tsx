@@ -126,8 +126,12 @@ export const PlaceEditorScreen: FC<AppStackScreenProps<"PlaceEditor">> = ({
           text: translate("common:delete"),
           style: "destructive",
           onPress: async () => {
-            await remove.mutateAsync(existing.id)
-            navigation.navigate("Main", { screen: "Places" })
+            try {
+              await remove.mutateAsync(existing.id)
+              navigation.navigate("Main", { screen: "Places" })
+            } catch (error) {
+              toast.error((error as Error).message)
+            }
           },
         },
       ],

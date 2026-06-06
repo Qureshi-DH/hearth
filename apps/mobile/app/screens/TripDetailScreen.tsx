@@ -103,12 +103,12 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
         <StatTile
           icon="speedometer-outline"
           label={translate("trips:topSpeed")}
-          value={formatSpeed(trip.maxSpeedMps, units) ?? "—"}
+          value={formatSpeed(trip.maxSpeedMps, units) ?? "–"}
         />
         <StatTile
           icon="pulse-outline"
           label={translate("trips:avgSpeed")}
-          value={formatSpeed(trip.avgSpeedMps, units) ?? "—"}
+          value={formatSpeed(trip.avgSpeedMps, units) ?? "–"}
         />
       </View>
     </Screen>

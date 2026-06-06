@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { memo, useEffect } from "react"
 import { Pressable, View } from "react-native"
 import type { MemberPresence, PublicUser } from "@hearth/shared"
 import Animated, {
@@ -16,10 +16,9 @@ import { useAppTheme } from "@/theme/context"
 import { withAlpha } from "@/utils/color"
 
 /**
- * Height of the name pill below the pointer: 2 margin + 2 padding + an 18pt
- * xxs line + 2 padding. It sits below the tip, so a marker anchored by its
- * bottom edge is pushed this far up and the pill, not the pointer, lands on
- * the coordinate. Callers pass it back as the marker's pixel offset.
+ * The name pill sits below the pointer tip, so a marker anchored by its bottom
+ * edge is pushed this far up and the pill, not the pointer, lands on the
+ * coordinate. Callers pass it back as the marker's pixel offset.
  */
 export const MEMBER_MARKER_LABEL_HEIGHT = 24
 
@@ -29,14 +28,16 @@ export interface MemberMarkerProps {
   presence: MemberPresence
   ring: AvatarRing
   selected?: boolean
-  onPress?: () => void
+  onPress?: (userId: string) => void
 }
 
 /**
  * A circle can have a dozen of these moving at once, so the only animation is
- * the SOS pulse and it runs on the UI thread.
+ * the SOS pulse and it runs on the UI thread. Memoised because one member
+ * moving pushes a new presence array, and every other marker's props are
+ * unchanged by it.
  */
-export function MemberMarker({
+export const MemberMarker = memo(function MemberMarker({
   user,
   label,
   presence,
@@ -71,7 +72,7 @@ export function MemberMarker({
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => onPress?.(presence.userId)}
       hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -139,4 +140,4 @@ export function MemberMarker({
       </View>
     </Pressable>
   )
-}
+})

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "reac
 import { Pressable, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet"
-import type { MemberPresence } from "@hearth/shared"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
@@ -36,12 +35,8 @@ import type { ThemedStyle } from "@/theme/types"
 import { fitBoundsFor } from "@/utils/map"
 
 const FALLBACK_CENTER: [number, number] = [-0.1276, 51.5072]
-/** Two 44 pt buttons plus the gap between them. */
 const CONTROLS_HEIGHT = 96
-/**
- * Just the grabber and the members line. Any taller and the tops of the
- * check in and SOS buttons peek out under it.
- */
+/** Any taller and the tops of the check in and SOS buttons peek out under it. */
 const COLLAPSED_BAR_HEIGHT = 52
 
 export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
@@ -66,7 +61,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [mapReady, setMapReady] = useState(false)
-  const didFitRef = useRef(false)
+  const fittedCircleRef = useRef<string | null>(null)
 
   const presenceByUser = useMemo(
     () => new Map((presence ?? []).map((entry) => [entry.userId, entry])),
@@ -107,17 +102,17 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
     }, []),
   )
 
-  // Fit everyone once, on first data. After that the camera belongs to the user.
+  // Fit everyone once per circle, on its first data. After that the camera
+  // belongs to the user. Keyed on the circle rather than a plain flag, because
+  // switching between two circles with the same number of located members
+  // changes neither `mapReady` nor `located.length`.
   useEffect(() => {
-    if (!mapReady || didFitRef.current || located.length === 0) return
-    didFitRef.current = true
+    if (!mapReady || !circleId || located.length === 0) return
+    if (fittedCircleRef.current === circleId) return
+    fittedCircleRef.current = circleId
     fitAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapReady, located.length])
-
-  useEffect(() => {
-    didFitRef.current = false
-  }, [circleId])
+  }, [mapReady, circleId, located.length])
 
   const fitAll = () => {
     const bounds = fitBoundsFor(
@@ -131,9 +126,16 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
     })
   }
 
-  const focusMember = (entry: MemberPresence | undefined, userId: string) => {
+  // Presence is read through a ref so this handler keeps a stable identity:
+  // it is passed straight to the memoised markers, which would otherwise all
+  // re-render whenever one member moves.
+  const presenceRef = useRef(presenceByUser)
+  presenceRef.current = presenceByUser
+
+  const focusMember = useCallback((userId: string) => {
     setSelectedUserId(userId)
     sheetRef.current?.snapToIndex(0)
+    const entry = presenceRef.current.get(userId)
     if (entry?.lat != null && entry.lon != null) {
       cameraRef.current?.flyTo({
         center: [entry.lon, entry.lat],
@@ -142,11 +144,10 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         padding: { bottom: 200 },
       })
     }
-  }
+  }, [])
 
   // The tab navigator already insets this screen above the tab bar, so bottom:0
   // here is the top of the bar. Do not add its height again.
-  // Resting height is the handle plus the action row plus one member row.
   const restingSheetHeight = 210
   // The lowest point is a real snap, not a separate bar pretending to be one.
   // A grabber that only answers taps reads as a broken sheet.
@@ -230,7 +231,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
                 presence={entry}
                 ring={ringFor(entry, isSelf)}
                 selected={selectedUserId === member.userId}
-                onPress={() => focusMember(entry, member.userId)}
+                onPress={focusMember}
               />
             </Marker>
           )
@@ -332,11 +333,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         ) : null}
 
         {activeSos && activeSos.length > 0 ? (
-          <Pressable
-            onPress={() =>
-              focusMember(presenceByUser.get(activeSos[0]!.user.id), activeSos[0]!.user.id)
-            }
-          >
+          <Pressable onPress={() => focusMember(activeSos[0]!.user.id)}>
             <View style={[themed($banner), { backgroundColor: theme.colors.error }]}>
               <Ionicons name="alert-circle" size={18} color="#FFFFFF" />
               <Text size="xs" weight="semiBold" style={{ color: "#FFFFFF", flex: 1 }}>
@@ -411,7 +408,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
           icon="locate"
           tone="glass"
           accessibilityLabel={translate("map:you")}
-          onPress={() => me && focusMember(presenceByUser.get(me.id), me.id)}
+          onPress={() => me && focusMember(me.id)}
         />
       </Animated.View>
 
@@ -465,7 +462,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
               presence={presenceByUser.get(item.userId)}
               isSelf={item.userId === me?.id}
               units={units}
-              onPress={() => focusMember(presenceByUser.get(item.userId), item.userId)}
+              onPress={() => focusMember(item.userId)}
               onLongPress={() =>
                 circle &&
                 navigation.navigate("MemberDetail", { circleId: circle.id, userId: item.userId })

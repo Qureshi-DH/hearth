@@ -11,7 +11,6 @@ import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { requestPermissions, startTracking } from "@/services/location/tracker"
 import { ensureMotionPermission, motionPermission } from "@/services/location/motion"
-import { useAuthStore } from "@/stores/auth"
 import {
   getPermissionSnapshot,
   openAppSettings,
@@ -21,6 +20,7 @@ import {
   type PermissionSnapshot,
 } from "@/services/permissions"
 import { useSettingsStore } from "@/stores/settings"
+import { toast } from "@/stores/toast"
 import { useTrackingStore } from "@/stores/tracking"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
@@ -53,7 +53,7 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
   const [snapshot, setSnapshot] = useState<PermissionSnapshot | null>(null)
   // Only asked for when the server has turned the motion path on, so the
   // checklist must not demand it otherwise.
-  const nativeMotion = useAuthStore((state) => state.serverInfo?.nativeMotion === true)
+  const nativeMotion = useSettingsStore((state) => state.nativeMotion)
   // Mirrors whether any circle asked for incident alerts, which is the only
   // condition under which the sensors below are read at all.
   const incidentDetection = useSettingsStore((state) => state.incidentDetection)
@@ -79,6 +79,11 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
     setBusy(key)
     try {
       await fn()
+    } catch (error) {
+      // A dialog the OS refused to open, or a second request while one is
+      // already in flight. Without this the only control on the screen looks
+      // dead, because nothing awaits this call.
+      toast.error((error as Error).message)
     } finally {
       setBusy(null)
       await refresh()
@@ -173,7 +178,7 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
         // Not a permission, which is exactly why it is worth saying. Crash
         // detection reads the accelerometer, gyroscope and barometer, and at
         // the rates Hearth samples them neither platform asks the person
-        // anything — so without a line here it would run unannounced.
+        // anything, so without a line here it would run unannounced.
         ...((incidentDetection
           ? [
               {
@@ -181,10 +186,17 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
                 icon: "pulse" as IoniconName,
                 title: translate("permissions:sensorsTitle"),
                 body: translate("permissions:sensorsBody"),
-                state: "info" as ItemState,
+                state: "done" as ItemState,
               },
             ]
           : []) as Item[]),
+        {
+          key: "wifi",
+          icon: "wifi" as IoniconName,
+          title: translate("permissions:wifiTitle"),
+          body: translate("permissions:wifiBody"),
+          state: "info" as ItemState,
+        },
         {
           key: "notifications",
           icon: "notifications",
@@ -243,7 +255,8 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
       ]
     : []
 
-  const allGood = items.every((item) => item.state === "done" || item.state === "info")
+  const allGood =
+    snapshot != null && items.every((item) => item.state === "done" || item.state === "info")
 
   return (
     <Screen

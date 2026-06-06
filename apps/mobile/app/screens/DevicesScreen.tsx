@@ -8,6 +8,7 @@ import { SectionHeader } from "@/components/SectionHeader"
 import { useRevokeSession, useSessions } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
+import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { relativeTime } from "@/utils/time"
@@ -53,7 +54,10 @@ export const DevicesScreen: FC<AppStackScreenProps<"Devices">> = ({ navigation }
                       {
                         text: translate("settings:signOutDevice"),
                         style: "destructive",
-                        onPress: () => revoke.mutate(session.id),
+                        onPress: () =>
+                          revoke.mutate(session.id, {
+                            onError: (error) => toast.error((error as Error).message),
+                          }),
                       },
                     ])
             }

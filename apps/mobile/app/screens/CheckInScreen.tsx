@@ -4,7 +4,7 @@ import { Ionicons } from "@expo/vector-icons"
 import { haversineMeters } from "@hearth/shared"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
-import { Screen } from "@/components/Screen"
+import { SheetScreen } from "@/components/SheetScreen"
 import { Text } from "@/components/Text"
 import { TextField } from "@/components/TextField"
 import { useCheckIn, usePlaces } from "@/hooks/queries"
@@ -14,7 +14,6 @@ import { reportNow } from "@/services/location/tracker"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { useHeader } from "@/utils/useHeader"
 
 export const CheckInScreen: FC<AppStackScreenProps<"CheckIn">> = ({ navigation, route }) => {
   const { circleId } = route.params
@@ -24,10 +23,6 @@ export const CheckInScreen: FC<AppStackScreenProps<"CheckIn">> = ({ navigation, 
   const [note, setNote] = useState("")
   const [fix, setFix] = useState<{ lat: number; lon: number; accuracy: number | null } | null>(null)
   const [locating, setLocating] = useState(true)
-
-  useHeader({ titleTx: "checkIn:title", leftIcon: "x", onLeftPress: () => navigation.goBack() }, [
-    navigation,
-  ])
 
   useEffect(() => {
     ;(async () => {
@@ -64,57 +59,62 @@ export const CheckInScreen: FC<AppStackScreenProps<"CheckIn">> = ({ navigation, 
   }
 
   return (
-    <Screen preset="scroll" safeAreaEdges={["bottom"]} contentContainerStyle={themed($container)}>
-      <Text tx="checkIn:subtitle" size="sm" style={{ color: theme.colors.textDim }} />
+    <SheetScreen scroll>
+      <View style={themed($container)}>
+        <Text preset="heading" tx="checkIn:title" />
+        <Text tx="checkIn:subtitle" size="sm" style={{ color: theme.colors.textDim }} />
 
-      <View style={themed($locationCard)}>
-        {locating ? (
-          <ActivityIndicator color={theme.colors.tint} />
-        ) : fix ? (
-          <>
-            <Ionicons name={nearby ? "location" : "navigate"} size={22} color={theme.colors.tint} />
-            <View style={{ flex: 1 }}>
-              <Text weight="semiBold" size="sm">
-                {nearby ? nearby.name : `${fix.lat.toFixed(5)}, ${fix.lon.toFixed(5)}`}
-              </Text>
-              {fix.accuracy != null ? (
-                <Text size="xxs" style={{ color: theme.colors.textDim }}>
-                  ±{Math.round(fix.accuracy)} m
+        <View style={themed($locationCard)}>
+          {locating ? (
+            <ActivityIndicator color={theme.colors.tint} />
+          ) : fix ? (
+            <>
+              <Ionicons
+                name={nearby ? "location" : "navigate"}
+                size={22}
+                color={theme.colors.tint}
+              />
+              <View style={{ flex: 1 }}>
+                <Text weight="semiBold" size="sm">
+                  {nearby ? nearby.name : `${fix.lat.toFixed(5)}, ${fix.lon.toFixed(5)}`}
                 </Text>
-              ) : null}
-            </View>
-          </>
-        ) : (
-          <Text size="xs" style={{ color: theme.colors.error }}>
-            {translate("permissions:deniedBody")}
-          </Text>
-        )}
+                {fix.accuracy != null ? (
+                  <Text size="xxs" style={{ color: theme.colors.textDim }}>
+                    ±{Math.round(fix.accuracy)} m
+                  </Text>
+                ) : null}
+              </View>
+            </>
+          ) : (
+            <Text size="xs" style={{ color: theme.colors.error }}>
+              {translate("permissions:deniedBody")}
+            </Text>
+          )}
+        </View>
+
+        <TextField
+          value={note}
+          onChangeText={setNote}
+          labelTx="checkIn:note"
+          placeholderTx="checkIn:notePlaceholder"
+          maxLength={140}
+          inputWrapperStyle={themed($input)}
+          containerStyle={{ marginTop: theme.spacing.md }}
+        />
+
+        <PrimaryButton
+          tx="checkIn:send"
+          onPress={submit}
+          loading={checkIn.isPending}
+          disabled={!fix}
+          style={{ marginTop: theme.spacing.lg }}
+        />
       </View>
-
-      <TextField
-        value={note}
-        onChangeText={setNote}
-        labelTx="checkIn:note"
-        placeholderTx="checkIn:notePlaceholder"
-        maxLength={140}
-        inputWrapperStyle={themed($input)}
-        containerStyle={{ marginTop: theme.spacing.md }}
-      />
-
-      <PrimaryButton
-        tx="checkIn:send"
-        onPress={submit}
-        loading={checkIn.isPending}
-        disabled={!fix}
-        style={{ marginTop: theme.spacing.lg }}
-      />
-    </Screen>
+    </SheetScreen>
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
-  flexGrow: 1,
-  backgroundColor: colors.background,
+const $container: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   padding: spacing.lg,
 })
 const $locationCard: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({

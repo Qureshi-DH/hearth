@@ -82,14 +82,20 @@ export const NotificationPrefsScreen: FC<AppStackScreenProps<"NotificationPrefs"
 
   const muteAll = (value: boolean) => {
     if (!value) {
-      setNotifications.mutate({ mutedUntil: null })
+      setNotifications.mutate(
+        { mutedUntil: null },
+        { onError: (error) => toast.error((error as Error).message) },
+      )
       return
     }
     setMuteOpen(true)
   }
 
   const muteFor = (ms: number) =>
-    setNotifications.mutate({ mutedUntil: new Date(Date.now() + ms).toISOString() })
+    setNotifications.mutate(
+      { mutedUntil: new Date(Date.now() + ms).toISOString() },
+      { onError: (error) => toast.error((error as Error).message) },
+    )
 
   return (
     <Screen preset="scroll" safeAreaEdges={["bottom"]} contentContainerStyle={themed($container)}>

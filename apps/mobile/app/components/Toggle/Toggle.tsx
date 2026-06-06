@@ -28,35 +28,20 @@ export interface ToggleProps<T> extends Omit<TouchableOpacityProps, "style"> {
    * If false, input is not editable. The default value is true.
    */
   editable?: TextInputProps["editable"]
-  /**
-   * The value of the field. If true the component will be turned on.
-   */
   value?: boolean
-  /**
-   * Invoked with the new value when the value changes.
-   */
   onValueChange?: SwitchProps["onValueChange"]
-  /**
-   * Style overrides for the container
-   */
   containerStyle?: StyleProp<ViewStyle>
-  /**
-   * Style overrides for the input wrapper
-   */
   inputWrapperStyle?: StyleProp<ViewStyle>
   /**
-   * Optional input wrapper style override.
-   * This gives the inputs their size, shape, "off" background-color, and outer border.
+   * Gives the inputs their size, shape, "off" background-color, and outer border.
    */
   inputOuterStyle?: ViewStyle
   /**
-   * Optional input style override.
-   * This gives the inputs their inner characteristics and "on" background-color.
+   * Gives the inputs their inner characteristics and "on" background-color.
    */
   inputInnerStyle?: ViewStyle
   /**
-   * Optional detail style override.
-   * See Checkbox, Radio, and Switch for more details
+   * See Checkbox, Radio, and Switch for what the detail is in each.
    */
   inputDetailStyle?: ViewStyle
   /**
@@ -77,13 +62,7 @@ export interface ToggleProps<T> extends Omit<TouchableOpacityProps, "style"> {
    * as well as explicitly setting locale or translation fallbacks.
    */
   labelTxOptions?: TextProps["txOptions"]
-  /**
-   * Style overrides for label text.
-   */
   labelStyle?: StyleProp<TextStyle>
-  /**
-   * Pass any additional props directly to the label Text component.
-   */
   LabelTextProps?: TextProps
   /**
    * The helper text to display if not using `helperTx`.
@@ -98,13 +77,7 @@ export interface ToggleProps<T> extends Omit<TouchableOpacityProps, "style"> {
    * as well as explicitly setting locale or translation fallbacks.
    */
   helperTxOptions?: TextProps["txOptions"]
-  /**
-   * Pass any additional props directly to the helper Text component.
-   */
   HelperTextProps?: TextProps
-  /**
-   * The input control for the type of toggle component
-   */
   ToggleInput: FC<BaseToggleInputProps<T>>
 }
 
@@ -118,10 +91,8 @@ export interface BaseToggleInputProps<T> {
 }
 
 /**
- * Renders a boolean input.
- * This is a controlled component that requires an onValueChange callback that updates the value prop in order for the component to reflect user actions. If the value prop is not updated, the component will continue to render the supplied value prop instead of the expected result of any user actions.
- * @param {ToggleProps} props - The props for the `Toggle` component.
- * @returns {JSX.Element} The rendered `Toggle` component.
+ * Controlled: `onValueChange` has to update the `value` prop, or the component
+ * keeps rendering the value it was handed rather than the result of the tap.
  */
 export function Toggle<T>(props: ToggleProps<T>) {
   const {
@@ -162,9 +133,6 @@ export function Toggle<T>(props: ToggleProps<T>) {
     HelperTextProps?.style,
   ])
 
-  /**
-   * @param {GestureResponderEvent} e - The event object.
-   */
   function handlePress(e: GestureResponderEvent) {
     if (disabled) return
     onValueChange?.(!value)
@@ -209,10 +177,6 @@ export function Toggle<T>(props: ToggleProps<T>) {
   )
 }
 
-/**
- * @param {ToggleProps} props - The props for the `FieldLabel` component.
- * @returns {JSX.Element} The rendered `FieldLabel` component.
- */
 function FieldLabel<T>(props: ToggleProps<T>) {
   const {
     status,

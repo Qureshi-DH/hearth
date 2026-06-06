@@ -83,7 +83,16 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
     if (name.trim() && name.trim() !== circle.name) {
       update.mutate(
         { name: name.trim() },
-        { onSuccess: () => toast.success(translate("common:done")) },
+        {
+          onSuccess: () => toast.success(translate("common:done")),
+          onError: (error) => {
+            toast.error((error as Error).message)
+            // The reset effect is keyed on the server's name, which did not
+            // change, so without this the field keeps showing a name nobody
+            // else can see.
+            setName(circle.name)
+          },
+        },
       )
     }
   }

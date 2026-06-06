@@ -160,7 +160,14 @@ export const InvitesScreen: FC<AppStackScreenProps<"Invites">> = ({ navigation, 
                 <Text weight="medium" style={{ flex: 1, letterSpacing: 2 }}>
                   {invite.code}
                 </Text>
-                <Pressable onPress={() => revokeInvite.mutate(invite.id)} hitSlop={8}>
+                <Pressable
+                  onPress={() =>
+                    revokeInvite.mutate(invite.id, {
+                      onError: (error) => toast.error((error as Error).message),
+                    })
+                  }
+                  hitSlop={8}
+                >
                   <Text size="xs" tx="circle:revoke" style={{ color: theme.colors.error }} />
                 </Pressable>
               </Pressable>
@@ -169,7 +176,11 @@ export const InvitesScreen: FC<AppStackScreenProps<"Invites">> = ({ navigation, 
         </>
       ) : selected ? (
         <Pressable
-          onPress={() => revokeInvite.mutate(selected.id)}
+          onPress={() =>
+            revokeInvite.mutate(selected.id, {
+              onError: (error) => toast.error((error as Error).message),
+            })
+          }
           style={{ alignSelf: "center", marginTop: theme.spacing.md }}
         >
           <Text size="xs" tx="circle:revoke" style={{ color: theme.colors.error }} />

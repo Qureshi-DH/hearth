@@ -107,9 +107,9 @@ export function useCircles() {
     staleTime: 60_000,
   })
 
-  // Crash detection samples at 50Hz and can raise an SOS, so it may only run
-  // where a circle has actually asked for it. The tracker reads this from the
-  // background, long after any of this is mounted.
+  // Crash detection runs the sensors hard and can raise an SOS, so it may only
+  // run where a circle has actually asked for it. The tracker reads this from
+  // the background, long after any of this is mounted.
   const circles = query.data
   useEffect(() => {
     if (!circles) return

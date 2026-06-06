@@ -4,7 +4,7 @@ import { CameraView, useCameraPermissions } from "expo-camera"
 import { Ionicons } from "@expo/vector-icons"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
-import { Screen } from "@/components/Screen"
+import { SheetScreen } from "@/components/SheetScreen"
 import { Text } from "@/components/Text"
 import { TextField } from "@/components/TextField"
 import { useAcceptInvite, useInvitePreview } from "@/hooks/queries"
@@ -15,7 +15,6 @@ import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { useHeader } from "@/utils/useHeader"
 
 /** Accepts a URL, a deep link, or a bare code, since a QR could hold any of them. */
 export function extractInviteCode(raw: string): string | null {
@@ -34,10 +33,6 @@ export const JoinCircleScreen: FC<AppStackScreenProps<"JoinCircle">> = ({ naviga
 
   const preview = useInvitePreview(code.length >= 4 ? code : null)
   const accept = useAcceptInvite()
-
-  useHeader({ titleTx: "join:title", leftIcon: "x", onLeftPress: () => navigation.goBack() }, [
-    navigation,
-  ])
 
   // A deep link can land here signed out, so stash the code for after login.
   useEffect(() => {
@@ -80,84 +75,85 @@ export const JoinCircleScreen: FC<AppStackScreenProps<"JoinCircle">> = ({ naviga
               : null
 
   return (
-    <Screen preset="scroll" safeAreaEdges={["bottom"]} contentContainerStyle={themed($container)}>
-      <Text tx="join:subtitle" size="sm" style={{ color: theme.colors.textDim }} />
+    <SheetScreen scroll>
+      <View style={themed($container)}>
+        <Text preset="heading" tx="join:title" />
+        <Text tx="join:subtitle" size="sm" style={{ color: theme.colors.textDim }} />
 
-      {scanning ? (
-        <View style={themed($scanner)}>
-          <CameraView
-            style={{ flex: 1 }}
-            facing="back"
-            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-            onBarcodeScanned={({ data }) => {
-              const found = extractInviteCode(data)
-              if (found) {
-                setCode(found)
-                setScanning(false)
-              }
-            }}
-          />
-          <Pressable onPress={() => setScanning(false)} style={themed($scanClose)}>
-            <Ionicons name="close" size={20} color="#FFFFFF" />
-          </Pressable>
-        </View>
-      ) : (
-        <Pressable onPress={startScan} style={themed($scanButton)}>
-          <Ionicons name="qr-code-outline" size={22} color={theme.colors.tint} />
-          <Text tx="join:scan" weight="medium" size="sm" style={{ color: theme.colors.tint }} />
-        </Pressable>
-      )}
-
-      <TextField
-        value={code}
-        onChangeText={(value) => setCode(value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
-        labelTx="join:codeLabel"
-        autoCapitalize="characters"
-        autoCorrect={false}
-        maxLength={16}
-        style={{ letterSpacing: 4, fontSize: 22, height: 32 }}
-        inputWrapperStyle={themed($input)}
-        containerStyle={{ marginTop: theme.spacing.lg }}
-        status={reasonText ? "error" : undefined}
-        helper={reasonText ?? undefined}
-      />
-
-      {preview.data?.valid ? (
-        <View style={themed($preview)}>
-          <Text size="xl">{preview.data.circleEmoji ?? "🏠"}</Text>
-          <View style={{ flex: 1 }}>
-            <Text weight="semiBold" size="md">
-              {preview.data.circleName}
-            </Text>
-            <Text size="xs" style={{ color: theme.colors.textDim }}>
-              {translate("circles:members", { count: preview.data.memberCount })}
-              {preview.data.invitedBy
-                ? ` · ${translate("join:invitedBy", { name: preview.data.invitedBy })}`
-                : ""}
-            </Text>
+        {scanning ? (
+          <View style={themed($scanner)}>
+            <CameraView
+              style={{ flex: 1 }}
+              facing="back"
+              barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+              onBarcodeScanned={({ data }) => {
+                const found = extractInviteCode(data)
+                if (found) {
+                  setCode(found)
+                  setScanning(false)
+                }
+              }}
+            />
+            <Pressable onPress={() => setScanning(false)} style={themed($scanClose)}>
+              <Ionicons name="close" size={20} color="#FFFFFF" />
+            </Pressable>
           </View>
-        </View>
-      ) : null}
+        ) : (
+          <Pressable onPress={startScan} style={themed($scanButton)}>
+            <Ionicons name="qr-code-outline" size={22} color={theme.colors.tint} />
+            <Text tx="join:scan" weight="medium" size="sm" style={{ color: theme.colors.tint }} />
+          </Pressable>
+        )}
 
-      <PrimaryButton
-        text={
-          preview.data?.valid
-            ? translate("join:join", { name: preview.data.circleName })
-            : translate("join:title")
-        }
-        onPress={join}
-        loading={accept.isPending}
-        disabled={!preview.data?.valid}
-        style={{ marginTop: theme.spacing.lg }}
-      />
-    </Screen>
+        <TextField
+          value={code}
+          onChangeText={(value) => setCode(value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+          labelTx="join:codeLabel"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          maxLength={16}
+          style={{ letterSpacing: 4, fontSize: 22, height: 32 }}
+          inputWrapperStyle={themed($input)}
+          containerStyle={{ marginTop: theme.spacing.lg }}
+          status={reasonText ? "error" : undefined}
+          helper={reasonText ?? undefined}
+        />
+
+        {preview.data?.valid ? (
+          <View style={themed($preview)}>
+            <Text size="xl">{preview.data.circleEmoji ?? "🏠"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text weight="semiBold" size="md">
+                {preview.data.circleName}
+              </Text>
+              <Text size="xs" style={{ color: theme.colors.textDim }}>
+                {translate("circles:members", { count: preview.data.memberCount })}
+                {preview.data.invitedBy
+                  ? ` · ${translate("join:invitedBy", { name: preview.data.invitedBy })}`
+                  : ""}
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        <PrimaryButton
+          text={
+            preview.data?.valid
+              ? translate("join:join", { name: preview.data.circleName })
+              : translate("join:title")
+          }
+          onPress={join}
+          loading={accept.isPending}
+          disabled={!preview.data?.valid}
+          style={{ marginTop: theme.spacing.lg }}
+        />
+      </View>
+    </SheetScreen>
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
-  flexGrow: 1,
+const $container: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   padding: spacing.lg,
-  backgroundColor: colors.background,
 })
 
 const $scanButton: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({

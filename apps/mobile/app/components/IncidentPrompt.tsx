@@ -26,8 +26,8 @@ const COUNTDOWN_MS = 30_000
 const STALE_MS = 5 * 60_000
 /**
  * And past this it is not a question worth asking. The incident survives a
- * restart on purpose, but a phone that comes back an hour later should not open
- * on "are you okay?" about something the person plainly walked away from.
+ * restart on purpose, but a phone that comes back long afterwards should not
+ * open on "are you okay?" about something the person plainly walked away from.
  */
 const FORGET_MS = 60 * 60_000
 
@@ -87,7 +87,13 @@ export function IncidentPrompt() {
   useEffect(() => {
     if (!pending) return
     setNow(Date.now())
-    const tick = setInterval(() => setNow(Date.now()), 500)
+    const tick = setInterval(() => {
+      const next = Date.now()
+      setNow(next)
+      // Past the stale cutoff nothing on this card can change again, and the
+      // phone it is open on may sit unattended for hours.
+      if (next - detectedAt > STALE_MS) clearInterval(tick)
+    }, 500)
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") setNow(Date.now())
     })

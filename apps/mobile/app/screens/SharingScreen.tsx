@@ -51,9 +51,23 @@ export const SharingScreen: FC<AppStackScreenProps<"Sharing">> = ({ navigation, 
   )
 
   const toggleMaster = async (value: boolean) => {
-    setEnabled(value)
-    if (value) await startTracking()
-    else await stopTracking()
+    if (!value) {
+      setEnabled(false)
+      await stopTracking().catch((error) => toast.error((error as Error).message))
+      return
+    }
+    setEnabled(true)
+    // A switch left on while nothing is producing fixes is how a family ends up
+    // watching a frozen dot with no error anywhere, so it goes back off.
+    try {
+      if (!(await startTracking())) {
+        setEnabled(false)
+        toast.error(translate("permissions:deniedBody"))
+      }
+    } catch (error) {
+      setEnabled(false)
+      toast.error((error as Error).message)
+    }
   }
 
   return (

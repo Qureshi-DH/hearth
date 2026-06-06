@@ -2,7 +2,7 @@ import { useState, type FC } from "react"
 import { Pressable, View, type ViewStyle } from "react-native"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
-import { Screen } from "@/components/Screen"
+import { SheetScreen } from "@/components/SheetScreen"
 import { Text } from "@/components/Text"
 import { TextField } from "@/components/TextField"
 import { useCreateCircle } from "@/hooks/queries"
@@ -12,7 +12,6 @@ import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { useHeader } from "@/utils/useHeader"
 
 const EMOJI = ["🏠", "❤️", "👨‍👩‍👧‍👦", "🌙", "⭐", "🐾", "🚗", "🌿", "🔥", "🛡️"]
 
@@ -22,10 +21,6 @@ export const CreateCircleScreen: FC<AppStackScreenProps<"CreateCircle">> = ({ na
   const [emoji, setEmoji] = useState("🏠")
   const create = useCreateCircle()
   const setActiveCircle = useSettingsStore((state) => state.setActiveCircle)
-
-  useHeader({ titleTx: "circles:create", leftIcon: "x", onLeftPress: () => navigation.goBack() }, [
-    navigation,
-  ])
 
   const submit = async () => {
     try {
@@ -39,53 +34,55 @@ export const CreateCircleScreen: FC<AppStackScreenProps<"CreateCircle">> = ({ na
   }
 
   return (
-    <Screen preset="scroll" safeAreaEdges={["bottom"]} contentContainerStyle={themed($container)}>
-      <View style={themed($emojiRow)}>
-        {EMOJI.map((candidate) => (
-          <Pressable
-            key={candidate}
-            onPress={() => setEmoji(candidate)}
-            style={[
-              themed($emoji),
-              candidate === emoji && {
-                borderColor: theme.colors.tint,
-                backgroundColor: theme.colors.tintSoft,
-              },
-            ]}
-          >
-            <Text size="lg">{candidate}</Text>
-          </Pressable>
-        ))}
+    <SheetScreen scroll>
+      <View style={themed($container)}>
+        <Text preset="heading" tx="circles:create" />
+
+        <View style={themed($emojiRow)}>
+          {EMOJI.map((candidate) => (
+            <Pressable
+              key={candidate}
+              onPress={() => setEmoji(candidate)}
+              style={[
+                themed($emoji),
+                candidate === emoji && {
+                  borderColor: theme.colors.tint,
+                  backgroundColor: theme.colors.tintSoft,
+                },
+              ]}
+            >
+              <Text size="lg">{candidate}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <TextField
+          value={name}
+          onChangeText={setName}
+          labelTx="circles:nameLabel"
+          placeholderTx="circles:namePlaceholder"
+          autoFocus
+          maxLength={80}
+          returnKeyType="done"
+          onSubmitEditing={submit}
+          inputWrapperStyle={themed($input)}
+          containerStyle={{ marginTop: theme.spacing.lg }}
+        />
+
+        <PrimaryButton
+          tx="circles:create"
+          onPress={submit}
+          loading={create.isPending}
+          disabled={name.trim().length === 0}
+          style={{ marginTop: theme.spacing.lg }}
+        />
       </View>
-
-      <TextField
-        value={name}
-        onChangeText={setName}
-        labelTx="circles:nameLabel"
-        placeholderTx="circles:namePlaceholder"
-        autoFocus
-        maxLength={80}
-        returnKeyType="done"
-        onSubmitEditing={submit}
-        inputWrapperStyle={themed($input)}
-        containerStyle={{ marginTop: theme.spacing.lg }}
-      />
-
-      <PrimaryButton
-        tx="circles:create"
-        onPress={submit}
-        loading={create.isPending}
-        disabled={name.trim().length === 0}
-        style={{ marginTop: theme.spacing.lg }}
-      />
-    </Screen>
+    </SheetScreen>
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
-  flexGrow: 1,
+const $container: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   padding: spacing.lg,
-  backgroundColor: colors.background,
 })
 
 const $emojiRow: ThemedStyle<ViewStyle> = ({ spacing }) => ({
