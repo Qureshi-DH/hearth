@@ -11,11 +11,16 @@ in.
 ```bash
 pnpm install
 createdb hearth_dev
-cp .env.example .env      # set DATABASE_URL and JWT_SECRET
+cp .env.example .env
 
 pnpm dev                  # API on :4000
 pnpm seed                 # demo family, prints the login details
 ```
+
+In `.env`, uncomment `DATABASE_URL` and point it at `hearth_dev`. Everything
+else has a working default outside production. Set `JWT_SECRET` as well unless
+you enjoy being signed out: without one, development generates a fresh secret on
+every restart, which invalidates the tokens it issued before it.
 
 `pnpm install` also installs the git hooks. They format and lint what you
 staged, and check the commit message.
@@ -32,7 +37,7 @@ pnpm verify
 That runs format checking, lint, typecheck and tests. The pre-push hook runs a
 subset of it, and CI runs all of it plus a Docker build.
 
-Server tests need a database:
+Server tests need a database of their own, which they truncate between specs:
 
 ```bash
 createdb hearth_test

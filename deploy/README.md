@@ -2,8 +2,13 @@
 
 Reverse-proxy examples referenced from [docs/SELF-HOSTING.md](../docs/SELF-HOSTING.md).
 
-- `Caddyfile` — TLS + websocket proxy for the API (and optionally ntfy).
+- `Caddyfile`: TLS and websocket proxy for the API, and optionally for ntfy.
 
 The compose files themselves live at the repository root:
-`docker-compose.yml` (API + Postgres), `docker-compose.ntfy.yml` (self-hosted
-push), `docker-compose.redis.yml` (multi-replica realtime).
+`docker-compose.yml` (API, Postgres and MinIO, built from this working tree),
+`docker-compose.ntfy.yml` (self-hosted push) and `docker-compose.redis.yml`
+(multi-replica realtime).
+
+To run a released build rather than your own, swap the `api` service's `build:`
+for `image: dhqureshi/hearth-api:latest`. [docs/SELF-HOSTING.md](../docs/SELF-HOSTING.md)
+has the whole file written that way.

@@ -30,7 +30,13 @@ import { registerWebsocket } from "./modules/ws.routes"
 import { authPlugin } from "./plugins/auth"
 import { securityPlugin } from "./plugins/security"
 
-const VERSION = process.env.npm_package_version ?? "0.1.0"
+declare const __HEARTH_VERSION__: string | undefined
+
+/** Baked in by tsup for the bundle. Falls back to the package manager in dev. */
+const VERSION =
+  typeof __HEARTH_VERSION__ === "string"
+    ? __HEARTH_VERSION__
+    : (process.env.npm_package_version ?? "0.0.0-dev")
 
 export async function buildApp(): Promise<FastifyInstance> {
   const config = getConfig()
