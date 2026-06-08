@@ -7,3 +7,5 @@ server/src/db/migrations
 apps/mobile/ios
 apps/mobile/android
 apps/mobile/.expo
+docs/build/
+docs/.docusaurus/

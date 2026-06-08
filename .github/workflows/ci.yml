@@ -39,6 +39,26 @@ jobs:
           --from ${{ github.event.pull_request.base.sha }}
           --to ${{ github.event.pull_request.head.sha }}
 
+  docs:
+    name: Documentation site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: "10.14.0" }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        working-directory: docs
+        run: pnpm install --frozen-lockfile --ignore-workspace
+      - name: Build
+        working-directory: docs
+        # onBrokenLinks is "throw", so this fails on a stale internal link
+        # rather than shipping one.
+        run: pnpm build
+
   server:
     name: Server
     runs-on: ubuntu-latest

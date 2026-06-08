@@ -1,0 +1,39 @@
+/**
+ * The app's ember accent, darkened for light backgrounds so body text and
+ * links keep an accessible contrast ratio against white.
+ */
+:root {
+  --ifm-color-primary: #c9481c;
+  --ifm-color-primary-dark: #b54019;
+  --ifm-color-primary-darker: #aa3d18;
+  --ifm-color-primary-darkest: #8c3214;
+  --ifm-color-primary-light: #dd5222;
+  --ifm-color-primary-lighter: #e35c2d;
+  --ifm-color-primary-lightest: #e8764c;
+  --ifm-code-font-size: 92%;
+  --ifm-font-family-base:
+    system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="dark"] {
+  --ifm-color-primary: #ff8355;
+  --ifm-color-primary-dark: #ff6b36;
+  --ifm-color-primary-darker: #ff5f26;
+  --ifm-color-primary-darkest: #e84400;
+  --ifm-color-primary-light: #ff9b74;
+  --ifm-color-primary-lighter: #ffa784;
+  --ifm-color-primary-lightest: #ffcbb5;
+  --ifm-background-color: #121214;
+  --ifm-background-surface-color: #1a1a1d;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.1);
+}
+
+.markdown table {
+  display: table;
+  width: 100%;
+}
+
+.markdown h2 {
+  margin-top: 2.4rem;
+}
