@@ -1,4 +1,7 @@
-# Roadmap
+---
+sidebar_position: 7
+title: Roadmap
+---
 
 v1 ships the core of a family location app, end to end. Nothing below it is
 built yet, so read this as intent rather than a promise. Roughly ordered by
@@ -44,4 +47,4 @@ value.
 An Apple Watch or Wear OS glance. Bluetooth tag support, an ESP32 with GPS
 reporting to the same API. Home Assistant integration via the websocket.
 
-Contributions welcome. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+Contributions welcome. See [CONTRIBUTING.md](https://github.com/Qureshi-DH/hearth/blob/main/CONTRIBUTING.md).

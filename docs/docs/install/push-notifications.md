@@ -1,4 +1,7 @@
-# Push notifications in a self-hosted world
+---
+sidebar_position: 3
+title: Push notifications
+---
 
 Push is the one part of a family tracking app you can't just run on your own box.
 The last hop, waking a phone that's asleep in someone's pocket, belongs to Apple

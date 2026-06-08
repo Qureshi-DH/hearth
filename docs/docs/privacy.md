@@ -1,4 +1,7 @@
-# Privacy & data
+---
+sidebar_position: 4
+title: Privacy
+---
 
 Hearth exists so that a family's whereabouts stay on hardware the family
 controls. This is the plain-language version of what the server stores and who
@@ -97,7 +100,8 @@ identifier. Crash detection is the one thing that reads a sensor without asking:
 the accelerometer, gyroscope and barometer need no permission on either platform
 at the rates it samples them, so it is listed on the setup checklist instead,
 where you can at least see that it is running. See
-[MOBILE.md](MOBILE.md#permissions) for the full table and the reason for each.
+[the mobile app page](developer/mobile.md#permissions) for the full table and the
+reason for each.
 
 ## Security summary
 
@@ -108,4 +112,4 @@ where you can at least see that it is running. See
 - Rate limiting per account. Login timing is equalised for unknown emails.
 - Authorisation is checked against the database on every request.
 
-Report vulnerabilities per [SECURITY.md](../SECURITY.md).
+Report vulnerabilities per [SECURITY.md](https://github.com/Qureshi-DH/hearth/blob/main/SECURITY.md).

@@ -1,4 +1,7 @@
-# Mobile app
+---
+sidebar_position: 3
+title: Mobile app
+---
 
 `apps/mobile` is an Expo SDK 55 / React Native 0.83 app bootstrapped with
 [Ignite](https://github.com/infinitered/ignite) 11 and then reshaped for Hearth.
@@ -96,7 +99,7 @@ present, so Hearth emits exactly one of the two.
 
 A production Android build therefore can't reach `http://192.168.1.10:4000`
 unless it was built with `HEARTH_ALLOW_HTTP=1`, while a production iOS build
-can. Put TLS in front of the server (see [SELF-HOSTING.md](SELF-HOSTING.md))
+can. Put TLS in front of the server (see [self-hosting](../install/self-hosting.md))
 and neither caveat applies.
 
 ### Invite links

@@ -1,4 +1,7 @@
-# Self-hosting Hearth
+---
+sidebar_position: 1
+title: Self-hosting
+---
 
 Hearth runs as three containers behind any reverse proxy that can terminate
 TLS: the API, Postgres, and MinIO for profile pictures. A Raspberry Pi 4 or the
@@ -136,6 +139,11 @@ Interactive API docs are served at `/docs` (disable with `ENABLE_SWAGGER=false`)
 
 ## 3. Put TLS in front
 
+If you do not have a domain yet, or you would rather not expose anything to the
+internet, [remote access](remote-access.md) compares the ways to reach the
+server from outside and explains why the usual VPN-first advice fits a location
+app badly.
+
 Both platforms refuse plain HTTP for background traffic, so a TLS-terminating
 proxy is required, not optional.
 
@@ -189,7 +197,7 @@ labels:
 
 ## 4. Connect a phone
 
-Install the Hearth app (see [MOBILE.md](MOBILE.md) for building it), enter
+Install the Hearth app (see [the mobile app page](../developer/mobile.md) for building it), enter
 `https://hearth.example.com`, sign in as the admin account you configured,
 create a circle, and share the invite code or QR with the family.
 
@@ -197,7 +205,7 @@ create a circle, and share the invite code or QR with the family.
 
 ### Push notifications
 
-Read [PUSH-NOTIFICATIONS.md](PUSH-NOTIFICATIONS.md). For the fully self-hosted
+Read [push notifications](push-notifications.md). For the fully self-hosted
 route, take the `docker-compose.ntfy.yml` overlay from the repository and run:
 
 ```bash

@@ -1,4 +1,7 @@
-# API overview
+---
+sidebar_position: 2
+title: API
+---
 
 Every endpoint lives under `/api/v1` and returns JSON. The authoritative,
 always-current reference is the OpenAPI document the running server serves

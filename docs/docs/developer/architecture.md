@@ -1,4 +1,7 @@
-# Architecture
+---
+sidebar_position: 1
+title: Architecture
+---
 
 Hearth is a monorepo with three packages:
 
@@ -123,7 +126,7 @@ transaction. A scheduler tick claims pending rows with
 several API replicas and against an admin "flush now". It drains them through
 the configured `PushDriver` (`none` / `expo` / `ntfy` / `webpush`), with
 exponential back-off, dead-token cleanup, and re-queueing of rows a crashed
-replica left in `sending`. See [PUSH-NOTIFICATIONS.md](PUSH-NOTIFICATIONS.md).
+replica left in `sending`. See [push notifications](../install/push-notifications.md).
 
 ### Background jobs (`jobs/scheduler.ts`, every `JOB_INTERVAL_SECONDS`)
 
@@ -199,4 +202,4 @@ cache. Screens just render query data.
 - Invite codes: 8 chars, Crockford base32, rejection-sampled, single
   conditional `UPDATE` to claim a seat.
 
-See [PRIVACY.md](PRIVACY.md) for what is stored and for how long.
+See [privacy](../privacy.md) for what is stored and for how long.
