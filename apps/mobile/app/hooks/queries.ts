@@ -22,6 +22,7 @@ import {
 
 import { endpoints } from "@/services/api"
 import { useAuthStore } from "@/stores/auth"
+import { refreshMotionWatch } from "@/services/location/tracker"
 import { useSettingsStore } from "@/stores/settings"
 
 import { queryKeys } from "./queryKeys"
@@ -113,9 +114,11 @@ export function useCircles() {
   const circles = query.data
   useEffect(() => {
     if (!circles) return
-    useSettingsStore
-      .getState()
-      .setIncidentDetection(circles.some((circle) => circle.settings.incidentDetection))
+    const wanted = circles.some((circle) => circle.settings.incidentDetection)
+    if (wanted !== useSettingsStore.getState().incidentDetection) {
+      useSettingsStore.getState().setIncidentDetection(wanted)
+      void refreshMotionWatch()
+    }
   }, [circles])
 
   return query

@@ -367,12 +367,23 @@ let motionStillSince: number | null = null
  * asking them costs far less than waking the GPS to work it out from position.
  * Opt in per server while it is being compared against the GPS only path.
  */
+/**
+ * The OS classifier is the only thing that tells us a journey has started, so
+ * crash detection depends on it as much as the battery work does. Gating it on
+ * the battery toggle alone meant turning on incident alerts for a circle did
+ * nothing at all until an unrelated switch was also found.
+ */
+function motionWanted(): boolean {
+  const settings = useSettingsStore.getState()
+  return settings.nativeMotion || settings.incidentDetection
+}
+
 async function startMotionWatch(): Promise<void> {
   // The resume path and the device toggle can call this at once, and each await
   // below is a chance for the second to walk past a null subscription and add a
   // native listener whose handle we then lose.
   if (motionSubscription || motionStarting) return
-  if (!useSettingsStore.getState().nativeMotion) return
+  if (!motionWanted()) return
   motionStarting = true
   try {
     motionSubscription = await startMotion((activity, confidence) => {
@@ -390,7 +401,7 @@ async function startMotionWatch(): Promise<void> {
  * takes effect without restarting tracking.
  */
 export async function refreshMotionWatch(): Promise<void> {
-  if (useSettingsStore.getState().nativeMotion) await startMotionWatch()
+  if (motionWanted()) await startMotionWatch()
   else await stopMotionWatch()
 }
 
