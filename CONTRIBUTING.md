@@ -25,7 +25,7 @@ every restart, which invalidates the tokens it issued before it.
 `pnpm install` also installs the git hooks. They format and lint what you
 staged, and check the commit message.
 
-For the app, see [docs/MOBILE.md](docs/MOBILE.md). Short version:
+For the app, see [docs/docs/developer/mobile.md](docs/docs/developer/mobile.md). Short version:
 `npx expo prebuild && npx expo run:ios`.
 
 ## Before you open a pull request

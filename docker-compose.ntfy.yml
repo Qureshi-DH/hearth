@@ -8,7 +8,7 @@
 #
 # The api container talks to ntfy over the internal network as http://ntfy:80,
 # so NTFY_INTERNAL_URL below overrides NTFY_BASE_URL for server->ntfy calls.
-# See docs/PUSH-NOTIFICATIONS.md.
+# See docs/docs/install/push-notifications.md.
 
 services:
   ntfy:

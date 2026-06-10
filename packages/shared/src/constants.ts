@@ -55,7 +55,7 @@ export type ActivityType = (typeof ACTIVITY_TYPES)[number]
 export const PLATFORMS = ["ios", "android", "web", "other"] as const
 export type Platform = (typeof PLATFORMS)[number]
 
-/** See docs/PUSH-NOTIFICATIONS.md for the trade-offs of each. */
+/** See docs/docs/install/push-notifications.md for the trade-offs of each. */
 export const PUSH_PROVIDERS = ["none", "expo", "ntfy", "webpush"] as const
 export type PushProvider = (typeof PUSH_PROVIDERS)[number]
 

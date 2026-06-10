@@ -53,7 +53,7 @@ class NoopDriver implements PushDriver {
 /**
  * Expo's hosted push service relays to APNs and FCM, so a deployment needs no
  * Apple or Google credentials. The cost is that notification metadata routes
- * through a third party. See docs/PUSH-NOTIFICATIONS.md.
+ * through a third party. See docs/docs/install/push-notifications.md.
  */
 class ExpoDriver implements PushDriver {
   readonly provider = "expo" as const

@@ -82,7 +82,7 @@ delete your account and watch it cascade through every table.
 
 You need Docker and about five minutes. The server is published as
 `dhqureshi/hearth-api` for amd64 and arm64, so running Hearth needs no clone at
-all. [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) has the compose file and the
+all. The [self-hosting guide](docs/docs/install/self-hosting.md) has the compose file and the
 `.env` to paste.
 
 From a clone, which builds the image from your working tree instead of pulling
@@ -123,7 +123,7 @@ cannot be claimed by whoever finds the URL. Set `ADMIN_NAME` too if you want
 something other than the part before the @.
 
 Phones won't talk to a plain HTTP server in the background, so put a TLS proxy
-in front before you invite anyone. [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)
+in front before you invite anyone. [docs/docs/install/self-hosting.md](docs/docs/install/self-hosting.md)
 has Caddy and nginx configs you can paste.
 
 ## Build the app
@@ -189,16 +189,18 @@ response shape changes, both fail to typecheck until they agree.
 
 ## Documentation
 
-|                                                  |                                                    |
-| ------------------------------------------------ | -------------------------------------------------- |
-| [Self-hosting](docs/SELF-HOSTING.md)             | Deploy, TLS, backups, upgrades, scaling            |
-| [Push notifications](docs/PUSH-NOTIFICATIONS.md) | Every option for self-hosters, with the tradeoffs  |
-| [Architecture](docs/ARCHITECTURE.md)             | Data model, location pipeline, realtime, jobs      |
-| [API](docs/API.md)                               | REST and websocket reference                       |
-| [Mobile](docs/MOBILE.md)                         | Building the app, permissions, background location |
-| [Privacy](docs/PRIVACY.md)                       | What's stored, for how long, who can see it        |
-| [Roadmap](docs/ROADMAP.md)                       | What's next                                        |
-| [Contributing](CONTRIBUTING.md)                  | Setup and conventions                              |
+|                                                               |                                                    |
+| ------------------------------------------------------------- | -------------------------------------------------- |
+| [Quick start](docs/docs/overview/quick-start.md)              | From nothing to one phone on the map               |
+| [Self-hosting](docs/docs/install/self-hosting.md)             | Deploy, TLS, backups, upgrades, scaling            |
+| [Remote access](docs/docs/install/remote-access.md)           | Reaching your server from outside the house        |
+| [Push notifications](docs/docs/install/push-notifications.md) | Every option for self-hosters, with the tradeoffs  |
+| [Architecture](docs/docs/developer/architecture.md)           | Data model, location pipeline, realtime, jobs      |
+| [API](docs/docs/developer/api.md)                             | REST and websocket reference                       |
+| [Mobile](docs/docs/developer/mobile.md)                       | Building the app, permissions, background location |
+| [Privacy](docs/docs/privacy.md)                               | What's stored, for how long, who can see it        |
+| [Roadmap](docs/docs/roadmap.md)                               | What's next                                        |
+| [Contributing](CONTRIBUTING.md)                               | Setup and conventions                              |
 
 ## Push notifications, briefly
 
@@ -215,7 +217,7 @@ options and defaults to the one that needs no configuration:
 
 Notification payloads carry names and identifiers, never coordinates. The app
 fetches the position from your server when you tap.
-[docs/PUSH-NOTIFICATIONS.md](docs/PUSH-NOTIFICATIONS.md) goes through each one
+The [push notifications guide](docs/docs/install/push-notifications.md) goes through each one
 properly.
 
 ## Contributing

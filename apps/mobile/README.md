@@ -9,6 +9,6 @@ npx expo prebuild       # native projects (git-ignored)
 npx expo run:ios        # or run:android
 ```
 
-Everything else is in [docs/MOBILE.md](../../docs/MOBILE.md): permissions,
+Everything else is in [the mobile guide](../../docs/docs/developer/mobile.md): permissions,
 background location, crash detection, EAS builds, project structure and the
 design notes.

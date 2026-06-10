@@ -5,7 +5,7 @@
 #
 # The API listens on ${HEARTH_PORT:-4000}. Put a TLS-terminating reverse proxy
 # (Caddy, Traefik, nginx) in front of it before exposing it to the internet;
-# see docs/SELF-HOSTING.md for a ready-made Caddy example.
+# see docs/docs/install/self-hosting.md for a ready-made Caddy example.
 
 name: hearth
 
