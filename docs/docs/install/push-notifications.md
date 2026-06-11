@@ -91,10 +91,24 @@ The Hearth app is built with Expo, so `expo-notifications` can hand you an
 `ExponentPushToken[...]`. Your server POSTs to `https://exp.host/--/api/v2/push/send`
 and Expo relays to APNs/FCM using credentials attached to your Expo project.
 
-Setup is three steps. Run `cd apps/mobile && eas init` to get an Expo project id
-(the free tier is fine). Build the app with EAS or locally, since Expo needs its
-project id baked in. Then set `PUSH_PROVIDER=expo` on the server, plus
-`EXPO_ACCESS_TOKEN` if you enabled enhanced push security on your Expo account.
+Setup, if you are building the app yourself:
+
+1. `cd apps/mobile && eas init` for an Expo project id. The free tier is fine.
+2. For Android, create a Firebase project, add an Android app with the package
+   name from `app.json`, and put the downloaded `google-services.json` in
+   `apps/mobile/`. It is gitignored on purpose, so a build from a fork registers
+   devices in that fork's Firebase project rather than somebody else's.
+   `google-services.example.json` shows the shape. Then upload the FCM V1
+   service account key to Expo with `eas credentials -p android`. Without that
+   upload, tokens register and nothing is ever delivered.
+3. For iOS, `eas credentials -p ios` and let EAS hold the APNs key.
+4. Set `PUSH_PROVIDER=expo` on the server, plus `EXPO_ACCESS_TOKEN` if you
+   enabled enhanced push security on your Expo account.
+
+Both the project id and `google-services.json` are compiled into the build, so
+a build made before you configured them cannot deliver push no matter what the
+server is set to. The service account key and the APNs key are the two real
+secrets here and neither belongs in the repository.
 
 You get zero infrastructure and the best out-of-the-box reliability on both
 platforms. The price is that Expo sits in the delivery path and sees the device

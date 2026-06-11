@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs"
+import { resolve } from "node:path"
+
 import { ExpoConfig, ConfigContext } from "@expo/config"
 
 /**
@@ -34,6 +37,20 @@ const allowInsecureHttp =
  */
 const appLinkHost = process.env.HEARTH_APP_LINK_HOST?.trim()
 
+/**
+ * Android push goes through Firebase, and Firebase needs this file compiled
+ * into the build. It is gitignored, because a build made from a fork should
+ * register its devices in that fork's own Firebase project rather than in
+ * ours. Referenced only when it is actually present, so cloning the repo and
+ * running prebuild still works without it. Push is simply off in that build.
+ *
+ * google-services.example.json shows the shape. Get the real one from the
+ * Firebase console, Project settings, Your apps, for package app.hearth.mobile.
+ */
+const googleServicesFile = existsSync(resolve(__dirname, "google-services.json"))
+  ? "./google-services.json"
+  : undefined
+
 module.exports = ({ config }: ConfigContext): Partial<ExpoConfig> => {
   type Plugin = NonNullable<ExpoConfig["plugins"]>[number]
   const existingPlugins: Plugin[] = (config.plugins ?? []).map((plugin): Plugin => {
@@ -54,6 +71,7 @@ module.exports = ({ config }: ConfigContext): Partial<ExpoConfig> => {
     ...config,
     android: {
       ...config.android,
+      ...(googleServicesFile ? { googleServicesFile } : {}),
       ...(appLinkHost
         ? {
             intentFilters: [
