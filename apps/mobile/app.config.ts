@@ -19,11 +19,13 @@ import "tsx/cjs"
  * trying Hearth on a LAN at http://192.168.x.x need it allowed, so development
  * builds allow it and production builds can opt in with HEARTH_ALLOW_HTTP=1.
  */
+const isProductionBuild =
+  process.env.EAS_BUILD_PROFILE?.startsWith("production") === true ||
+  process.env.NODE_ENV === "production"
+
 const allowInsecureHttp =
   process.env.HEARTH_ALLOW_HTTP === "1" ||
-  (process.env.HEARTH_ALLOW_HTTP !== "0" &&
-    process.env.EAS_BUILD_PROFILE !== "production" &&
-    process.env.NODE_ENV !== "production")
+  (process.env.HEARTH_ALLOW_HTTP !== "0" && !isProductionBuild)
 
 /**
  * Android App Links need a concrete domain baked in at build time, and every

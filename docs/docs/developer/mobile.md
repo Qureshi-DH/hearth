@@ -27,19 +27,37 @@ on the same machine, that's `http://localhost:4000` on iOS or
 `http://10.0.2.2:4000` on the Android emulator. Set `REGISTRATION_MODE=open` on
 the server while you play.
 
-### EAS builds
+### Builds
 
-`eas.json` ships with `development`, `preview` and `production` profiles.
+Two environments, `development` and `production`, plus a variant of each for
+the shape of artifact you need. Every command builds locally rather than on
+Expo's servers.
 
 ```bash
-npm i -g eas-cli && eas login
-eas init                          # creates the project id used for Expo push
-eas build --profile development --platform ios
+pnpm build:android:dev        # debug APK for an emulator or a plugged-in phone
+pnpm build:android:prod       # AAB, what Play Store wants
+pnpm build:android:prod:apk   # APK, for sideloading a release build
+pnpm build:ios:sim            # debug build for the simulator
+pnpm build:ios:dev            # debug build for a real device
+pnpm build:ios:prod           # IPA
 ```
 
-`eas init` also writes `extra.eas.projectId` into `app.json`, which is what
-`PUSH_PROVIDER=expo` needs. Without it the app falls back gracefully and tells
-the user push is unavailable.
+Development builds allow plain HTTP so a family can try the app against a LAN
+server. Production builds do not, on either platform, which is the behaviour
+you want and the thing to remember when a release build cannot reach a server
+that a development build could.
+
+Android release signing runs through `scripts/eas-build.sh`, which loads the
+keystore from outside the repository before handing over to EAS. That key must
+never change: Android refuses an update signed with a different one, so a build
+signed by anything else strands everyone who already installed the app. If the
+keystore properties are missing the script says so and falls back to debug
+signing, which is fine for trying the app and must not be given to anyone.
+
+Push notifications are configured for production only. `eas init` writes
+`extra.eas.projectId` into `app.json`, which is what `PUSH_PROVIDER=expo` needs,
+and Android additionally needs `google-services.json` present. Without either,
+the app falls back gracefully and tells the user push is unavailable.
 
 ## Permissions
 
