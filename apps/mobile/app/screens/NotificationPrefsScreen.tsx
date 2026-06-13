@@ -37,6 +37,7 @@ const LABELS: Record<
   | "notifications:sharingPaused"
   | "notifications:tripCompleted"
   | "notifications:speedAlert"
+  | "notifications:nudge"
 > = {
   place_arrive: "notifications:placeArrive",
   place_leave: "notifications:placeLeave",
@@ -46,6 +47,7 @@ const LABELS: Record<
   sharing_paused: "notifications:sharingPaused",
   trip_completed: "notifications:tripCompleted",
   speed_alert: "notifications:speedAlert",
+  nudge_requested: "notifications:nudge",
 }
 
 export const NotificationPrefsScreen: FC<AppStackScreenProps<"NotificationPrefs">> = ({

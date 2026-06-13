@@ -1,18 +1,13 @@
 import { useEffect, useRef } from "react"
 import { AppState, type AppStateStatus } from "react-native"
-import type {
-  CircleMessage,
-  FeedEvent,
-  MemberPresence,
-  Paginated,
-  WsServerMessage,
-} from "@hearth/shared"
+import type { FeedEvent, MemberPresence, Paginated, WsServerMessage } from "@hearth/shared"
 
 import { queryKeys } from "@/hooks/queryKeys"
 import { api } from "@/services/api"
 import { reportNow } from "@/services/location/tracker"
 import { queryClient } from "@/services/queryClient"
 import { useAuthStore } from "@/stores/auth"
+import { useNudgeStore } from "@/stores/nudge"
 
 const MIN_BACKOFF_MS = 1_000
 const MAX_BACKOFF_MS = 30_000
@@ -25,8 +20,9 @@ type Listener = (message: WsServerMessage) => void
  * socket open from a suspended phone is unreliable and drains the battery, so
  * background wake-ups come from push instead.
  *
- * Incoming messages are written straight into the React Query cache. Screens
- * render query data and never subscribe to the socket.
+ * Incoming frames are written straight into the React Query cache. Screens
+ * render query data and never subscribe to the socket. A quick message is the
+ * exception: nothing keeps it, so it goes to the store the banner reads.
  */
 class RealtimeClient {
   private socket: WebSocket | null = null
@@ -162,27 +158,16 @@ class RealtimeClient {
         }
         break
 
-      case "message":
-        queryClient.setQueryData<{ pages: Paginated<CircleMessage>[]; pageParams: unknown[] }>(
-          queryKeys.messages(message.circleId),
-          (current) => {
-            if (!current || current.pages.length === 0) return current
-            const [first, ...rest] = current.pages
-            if (!first || first.items.some((item) => item.id === message.message.id)) return current
-            return {
-              ...current,
-              pages: [{ ...first, items: [message.message, ...first.items] }, ...rest],
-            }
-          },
-        )
-        break
-
       case "sos":
         void queryClient.invalidateQueries({ queryKey: queryKeys.sos(message.circleId) })
         void queryClient.invalidateQueries({ queryKey: queryKeys.presence(message.circleId) })
         break
 
       case "nudge":
+        // Two things at once: report a fresh position, and put the sender's
+        // words on screen. Delivered on this user's own topic, so it is
+        // already addressed and needs no filtering.
+        useNudgeStore.getState().receive(message.nudge)
         void reportNow("nudge")
         break
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FC } from "react"
 import { Alert, Linking, Platform, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
+import { QUICK_MESSAGES, type QuickMessageKey } from "@hearth/shared"
 
 import { Avatar } from "@/components/Avatar"
 import { BatteryPill } from "@/components/BatteryPill"
@@ -9,6 +10,7 @@ import { HearthMap, PlaceLayers, TrailLayer } from "@/components/HearthMap"
 import { ListGroup, ListRow } from "@/components/ListRow"
 import { MemberMarker, MEMBER_MARKER_LABEL_HEIGHT } from "@/components/MemberMarker"
 import { ringFor, statusLine } from "@/components/MemberRow"
+import { OptionSheet } from "@/components/OptionSheet"
 import { Pill } from "@/components/Pill"
 import { PromptDialog } from "@/components/PromptDialog"
 import { PrimaryButton } from "@/components/PrimaryButton"
@@ -103,7 +105,17 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
 
   const askNudge = async () => {
     try {
-      await nudge.mutateAsync(userId)
+      await nudge.mutateAsync({ userId })
+      toast.success(translate("map:nudged", { name }))
+    } catch (error) {
+      toast.error((error as Error).message)
+    }
+  }
+
+  const [choosingMessage, setChoosingMessage] = useState(false)
+  const sendQuick = async (quickKey: QuickMessageKey) => {
+    try {
+      await nudge.mutateAsync({ userId, quickKey })
       toast.success(translate("map:nudged", { name }))
     } catch (error) {
       toast.error((error as Error).message)
@@ -308,7 +320,7 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
             tx="messages:messageMember"
             icon="chatbubble-ellipses-outline"
             iconTone="tint"
-            onPress={() => navigation.navigate("Messages", { circleId, toUserId: userId })}
+            onPress={() => setChoosingMessage(true)}
           />
         ) : null}
         {canManage || isSelf ? (
@@ -352,6 +364,18 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
           />
         ) : null}
       </ListGroup>
+      <OptionSheet
+        visible={choosingMessage}
+        titleTx="messages:title"
+        onClose={() => setChoosingMessage(false)}
+        options={QUICK_MESSAGES.map((quick) => ({
+          key: quick.key,
+          // The words themselves, because they are what the other person will
+          // read on their screen and what the activity feed will record.
+          label: quick.body,
+          onPress: () => void sendQuick(quick.key),
+        }))}
+      />
       <PromptDialog
         visible={nicknaming}
         titleTx="member:nickname"

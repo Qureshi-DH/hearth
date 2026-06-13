@@ -18,11 +18,13 @@ import { useFonts } from "expo-font"
 import * as Linking from "expo-linking"
 import * as SplashScreen from "expo-splash-screen"
 import { QueryClientProvider } from "@tanstack/react-query"
+import { BottomSheetModalProvider } from "@gorhom/bottom-sheet"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { KeyboardProvider } from "react-native-keyboard-controller"
 import { initialWindowMetrics, SafeAreaProvider } from "react-native-safe-area-context"
 
 import { IncidentPrompt } from "./components/IncidentPrompt"
+import { NudgeBanner } from "./components/NudgeBanner"
 import { ToastHost } from "./components/Toast"
 import { initI18n } from "./i18n"
 import { AppNavigator } from "./navigators/AppNavigator"
@@ -150,19 +152,22 @@ export function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-        <KeyboardProvider>
-          <QueryClientProvider client={queryClient}>
-            <ThemeProvider>
-              <AppNavigator
-                linking={linking}
-                initialState={initialNavigationState}
-                onStateChange={onNavigationStateChange}
-              />
-              <IncidentPrompt />
-              <ToastHost />
-            </ThemeProvider>
-          </QueryClientProvider>
-        </KeyboardProvider>
+        <BottomSheetModalProvider>
+          <KeyboardProvider>
+            <QueryClientProvider client={queryClient}>
+              <ThemeProvider>
+                <AppNavigator
+                  linking={linking}
+                  initialState={initialNavigationState}
+                  onStateChange={onNavigationStateChange}
+                />
+                <IncidentPrompt />
+                <ToastHost />
+                <NudgeBanner />
+              </ThemeProvider>
+            </QueryClientProvider>
+          </KeyboardProvider>
+        </BottomSheetModalProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   )
