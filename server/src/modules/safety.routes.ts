@@ -1,4 +1,4 @@
-import { haversineMeters } from "@hearth/shared"
+import { DEFAULTS, haversineMeters, QUICK_MESSAGE_KEYS, QUICK_MESSAGES } from "@hearth/shared"
 import { and, desc, eq, isNull } from "drizzle-orm"
 import { alias } from "drizzle-orm/pg-core"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
@@ -417,11 +417,17 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
       preHandler: app.authenticate,
       schema: {
         tags: ["safety"],
-        summary: "Ask someone for a fresh location",
+        summary: "Nudge someone",
         description:
-          "Sends a high-priority silent push that asks the device to report in. Rate limited " +
-          "so it cannot be used to badger someone.",
+          "Asks their device to report a fresh location, and optionally puts a short message " +
+          "on their screen. Rate limited so it cannot be used to badger someone.",
         params: circleIdParam.extend({ userId: z.string().uuid() }),
+        body: z
+          .object({
+            quickKey: z.enum(QUICK_MESSAGE_KEYS).optional(),
+            body: z.string().trim().min(1).max(DEFAULTS.maxMessageLength).optional(),
+          })
+          .optional(),
       },
       config: { rateLimit: { max: 6, timeWindow: "10 minutes" } },
     },
@@ -448,35 +454,53 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
       }
 
       const [actor] = await db
-        .select({ displayName: users.displayName })
+        .select({
+          id: users.id,
+          displayName: users.displayName,
+          avatarColor: users.avatarColor,
+          avatarUrl: users.avatarUrl,
+        })
         .from(users)
         .where(eq(users.id, auth.userId))
         .limit(1)
+      const name = actor?.displayName ?? "Someone"
 
-      await enqueuePush(db, [
-        {
-          userId: target.userId,
-          circleId: membership.circleId,
-          title: "Location requested",
-          body: `${actor?.displayName ?? "Someone"} asked where you are.`,
-          channel: "alerts",
-          priority: "high",
-          data: { type: "nudge", circleId: membership.circleId, fromUserId: auth.userId },
-        },
-      ])
+      const quickKey = request.body?.quickKey ?? null
+      const messageBody =
+        request.body?.body ??
+        (quickKey ? (QUICK_MESSAGES.find((m) => m.key === quickKey)?.body ?? null) : null)
 
-      await getBus()?.publish(userTopic(target.userId), {
-        type: "nudge",
-        circleId: membership.circleId,
-        fromUserId: auth.userId,
-      })
-
-      await recordEvent(db, {
+      // recordEvent puts it in the feed and queues the push through the path
+      // that honours each member's mute settings, narrowed to the one person
+      // it is aimed at.
+      const dto = await recordEvent(db, {
         circleId: membership.circleId,
         type: "nudge_requested",
         actorUserId: auth.userId,
-        payload: { targetUserId: target.userId },
-        summary: `${actor?.displayName ?? "Someone"} asked for a location update`,
+        payload: { targetUserId: target.userId, quickKey, body: messageBody },
+        summary: messageBody ? `${name}: ${messageBody}` : `${name} asked for a location update`,
+        notify: {
+          title: messageBody ? name : "Location requested",
+          body: messageBody ?? `${name} asked where you are.`,
+          channel: "alerts",
+          priority: "high",
+          onlyUserIds: [target.userId],
+          data: { fromUserId: auth.userId },
+        },
+      })
+
+      // On the user topic rather than the circle's, so it reaches the one
+      // person without every other socket having to filter it out.
+      await getBus()?.publish(userTopic(target.userId), {
+        type: "nudge",
+        circleId: membership.circleId,
+        nudge: {
+          circleId: membership.circleId,
+          from: toPublicUser(actor!),
+          body: messageBody,
+          quickKey,
+          sentAt: dto.occurredAt,
+        },
       })
 
       return { ok: true }

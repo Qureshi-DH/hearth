@@ -23,7 +23,6 @@ import { InvitesScreen } from "@/screens/InvitesScreen"
 import { JoinCircleScreen } from "@/screens/JoinCircleScreen"
 import { LoginScreen } from "@/screens/LoginScreen"
 import { MemberDetailScreen } from "@/screens/MemberDetailScreen"
-import { MessagesScreen } from "@/screens/MessagesScreen"
 import { NotificationPrefsScreen } from "@/screens/NotificationPrefsScreen"
 import { PermissionsScreen } from "@/screens/PermissionsScreen"
 import { PlaceDetailScreen } from "@/screens/PlaceDetailScreen"
@@ -139,7 +138,9 @@ const AppStack = () => {
         target.userId
       ) {
         navigationRef.navigate("MemberDetail", { circleId: target.circleId, userId: target.userId })
-      } else if (target.type === "nudge") {
+      } else if (target.type === "nudge" || target.type === "quick_message") {
+        // A quick message is played over the map, so send the tap there rather
+        // than to the feed's after-the-fact record of it.
         navigationRef.navigate("Main", { screen: "Map" })
       } else {
         navigationRef.navigate("Main", { screen: "Activity" })
@@ -194,7 +195,6 @@ const AppStack = () => {
           <Stack.Screen name="Devices" component={DevicesScreen} />
           <Stack.Screen name="PrivacyData" component={PrivacyDataScreen} />
           <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} options={sheet} />
-          <Stack.Screen name="Messages" component={MessagesScreen} />
           <Stack.Screen
             name="Sos"
             component={SosScreen}

@@ -219,59 +219,74 @@ describe("auth", () => {
   })
 })
 
-describe("messages", () => {
-  it("keeps a directed message between the two people it names", async () => {
-    const owner = await registerUser(ctx.app, { displayName: "Owner" })
+describe("nudges", () => {
+  it("puts the message in the recipient's feed, and refuses one aimed outside the circle", async () => {
+    const owner = await registerUser(ctx.app, { displayName: "Amina" })
     const circle = await createCircle(owner.headers)
-    const join = async (headers: Record<string, string>) => {
-      const accepted = await ctx.app.inject({
-        method: "POST",
-        url: `/api/v1/invites/${circle.invite.code}/accept`,
-        headers,
-      })
-      expect(accepted.statusCode).toBe(200)
-    }
-    const driver = await registerUser(ctx.app, { displayName: "Driver" })
-    const bystander = await registerUser(ctx.app, { displayName: "Bystander" })
-    await join(driver.headers)
-    await join(bystander.headers)
+    const driver = await registerUser(ctx.app, { displayName: "Yusuf" })
+    const accepted = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/invites/${circle.invite.code}/accept`,
+      headers: driver.headers,
+    })
+    expect(accepted.statusCode).toBe(200)
 
     const sent = await ctx.app.inject({
       method: "POST",
-      url: `/api/v1/circles/${circle.id}/messages`,
+      url: `/api/v1/circles/${circle.id}/nudge/${driver.user.id}`,
       headers: owner.headers,
-      payload: { body: "Drive carefully", toUserId: driver.user.id },
+      payload: { quickKey: "slow_down" },
     })
-    expect(sent.statusCode).toBe(201)
-    expect(sent.json().toUser.id).toBe(driver.user.id)
+    expect(sent.statusCode).toBe(200)
 
-    const bodies = async (headers: Record<string, string>) => {
-      const list = await ctx.app.inject({
-        method: "GET",
-        url: `/api/v1/circles/${circle.id}/messages`,
-        headers,
-      })
-      expect(list.statusCode).toBe(200)
-      return (list.json().items as Array<{ body: string }>).map((item) => item.body)
-    }
+    // Nothing is stored to read back, so the feed is the only record of it.
+    const feed = await ctx.app.inject({
+      method: "GET",
+      url: `/api/v1/circles/${circle.id}/events`,
+      headers: driver.headers,
+    })
+    expect(feed.statusCode).toBe(200)
+    const nudge = (feed.json().items as Array<{ type: string; summary: string }>).find(
+      (item) => item.type === "nudge_requested",
+    )
+    expect(nudge?.summary).toBe("Amina: Please slow down.")
 
-    expect(await bodies(driver.headers)).toContain("Drive carefully")
-    expect(await bodies(owner.headers)).toContain("Drive carefully")
-    expect(await bodies(bystander.headers)).not.toContain("Drive carefully")
+    const outsider = await registerUser(ctx.app)
+    const rejected = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/nudge/${outsider.user.id}`,
+      headers: owner.headers,
+      payload: { quickKey: "call_me" },
+    })
+    expect(rejected.statusCode).toBe(404)
   })
 
-  it("refuses to aim a message at somebody outside the circle", async () => {
-    const owner = await registerUser(ctx.app)
+  it("still works with no message, as a bare request for a location", async () => {
+    const owner = await registerUser(ctx.app, { displayName: "Amina" })
     const circle = await createCircle(owner.headers)
-    const outsider = await registerUser(ctx.app)
+    const driver = await registerUser(ctx.app, { displayName: "Yusuf" })
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/invites/${circle.invite.code}/accept`,
+      headers: driver.headers,
+    })
 
     const sent = await ctx.app.inject({
       method: "POST",
-      url: `/api/v1/circles/${circle.id}/messages`,
+      url: `/api/v1/circles/${circle.id}/nudge/${driver.user.id}`,
       headers: owner.headers,
-      payload: { body: "Hello", toUserId: outsider.user.id },
     })
-    expect(sent.statusCode).toBe(400)
+    expect(sent.statusCode).toBe(200)
+
+    const feed = await ctx.app.inject({
+      method: "GET",
+      url: `/api/v1/circles/${circle.id}/events`,
+      headers: driver.headers,
+    })
+    const nudge = (feed.json().items as Array<{ type: string; summary: string }>).find(
+      (item) => item.type === "nudge_requested",
+    )
+    expect(nudge?.summary).toBe("Amina asked for a location update")
   })
 })
 

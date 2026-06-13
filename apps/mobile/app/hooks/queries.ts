@@ -2,7 +2,6 @@ import { useEffect } from "react"
 import type {
   CircleInvite,
   CircleMember,
-  CircleMessage,
   CircleSettings,
   CurrentUser,
   FeedEvent,
@@ -10,6 +9,7 @@ import type {
   Paginated,
   Place,
   PlaceIcon,
+  QuickMessageKey,
   SharingState,
 } from "@hearth/shared"
 import {
@@ -366,38 +366,10 @@ export function useMarkFeedRead(circleId: string) {
   })
 }
 
-export function useMessages(circleId: string | null) {
-  return useInfiniteQuery({
-    queryKey: queryKeys.messages(circleId ?? ""),
-    queryFn: ({ pageParam }) =>
-      endpoints.messages.list(circleId!, { limit: 50, cursor: pageParam as string | undefined }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (last: Paginated<CircleMessage>) => last.nextCursor ?? undefined,
-    enabled: Boolean(circleId),
-    staleTime: 15_000,
-  })
-}
-
-export function useSendMessage(circleId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: { body?: string; quickKey?: string; toUserId?: string }) =>
-      endpoints.messages.send(circleId, body),
-    onSuccess: (message) => {
-      // The websocket echoes this back too, so de-duplicate on id.
-      queryClient.setQueryData<{ pages: Paginated<CircleMessage>[]; pageParams: unknown[] }>(
-        queryKeys.messages(circleId),
-        (current) => {
-          if (!current || current.pages.length === 0) return current
-          const [first, ...rest] = current.pages
-          if (!first || first.items.some((item) => item.id === message.id)) return current
-          return { ...current, pages: [{ ...first, items: [message, ...first.items] }, ...rest] }
-        },
-      )
-    },
-  })
-}
-
+/**
+ * Nothing is cached: the message is shown to the recipient once and recorded in
+ * their feed by the server, so the sender has no list to keep in step.
+ */
 export function useActiveSos(circleId: string | null) {
   return useQuery({
     queryKey: queryKeys.sos(circleId ?? ""),
@@ -439,7 +411,13 @@ export function useCheckIn(circleId: string) {
 }
 
 export function useNudge(circleId: string) {
-  return useMutation({ mutationFn: (userId: string) => endpoints.safety.nudge(circleId, userId) })
+  return useMutation({
+    mutationFn: (input: { userId: string; quickKey?: QuickMessageKey; body?: string }) =>
+      endpoints.safety.nudge(circleId, input.userId, {
+        quickKey: input.quickKey,
+        body: input.body,
+      }),
+  })
 }
 
 export function useTrips(circleId: string | null, userId: string | null) {

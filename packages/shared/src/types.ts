@@ -8,6 +8,7 @@ import type {
   PushProvider,
   RegistrationMode,
   SharingState,
+  QuickMessageKey,
   WsMessageType,
 } from "./constants"
 
@@ -290,16 +291,13 @@ export interface FeedEvent {
 /* Messages                                                            */
 /* ------------------------------------------------------------------ */
 
-export interface CircleMessage {
-  id: string
+export interface Nudge {
   circleId: string
-  /** Null for the whole family. Set when the message is aimed at one member. */
-  toUser?: PublicUser | null
-  author: PublicUser
-  body: string
-  /** Set when the message came from a quick reply. */
-  quickKey: string | null
-  createdAt: string
+  from: PublicUser
+  /** Null when it is only a request to update their location. */
+  body: string | null
+  quickKey: QuickMessageKey | null
+  sentAt: string
 }
 
 /* ------------------------------------------------------------------ */
@@ -416,8 +414,7 @@ export type WsServerMessage =
   | { type: "presence"; circleId: string; presences: MemberPresence[] }
   | { type: "event"; circleId: string; event: FeedEvent }
   | { type: "sos"; circleId: string; alert: SosAlert }
-  | { type: "nudge"; circleId: string; fromUserId: string }
-  | { type: "message"; circleId: string; message: CircleMessage }
+  | { type: "nudge"; circleId: string; nudge: Nudge }
   | { type: "pong"; serverTime: string }
   | { type: "error"; message: string }
 

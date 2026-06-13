@@ -4,7 +4,6 @@ import type {
   AuthResponse,
   CheckIn,
   Circle,
-  CircleMessage,
   CircleInvite,
   CircleMember,
   CircleRole,
@@ -24,6 +23,7 @@ import type {
   PlaceIcon,
   PushConfig,
   PushProvider,
+  QuickMessageKey,
   ServerInfo,
   ServerSettings,
   SessionSummary,
@@ -219,13 +219,6 @@ export function createEndpoints(api: ApiClient) {
         api.get<{ unread: number }>(`/circles/${circleId}/events/unread-count`),
     },
 
-    messages: {
-      list: (circleId: string, query: { limit?: number; cursor?: string } = {}) =>
-        api.get<Paginated<CircleMessage>>(`/circles/${circleId}/messages`, { query }),
-      send: (circleId: string, body: { body?: string; quickKey?: string; toUserId?: string }) =>
-        api.post<CircleMessage>(`/circles/${circleId}/messages`, body),
-    },
-
     safety: {
       raiseSos: (circleId: string, note?: string | null) =>
         api.post<SosAlert & { notifiedMembers: number }>(`/circles/${circleId}/sos`, { note }),
@@ -236,8 +229,11 @@ export function createEndpoints(api: ApiClient) {
         api.post<CheckIn>(`/circles/${circleId}/check-in`, body),
       checkIns: (circleId: string, limit = 50) =>
         api.get<CheckIn[]>(`/circles/${circleId}/check-ins`, { query: { limit } }),
-      nudge: (circleId: string, userId: string) =>
-        api.post<{ ok: true }>(`/circles/${circleId}/nudge/${userId}`),
+      nudge: (
+        circleId: string,
+        userId: string,
+        message?: { quickKey?: QuickMessageKey; body?: string },
+      ) => api.post<{ ok: true }>(`/circles/${circleId}/nudge/${userId}`, message),
     },
 
     trips: {

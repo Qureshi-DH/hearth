@@ -333,37 +333,6 @@ export const events = pgTable(
   ],
 )
 
-/**
- * A short note to the whole circle ("please slow down", "on my way").
- *
- * Not a chat product. One thread per circle, no threading, no read receipts,
- * no attachments. It exists so the alerts this app raises have an obvious
- * reply, not to replace the family group chat.
- */
-export const messages = pgTable(
-  "messages",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    circleId: uuid("circle_id")
-      .notNull()
-      .references(() => circles.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    /** Null addresses the whole circle. Set to aim the message at one member. */
-    toUserId: uuid("to_user_id").references(() => users.id, { onDelete: "cascade" }),
-    body: text("body").notNull(),
-    /** Set when the message came from a canned quick-reply. */
-    quickKey: text("quick_key"),
-    createdAt: createdAt(),
-  },
-  (table) => [
-    index("messages_circle_created_idx").on(table.circleId, table.createdAt.desc()),
-    index("messages_to_user_idx").on(table.toUserId, table.createdAt.desc()),
-    index("messages_user_idx").on(table.userId),
-  ],
-)
-
 export const sosAlerts = pgTable(
   "sos_alerts",
   {
@@ -512,4 +481,3 @@ export type FeedEventRow = typeof events.$inferSelect
 export type SosAlertRow = typeof sosAlerts.$inferSelect
 export type TripRow = typeof trips.$inferSelect
 export type OutboxRow = typeof notificationOutbox.$inferSelect
-export type MessageRow = typeof messages.$inferSelect

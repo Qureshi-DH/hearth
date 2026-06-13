@@ -93,6 +93,7 @@ export const MUTABLE_EVENT_TYPES = [
   "sharing_paused",
   "trip_completed",
   "speed_alert",
+  "nudge_requested",
 ] as const satisfies readonly EventType[]
 
 export type MutableEventType = (typeof MUTABLE_EVENT_TYPES)[number]
@@ -118,8 +119,10 @@ export const REGISTRATION_MODES = ["open", "invite", "closed"] as const
 export type RegistrationMode = (typeof REGISTRATION_MODES)[number]
 
 /**
- * A family tracker usually needs a short, urgent nudge rather than a
- * conversation, so these are one tap away and free text is the fallback.
+ * What a nudge can carry. A family tracker needs a short, urgent word rather
+ * than a conversation, so a nudge is either a bare request for someone's
+ * location or one of these attached to it. There is no chat and nothing to
+ * catch up on later: it shows on their screen, buzzes, and lands in the feed.
  */
 export const QUICK_MESSAGES = [
   { key: "slow_down", body: "Please slow down." },
@@ -130,6 +133,12 @@ export const QUICK_MESSAGES = [
   { key: "drive_safe", body: "Drive safe." },
 ] as const
 export type QuickMessageKey = (typeof QUICK_MESSAGES)[number]["key"]
+
+/** The keys on their own, for schemas that need a plain tuple. */
+export const QUICK_MESSAGE_KEYS = QUICK_MESSAGES.map((message) => message.key) as unknown as [
+  QuickMessageKey,
+  ...QuickMessageKey[],
+]
 
 /** Most of these are overridable per circle or via env. */
 export const DEFAULTS = {
@@ -190,7 +199,6 @@ export const WS_MESSAGE_TYPES = [
   "event",
   "sos",
   "nudge",
-  "message",
   "ping",
   "pong",
   "error",

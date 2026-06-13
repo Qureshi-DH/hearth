@@ -35,8 +35,6 @@ export type AppStackParamList = {
   Devices: undefined
   PrivacyData: undefined
   ChangePassword: undefined
-  /** toUserId turns the thread into a message to that one member. */
-  Messages: { circleId: string; toUserId?: string }
   Sos: { circleId: string }
   CheckIn: { circleId: string }
   Trips: { circleId: string; userId: string }

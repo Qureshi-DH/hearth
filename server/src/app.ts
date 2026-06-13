@@ -20,7 +20,6 @@ import { circleRoutes } from "./modules/circles.routes"
 import { eventRoutes } from "./modules/events.routes"
 import { locationRoutes } from "./modules/locations.routes"
 import { mediaRoutes } from "./modules/media.routes"
-import { messageRoutes } from "./modules/messages.routes"
 import { placeRoutes } from "./modules/places.routes"
 import { pushRoutes } from "./modules/push.routes"
 import { safetyRoutes } from "./modules/safety.routes"
@@ -92,7 +91,6 @@ export async function buildApp(): Promise<FastifyInstance> {
           { name: "locations", description: "Uploading and reading positions" },
           { name: "places", description: "Geofences and arrive/leave events" },
           { name: "events", description: "Activity feed" },
-          { name: "messages", description: "Short notes between members" },
           { name: "safety", description: "SOS, check-ins and nudges" },
           { name: "trips", description: "Journeys derived from history" },
           { name: "push", description: "Notification transport registration" },
@@ -175,7 +173,6 @@ export async function buildApp(): Promise<FastifyInstance> {
       await api.register(locationRoutes)
       await api.register(placeRoutes)
       await api.register(eventRoutes)
-      await api.register(messageRoutes)
       await api.register(safetyRoutes)
       await api.register(tripRoutes)
       await api.register(pushRoutes)
