@@ -88,10 +88,15 @@ export const IMPACT = {
    * reported for a minute. Below restNoiseG the surroundings are at rest.
    * Above it, something is running.
    */
-  restNoiseG: 0.05,
+  restNoiseG: 0.042,
   driveNoiseG: 0.02,
   /** And the shaking has to have collapsed, not merely be lowish. */
   restNoiseRatio: 0.35,
+  /**
+   * How much of the stillness afterwards may be disturbed and still count.
+   * Demanding every sample made one knock enough to discard a real crash.
+   */
+  restDisturbedRatio: 0.05,
   /** How long after the peak the corroborating signals are allowed to arrive. */
   aftermathMs: 2500,
   /** Without a signal beyond the stop, the stop is counted twice. */
@@ -102,10 +107,16 @@ export const IMPACT = {
 const IMPACT_LEAD_MS = 500
 /** An airbag pressurises the cabin in milliseconds. Climbing a hill does not. */
 const PRESSURE_BASELINE_MS = 1000
-const PRESSURE_STEP_MS = 600
+// Wide enough for a barometer that reports about once a second, which is what
+// iOS gives whatever interval is asked for. At 600ms the airbag rise landed
+// between two samples and was never seen. The slope subtraction above is what
+// keeps a descent from filling a window this wide.
+const PRESSURE_STEP_MS = 1800
 /** The run up, less RUN_UP_GAP_MS, in which the impact is already happening. */
 const RUN_UP_MS = 6000
 const RUN_UP_GAP_MS = 500
+/** How close to the impact a speed reading has to be to describe that moment. */
+const SPEED_AT_IMPACT_MS = 2000
 
 const deltaG = (sample: DriveSample): number => Math.abs(sample.accelG - 1)
 
@@ -118,9 +129,14 @@ const speeds = (samples: DriveSample[]): number[] =>
  */
 function jitterG(samples: DriveSample[]): number {
   if (samples.length < 2) return 0
-  const mean = samples.reduce((sum, s) => sum + s.accelG, 0) / samples.length
-  const variance = samples.reduce((sum, s) => sum + (s.accelG - mean) ** 2, 0) / samples.length
-  return Math.sqrt(variance)
+  // Median absolute deviation rather than standard deviation. One bag dropped
+  // on the back seat is a single huge squared term, and it dragged the run up
+  // of a parked car above the threshold that means "this vehicle was driving".
+  // Scaled by 1.4826 so that on normal noise it reads the same as before.
+  const values = samples.map((s) => s.accelG).sort((a, b) => a - b)
+  const median = values[Math.floor(values.length / 2)]!
+  const deviations = values.map((v) => Math.abs(v - median)).sort((a, b) => a - b)
+  return deviations[Math.floor(deviations.length / 2)]! * 1.4826
 }
 
 /**
@@ -167,6 +183,16 @@ export function detectDriveEvent(samples: DriveSample[]): DriveEvent {
     (priorSpeeds.length > 0 && Math.max(...priorSpeeds) > IMPACT.restSpeedMps) ||
     baselineJitter >= IMPACT.driveNoiseG
   if (!wasMoving) return { kind: "none" }
+
+  // Moving when it was hit, not merely at some point beforehand. A phone that
+  // slides into the footwell as the car settles at a red light spikes hard and
+  // spins, and its spin says nothing the spike did not already say. What
+  // separates that from a collision is that the vehicle had already stopped.
+  const atImpact = [...before, peak]
+    .reverse()
+    .find((s) => s.speedMps != null && peak.t - s.t <= SPEED_AT_IMPACT_MS)
+  if (atImpact && atImpact.speedMps! <= IMPACT.restSpeedMps) return { kind: "none" }
+
   if (!cameToRest(after, peak.t, baselineJitter)) return { kind: "none" }
 
   const window = after.filter((sample) => sample.t - peak.t <= IMPACT.aftermathMs)
@@ -207,21 +233,38 @@ function speedDrop(before: DriveSample[], after: DriveSample[]): number | null {
 }
 
 /**
- * An airbag pressurises the cabin within milliseconds, so the baseline is the
- * second before the peak and the rise has to land in the fraction of a second
- * after it. Measured against the whole buffer instead, a couple of metres of
- * elevation lost on a hill clears the threshold on its own.
+ * An airbag pressurises the cabin within milliseconds. Driving downhill also
+ * raises the pressure, steadily, and a plain before-and-after difference cannot
+ * tell the two apart: a long enough descent clears any fixed threshold on its
+ * own. So the slope the cabin already had is measured first and subtracted,
+ * and what is left is the part the descent does not explain.
  */
 function pressureJump(ordered: DriveSample[], peakAt: number): number | null {
-  const baselineWindow = ordered.filter(
-    (s) => peakAt - s.t > 0 && peakAt - s.t <= PRESSURE_BASELINE_MS,
-  )
-  const stepWindow = ordered.filter((s) => s.t >= peakAt && s.t - peakAt <= PRESSURE_STEP_MS)
-  const priorPressures = baselineWindow.map((s) => s.pressure).filter((v): v is number => v != null)
-  const laterPressures = stepWindow.map((s) => s.pressure).filter((v): v is number => v != null)
-  if (priorPressures.length === 0 || laterPressures.length === 0) return null
-  const baseline = priorPressures.reduce((sum, v) => sum + v, 0) / priorPressures.length
-  return Math.max(...laterPressures) - baseline
+  const readings = ordered
+    .filter((s) => s.pressure != null)
+    .map((s) => ({ t: s.t, p: s.pressure! }))
+  const baseline = readings.filter((r) => peakAt - r.t > 0 && peakAt - r.t <= PRESSURE_BASELINE_MS)
+  const step = readings.filter((r) => r.t >= peakAt && r.t - peakAt <= PRESSURE_STEP_MS)
+  if (baseline.length === 0 || step.length === 0) return null
+
+  const mean = baseline.reduce((sum, r) => sum + r.p, 0) / baseline.length
+  const meanT = baseline.reduce((sum, r) => sum + r.t, 0) / baseline.length
+  const raw = Math.max(...step.map((r) => r.p)) - mean
+
+  // Slope over the run up, in hPa per millisecond, by least squares. Two
+  // readings cannot establish a trend, so with fewer the raw rise stands.
+  if (baseline.length < 3) return raw
+  let num = 0
+  let den = 0
+  for (const r of baseline) {
+    num += (r.t - meanT) * (r.p - mean)
+    den += (r.t - meanT) ** 2
+  }
+  if (den === 0) return raw
+  const slope = num / den
+  const peakOfStep = step.reduce((best, r) => (r.p > best.p ? r : best), step[0]!)
+  const expected = slope * (peakOfStep.t - meanT)
+  return raw - expected
 }
 
 /**
@@ -234,17 +277,23 @@ function cameToRest(after: DriveSample[], peakAt: number, baselineJitter: number
   if (tail.length === 0) return false
   const covered = tail[tail.length - 1]!.t - tail[0]!.t
   if (covered < IMPACT.stillnessMs) return false
-  if (!tail.every((sample) => deltaG(sample) < IMPACT.stillDeltaG)) return false
+  // Not every sample: a single knock while somebody reaches for their phone,
+  // or one dropped reading, should not undo five seconds of stillness. The
+  // vibration test below is what actually decides whether the vehicle moved.
+  const disturbed = tail.filter((sample) => deltaG(sample) >= IMPACT.stillDeltaG).length
+  if (disturbed > Math.max(1, Math.floor(tail.length * IMPACT.restDisturbedRatio))) return false
 
   // A phone that has come to rest on the floor of a car that is still driving
   // reads as motionless to everything above, because it is: it is the vehicle
   // that is moving. What it cannot hide is the vehicle's vibration, which is
   // still coming through the floor.
+  //
+  // The test is absolute rather than relative to the run up. A stopped vehicle
+  // shakes about the same amount whatever road it had been on, so comparing
+  // the two let road roughness decide whether a crash was reported, and the
+  // same impact was found on a smooth road and missed on a moderate one.
   const restJitter = jitterG(tail)
   if (restJitter > IMPACT.restNoiseG) return false
-  if (baselineJitter >= IMPACT.driveNoiseG && restJitter > baselineJitter * IMPACT.restNoiseRatio) {
-    return false
-  }
 
   const tailSpeeds = speeds(tail)
   if (tailSpeeds.length > 0 && Math.max(...tailSpeeds) > IMPACT.restSpeedMps) return false

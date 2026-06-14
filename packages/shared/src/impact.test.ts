@@ -219,6 +219,76 @@ describe("detectDriveEvent", () => {
     expect(event.kind).toBe("none")
   })
 
+  it("does not let a phone tumbling off the seat corroborate its own spike", () => {
+    // A hard stop at a red light, and the phone slides off the passenger seat
+    // into the footwell as the car settles. The spike and the spin are one
+    // event: a phone loose enough to land at 7.5 g is loose enough to tumble on
+    // the way down, so its rotation carries nothing the spike did not already
+    // carry. The same stop with the phone in a cradle is the control.
+    const atTheLight = (): Omit<DriveSample, "t"> => ({
+      accelG: 1 + 0.02,
+      rotationRps: 0.05,
+      pressure: 1013,
+      speedMps: 0,
+    })
+    const pullingUp = (rotationRps: number): DriveSample[] => [
+      ...trace(4, cruising(12)),
+      ...trace(
+        1.5,
+        () => ({ accelG: 1 + 0.3, rotationRps: 0.2, pressure: 1013, speedMps: 5 }),
+        4000,
+      ),
+      { t: 5500, accelG: 1 + 7.5, rotationRps, pressure: 1013, speedMps: 0 },
+      ...trace(9, atTheLight, 5520),
+    ]
+    expect(detectDriveEvent(pullingUp(0.4)).kind).toBe("none")
+    expect(detectDriveEvent(pullingUp(9)).kind).toBe("none")
+  })
+
+  it("does not let a hill supply the pressure rise an airbag is meant to", () => {
+    // A steep descent at 38 km/h, a cattle grid for the spike, and a hairpin at
+    // the bottom for the stop. The cabin never pressurises. The pressure climbs
+    // at a steady 0.25 hPa per second the whole way down, before the spike and
+    // through it, and a steady climb is what a descent looks like rather than
+    // what an airbag looks like.
+    const rng = noise(23)
+    const RATE_HPA_PER_S = 0.25
+    const descending = (secondsIn: number, speedMps: number) => ({
+      accelG: 1 + ROAD_G * rng(),
+      rotationRps: 0.3,
+      pressure: 1010 + RATE_HPA_PER_S * secondsIn,
+      speedMps,
+    })
+    const samples = [
+      ...trace(6, (s) => descending(s, 10.6)),
+      {
+        t: 6000,
+        accelG: 1 + 3.5,
+        rotationRps: 0.5,
+        pressure: 1010 + RATE_HPA_PER_S * 6,
+        speedMps: 10.6,
+      },
+      ...trace(0.62, (s) => descending(6 + s, 10.6), 6020),
+      // Braking to a halt at the hairpin, still losing height as it slows.
+      ...trace(
+        1.86,
+        (s) => ({
+          accelG: 1 + 0.59,
+          rotationRps: 0.3,
+          pressure: 1011.66 + 0.12 * s,
+          speedMps: Math.max(0, 10.6 - 5.76 * s),
+        }),
+        6640,
+      ),
+      ...trace(
+        8,
+        () => ({ accelG: 1 + PARKED_G * rng(), rotationRps: 0.05, pressure: 1011.88, speedMps: 0 }),
+        8500,
+      ),
+    ]
+    expect(detectDriveEvent(samples).kind).toBe("none")
+  })
+
   /* ---------------------------------------------------------------- */
   /* Vibration, for the many seconds when GPS has nothing to say       */
   /* ---------------------------------------------------------------- */
@@ -270,5 +340,91 @@ describe("detectDriveEvent", () => {
       ...trace(8, parked(1013.6), 6020),
     ]
     expect(detectDriveEvent(samples).kind).toBe("none")
+  })
+
+  it("detects the same crash whatever the road before it was like", () => {
+    // Identical impact, identical aftermath, and only the roughness of the run
+    // up changes. How rough the road was says nothing about what disturbs a
+    // wreck once it has stopped, so it must not decide whether the crash is
+    // reported at all.
+    const outcomes = [0.05, 0.1, 0.2, 0.3, 0.5].map((roadG) => {
+      const rng = noise(29)
+      const samples = [
+        ...trace(6, () => ({
+          accelG: 1 + roadG * rng(),
+          rotationRps: 0.3,
+          pressure: 1013,
+          speedMps: 27,
+        })),
+        { t: 6000, accelG: 1 + 15, rotationRps: 8, pressure: 1013.9, speedMps: 27 },
+        ...trace(
+          8,
+          () => ({ accelG: 1 + 0.1 * rng(), rotationRps: 0.03, pressure: 1013.9, speedMps: 0 }),
+          6500,
+        ),
+      ]
+      return `road ${roadG} g: ${detectDriveEvent(samples).kind}`
+    })
+    expect(outcomes).toEqual([
+      "road 0.05 g: possibleImpact",
+      "road 0.1 g: possibleImpact",
+      "road 0.2 g: possibleImpact",
+      "road 0.3 g: possibleImpact",
+      "road 0.5 g: possibleImpact",
+    ])
+  })
+
+  it("ignores a door slammed on a parked car that was jostled a moment before", () => {
+    // The same parked car, with a bag dropped onto the back seat two seconds
+    // before the door goes. Nothing was moving for either event, and the proof
+    // of that is the same in both cases. But one 0.5 g sample lands inside the
+    // run up window, and a standard deviation cannot tell one shove from six
+    // seconds of road, so the handbrake reads as a motorway.
+    const rng = noise(31)
+    const parked = (pressure: number) => () => ({
+      accelG: 1 + PARKED_G * rng(),
+      rotationRps: 0.02,
+      pressure,
+    })
+    const samples = [
+      ...trace(6, parked(1013)),
+      { t: 6000, accelG: 1 + 0.5, rotationRps: 0.06, pressure: 1013 },
+      ...trace(2, parked(1013), 6020),
+      { t: 8000, accelG: 1 + 4, rotationRps: 1.1, pressure: 1013.7 },
+      ...trace(8, parked(1013.6), 8020),
+    ]
+    expect(detectDriveEvent(samples).kind).toBe("none")
+  })
+
+  /* ---------------------------------------------------------------- */
+  /* A wreck is not a clean room                                       */
+  /* ---------------------------------------------------------------- */
+
+  it("still reports a crash when one sample of the aftermath is disturbed", () => {
+    // Everything the stillness test asks for is there: six seconds of tail,
+    // resting vibration of 0.005 g against a ceiling of 0.05, and a run up
+    // whose ratio allows 0.019. The only difference from the crash the suite
+    // already reports is one 0.25 g sample four seconds after the impact, which
+    // is a door being forced or somebody reaching for the phone.
+    const crash = (): DriveSample[] => {
+      const rng = noise(17)
+      return [
+        ...trace(6, () => ({
+          accelG: 1 + ROAD_G * rng(),
+          rotationRps: 0.3,
+          pressure: 1013,
+          speedMps: 27,
+        })),
+        { t: 6000, accelG: 1 + 9.2, rotationRps: 7, pressure: 1014.3, speedMps: 27 },
+        ...trace(
+          8,
+          () => ({ accelG: 1 + PARKED_G * rng(), rotationRps: 0.03, pressure: 1014, speedMps: 0 }),
+          6500,
+        ),
+      ]
+    }
+    expect(detectDriveEvent(crash()).kind).toBe("possibleImpact")
+    const disturbed = crash().map((s) => (s.t === 10000 ? { ...s, accelG: 1 + 0.25 } : s))
+    expect(detectDriveEvent(disturbed).kind).toBe("possibleImpact")
   })
 })
