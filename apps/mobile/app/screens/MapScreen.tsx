@@ -15,14 +15,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { Avatar } from "@/components/Avatar"
 import { GlassPanel } from "@/components/GlassPanel"
-import { HearthMap, PlaceLayers, TrailLayer } from "@/components/HearthMap"
+import { HearthMap, TrailLayer } from "@/components/HearthMap"
 import { IconButton } from "@/components/IconButton"
 import { MemberMarker, MEMBER_MARKER_LABEL_HEIGHT } from "@/components/MemberMarker"
 import { MemberRow, ringFor } from "@/components/MemberRow"
 import { Pill } from "@/components/Pill"
 import { PrimaryButton } from "@/components/PrimaryButton"
 import { Text } from "@/components/Text"
-import { useActiveSos, useHistory, useMembers, usePlaces, usePresence } from "@/hooks/queries"
+import { useActiveSos, useHistory, useMembers, usePresence } from "@/hooks/queries"
 import { useActiveCircle } from "@/hooks/useActiveCircle"
 import { translate } from "@/i18n/translate"
 import type { MainTabScreenProps } from "@/navigators/navigationTypes"
@@ -53,7 +53,6 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
 
   const { data: members } = useMembers(circleId)
   const { data: presence } = usePresence(circleId)
-  const { data: places } = usePlaces(circleId)
   const { data: activeSos } = useActiveSos(circleId)
 
   const cameraRef = useRef<CameraRef>(null)
@@ -211,7 +210,6 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
           setSwitcherOpen(false)
         }}
       >
-        <PlaceLayers places={places ?? []} />
         {trail && trail.length > 1 ? <TrailLayer id="trail" points={trail} /> : null}
         {(members ?? []).map((member) => {
           const entry = presenceByUser.get(member.userId)
@@ -265,12 +263,6 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
               </View>
             </GlassPanel>
           </Pressable>
-          <IconButton
-            icon="chatbubble-ellipses-outline"
-            tone="glass"
-            accessibilityLabel={translate("messages:title")}
-            onPress={() => circle && navigation.navigate("Messages", { circleId: circle.id })}
-          />
           <IconButton
             icon="settings-outline"
             tone="glass"

@@ -51,6 +51,7 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
   const serverInfo = useAuthStore((state) => state.serverInfo)
   const serverUrl = useAuthStore((state) => state.serverUrl)
   const signedOut = useAuthStore((state) => state.signedOut)
+  const clearServer = useAuthStore((state) => state.clearServer)
   // Per-field selectors, not the whole store: the tracking store writes on
   // every fix and every upload attempt, and this screen stays mounted.
   const themeMode = useSettingsStore((state) => state.themeMode)
@@ -109,6 +110,35 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
       { uri: resized.uri, name: "avatar.jpg", type: "image/jpeg" },
       { onError: (error) => toast.error((error as Error).message) },
     )
+  }
+
+  /**
+   * A session belongs to one server, so pointing the app somewhere else means
+   * leaving this one. Everything sign-out clears has to go too, or the tracker
+   * keeps uploading to the old address.
+   */
+  const changeServer = () => {
+    Alert.alert(translate("settings:changeServer"), translate("settings:changeServerConfirm"), [
+      { text: translate("common:cancel"), style: "cancel" },
+      {
+        text: translate("settings:changeServer"),
+        style: "destructive",
+        onPress: async () => {
+          await stopTracking()
+          await disablePush()
+          try {
+            await endpoints.auth.logout()
+          } catch {
+            // The old server may already be unreachable, which is often why
+            // somebody is changing it. Local cleanup below still has to run.
+          }
+          await tokenVault.set(null)
+          resetTracking()
+          queryClient.clear()
+          clearServer()
+        },
+      },
+    ])
   }
 
   const signOut = () => {
@@ -293,6 +323,7 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
           text={serverInfo?.serverName ?? "Hearth"}
           subtitle={serverUrl ?? undefined}
           icon="server-outline"
+          onPress={changeServer}
         />
         <ListRow
           tx="settings:version"
