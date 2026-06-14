@@ -148,6 +148,16 @@ and uploads it. Whether that wakes a backgrounded app depends on the provider:
 - `ntfy`: yes on Android. On iOS the user must tap the notification.
 - `none`: only if the app is in the foreground, via the websocket.
 
+## Quick messages
+
+A quick message is aimed at one member, so that member's phone is the only one
+notified. The title is the sender's name, the body is the line they sent, and
+`data` carries `type: "nudge_requested"` with the id of the feed entry behind it.
+Tapping it opens the map, which is where the app plays the message.
+
+Muting `nudge_requested` for a circle silences the notification. The activity feed
+records it either way, so the line is still there to find.
+
 ## Choosing, in one paragraph
 
 If you're running Hearth on a NAS for your own family and you care about privacy

@@ -37,9 +37,10 @@ There is nothing in between: no relay, no broker, no account with anybody.
 - **SOS.** Hold for three seconds and the circle gets a high-priority alert with
   your position, refreshed every 20 seconds until it is cleared. SOS overrides a
   paused state, because an emergency is not the moment to respect ghost mode.
-- **Check-ins, nudges and short messages.** One tap to say you are fine, a way
-  to ask a phone for a fresh fix, and one-tap replies like "On my way" so the
-  alerts have an obvious answer.
+- **Check-ins, nudges and quick messages.** One tap to say you are fine, a way
+  to ask a phone for a fresh fix, and a one-tap word to one person, "On my way"
+  or "Please slow down", which plays on their map for a moment, arrives as a
+  notification, and is recorded in the activity feed.
 - **Driving alerts, off until you turn them on.** A speed threshold, and an
   incident heuristic that asks you first and only ever suggests going to check
   on someone.
@@ -53,6 +54,10 @@ There is nothing in between: no relay, no broker, no account with anybody.
 There is no hosted version to sign up for, and no browser dashboard. Nobody
 operates Hearth as a service, which is the point, and the map lives in the phone
 app while the server just serves an API.
+
+There is no chat either. Everyone already has a messenger, and a family map does
+not need to be a second one. A quick message is one line to one person, seen
+once and then only in the feed, so there is no thread to keep up with.
 
 Nothing phones home. No analytics, no crash reporting, no third-party SDKs. Two
 things do leave your server, and both are your choice: map tiles come from the

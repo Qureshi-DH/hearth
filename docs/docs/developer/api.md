@@ -35,7 +35,7 @@ access token as `Authorization: Bearer <token>`. It's good for 15 minutes.
 | Locations | `POST /locations/batch`, `GET /circles/:id/locations`, `GET /circles/:id/members/:userId/history`                                                                                                                                      |
 | Places    | `GET/POST /circles/:id/places`, `PATCH/DELETE /circles/:id/places/:placeId`, `GET /circles/:id/places/:placeId/events`                                                                                                                 |
 | Events    | `GET /circles/:id/events?limit&cursor`, `POST /circles/:id/events/read`, `GET /circles/:id/events/unread-count`                                                                                                                        |
-| Messages  | `GET /circles/:id/messages?limit&cursor`, `POST /circles/:id/messages`                                                                                                                                                                 |
+| Nudges    | `POST /circles/:id/nudge/:userId` (one member, no history)                                                                                                                                                                             |
 | Safety    | `POST /circles/:id/sos` (3 per 10 min), `POST /sos/:alertId/resolve`, `GET /circles/:id/sos?activeOnly=true`, `POST /circles/:id/check-in`, `GET /circles/:id/check-ins`, `POST /circles/:id/nudge/:userId`                            |
 | Trips     | `GET /circles/:id/members/:userId/trips`, `GET /me/trips`, `GET /trips/:tripId`                                                                                                                                                        |
 | Push      | `GET /push/config`, `POST/DELETE /push/register`, `POST /push/test`                                                                                                                                                                    |
@@ -51,10 +51,21 @@ WebP, at most 2 MB, and the content type is decided by sniffing the bytes rather
 than by trusting the part header. They return `404` on a server with no object
 storage configured, which `GET /server-info` reports as `features.avatars`.
 
-A message carries either `body` or `quickKey` (one of the canned replies in
-`packages/shared`). Omit `toUserId` and it goes to the whole circle. Set it and
-only the two of you can read it, which the list query enforces in SQL rather
-than in the client.
+A quick message goes to one person, never to the circle.
+
+```text
+POST /circles/:circleId/nudge/:userId    { quickKey?, body? }
+```
+
+`toUserId` has to be another member of that circle. The text is either a
+`quickKey` from `QUICK_MESSAGES` in `packages/shared` ("Please slow down.", "On
+my way.") or a short line of your own, and a `201` returns the `QuickMessage`
+that went out. Sending one records a `nudge_requested` event in the circle's
+activity feed, queues a push for the recipient alone, and publishes a
+`nudge` frame on the recipient's own topic. Nothing is
+kept as a conversation, so there is no endpoint to list them back. The feed
+entry names both people and quotes the line, so this is a short word in front of
+the family rather than a private channel.
 
 ## Uploading location
 
@@ -115,7 +126,7 @@ Server → client messages (`WsServerMessage` in the shared package):
 | `event`      | `{ circleId, event }`, new activity-feed entry               |
 | `sos`        | `{ circleId, alert }`                                        |
 | `nudge`      | `{ circleId, fromUserId }`, the device should report a fix   |
-| `message`    | `{ circleId, message }`, a new message in the thread         |
+| `nudge`      | `{ circleId, nudge }`, on the recipient's own topic          |
 | `pong`       | `{ serverTime }`                                             |
 | `error`      | `{ message }`, the socket could not honour what you sent     |
 
@@ -141,16 +152,16 @@ whole household, and unauthenticated calls are counted per IP. `/healthz` and
 
 Routes with their own budget:
 
-| Route                        | Limit          |
-| ---------------------------- | -------------- |
-| `POST /locations/batch`      | 240 per minute |
-| `GET /media/*`               | 600 per minute |
-| `GET /join/:code`            | 60 per minute  |
-| `POST /auth/me/avatar`       | 10 per minute  |
-| `POST /circles/:id/messages` | 30 per 5 min   |
-| `POST /circles/:id/nudge/*`  | 6 per 10 min   |
-| `POST /circles/:id/sos`      | 3 per 10 min   |
-| `POST /push/test`            | 5 per 5 min    |
+| Route                             | Limit          |
+| --------------------------------- | -------------- |
+| `POST /locations/batch`           | 240 per minute |
+| `GET /media/*`                    | 600 per minute |
+| `GET /join/:code`                 | 60 per minute  |
+| `POST /auth/me/avatar`            | 10 per minute  |
+| `POST /circles/:id/nudge/:userId` | 6 per 10 min   |
+| `POST /circles/:id/nudge/*`       | 6 per 10 min   |
+| `POST /circles/:id/sos`           | 3 per 10 min   |
+| `POST /push/test`                 | 5 per 5 min    |
 
 Exceeding a limit returns `429`.
 

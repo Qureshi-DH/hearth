@@ -33,7 +33,7 @@ Every route lives under `/api/v1`. Routes are thin: validate, authorise via
 `requireMembership(circleId, minRole)`, call a service, serialise. Services hold
 the domain logic and are unit-testable with a real database.
 
-### Data model (18 tables)
+### Data model (17 tables)
 
 - `users` and `sessions` hold one session row per (user, device). Refresh
   tokens are hashed and rotated, and push tokens hang off the session, so
@@ -49,10 +49,10 @@ the domain logic and are unit-testable with a real database.
   map hit this table, never the history table.
 - `places`, `place_memberships` and `place_events` cover geofences, who is
   currently inside each one, and the arrive/leave log.
-- `events` is the activity feed. Everything the family sees as a line item.
-- `messages` is the short thread per circle. A row with `to_user_id` set is a
-  quiet word with one member, and the list query filters on that rather than
-  trusting the client to hide it.
+- `events` is the activity feed. Everything the family sees as a line item,
+  including a quick message, which is a feed row, a push and a live frame rather
+  than a stored conversation. There is no chat table, because nothing would ever
+  read one back.
 - `sos_alerts`, `check_ins` and `trips` are the safety features and derived
   journeys.
 - `notification_outbox` is the durable push queue (see below).
@@ -108,8 +108,8 @@ websocket layer re-projects on each socket.
 `lib/bus.ts` is an in-process EventEmitter by default and a Redis pub/sub when
 `REDIS_URL` is set. `/api/v1/ws` authenticates with the same JWT (header or
 `?access_token=`), primes the client with current presence, then forwards
-`location` / `event` / `sos` / `nudge` messages for the circles the user
-belongs to. Heartbeat every 30 s.
+`location` / `event` / `sos` / `nudge` frames for the circles
+the user belongs to. Heartbeat every 30 s.
 
 A `location` message carries the moving member's _unprojected_ presence row,
 which never leaves the server-internal bus. Each socket projects it for its own
@@ -117,6 +117,10 @@ viewer in memory, so N connected phones cost zero extra queries per fix.
 Membership is re-read every 60 s and immediately on a `member_removed` /
 `member_left` event about the socket's user, so being kicked from a circle stops
 its coordinates within seconds rather than at reconnect.
+
+A `nudge` goes to the recipient's own topic rather than the circle's, so it
+arrives already addressed and no other socket has to filter it out. The feed
+entry behind it still reaches everyone in the circle.
 
 ### Push (`services/push.ts`)
 

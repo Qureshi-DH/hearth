@@ -39,3 +39,8 @@ apps/mobile/expo-env.d.ts
 apps/mobile/dist/
 apps/mobile/web-build/
 apps/mobile/app-dependency-graph.*
+
+# Artifacts eas build --local drops into the project directory.
+build-*.apk
+build-*.aab
+build-*.ipa

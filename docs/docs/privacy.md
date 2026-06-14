@@ -17,7 +17,7 @@ sees it.
 | Breadcrumb history: coordinates, accuracy, speed, heading, battery, activity    | `location_points`                   | Per-circle setting (default 30 d), under a server-wide ceiling (90 d out of the box, admin-editable). 0 = live position only |
 | Places and arrive/leave events                                                  | `places`, `place_events`            | Until the place or circle is deleted                                                                                         |
 | Activity feed, SOS alerts, check-ins                                            | `events`, `sos_alerts`, `check_ins` | Until the circle is deleted                                                                                                  |
-| Messages: body, sender, circle, and the one member it was aimed at              | `messages`                          | Until the circle is deleted                                                                                                  |
+| Quick messages: the line sent, its sender and the member it named               | `events`                            | Until the circle is deleted                                                                                                  |
 | Profile picture                                                                 | Object storage, key in `users`      | Until you replace or remove it                                                                                               |
 | Trips (aggregates + endpoints)                                                  | `trips`                             | Until the account is deleted. Survive breadcrumb pruning                                                                     |
 | Notification outbox (title, body, ids)                                          | `notification_outbox`               | Delivered/failed rows pruned after 7 days                                                                                    |
@@ -51,6 +51,10 @@ members' locations. Roles only govern circle management.
 SOS is the one exception. Raising an SOS switches the sender to precise sharing
 in that circle for the duration and notifies everyone regardless of mutes. The
 sender (or an admin) resolves it.
+
+A quick message wakes only the person it names, but the circle's activity feed
+records it with both names and the line itself. It is a short word said in front
+of the family rather than a private channel, and there is no chat to read back.
 
 ## What leaves the server
 
