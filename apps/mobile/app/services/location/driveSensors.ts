@@ -22,6 +22,22 @@ const VERDICT_DELAY_MS = IMPACT.aftermathMs + IMPACT.stillnessMs + 1000
 /** One verdict per incident. Without this a crash reports itself repeatedly. */
 const COOLDOWN_MS = 60_000
 /**
+ * How far a later, larger jolt may push the verdict past the first one. Long
+ * enough for a multi-stage collision to finish, short enough that somebody
+ * hurt is not waiting on a timer.
+ */
+const MAX_VERDICT_DEFER_MS = 10_000
+/**
+ * How much of the buffer a verdict looks at, measured back from the jolt that
+ * armed it. The detector reads the largest jolt in whatever it is given, so
+ * handing it the whole 20 seconds lets an earlier, unrelated one mask a real
+ * collision: a phone thrown off the seat reads bigger at the sensor than the
+ * crash ten seconds later, because the phone was in free fall and the car was
+ * not. This leaves room for the run up the detector needs to decide the
+ * vehicle was moving beforehand.
+ */
+const VERDICT_CONTEXT_MS = 8000
+/**
  * Beyond this a fix describes where the phone was, not how fast it is going
  * now. Location arrives in deferred batches that can be a minute apart, so most
  * samples have no speed at all, which is the honest answer. Carrying the last
@@ -44,6 +60,9 @@ let latestRotation = 0
 let latestPressure: number | undefined
 let verdictTimer: ReturnType<typeof setTimeout> | null = null
 let lastVerdictAt = 0
+let firstSpikeAt = 0
+let peakSinceSpike = 0
+let stopRequested = false
 
 let onEvent: ((event: DriveEvent) => void) | null = null
 
@@ -89,6 +108,9 @@ function unsubscribe(): void {
 }
 
 function forget(): void {
+  stopRequested = false
+  firstSpikeAt = 0
+  peakSinceSpike = 0
   window = []
   windowStart = 0
   latestRotation = 0
@@ -103,15 +125,22 @@ function forget(): void {
  */
 function judge(): void {
   verdictTimer = null
-  const event = detectDriveEvent(liveSamples())
+  const since = firstSpikeAt - VERDICT_CONTEXT_MS
+  const event = detectDriveEvent(liveSamples().filter((sample) => sample.t >= since))
   const suppressed = event.kind === "possibleImpact" && Date.now() - lastVerdictAt < COOLDOWN_MS
   if (event.kind !== "none" && !suppressed) {
     if (event.kind === "possibleImpact") lastVerdictAt = Date.now()
     onEvent?.(event)
   }
-  // Sensors were released while this verdict was outstanding, so nothing else
-  // is going to clean up after it.
-  if (accelSub === null) forget()
+  // A stop that arrived mid-aftermath was held back so the samples it needed
+  // could keep arriving. Now that it has decided, let go.
+  if (stopRequested) {
+    stopRequested = false
+    unsubscribe()
+    forget()
+  } else if (accelSub === null) {
+    forget()
+  }
 }
 
 function record(accelG: number): void {
@@ -125,11 +154,29 @@ function record(accelG: number): void {
   })
   trim(now)
 
-  // A spike starts the clock rather than deciding anything. Later spikes inside
-  // the same incident must not keep pushing the verdict further out.
-  if (Math.abs(accelG - 1) >= IMPACT.impactG && verdictTimer === null) {
+  // A spike starts the clock rather than deciding anything. The detector reads
+  // the aftermath from the LARGEST jolt, so if a bigger one lands later, the
+  // clock has to follow it: a kerb then a tree, a spin then a barrier. Judging
+  // on the first one leaves the tail too short and the crash is dropped.
+  //
+  // The cap is what stops a rolling incident deferring the verdict for ever.
+  const delta = Math.abs(accelG - 1)
+  if (delta < IMPACT.impactG) return
+
+  if (verdictTimer === null) {
+    firstSpikeAt = now
+    peakSinceSpike = delta
     verdictTimer = setTimeout(judge, VERDICT_DELAY_MS)
+    return
   }
+
+  if (delta <= peakSinceSpike) return
+  peakSinceSpike = delta
+  const deadline = Math.min(now + VERDICT_DELAY_MS, firstSpikeAt + MAX_VERDICT_DEFER_MS)
+  const wait = deadline - now
+  if (wait <= 0) return
+  clearTimeout(verdictTimer)
+  verdictTimer = setTimeout(judge, wait)
 }
 
 const magnitude = (v: { x: number; y: number; z: number }): number =>
@@ -188,6 +235,13 @@ export async function startDriveSensors(handler: (event: DriveEvent) => void): P
  * throw away the incident at exactly the moment it happened.
  */
 export function stopDriveSensors(): void {
+  // Releasing the sensors now would cut off the aftermath a pending verdict is
+  // waiting for, and the reclassification that stops us is usually the crashed
+  // car reading as still. So keep sampling until it has decided.
+  if (verdictTimer !== null) {
+    stopRequested = true
+    return
+  }
   unsubscribe()
-  if (verdictTimer === null) forget()
+  forget()
 }

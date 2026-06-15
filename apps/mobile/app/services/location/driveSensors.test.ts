@@ -1,10 +1,22 @@
 import { IMPACT } from "@hearth/shared"
 
-import { contemporaneousSpeed, startDriveSensors, stopDriveSensors } from "./driveSensors"
+import appConfig from "../../../app.json"
+import {
+  contemporaneousSpeed,
+  driveSensorsRunning,
+  startDriveSensors,
+  stopDriveSensors,
+} from "./driveSensors"
 
 /** Held outside the factory so the test can drive the sensor by hand. */
 type Vector = { x: number; y: number; z: number }
-const mockState: { accel?: (r: Vector) => void; gyro?: (r: Vector) => void } = {}
+const mockState: {
+  accel?: (r: Vector) => void
+  gyro?: (r: Vector) => void
+  baro?: (r: { pressure: number }) => void
+  /** Off unless a test asks for it, which is a real and common Android phone. */
+  hasBarometer?: boolean
+} = {}
 
 jest.mock("expo-sensors", () => {
   const sensor = (slot: "accel" | "gyro") => ({
@@ -18,11 +30,13 @@ jest.mock("expo-sensors", () => {
   return {
     Accelerometer: sensor("accel"),
     Gyroscope: sensor("gyro"),
-    // No barometer, which is a real and common Android phone.
     Barometer: {
-      isAvailableAsync: jest.fn(async () => false),
+      isAvailableAsync: jest.fn(async () => mockState.hasBarometer === true),
       setUpdateInterval: jest.fn(),
-      addListener: jest.fn(() => ({ remove: jest.fn() })),
+      addListener: jest.fn((cb: (reading: { pressure: number }) => void) => {
+        mockState.baro = cb
+        return { remove: jest.fn() }
+      }),
     },
   }
 })
@@ -32,6 +46,7 @@ const STEP_MS = 20
 /** The accelerometer reports a vector. The detector only reads its magnitude. */
 const push = (g: number) => mockState.accel?.({ x: 0, y: 0, z: g })
 const spin = (rps: number) => mockState.gyro?.({ x: 0, y: 0, z: rps })
+const baro = (hPa: number) => mockState.baro?.({ pressure: hPa })
 
 /** Feeds `seconds` of samples, advancing the clock as it goes. */
 function drive(seconds: number, g: () => number) {
@@ -81,6 +96,7 @@ describe("drive sensor lifecycle", () => {
     jest.useFakeTimers()
     jest.setSystemTime(Date.parse("2026-01-01T12:00:00.000Z"))
     seed = 1
+    mockState.hasBarometer = false
   })
 
   afterEach(() => {
@@ -139,5 +155,112 @@ describe("drive sensor lifecycle", () => {
     jest.advanceTimersByTime(IMPACT.aftermathMs + IMPACT.stillnessMs + 1000)
 
     expect(events).toEqual([])
+  })
+
+  it("judges a collision whose worst impact lands after the jolt that started the clock", async () => {
+    // Clear of the cooldown left behind by the verdicts above, which is module
+    // state that outlives the test that set it.
+    jest.setSystemTime(Date.parse("2026-01-01T12:20:00.000Z"))
+    const events: string[] = []
+    await startDriveSensors((event) => events.push(event.kind))
+
+    drive(6, road)
+    // First contact. Hard enough to start the verdict clock, and not the impact
+    // that matters: the car carries on into a barrier a second and a half later.
+    spin(2)
+    push(1 + 3.5)
+    jest.advanceTimersByTime(STEP_MS)
+    drive(1.5, road)
+    spin(7)
+    push(1 + 9.2)
+    jest.advanceTimersByTime(STEP_MS)
+    spin(0.05)
+    drive(7, parked)
+    jest.advanceTimersByTime(IMPACT.aftermathMs + IMPACT.stillnessMs + 1000)
+
+    expect(events).toEqual(["possibleImpact"])
+  })
+
+  it("judges a collision that follows an earlier jolt still inside the window", async () => {
+    jest.setSystemTime(Date.parse("2026-01-01T12:30:00.000Z"))
+    const events: string[] = []
+    await startDriveSensors((event) => events.push(event.kind))
+
+    drive(2, road)
+    // A phone thrown off the seat. Violent, but the car drives on, so the
+    // verdict it schedules rightly finds nothing.
+    spin(0.4)
+    push(1 + 8)
+    jest.advanceTimersByTime(STEP_MS)
+    drive(10, road)
+
+    // Ten seconds later, a real collision. Smaller at the sensor than the phone
+    // that was thrown, because the phone was in free fall and the car was not.
+    spin(7)
+    push(1 + 5)
+    jest.advanceTimersByTime(STEP_MS)
+    spin(0.05)
+    drive(7, parked)
+    jest.advanceTimersByTime(IMPACT.aftermathMs + IMPACT.stillnessMs + 1000)
+
+    expect(events).toEqual(["possibleImpact"])
+  })
+
+  it("keeps sampling through a stop that lands mid-aftermath, then releases", async () => {
+    jest.setSystemTime(Date.parse("2026-01-01T12:40:00.000Z"))
+    const events: string[] = []
+    await startDriveSensors((event) => events.push(event.kind))
+
+    drive(6, road)
+    spin(7)
+    push(1 + 9.2)
+    jest.advanceTimersByTime(STEP_MS)
+    spin(0.05)
+    // The stop arrives from the same reclassification the crash caused, so it
+    // lands seconds into the aftermath rather than after it.
+    drive(2.5, parked)
+    stopDriveSensors()
+
+    // Letting go here would discard the stillness the verdict is waiting on,
+    // which is the one thing that separates a crash from a dropped phone.
+    expect(driveSensorsRunning()).toBe(true)
+
+    drive(5, parked)
+    jest.advanceTimersByTime(IMPACT.aftermathMs + IMPACT.stillnessMs + 1000)
+
+    expect(events).toEqual(["possibleImpact"])
+    expect(driveSensorsRunning()).toBe(false)
+  })
+
+  it("counts an airbag pressure rise the barometer reports a second after the impact", async () => {
+    jest.setSystemTime(Date.parse("2026-01-01T12:50:00.000Z"))
+    // iOS discards the requested interval and delivers roughly once a second,
+    // so the reading that carries the rise arrives well after the impact.
+    mockState.hasBarometer = true
+    const events: string[] = []
+    await startDriveSensors((event) => events.push(event.kind))
+
+    baro(1013)
+    // A frontal impact into something solid. Nothing spins, so the pressure the
+    // airbag puts into the cabin is the only thing that can corroborate it.
+    spin(0.4)
+    drive(6, road)
+    push(1 + 9.2)
+    jest.advanceTimersByTime(STEP_MS)
+    drive(0.9, parked)
+    baro(1013.8)
+    drive(7, parked)
+    jest.advanceTimersByTime(IMPACT.aftermathMs + IMPACT.stillnessMs + 1000)
+
+    expect(events).toEqual(["possibleImpact"])
+  })
+})
+
+describe("android sampling rate", () => {
+  it("asks Android for the permission the requested accelerometer rate needs", () => {
+    // Below the 200 ms default Android only speeds a sensor up for an app that
+    // declares this, so without it the accelerometer runs at 5 Hz however short
+    // an interval driveSensors asks for, and a collision falls between samples.
+    expect(appConfig.android.permissions).toContain("android.permission.HIGH_SAMPLING_RATE_SENSORS")
   })
 })
