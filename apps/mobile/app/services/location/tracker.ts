@@ -81,9 +81,13 @@ export function toFix(
     recordedAt: new Date(location.timestamp).toISOString(),
     lat: c.latitude,
     lon: c.longitude,
-    accuracyMeters: c.accuracy ?? null,
+    // iOS reports a negative accuracy to mean "this component is invalid",
+    // which is routine for altitude on a Wi-Fi or cell derived fix. Sending it
+    // on is how a whole batch used to be rejected and then thrown away.
+    accuracyMeters: c.accuracy != null && c.accuracy >= 0 ? c.accuracy : null,
     altitudeMeters: c.altitude ?? null,
-    altitudeAccuracyMeters: c.altitudeAccuracy ?? null,
+    altitudeAccuracyMeters:
+      c.altitudeAccuracy != null && c.altitudeAccuracy >= 0 ? c.altitudeAccuracy : null,
     speedMps: c.speed != null && c.speed >= 0 ? c.speed : null,
     headingDegrees: c.heading != null && c.heading >= 0 ? c.heading : null,
     batteryLevel: battery.batteryLevel,
@@ -239,6 +243,11 @@ TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
   if (event?.eventType !== Location.GeofencingEventType.Exit) return
   if (!useTrackingStore.getState().enabled) return
   await enterMoving()
+  // The process may have been killed while parked, so this task can be the
+  // first thing to run in a fresh one. Bringing location back without the
+  // classifier left crash detection off for the whole journey, while the
+  // settings screen still said it was on.
+  await startMotionWatch()
   await reportNow("significant")
 })
 
@@ -409,6 +418,10 @@ async function stopMotionWatch(): Promise<void> {
   await stopMotion(motionSubscription)
   motionSubscription = null
   motionStillSince = null
+  // With the classifier gone nothing will report a change, so this is the last
+  // moment anything asks the sensors to stop. Leaving them running samples at
+  // 50Hz for a journey nobody is watching.
+  stopDriveSensors()
 }
 
 async function onMotion(activity: MotionActivity, confidence: number): Promise<void> {

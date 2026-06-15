@@ -1,4 +1,6 @@
-import { stillnessDecision, thin } from "./tracker"
+import type { LocationObject } from "expo-location"
+
+import { stillnessDecision, thin, toFix } from "./tracker"
 
 const at = (minutes: number) => new Date(Date.UTC(2026, 0, 1, 0, minutes)).toISOString()
 
@@ -56,5 +58,40 @@ describe("thin", () => {
       source: "background" as const,
     }))
     expect(thin(fixes, null, policy)).toHaveLength(1)
+  })
+})
+
+describe("toFix", () => {
+  const battery = { batteryLevel: 0.62, isCharging: false }
+  const location = (coords: Partial<LocationObject["coords"]>): LocationObject => ({
+    timestamp: Date.UTC(2026, 0, 1, 18, 2),
+    coords: {
+      latitude: 51.4545,
+      longitude: -2.5879,
+      altitude: 0,
+      accuracy: 65,
+      altitudeAccuracy: 10,
+      heading: -1,
+      speed: -1,
+      ...coords,
+    },
+  })
+
+  it("keeps a reading the phone actually made", () => {
+    const fix = toFix(location({}), "background", battery)
+    expect(fix.accuracyMeters).toBe(65)
+    expect(fix.altitudeAccuracyMeters).toBe(10)
+  })
+
+  it("drops the negative sentinel iOS reports for a measurement it could not make", () => {
+    // CoreLocation returns a negative accuracy whenever that component is
+    // invalid, which is routine for altitude on a fix derived from Wi-Fi or
+    // cell. Speed and heading are already guarded that way on the next two
+    // lines of toFix, and the server rejects the whole batch over one of these.
+    const fix = toFix(location({ accuracy: -1, altitudeAccuracy: -1 }), "background", battery)
+    expect(fix.altitudeAccuracyMeters).toBeNull()
+    expect(fix.accuracyMeters).toBeNull()
+    expect(fix.speedMps).toBeNull()
+    expect(fix.headingDegrees).toBeNull()
   })
 })
