@@ -63,9 +63,15 @@ export const SosScreen: FC<AppStackScreenProps<"Sos">> = ({ navigation, route })
       {
         text: translate("sos:resolve"),
         onPress: async () => {
-          await resolve.mutateAsync(mine.id)
-          toast.success(translate("sos:resolved"))
-          navigation.goBack()
+          try {
+            await resolve.mutateAsync(mine.id)
+            toast.success(translate("sos:resolved"))
+            navigation.goBack()
+          } catch (error) {
+            // Leaving on a failure would be worse than staying: the circle is
+            // still being alerted, and the only way back here is another SOS.
+            toast.error((error as Error).message)
+          }
         },
       },
     ])

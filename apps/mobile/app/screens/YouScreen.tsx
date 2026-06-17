@@ -124,7 +124,9 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
         text: translate("settings:changeServer"),
         style: "destructive",
         onPress: async () => {
-          await stopTracking()
+          // A rejection here would take the whole handler with it and leave the
+          // app signed in to a server the user asked to leave.
+          await stopTracking().catch(() => {})
           await disablePush()
           try {
             await endpoints.auth.logout()
@@ -148,7 +150,9 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
         text: translate("common:logOut"),
         style: "destructive",
         onPress: async () => {
-          await stopTracking()
+          // Same reason as changeServer: nothing the tracker does may stop
+          // somebody logging out.
+          await stopTracking().catch(() => {})
           await disablePush()
           try {
             await endpoints.auth.logout()
@@ -304,7 +308,12 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
           onValueChange={(on) => {
             const next = on ? "imperial" : "metric"
             setUnits(next)
-            updateMe.mutate({ units: next })
+            // The switch renders from the local store, so a failure here shows
+            // up only as the next device disagreeing with this one.
+            updateMe.mutate(
+              { units: next },
+              { onError: (error) => toast.error((error as Error).message) },
+            )
           }}
         />
       </ListGroup>
@@ -363,7 +372,11 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
         initialValue={user?.displayName}
         onCancel={() => setRenaming(false)}
         onSubmit={(value) => {
-          if (value) updateMe.mutate({ displayName: value })
+          if (value)
+            updateMe.mutate(
+              { displayName: value },
+              { onError: (error) => toast.error((error as Error).message) },
+            )
         }}
       />
     </Screen>

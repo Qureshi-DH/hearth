@@ -82,7 +82,9 @@ export const PrivacyDataScreen: FC<AppStackScreenProps<"PrivacyData">> = ({ navi
     setDeleting(true)
     try {
       await endpoints.auth.deleteAccount(password)
-      await stopTracking()
+      // The account is already gone by this point, so a tracker that refuses to
+      // stop must not strand the app signed in to it.
+      await stopTracking().catch(() => {})
       await tokenVault.set(null)
       queryClient.clear()
       signedOut()

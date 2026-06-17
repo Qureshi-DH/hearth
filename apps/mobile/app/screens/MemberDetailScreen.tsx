@@ -381,7 +381,12 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
         titleTx="member:nickname"
         initialValue={member?.nickname ?? ""}
         onCancel={() => setNicknaming(false)}
-        onSubmit={(value) => updateMember.mutate({ userId, nickname: value || null })}
+        onSubmit={(value) =>
+          updateMember.mutate(
+            { userId, nickname: value || null },
+            { onError: (error) => toast.error((error as Error).message) },
+          )
+        }
       />
     </Screen>
   )
