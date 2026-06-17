@@ -31,6 +31,7 @@
       "android.permission.WAKE_LOCK",
       "android.permission.VIBRATE",
       "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+      "android.permission.HIGH_SAMPLING_RATE_SENSORS",
       "android.permission.ACCESS_NETWORK_STATE",
       "android.permission.INTERNET"
     ],

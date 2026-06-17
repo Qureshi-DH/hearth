@@ -10,13 +10,17 @@ import { requireAuth, requireMembership } from "../plugins/auth"
 import { ingestPoints } from "../services/locations"
 import { getCirclePresence } from "../services/presence"
 
+// Accuracy fields are deliberately not constrained here. A platform sentinel
+// in one optional field would otherwise fail the whole array, and the client
+// treats a 400 as a poison batch and discards every fix in it. normalize()
+// clamps these into range instead.
 const fixSchema = z.object({
   recordedAt: z.string().datetime({ offset: true }),
   lat: z.number().min(-90).max(90),
   lon: z.number().min(-180).max(180),
-  accuracyMeters: z.number().nonnegative().nullish(),
+  accuracyMeters: z.number().nullish(),
   altitudeMeters: z.number().nullish(),
-  altitudeAccuracyMeters: z.number().nonnegative().nullish(),
+  altitudeAccuracyMeters: z.number().nullish(),
   speedMps: z.number().nullish(),
   headingDegrees: z.number().nullish(),
   activity: z.enum(ACTIVITY_TYPES).nullish(),
