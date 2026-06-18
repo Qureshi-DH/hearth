@@ -92,9 +92,15 @@ describe("drive sensor lifecycle", () => {
     return 1 + 0.017 * (seed / 0xffffffff - 0.5)
   }
 
+  // Each test gets its own hour. The detector keeps a sixty second cooldown in
+  // module state, so tests sharing a clock silently suppress each other's
+  // verdicts depending on the order they happen to run in.
+  let hour = 0
+
   beforeEach(() => {
     jest.useFakeTimers()
-    jest.setSystemTime(Date.parse("2026-01-01T12:00:00.000Z"))
+    hour += 1
+    jest.setSystemTime(Date.parse("2026-01-01T00:00:00.000Z") + hour * 3_600_000)
     seed = 1
     mockState.hasBarometer = false
   })
@@ -129,7 +135,6 @@ describe("drive sensor lifecycle", () => {
   it("judges an impact after the window has been rolling for minutes", async () => {
     // Clear of the cooldown left behind by the verdict above, which is module
     // state that outlives the test that set it.
-    jest.setSystemTime(Date.parse("2026-01-01T12:10:00.000Z"))
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))
 
@@ -146,6 +151,44 @@ describe("drive sensor lifecycle", () => {
     expect(events).toEqual(["possibleImpact"])
   })
 
+  it("does not come back believing it is sampling when a stop landed mid-start", async () => {
+    // stopTracking and a motion reclassification both reach here, and the start
+    // is fire and forget, so a stop can land while it is still awaiting. If the
+    // start then published its subscription anyway, every later start would
+    // early-return on it and the detector would be dead for the rest of the
+    // journey with nothing to say so.
+    const pending = startDriveSensors(() => {})
+    stopDriveSensors()
+    await pending
+
+    expect(driveSensorsRunning()).toBe(false)
+    expect(await startDriveSensors(() => {})).toBe(true)
+    expect(driveSensorsRunning()).toBe(true)
+  })
+
+  it("keeps sampling when the classifier flips back inside the verdict window", async () => {
+    // A hard stop can read as "still" for a moment and then as "automotive"
+    // again. The stop that arrives in between is held until the verdict lands,
+    // and it must not then tear down sensors the app has since re-asked for.
+    const events: string[] = []
+    await startDriveSensors((event) => events.push(event.kind))
+
+    drive(6, road)
+    spin(7)
+    push(1 + 9.2)
+    jest.advanceTimersByTime(STEP_MS)
+    spin(0.05)
+
+    stopDriveSensors()
+    expect(await startDriveSensors((event) => events.push(event.kind))).toBe(true)
+
+    drive(7, parked)
+    jest.advanceTimersByTime(IMPACT.aftermathMs + IMPACT.stillnessMs + 1000)
+
+    expect(events).toEqual(["possibleImpact"])
+    expect(driveSensorsRunning()).toBe(true)
+  })
+
   it("keeps quiet when nothing violent happened", async () => {
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))
@@ -160,7 +203,6 @@ describe("drive sensor lifecycle", () => {
   it("judges a collision whose worst impact lands after the jolt that started the clock", async () => {
     // Clear of the cooldown left behind by the verdicts above, which is module
     // state that outlives the test that set it.
-    jest.setSystemTime(Date.parse("2026-01-01T12:20:00.000Z"))
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))
 
@@ -182,7 +224,6 @@ describe("drive sensor lifecycle", () => {
   })
 
   it("judges a collision that follows an earlier jolt still inside the window", async () => {
-    jest.setSystemTime(Date.parse("2026-01-01T12:30:00.000Z"))
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))
 
@@ -207,7 +248,6 @@ describe("drive sensor lifecycle", () => {
   })
 
   it("keeps sampling through a stop that lands mid-aftermath, then releases", async () => {
-    jest.setSystemTime(Date.parse("2026-01-01T12:40:00.000Z"))
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))
 
@@ -233,7 +273,6 @@ describe("drive sensor lifecycle", () => {
   })
 
   it("counts an airbag pressure rise the barometer reports a second after the impact", async () => {
-    jest.setSystemTime(Date.parse("2026-01-01T12:50:00.000Z"))
     // iOS discards the requested interval and delivers roughly once a second,
     // so the reading that carries the rise arrives well after the impact.
     mockState.hasBarometer = true

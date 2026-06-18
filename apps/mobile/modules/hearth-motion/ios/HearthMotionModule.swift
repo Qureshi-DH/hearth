@@ -2,17 +2,60 @@ import CoreMotion
 import ExpoModulesCore
 
 /**
+ Slow enough that a drive costs a handful of bridge crossings a second rather
+ than one per sample, short enough that the verdict clock on the JS side still
+ starts within a couple of samples of the jolt that armed it.
+ */
+private let batchInterval: TimeInterval = 0.25
+
+/// A collision is over in well under a tenth of a second, so it has to land in
+/// more than one sample to be told apart from a single bad reading.
+private let accelerometerInterval: TimeInterval = 0.02
+
+/// Rotation moves on human timescales, so sampling it as hard as the
+/// accelerometer would spend battery to learn nothing.
+private let gyroscopeInterval: TimeInterval = 0.1
+
+/// Core Motion reports kilopascals and the detector works in hectopascals.
+private let kilopascalsToHectopascals = 10.0
+
+/**
+ Batches are drained on the main queue, and a drive lasts hours. A stall there
+ has to cost the oldest samples rather than grow the buffer for ever.
+ */
+private let maxPendingSamples = 2_000
+
+/**
  Core Motion already classifies movement for the system, so reading its answer
  costs far less than waking the GPS to infer the same thing from position.
+
+ The module also samples the raw sensors crash detection reads. It does that
+ here rather than in JS so the two platforms hand the detector the same batched
+ shape, and so fifty readings a second stop crossing the bridge one at a time.
  */
 public class HearthMotionModule: Module {
   private let manager = CMMotionActivityManager()
   private var running = false
 
+  private let motion = CMMotionManager()
+  private let altimeter = CMAltimeter()
+  /// Serial, so the readings carried onto a sample are never half written.
+  private let sensorQueue: OperationQueue = {
+    let queue = OperationQueue()
+    queue.maxConcurrentOperationCount = 1
+    return queue
+  }()
+  private let pendingLock = NSLock()
+  private var pending: [[String: Any]] = []
+  private var latestRotation = 0.0
+  private var latestPressure: Double?
+  private var bootEpoch = 0.0
+  private var batchTimer: DispatchSourceTimer?
+
   public func definition() -> ModuleDefinition {
     Name("HearthMotion")
 
-    Events("onMotionChange")
+    Events("onMotionChange", "onSensorBatch")
 
     AsyncFunction("isAvailableAsync") { () -> Bool in
       CMMotionActivityManager.isActivityAvailable()
@@ -72,9 +115,111 @@ public class HearthMotionModule: Module {
       self.running = false
     }
 
+    AsyncFunction("startSensorsAsync") { () -> Bool in
+      self.startSensors()
+    }
+
+    AsyncFunction("stopSensorsAsync") {
+      self.stopSensors()
+    }
+
     OnDestroy {
       if self.running { self.manager.stopActivityUpdates() }
+      self.stopSensors()
     }
+  }
+
+  /**
+   False where the device cannot help. That is the caller's cue to fall back to
+   its own sampler rather than sit waiting on a batch that never arrives.
+   */
+  private func startSensors() -> Bool {
+    guard self.motion.isAccelerometerAvailable else { return false }
+    // Starting twice would leave the first set of updates running with nothing
+    // holding a reference to stop them.
+    guard self.batchTimer == nil else { return true }
+
+    // Core Motion stamps its readings against boot, so they need an offset to
+    // read as a wall clock time. The two clocks are read together once here
+    // rather than per batch, because re-reading them would let a clock
+    // correction mid drive shuffle new samples against the ones already in the
+    // detector's window.
+    self.bootEpoch = Date().timeIntervalSince1970 - ProcessInfo.processInfo.systemUptime
+
+    // Stopping can leave a reading or two already queued, and they belong to
+    // the drive that has ended rather than this one.
+    self.pendingLock.lock()
+    self.pending.removeAll()
+    self.pendingLock.unlock()
+
+    self.motion.accelerometerUpdateInterval = accelerometerInterval
+    self.motion.startAccelerometerUpdates(to: self.sensorQueue) { [weak self] data, _ in
+      guard let self, let data else { return }
+      let a = data.acceleration
+      self.collect(at: data.timestamp, accelG: (a.x * a.x + a.y * a.y + a.z * a.z).squareRoot())
+    }
+
+    if self.motion.isGyroAvailable {
+      self.motion.gyroUpdateInterval = gyroscopeInterval
+      self.motion.startGyroUpdates(to: self.sensorQueue) { [weak self] data, _ in
+        guard let self, let data else { return }
+        let r = data.rotationRate
+        self.latestRotation = (r.x * r.x + r.y * r.y + r.z * r.z).squareRoot()
+      }
+    }
+
+    // The absence of a barometer costs one corroborating signal rather than the
+    // whole feature.
+    if CMAltimeter.isRelativeAltitudeAvailable() {
+      self.altimeter.startRelativeAltitudeUpdates(to: self.sensorQueue) { [weak self] data, _ in
+        guard let self, let data else { return }
+        self.latestPressure = data.pressure.doubleValue * kilopascalsToHectopascals
+      }
+    }
+
+    let timer = DispatchSource.makeTimerSource(queue: .main)
+    timer.schedule(deadline: .now() + batchInterval, repeating: batchInterval)
+    timer.setEventHandler { [weak self] in self?.flush() }
+    timer.resume()
+    self.batchTimer = timer
+    return true
+  }
+
+  /// Runs on the sensor queue.
+  private func collect(at uptime: TimeInterval, accelG: Double) {
+    var sample: [String: Any] = [
+      "t": ((self.bootEpoch + uptime) * 1000).rounded(),
+      "accelG": accelG,
+      "rotationRps": self.latestRotation,
+    ]
+    if let pressure = self.latestPressure { sample["pressure"] = pressure }
+    self.pendingLock.lock()
+    if self.pending.count >= maxPendingSamples { self.pending.removeFirst() }
+    self.pending.append(sample)
+    self.pendingLock.unlock()
+  }
+
+  private func flush() {
+    self.pendingLock.lock()
+    let batch = self.pending
+    self.pending.removeAll(keepingCapacity: true)
+    self.pendingLock.unlock()
+    guard !batch.isEmpty else { return }
+    self.sendEvent("onSensorBatch", ["samples": batch])
+  }
+
+  /// Safe to call when nothing is running, which is the state it wants anyway.
+  private func stopSensors() {
+    self.batchTimer?.cancel()
+    self.batchTimer = nil
+    self.motion.stopAccelerometerUpdates()
+    self.motion.stopGyroUpdates()
+    self.altimeter.stopRelativeAltitudeUpdates()
+    self.pendingLock.lock()
+    self.pending.removeAll()
+    self.pendingLock.unlock()
+    self.latestRotation = 0
+    self.latestPressure = nil
   }
 
   private static func state(for status: CMAuthorizationStatus) -> String {

@@ -4,6 +4,8 @@ import type {
   MotionActivity,
   MotionChangeEvent,
   MotionPermission,
+  SensorBatchEvent,
+  SensorSample,
 } from "../../../modules/hearth-motion"
 
 type MotionModule = typeof import("../../../modules/hearth-motion").default
@@ -81,4 +83,38 @@ export async function stopMotion(subscription: EventSubscription | null): Promis
   }
 }
 
-export type { MotionActivity }
+/**
+ * Raw sensor samples that keep arriving once the Activity pauses, which is
+ * where expo-sensors gives up on Android. Null means the caller has to sample
+ * for itself: an older install without the module, or a device with nothing to
+ * sample. The listener goes on before the sensors do, so the first batch has
+ * somewhere to land.
+ */
+export async function startSensorBatches(
+  onBatch: (samples: SensorSample[]) => void,
+): Promise<EventSubscription | null> {
+  if (!native) return null
+  const subscription = native.addListener("onSensorBatch", (event: SensorBatchEvent) =>
+    onBatch(event.samples),
+  )
+  try {
+    if (await native.startSensorsAsync()) return subscription
+  } catch {
+    // An install carrying an older copy of the module has no such function, and
+    // that is the same to the caller as having no module at all.
+  }
+  subscription.remove()
+  return null
+}
+
+export async function stopSensorBatches(subscription: EventSubscription | null): Promise<void> {
+  subscription?.remove()
+  if (!native) return
+  try {
+    await native.stopSensorsAsync()
+  } catch {
+    // Nothing to stop is the state we wanted.
+  }
+}
+
+export type { MotionActivity, SensorSample }

@@ -6,18 +6,36 @@ import { useTrackingStore } from "@/stores/tracking"
 
 import { stopDriveSensors } from "./driveSensors"
 import { startMotion, stopMotion } from "./motion"
-import { refreshMotionWatch, stopTracking, STATIONARY_GEOFENCE_TASK } from "./tracker"
+import {
+  BACKGROUND_SYNC_TASK,
+  enterStationary,
+  ingest,
+  refreshMotionWatch,
+  stopTracking,
+  STATIONARY_GEOFENCE_TASK,
+} from "./tracker"
 
 jest.mock("expo-task-manager", () => ({
   defineTask: jest.fn(),
   isTaskRegisteredAsync: jest.fn(async () => true),
 }))
 
+jest.mock("expo-background-task", () => ({
+  BackgroundTaskResult: { Success: 1, Failed: 2 },
+  BackgroundTaskStatus: { Available: 1 },
+  getStatusAsync: jest.fn(async () => 1),
+  registerTaskAsync: jest.fn(async () => {}),
+}))
+
 jest.mock("expo-location", () => ({
   Accuracy: { Balanced: 3, High: 4, Highest: 6 },
   ActivityType: { Other: 1 },
   GeofencingEventType: { Enter: 1, Exit: 2 },
+  PermissionStatus: { GRANTED: "granted", DENIED: "denied", UNDETERMINED: "undetermined" },
+  getForegroundPermissionsAsync: jest.fn(async () => ({ status: "denied", canAskAgain: true })),
+  getBackgroundPermissionsAsync: jest.fn(async () => ({ status: "denied" })),
   hasStartedGeofencingAsync: jest.fn(async () => true),
+  startGeofencingAsync: jest.fn(async () => {}),
   stopGeofencingAsync: jest.fn(async () => {}),
   hasStartedLocationUpdatesAsync: jest.fn(async () => false),
   startLocationUpdatesAsync: jest.fn(async () => {}),
@@ -82,6 +100,77 @@ describe("background wakes", () => {
     // about this looks broken from the map.
     expect(Location.startLocationUpdatesAsync).toHaveBeenCalled()
     expect(startMotion).toHaveBeenCalled()
+  })
+})
+
+describe("parking", () => {
+  it("remembers the spot it armed the fence around", async () => {
+    // Everything that looks after a parked phone reads stillAnchor, not the
+    // fence: the periodic re-arm, the drift check and the relaunch path all
+    // skip a stationary phone whose anchor is null, which is what the motion
+    // classifier left behind whenever it called the stop.
+    await enterStationary(51.4545, -2.5879)
+
+    expect(useTrackingStore.getState().stillAnchor).toMatchObject({
+      lat: 51.4545,
+      lon: -2.5879,
+    })
+  })
+
+  it("reports the fix the drift check woke the GPS for", async () => {
+    useTrackingStore.getState().reset()
+    useTrackingStore.getState().setEnabled(true)
+    useTrackingStore.getState().setMode("stationary")
+    // Anchored where the mocked fix reads, so the phone has not drifted far
+    // enough to call the stop over. Waking the GPS cost the same either way.
+    useTrackingStore
+      .getState()
+      .setStillAnchor({ lat: 51.4545, lon: -2.5879, since: new Date().toISOString() })
+
+    const sweep = taskBodies.get(BACKGROUND_SYNC_TASK)
+    expect(sweep).toBeDefined()
+    await sweep?.({ data: null, error: null })
+
+    expect(useTrackingStore.getState().queue).toHaveLength(1)
+  })
+
+  it("calls the stop on fixes spaced at the circle's own distance filter", async () => {
+    useTrackingStore.getState().reset()
+    useTrackingStore.getState().setEnabled(true)
+    useTrackingStore
+      .getState()
+      .setPolicy({ minUpdateIntervalSeconds: 30, distanceFilterMeters: 100 })
+    useTrackingStore.getState().setMode("moving")
+    useTrackingStore.getState().setStillAnchor({
+      lat: 51.4545,
+      lon: -2.5879,
+      since: new Date(Date.UTC(2026, 0, 1, 8, 0)).toISOString(),
+    })
+
+    // ~100 m from the anchor six minutes later. The OS holds back anything
+    // closer than the filter, so this is the nearest fix a circle set that way
+    // can ever deliver: measured against a fixed 60 m radius every fix it will
+    // ever see reads as movement, and the service runs until something else
+    // stops it.
+    await ingest(
+      [
+        {
+          timestamp: Date.UTC(2026, 0, 1, 8, 6),
+          coords: {
+            latitude: 51.45539,
+            longitude: -2.5879,
+            altitude: 0,
+            accuracy: 20,
+            altitudeAccuracy: 5,
+            heading: -1,
+            speed: -1,
+          },
+        } as Location.LocationObject,
+      ],
+      "background",
+    )
+
+    expect(useTrackingStore.getState().mode).toBe("stationary")
   })
 })
 

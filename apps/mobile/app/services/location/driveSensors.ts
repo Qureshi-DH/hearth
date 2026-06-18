@@ -1,7 +1,10 @@
+import type { EventSubscription } from "expo-modules-core"
 import { Accelerometer, Barometer, Gyroscope } from "expo-sensors"
 import { detectDriveEvent, IMPACT, type DriveEvent, type DriveSample } from "@hearth/shared"
 
 import { useTrackingStore } from "@/stores/tracking"
+
+import { startSensorBatches, stopSensorBatches, type SensorSample } from "./motion"
 
 /**
  * Samples the sensors that can tell a crash from a pothole, and only while the
@@ -10,7 +13,16 @@ import { useTrackingStore } from "@/stores/tracking"
  * The accelerometer has to sample fast enough to catch an impact at all, since
  * a collision is over in well under a tenth of a second. Everything else
  * samples far slower because pressure and rotation change on human timescales.
+ *
+ * Samples arrive from the native module wherever it exists, batched, because
+ * expo-sensors on Android unregisters the moment the Activity pauses and a
+ * phone spends the whole of a drive with its screen off. expo-sensors is still
+ * the fallback: an install built without the module has to keep working, and
+ * on iOS both paths read the same Core Motion. Only the source changes here.
+ * What a sample means, and everything that judges one, is the same either way.
  */
+
+/** What the fallback asks for. The native sampler sets its own rates. */
 const ACCEL_INTERVAL_MS = 20
 const GYRO_INTERVAL_MS = 100
 const BARO_INTERVAL_MS = 200
@@ -51,6 +63,7 @@ type Subscription = { remove: () => void }
 let accelSub: Subscription | null = null
 let gyroSub: Subscription | null = null
 let baroSub: Subscription | null = null
+let nativeSub: EventSubscription | null = null
 let starting = false
 
 let window: DriveSample[] = []
@@ -63,6 +76,13 @@ let lastVerdictAt = 0
 let firstSpikeAt = 0
 let peakSinceSpike = 0
 let stopRequested = false
+/**
+ * Bumped by every stop. A start that was already awaiting the native module
+ * when a stop arrived compares this on the way back: without it the stop
+ * unregisters the sensors, the start then assigns its subscription anyway, and
+ * the app is left believing it is sampling when nothing is.
+ */
+let startEpoch = 0
 
 let onEvent: ((event: DriveEvent) => void) | null = null
 
@@ -97,6 +117,9 @@ export function contemporaneousSpeed(
 const freshSpeed = (now: number): number | undefined =>
   contemporaneousSpeed(useTrackingStore.getState().lastFix, now)
 
+/** Whichever source is live. Never both, and usually neither. */
+const sampling = (): boolean => accelSub !== null || nativeSub !== null
+
 /** Everything sensor related released. The window and the handler are separate. */
 function unsubscribe(): void {
   accelSub?.remove()
@@ -105,6 +128,8 @@ function unsubscribe(): void {
   accelSub = null
   gyroSub = null
   baroSub = null
+  void stopSensorBatches(nativeSub)
+  nativeSub = null
 }
 
 function forget(): void {
@@ -138,18 +163,18 @@ function judge(): void {
     stopRequested = false
     unsubscribe()
     forget()
-  } else if (accelSub === null) {
+  } else if (!sampling()) {
     forget()
   }
 }
 
-function record(accelG: number): void {
-  const now = Date.now()
+function record(sample: SensorSample): void {
+  const now = sample.t
   window.push({
     t: now,
-    accelG,
-    rotationRps: latestRotation,
-    pressure: latestPressure,
+    accelG: sample.accelG,
+    rotationRps: sample.rotationRps,
+    pressure: sample.pressure,
     speedMps: freshSpeed(now),
   })
   trim(now)
@@ -160,7 +185,7 @@ function record(accelG: number): void {
   // on the first one leaves the tail too short and the crash is dropped.
   //
   // The cap is what stops a rolling incident deferring the verdict for ever.
-  const delta = Math.abs(accelG - 1)
+  const delta = Math.abs(sample.accelG - 1)
   if (delta < IMPACT.impactG) return
 
   if (verdictTimer === null) {
@@ -183,19 +208,39 @@ const magnitude = (v: { x: number; y: number; z: number }): number =>
   Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
 
 export function driveSensorsRunning(): boolean {
-  return accelSub !== null || starting
+  return sampling() || starting
 }
 
 export async function startDriveSensors(handler: (event: DriveEvent) => void): Promise<boolean> {
   // Motion callbacks can land on top of each other, and each await below is a
-  // chance for a second start to walk past a null accelSub and subscribe twice.
-  if (accelSub || starting) return true
+  // chance for a second start to walk past an idle sampler and subscribe twice.
+  if (sampling() || starting) {
+    // A stop that arrived while a verdict was pending left this set. The app
+    // has asked for sampling again since, so the teardown that stop scheduled
+    // must not run when the verdict lands.
+    stopRequested = false
+    return true
+  }
   starting = true
+  const epoch = startEpoch
   try {
-    if (!(await Accelerometer.isAvailableAsync().catch(() => false))) return false
+    // Asked first, because it is the one that keeps sampling with the screen off.
+    const native = await startSensorBatches((samples) => {
+      for (const sample of samples) record(sample)
+    })
+    // A stop landed while that was in flight, so this start is stale. Release
+    // what it opened rather than publishing a subscription nothing will stop.
+    if (epoch !== startEpoch) {
+      await stopSensorBatches(native)
+      return false
+    }
+    nativeSub = native
+    if (!nativeSub && !(await Accelerometer.isAvailableAsync().catch(() => false))) return false
 
     onEvent = handler
-    // A verdict still outstanding is holding the only copy of the evidence.
+    // A verdict still outstanding is holding the only copy of the evidence. The
+    // first native batch is a whole cadence away, so this still lands ahead of
+    // every sample either source has to offer.
     if (verdictTimer === null) {
       window = []
       windowStart = 0
@@ -203,8 +248,19 @@ export async function startDriveSensors(handler: (event: DriveEvent) => void): P
       latestPressure = undefined
     }
 
+    // The native sampler carries its own rotation and pressure, so the two
+    // listeners below belong to the fallback alone.
+    if (nativeSub) return true
+
     Accelerometer.setUpdateInterval(ACCEL_INTERVAL_MS)
-    accelSub = Accelerometer.addListener((reading) => record(magnitude(reading)))
+    accelSub = Accelerometer.addListener((reading) =>
+      record({
+        t: Date.now(),
+        accelG: magnitude(reading),
+        rotationRps: latestRotation,
+        pressure: latestPressure,
+      }),
+    )
 
     if (await Gyroscope.isAvailableAsync().catch(() => false)) {
       Gyroscope.setUpdateInterval(GYRO_INTERVAL_MS)
@@ -238,6 +294,7 @@ export function stopDriveSensors(): void {
   // Releasing the sensors now would cut off the aftermath a pending verdict is
   // waiting for, and the reclassification that stops us is usually the crashed
   // car reading as still. So keep sampling until it has decided.
+  startEpoch += 1
   if (verdictTimer !== null) {
     stopRequested = true
     return

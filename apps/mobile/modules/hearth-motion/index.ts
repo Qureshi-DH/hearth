@@ -11,8 +11,26 @@ export interface MotionChangeEvent {
 
 export type MotionPermission = "granted" | "denied" | "undetermined"
 
+/** One accelerometer reading, carrying whatever the slower sensors last said. */
+export interface SensorSample {
+  /** Milliseconds since epoch, taken from the sensor's own clock rather than delivery. */
+  t: number
+  /** Resultant accelerometer magnitude in g, gravity included, so 1 at rest. */
+  accelG: number
+  /** Resultant rotation rate in radians per second. */
+  rotationRps: number
+  /** Barometric pressure in hPa. Absent on devices without the sensor. */
+  pressure?: number
+}
+
+export interface SensorBatchEvent {
+  /** In the order they were sampled, oldest first. */
+  samples: SensorSample[]
+}
+
 declare class HearthMotionModule extends NativeModule<{
   onMotionChange: (event: MotionChangeEvent) => void
+  onSensorBatch: (event: SensorBatchEvent) => void
 }> {
   /** False on a simulator, an old device, or where Play Services is missing. */
   isAvailableAsync(): Promise<boolean>
@@ -20,6 +38,13 @@ declare class HearthMotionModule extends NativeModule<{
   requestPermissionAsync(): Promise<MotionPermission>
   startUpdatesAsync(): Promise<void>
   stopUpdatesAsync(): Promise<void>
+  /**
+   * Sampling that is not tied to the Activity, which is the only kind that
+   * keeps running once the screen goes off mid drive. False where the device
+   * has no accelerometer to offer, so the caller can sample for itself instead.
+   */
+  startSensorsAsync(): Promise<boolean>
+  stopSensorsAsync(): Promise<void>
 }
 
 export default requireNativeModule<HearthMotionModule>("HearthMotion")

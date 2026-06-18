@@ -48,6 +48,22 @@ const STILL_AFTER_MS = 5 * 60 * 1000
 /** Bigger than the still radius so GPS jitter at a standstill cannot trip it. */
 const STATIONARY_GEOFENCE_RADIUS_METERS = 150
 
+/**
+ * The OS withholds any fix closer to the last one it delivered than the
+ * distance filter, so a still radius at or below that filter only ever sees
+ * fixes it has to read as movement and a stop never settles from the location
+ * path at all. A circle may set the filter far above the floor here, so the
+ * radius follows it up.
+ */
+export function stillRadiusMeters(policy: TrackingPolicy): number {
+  return Math.max(STILL_RADIUS_METERS, policy.distanceFilterMeters * 1.5)
+}
+
+/** Keeps the fence clear of the still radius when a wide filter widens that. */
+function stationaryRadiusMeters(policy: TrackingPolicy): number {
+  return Math.max(STATIONARY_GEOFENCE_RADIUS_METERS, stillRadiusMeters(policy) * 1.5)
+}
+
 async function batterySnapshot(): Promise<{
   batteryLevel: number | null
   isCharging: boolean | null
@@ -111,7 +127,10 @@ export function thin(
   for (const fix of fixes) {
     if (last) {
       const dt = Date.parse(fix.recordedAt) - Date.parse(last.recordedAt)
-      const moved = Math.hypot(fix.lat - last.lat, fix.lon - last.lon) * 111_000
+      const moved = haversineMeters(
+        { lat: last.lat, lon: last.lon },
+        { lat: fix.lat, lon: fix.lon },
+      )
       const halfInterval = (policy.minUpdateIntervalSeconds * 1000) / 2
       if (
         dt < halfInterval &&
@@ -257,7 +276,7 @@ let lastDriftCheck = 0
 
 TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
   try {
-    const { lastFix, enabled, mode, stillAnchor } = useTrackingStore.getState()
+    const { enabled, mode, policy, stillAnchor } = useTrackingStore.getState()
 
     // Android forgets geofences when the app process is killed, and expo's
     // geofencing does not restart a terminated app the way iOS does. Rather
@@ -277,9 +296,12 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
             { lat: stillAnchor.lat, lon: stillAnchor.lon },
             { lat: here.coords.latitude, lon: here.coords.longitude },
           )
-          if (drift > STATIONARY_GEOFENCE_RADIUS_METERS) {
+          // Waking the location stack already spent the battery this mode
+          // exists to save, so the fix is worth reporting whether or not it
+          // turns out to be far enough to call the stop over.
+          await ingest([here], "significant")
+          if (drift > stationaryRadiusMeters(policy)) {
             await enterMoving()
-            await ingest([here], "significant")
           }
         } catch {
           // No fix available this wake. The fence is still armed.
@@ -306,6 +328,10 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
       }
     }
 
+    // Read back rather than reused from above, because the drift check may
+    // have just reported a fix and a second wake of the GPS in the same pass is
+    // the cost stationary mode exists to avoid.
+    const { lastFix } = useTrackingStore.getState()
     const stale = !lastFix || Date.now() - Date.parse(lastFix.recordedAt) > STALE_FIX_MS
     if (enabled && stale && (await currentPermission()) === "always") {
       await reportNow("significant")
@@ -493,7 +519,7 @@ export async function enterStationary(lat: number, lon: number): Promise<void> {
       {
         latitude: lat,
         longitude: lon,
-        radius: STATIONARY_GEOFENCE_RADIUS_METERS,
+        radius: stationaryRadiusMeters(store.policy),
         notifyOnEnter: false,
         notifyOnExit: true,
       },
@@ -511,6 +537,10 @@ export async function enterStationary(lat: number, lon: number): Promise<void> {
   // moving vehicle. A verdict already scheduled survives this, see
   // stopDriveSensors.
   stopDriveSensors()
+  // The sweep's re-arm and the relaunch path both read stillAnchor as the spot
+  // the phone is parked at, and neither runs while it is null. Writing it here
+  // is what keeps it the same point as the fence however the stop was called.
+  store.setStillAnchor({ lat, lon, since: new Date().toISOString() })
   store.setMode("stationary")
   store.setBackgroundActive(true)
 }
@@ -525,13 +555,14 @@ export type StillnessDecision = "settle" | "reanchor" | "wait"
 export function stillnessDecision(
   anchor: { lat: number; lon: number; since: string } | null,
   fix: Pick<LocationFixInput, "lat" | "lon" | "recordedAt">,
+  radiusMeters: number = STILL_RADIUS_METERS,
 ): StillnessDecision {
   if (!anchor) return "reanchor"
   const moved = haversineMeters(
     { lat: anchor.lat, lon: anchor.lon },
     { lat: fix.lat, lon: fix.lon },
   )
-  if (moved > STILL_RADIUS_METERS) return "reanchor"
+  if (moved > radiusMeters) return "reanchor"
   return Date.parse(fix.recordedAt) - Date.parse(anchor.since) >= STILL_AFTER_MS ? "settle" : "wait"
 }
 
@@ -542,7 +573,7 @@ async function evaluateStillness(
   if (store.mode !== "moving") return
 
   const anchor = store.stillAnchor
-  switch (stillnessDecision(anchor, fix)) {
+  switch (stillnessDecision(anchor, fix, stillRadiusMeters(store.policy))) {
     case "reanchor":
       store.setStillAnchor({ lat: fix.lat, lon: fix.lon, since: fix.recordedAt })
       return
@@ -597,7 +628,7 @@ async function hasLeft(anchor: { lat: number; lon: number }): Promise<boolean> {
     { lat: anchor.lat, lon: anchor.lon },
     { lat: last.coords.latitude, lon: last.coords.longitude },
   )
-  return away > STATIONARY_GEOFENCE_RADIUS_METERS
+  return away > stationaryRadiusMeters(useTrackingStore.getState().policy)
 }
 
 /** Foreground permission is enough to start, but only "always" keeps it running. */
