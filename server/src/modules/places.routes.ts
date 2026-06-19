@@ -4,12 +4,13 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
 import { getDb } from "../db/client"
-import { placeEvents, placeMemberships, places, users } from "../db/schema"
+import { circleMembers, placeEvents, placeMemberships, places, users } from "../db/schema"
 import { badRequest, notFound } from "../lib/errors"
 import { toPlace, toPublicUser } from "../lib/serialize"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { recordEvent } from "../services/feed"
 import { primePlaceMemberships } from "../services/geofence"
+import { effectiveSharingState } from "../services/presence"
 
 const circleIdParam = z.object({ circleId: z.string().uuid() })
 const placeParams = circleIdParam.extend({ placeId: z.string().uuid() })
@@ -44,6 +45,43 @@ const placePatch = z.object({ ...placeFields, radiusMeters: radiusSchema }).part
 export const placeRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
 
+  /**
+   * A member's fences are only evaluated for the circles they share precisely
+   * with, so a row belonging to anyone else is frozen at their last precise
+   * fix. Priming a new place fills those rows in too. Reporting either would
+   * keep asserting a doorstep they may have left hours ago, which is the one
+   * thing `approximate` and `paused` exist to prevent.
+   */
+  async function membersInsideByPlace(
+    circleId: string,
+    placeIds: string[],
+  ): Promise<Map<string, string[]>> {
+    const now = new Date()
+    const rows = await db
+      .select({
+        placeId: placeMemberships.placeId,
+        userId: placeMemberships.userId,
+        sharingState: circleMembers.sharingState,
+        pausedUntil: circleMembers.pausedUntil,
+      })
+      .from(placeMemberships)
+      .innerJoin(
+        circleMembers,
+        and(
+          eq(circleMembers.circleId, circleId),
+          eq(circleMembers.userId, placeMemberships.userId),
+        ),
+      )
+      .where(and(inArray(placeMemberships.placeId, placeIds), eq(placeMemberships.isInside, true)))
+
+    const byPlace = new Map<string, string[]>()
+    for (const row of rows) {
+      if (effectiveSharingState(row.sharingState, row.pausedUntil, now) !== "precise") continue
+      byPlace.set(row.placeId, [...(byPlace.get(row.placeId) ?? []), row.userId])
+    }
+    return byPlace
+  }
+
   app.get(
     "/circles/:circleId/places",
     {
@@ -67,23 +105,10 @@ export const placeRoutes: FastifyPluginAsyncZod = async (app) => {
 
       if (rows.length === 0) return []
 
-      const inside = await db
-        .select({ placeId: placeMemberships.placeId, userId: placeMemberships.userId })
-        .from(placeMemberships)
-        .where(
-          and(
-            inArray(
-              placeMemberships.placeId,
-              rows.map((row) => row.place.id),
-            ),
-            eq(placeMemberships.isInside, true),
-          ),
-        )
-
-      const byPlace = new Map<string, string[]>()
-      for (const row of inside) {
-        byPlace.set(row.placeId, [...(byPlace.get(row.placeId) ?? []), row.userId])
-      }
+      const byPlace = await membersInsideByPlace(
+        membership.circleId,
+        rows.map((row) => row.place.id),
+      )
 
       return rows.map((row) =>
         toPlace(
@@ -139,18 +164,9 @@ export const placeRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: `Added the place "${created.name}"`,
       })
 
-      const inside = await db
-        .select({ userId: placeMemberships.userId })
-        .from(placeMemberships)
-        .where(and(eq(placeMemberships.placeId, created.id), eq(placeMemberships.isInside, true)))
+      const inside = await membersInsideByPlace(membership.circleId, [created.id])
 
-      return reply.code(201).send(
-        toPlace(
-          created,
-          null,
-          inside.map((row) => row.userId),
-        ),
-      )
+      return reply.code(201).send(toPlace(created, null, inside.get(created.id) ?? []))
     },
   )
 

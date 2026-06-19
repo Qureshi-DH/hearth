@@ -11,7 +11,15 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
 import { getDb } from "../db/client"
-import { circleMembers, circles, events, invites, users } from "../db/schema"
+import {
+  circleMembers,
+  circles,
+  events,
+  invites,
+  placeMemberships,
+  places,
+  users,
+} from "../db/schema"
 import type { CircleSettingsJson } from "../db/schema"
 import { badRequest, conflict, forbidden, notFound } from "../lib/errors"
 import { toPublicUser } from "../lib/serialize"
@@ -524,6 +532,27 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
             eq(circleMembers.userId, auth.userId),
           ),
         )
+
+      // Fences stop being evaluated for a circle the moment sharing is not
+      // precise. Left in place, "inside Home" freezes and is still served as
+      // where they are now, then replayed as a departure from wherever they
+      // have got to by the time sharing resumes.
+      if (request.body.sharingState !== "precise") {
+        await db
+          .delete(placeMemberships)
+          .where(
+            and(
+              eq(placeMemberships.userId, auth.userId),
+              inArray(
+                placeMemberships.placeId,
+                db
+                  .select({ id: places.id })
+                  .from(places)
+                  .where(eq(places.circleId, request.params.circleId)),
+              ),
+            ),
+          )
+      }
 
       await recordEvent(db, {
         circleId: request.params.circleId,

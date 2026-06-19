@@ -1,5 +1,5 @@
 import { DEFAULTS, coarsenLocation, type MemberPresence, type SharingState } from "@hearth/shared"
-import { and, eq, inArray, isNull } from "drizzle-orm"
+import { and, asc, eq, inArray, isNull } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import { circleMembers, placeMemberships, places, sosAlerts, userPresence } from "../db/schema"
@@ -137,6 +137,11 @@ export async function loadRawCirclePresence(
     .from(placeMemberships)
     .innerJoin(places, eq(places.id, placeMemberships.placeId))
     .where(and(eq(places.circleId, circleId), eq(placeMemberships.isInside, true)))
+    // A 2 km Neighbourhood containing a 100 m Home is the ordinary way to use
+    // places, so someone is often inside several at once and only the first row
+    // becomes the badge. Innermost wins, and the id only breaks ties between
+    // equal radii, so the answer stops depending on Postgres heap order.
+    .orderBy(asc(places.radiusMeters), asc(places.id))
 
   const atPlaceByUser: Record<string, MemberPresence["atPlace"]> = {}
   for (const row of insideRows) {
@@ -204,6 +209,9 @@ export async function loadRawPresenceByCircle(
         inArray(places.circleId, circleIds),
       ),
     )
+    // Innermost first, for the same reason as above: the loop below keeps one
+    // row per circle and that choice has to be the same on every read.
+    .orderBy(asc(places.radiusMeters), asc(places.id))
 
   const activeSos = await db
     .select({ id: sosAlerts.id, circleId: sosAlerts.circleId })
