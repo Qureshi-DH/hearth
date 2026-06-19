@@ -245,6 +245,30 @@ describe("detectDriveEvent", () => {
     expect(detectDriveEvent(pullingUp(9)).kind).toBe("none")
   })
 
+  it("does not let a phone tumbling while the car is still rolling corroborate its own spike", () => {
+    // The same slide off the seat, but a moment earlier, while the car is still
+    // creeping towards the line. The check above cannot help here because the
+    // vehicle genuinely was moving. What rules it out is that a car doing 5 m/s
+    // cannot be spun at 9 rad/s: only the phone can rotate that fast down there.
+    const rollingUp = (rotationRps: number): DriveSample[] => [
+      ...trace(4, cruising(12)),
+      ...trace(
+        1.5,
+        () => ({ accelG: 1 + 0.3, rotationRps: 0.2, pressure: 1013, speedMps: 5 }),
+        4000,
+      ),
+      { t: 5500, accelG: 1 + 7.5, rotationRps, pressure: 1013, speedMps: 5 },
+      // Flat pressure throughout, so rotation is the only thing on offer.
+      ...trace(
+        9,
+        () => ({ accelG: 1 + 0.02, rotationRps: 0.05, pressure: 1013, speedMps: 0 }),
+        5520,
+      ),
+    ]
+    expect(detectDriveEvent(rollingUp(0.4)).kind).toBe("none")
+    expect(detectDriveEvent(rollingUp(9)).kind).toBe("none")
+  })
+
   it("does not let a hill supply the pressure rise an airbag is meant to", () => {
     // A steep descent at 38 km/h, a cattle grid for the spike, and a hairpin at
     // the bottom for the stop. The cabin never pressurises. The pressure climbs

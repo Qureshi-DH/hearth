@@ -73,6 +73,13 @@ export const IMPACT = {
   speedDropMps: 5.5,
   /** A spin, not a swerve. */
   rotationRps: 3.5,
+  /**
+   * Below this, a spin at rotationRps would have the car turning faster than it
+   * is travelling, which no car in traffic does. A phone tumbling through the
+   * cabin does it every time, so under this speed the gyroscope is describing
+   * the phone rather than the vehicle.
+   */
+  spinSpeedMps: 7,
   /** An airbag firing pressurises the cabin. */
   pressureJumpHpa: 0.25,
   /** Above this the phone is still being moved about, so nothing came to rest. */
@@ -82,16 +89,14 @@ export const IMPACT = {
   /** Walking pace. Wherever speed is known, stopping has to agree with it. */
   restSpeedMps: 1.5,
   /**
-   * Vibration, as the standard deviation of accelerometer magnitude. A vehicle
-   * under way shakes even when its speed is steady, and that shaking is what
-   * separates "stopped" from "cruising smoothly" on a phone whose GPS has not
-   * reported for a minute. Below restNoiseG the surroundings are at rest.
+   * Vibration, as the spread of accelerometer magnitude (see jitterG). A
+   * vehicle under way shakes even when its speed is steady, and that shaking is
+   * what separates "stopped" from "cruising smoothly" on a phone whose GPS has
+   * not reported for a minute. Below restNoiseG the surroundings are at rest.
    * Above it, something is running.
    */
   restNoiseG: 0.042,
   driveNoiseG: 0.02,
-  /** And the shaking has to have collapsed, not merely be lowish. */
-  restNoiseRatio: 0.35,
   /**
    * How much of the stillness afterwards may be disturbed and still count.
    * Demanding every sample made one knock enough to discard a real crash.
@@ -202,8 +207,15 @@ export function detectDriveEvent(samples: DriveSample[]): DriveEvent {
   const rotation = Math.max(0, ...impactSlice.map((sample) => sample.rotationRps ?? 0))
   const pressureJumpHpa = pressureJump(ordered, peak.t)
 
+  // A phone loose enough to spike at impactG is loose enough to tumble, and a
+  // tumble spins several times faster than any car, so on a slow vehicle the
+  // rotation channel is the spike itself wearing a second hat. Where the speed
+  // at the impact is unknown this still counts: with GPS silent, refusing it
+  // would leave a barometer-less phone with no way to report a crash at all.
+  const couldHaveSpun = !atImpact || atImpact.speedMps! >= IMPACT.spinSpeedMps
+
   const corroborations = [
-    rotation >= IMPACT.rotationRps,
+    couldHaveSpun && rotation >= IMPACT.rotationRps,
     pressureJumpHpa !== null && pressureJumpHpa >= IMPACT.pressureJumpHpa,
   ].filter(Boolean).length
 
