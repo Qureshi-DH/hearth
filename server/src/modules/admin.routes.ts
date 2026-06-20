@@ -26,6 +26,28 @@ import { VERSION } from "./system.routes"
 export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
 
+  /**
+   * `min(recorded_at)` over the whole table has no index to lead with and reads
+   * every breadcrumb on the server. Per user it does have one: the
+   * (user_id, recorded_at) index answers each account from a single entry, and
+   * a household has a handful of accounts against millions of points.
+   */
+  async function oldestPointAt(): Promise<string | null> {
+    const rows = (await db.execute(sql`
+      select min(p.recorded_at) as oldest
+      from users u
+      cross join lateral (
+        select lp.recorded_at
+        from location_points lp
+        where lp.user_id = u.id
+        order by lp.recorded_at
+        limit 1
+      ) p
+    `)) as unknown as { oldest: Date | string | null }[]
+    const raw = rows[0]?.oldest
+    return raw ? new Date(raw).toISOString() : null
+  }
+
   /** Some managed Postgres roles are not allowed to read the database size. */
   async function databaseSizeBytes(): Promise<number | null> {
     try {
@@ -213,7 +235,8 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         [activeCount],
         [circleCount],
         [placeCount],
-        [pointStats],
+        [pointCount],
+        oldest,
         [queueDepth],
         dbSize,
       ] = await Promise.all([
@@ -224,12 +247,8 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
           .where(gte(users.lastSeenAt, dayAgo)),
         db.select({ count: sql<number>`count(*)::int` }).from(circles),
         db.select({ count: sql<number>`count(*)::int` }).from(places),
-        db
-          .select({
-            count: sql<number>`count(*)::int`,
-            oldest: sql<Date | null>`min(${locationPoints.recordedAt})`,
-          })
-          .from(locationPoints),
+        db.select({ count: sql<number>`count(*)::int` }).from(locationPoints),
+        oldestPointAt(),
         db
           .select({ count: sql<number>`count(*)::int` })
           .from(notificationOutbox)
@@ -242,8 +261,8 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         activeUsers24h: activeCount?.count ?? 0,
         circles: circleCount?.count ?? 0,
         places: placeCount?.count ?? 0,
-        locationPoints: pointStats?.count ?? 0,
-        oldestPointAt: pointStats?.oldest ? new Date(pointStats.oldest).toISOString() : null,
+        locationPoints: pointCount?.count ?? 0,
+        oldestPointAt: oldest,
         pushQueueDepth: queueDepth?.count ?? 0,
         databaseSizeBytes: dbSize,
         uptimeSeconds: uptimeSeconds(),

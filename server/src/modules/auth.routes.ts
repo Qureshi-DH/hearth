@@ -1,6 +1,7 @@
 import { PLATFORMS } from "@hearth/shared"
-import { and, desc, eq, isNull, sql } from "drizzle-orm"
+import { and, desc, eq, isNull, lte, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
+import { Readable } from "node:stream"
 import { z } from "zod"
 
 import { getDb } from "../db/client"
@@ -14,6 +15,7 @@ import {
   sessions,
   trips,
   users,
+  type LocationPoint,
 } from "../db/schema"
 import {
   badRequest,
@@ -48,6 +50,9 @@ const DeviceSchema = z.object({
   appVersion: z.string().max(40).nullish(),
   osVersion: z.string().max(40).nullish(),
 })
+
+/** How many breadcrumbs the export holds in memory at once. */
+const EXPORT_PAGE_SIZE = 5_000
 
 const emailSchema = z
   .string()
@@ -447,6 +452,9 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     "/me/export",
     {
       preHandler: app.authenticate,
+      // A full history is minutes of streaming. Under the global budget alone,
+      // a few hundred of these at once is the whole server.
+      config: { rateLimit: { max: 3, timeWindow: "10 minutes" } },
       schema: {
         tags: ["account"],
         summary: "Export everything this server holds about you",
@@ -456,7 +464,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     async (request, reply) => {
       const user = await loadCurrentUser(request)
 
-      const [memberships, history, myTrips, myCheckIns] = await Promise.all([
+      const [memberships, myTrips, myCheckIns] = await Promise.all([
         db
           .select({
             circleId: circleMembers.circleId,
@@ -468,28 +476,77 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           .from(circleMembers)
           .innerJoin(circles, eq(circles.id, circleMembers.circleId))
           .where(eq(circleMembers.userId, user.id)),
-        db
-          .select()
-          .from(locationPoints)
-          .where(eq(locationPoints.userId, user.id))
-          .orderBy(desc(locationPoints.recordedAt))
-          .limit(100_000),
         db.select().from(trips).where(eq(trips.userId, user.id)),
         db.select().from(checkIns).where(eq(checkIns.userId, user.id)),
       ])
 
       const placesCreated = await db.select().from(places).where(eq(places.createdBy, user.id))
 
-      reply.header("content-disposition", `attachment; filename="hearth-export-${user.id}.json"`)
-      return {
-        exportedAt: new Date().toISOString(),
-        profile: toCurrentUser(user),
-        circles: memberships,
-        locationHistory: history,
-        trips: myTrips,
-        checkIns: myCheckIns,
-        placesCreated,
+      /**
+       * Every other part of this document is bounded by how many circles and
+       * trips one person has. The breadcrumbs are not: a phone reporting every
+       * half minute leaves a quarter of a million rows inside the default
+       * retention window, and holding all of them plus the string they
+       * serialise into is more memory than the small boxes this server is meant
+       * to run on have. Streaming a page at a time keeps that flat, and keeps
+       * the export honest to its own summary rather than cut off at a limit.
+       */
+      async function* document(): AsyncGenerator<string> {
+        const head = JSON.stringify({
+          exportedAt: new Date().toISOString(),
+          profile: toCurrentUser(user),
+          circles: memberships,
+          trips: myTrips,
+          checkIns: myCheckIns,
+          placesCreated,
+        })
+        yield `${head.slice(0, -1)},"locationHistory":[`
+
+        let before: Date | null = null
+        let first = true
+        for (;;) {
+          const page: LocationPoint[] = await db
+            .select()
+            .from(locationPoints)
+            .where(
+              before
+                ? and(eq(locationPoints.userId, user.id), lte(locationPoints.recordedAt, before))
+                : eq(locationPoints.userId, user.id),
+            )
+            .orderBy(desc(locationPoints.recordedAt))
+            .limit(EXPORT_PAGE_SIZE)
+
+          // Keyset, not OFFSET: a fix uploaded from the road while the export
+          // runs shifts an offset window and duplicates a row. Rows sharing the
+          // page's final timestamp are held back instead, because the next page
+          // starts at that timestamp and is the one that emits them.
+          const boundary =
+            page.length === EXPORT_PAGE_SIZE ? page[page.length - 1]!.recordedAt : null
+          const trimmed = boundary
+            ? page.filter((row) => row.recordedAt.getTime() !== boundary.getTime())
+            : page
+          // Holding the ties back can only empty a page if every row in it
+          // shares one timestamp, which would need a device per row. Emitting
+          // that page whole is what stops the loop spinning on it.
+          const last = boundary === null || trimmed.length === 0
+          const emit = last ? page : trimmed
+
+          if (emit.length > 0) {
+            const chunk = emit.map((row) => JSON.stringify(row)).join(",")
+            yield first ? chunk : `,${chunk}`
+            first = false
+          }
+
+          if (last) break
+          before = boundary
+        }
+
+        yield "]}"
       }
+
+      reply.header("content-disposition", `attachment; filename="hearth-export-${user.id}.json"`)
+      reply.header("content-type", "application/json; charset=utf-8")
+      return Readable.from(document())
     },
   )
 
