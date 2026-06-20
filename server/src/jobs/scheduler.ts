@@ -38,36 +38,49 @@ async function pruneLocationHistory(db: Database, config: AppConfig): Promise<nu
   // Bounded batches. One unbounded DELETE over months of breadcrumbs holds
   // locks for minutes and starves everything queued behind it.
   const BATCH = 5000
-  const MAX_BATCHES_PER_TICK = 20
+  const MAX_BATCHES_PER_USER = 20
+
+  // Resolve each household member's window here and sweep one user at a time.
+  // Joining the window to the breadcrumbs instead puts the cutoff in the join
+  // predicate, where it cannot be an index qual, so the planner seq-scans the
+  // whole of location_points on every tick just to learn there is nothing old
+  // enough to delete. Users are few, breadcrumbs are not.
+  const windows = (await db.execute(sql`
+    select
+      u.id as user_id,
+      least(
+        coalesce(max((c.settings ->> 'historyRetentionDays')::int), ${DEFAULTS.historyRetentionDays}),
+        ${ceilingDays}
+      ) as days
+    from users u
+    left join circle_members cm on cm.user_id = u.id
+    left join circles c on c.id = cm.circle_id
+    group by u.id
+  `)) as unknown as { user_id: string; days: number }[]
+
   let total = 0
-  for (let i = 0; i < MAX_BATCHES_PER_TICK; i += 1) {
-    const result = await db.execute(sql`
-      with retention as (
-        select
-          u.id as user_id,
-          least(
-            coalesce(max((c.settings ->> 'historyRetentionDays')::int), ${DEFAULTS.historyRetentionDays}),
-            ${ceilingDays}
-          ) as days
-        from users u
-        left join circle_members cm on cm.user_id = u.id
-        left join circles c on c.id = cm.circle_id
-        group by u.id
-      ),
-      victims as (
-        select lp.id
-        from location_points lp
-        join retention r on r.user_id = lp.user_id
-        where lp.recorded_at < now() - make_interval(days => r.days)
-        limit ${BATCH}
-      )
-      delete from location_points lp
-      using victims v
-      where lp.id = v.id
-    `)
-    const deleted = readCount(result)
-    total += deleted
-    if (deleted < BATCH) break
+  for (const row of windows) {
+    // Budgeted per user rather than per tick. Shared, one account with years of
+    // backlog absorbed the whole tick and everybody behind it in an unordered
+    // result waited for it to drain.
+    let batches = 0
+    const cutoff = new Date(Date.now() - row.days * 24 * 60 * 60 * 1000)
+    while (batches < MAX_BATCHES_PER_USER) {
+      batches += 1
+      const result = await db.execute(sql`
+        delete from location_points
+        where id in (
+          select id
+          from location_points
+          where user_id = ${row.user_id}::uuid
+            and recorded_at < ${cutoff.toISOString()}::timestamptz
+          limit ${BATCH}
+        )
+      `)
+      const deleted = readCount(result)
+      total += deleted
+      if (deleted < BATCH) break
+    }
   }
   return total
 }
@@ -88,23 +101,42 @@ async function pruneSessions(db: Database): Promise<number> {
 }
 
 /**
+ * Enough phones that all of them being quiet at the same moment is evidence
+ * about the server rather than a coincidence between households.
+ */
+const OUTAGE_MIN_REPORTING = 8
+
+/**
  * A phone that went quiet says more than one that is merely stationary, so
  * this is the alert families care about most. It fires once per outage, not
  * once per tick.
  */
-async function flagOfflineDevices(db: Database): Promise<number> {
+async function flagOfflineDevices(db: Database, log: FastifyBaseLogger): Promise<number> {
   const cutoff = new Date(Date.now() - DEFAULTS.offlineAfterSeconds * 1000)
 
-  // If most reporting phones went quiet at once, the outage is ours, not
-  // theirs. Alerting every family would be noise, so skip the tick.
   const [totals] = await db
     .select({
       reporting: sql<number>`count(*) filter (where ${userPresence.recordedAt} is not null)::int`,
       stale: sql<number>`count(*) filter (where ${userPresence.recordedAt} < ${cutoff.toISOString()}::timestamptz and ${userPresence.offlineNotifiedAt} is null)::int`,
+      fresh: sql<number>`count(*) filter (where ${userPresence.recordedAt} >= ${cutoff.toISOString()}::timestamptz)::int`,
     })
     .from(userPresence)
   if (!totals || totals.stale === 0) return 0
-  if (totals.reporting >= 4 && totals.stale / totals.reporting > 0.5) return 0
+
+  // Nobody at all still reporting is what our own ingest being down looks
+  // like, and alerting every family for that would be noise. Several phones
+  // going quiet together is not that: they share one OS scheduler, so a
+  // household asleep can easily have most of its background windows missed at
+  // once, and the one phone that genuinely went dark must not be silenced
+  // along with them. Small accounts never take this branch, because every
+  // phone in a family of three being quiet says nothing about the server.
+  if (totals.fresh === 0 && totals.reporting >= OUTAGE_MIN_REPORTING) {
+    log.warn(
+      { reporting: totals.reporting, stale: totals.stale },
+      "offline alerts withheld; no device has reported recently",
+    )
+    return 0
+  }
 
   const stale = await db
     .select({ userId: userPresence.userId, displayName: users.displayName })
@@ -112,6 +144,10 @@ async function flagOfflineDevices(db: Database): Promise<number> {
     .innerJoin(users, eq(users.id, userPresence.userId))
     .where(
       and(
+        // A deactivated account's sessions are all revoked, so its phone
+        // cannot report by design. Telling the circle it stopped reporting
+        // describes an admin's decision as a malfunction.
+        eq(users.isActive, true),
         isNotNull(userPresence.recordedAt),
         lt(userPresence.recordedAt, cutoff),
         isNull(userPresence.offlineNotifiedAt),
@@ -282,7 +318,7 @@ export async function runJobs(
   })
 
   await step("devices.offline", async () => {
-    report.offlineFlagged = await flagOfflineDevices(db)
+    report.offlineFlagged = await flagOfflineDevices(db, log)
   })
 
   await step("trips.detect", async () => {
