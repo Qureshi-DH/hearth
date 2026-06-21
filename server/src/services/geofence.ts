@@ -1,9 +1,16 @@
-import { DEFAULTS, evaluateGeofence, type FeedEvent } from "@hearth/shared"
+import { DEFAULTS, haversineMeters, type FeedEvent } from "@hearth/shared"
 import { and, eq, inArray, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import { circleMembers, placeEvents, placeMemberships, places, users } from "../db/schema"
 import { broadcastEvent, recordEvent } from "./feed"
+
+/**
+ * A crossing cancelled this quickly was a transit, not a visit. Driving through
+ * a fence puts one fix inside and the next one back outside, and an arrival the
+ * family is told about and then told to forget is worse than no arrival at all.
+ */
+const TRANSIENT_VISIT_MS = 2 * 60 * 1000
 
 export interface GeofenceFix {
   lat: number
@@ -27,10 +34,12 @@ export interface GeofenceTransition {
  * catch-up upload costs a constant number of queries rather than four per
  * point.
  *
- * Two safeguards keep this from spamming the family. Fixes worse than
- * `geofenceMaxAccuracyMeters` are skipped, because a 2 km cell-tower fix would
- * "arrive" everywhere at once. Leaving requires clearing the radius plus a
- * buffer, so a phone resting on a boundary cannot oscillate.
+ * Several safeguards keep this from spamming the family. Fixes worse than
+ * `geofenceMaxAccuracyMeters` are dropped outright, because a 2 km cell-tower
+ * fix would "arrive" everywhere at once, and every fix that survives still has
+ * to clear the boundary by its own error circle before it may change anything.
+ * Leaving requires clearing the radius plus a buffer, so a phone resting on a
+ * boundary cannot oscillate.
  */
 export async function evaluateGeofenceBatch(
   db: Database,
@@ -43,8 +52,11 @@ export async function evaluateGeofenceBatch(
      * they just reached a specific address. That is the point of those modes.
      */
     visibleCircleIds?: string[]
+    /** Wall clock, so a replayed backlog can be told apart from live movement. */
+    now?: Date
   } = {},
 ): Promise<GeofenceTransition[]> {
+  const now = options.now ?? new Date()
   const usable = fixes
     .filter(
       (fix) =>
@@ -77,87 +89,128 @@ export async function evaluateGeofenceBatch(
     .where(visible ? inArray(places.circleId, visible) : undefined)
   if (placeRows.length === 0) return []
 
-  const existing = await db
-    .select()
-    .from(placeMemberships)
-    .where(
-      and(
-        eq(placeMemberships.userId, userId),
-        inArray(
-          placeMemberships.placeId,
-          placeRows.map((place) => place.id),
-        ),
-      ),
-    )
-
-  const known = new Map(existing.map((row) => [row.placeId, row.isInside]))
-  const seenBefore = new Set(existing.map((row) => row.placeId))
-  const evaluatedUntil = new Map(
-    existing.map((row) => [row.placeId, row.lastEvaluatedAt.getTime()]),
-  )
-
-  const transitions: GeofenceTransition[] = []
-  const finalState = new Map<string, { isInside: boolean; since: Date }>()
-
-  for (const place of placeRows) {
-    let wasInside = known.get(place.id) ?? false
-    let since: Date | null = null
-    let firstEvaluation = !seenBefore.has(place.id)
-
-    for (const fix of usable) {
-      // A straggler older than what this fence has already seen cannot rewind
-      // its state. Skipping it is what makes retried uploads idempotent here.
-      if (fix.recordedAt.getTime() <= (evaluatedUntil.get(place.id) ?? -Infinity)) continue
-      const isInside = evaluateGeofence({
-        point: { lat: fix.lat, lon: fix.lon },
-        center: { lat: place.lat, lon: place.lon },
-        radiusMeters: place.radiusMeters,
-        wasInside,
-        exitBufferMeters: DEFAULTS.geofenceExitBufferMeters,
-      })
-
-      if (isInside === wasInside && !firstEvaluation) continue
-
-      // The first evaluation only counts as an event if they are inside.
-      // "Not at the park" is not news.
-      const shouldEmit = !firstEvaluation || isInside
-      firstEvaluation = false
-      wasInside = isInside
-      since = fix.recordedAt
-
-      if (!shouldEmit) continue
-
-      transitions.push({
-        placeId: place.id,
-        placeName: place.name,
-        circleId: place.circleId,
-        type: isInside ? "arrive" : "leave",
-        occurredAt: fix.recordedAt,
-        pointId: fix.pointId ?? null,
-      })
-    }
-
-    const changed = wasInside !== (known.get(place.id) ?? false)
-    if (changed || !seenBefore.has(place.id)) {
-      finalState.set(place.id, {
-        isInside: wasInside,
-        since: since ?? usable[usable.length - 1]!.recordedAt,
-      })
-    }
-  }
-
   const lastFixAt = usable[usable.length - 1]!.recordedAt
-  const untouched = placeRows
-    .map((place) => place.id)
-    .filter((id) => !finalState.has(id) && seenBefore.has(id))
+  const transitions: GeofenceTransition[] = []
+
+  const broadcasts: Array<{ circleId: string; event: FeedEvent }> = []
 
   // The new state and the events it produced commit together. If
   // `lastEvaluatedAt` moved on its own and the process then died, every fix in
   // this batch would be skipped as a straggler on the retry, and the arrival
   // nobody was told about could never be recovered.
-  const broadcasts: Array<{ circleId: string; event: FeedEvent }> = []
-
   await db.transaction(async (tx) => {
+    // One person's two signed-in devices can upload at the same moment. The
+    // membership read below is what decides the transitions, so without
+    // serialising here both uploads see "outside" and both announce the same
+    // arrival. Blocking rather than skipping, because the batch that loses the
+    // race still has fixes that have to be evaluated.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`hearth:geofence:${userId}`}))`)
+
+    const existing = await tx
+      .select()
+      .from(placeMemberships)
+      .where(
+        and(
+          eq(placeMemberships.userId, userId),
+          inArray(
+            placeMemberships.placeId,
+            placeRows.map((place) => place.id),
+          ),
+        ),
+      )
+
+    const known = new Map(existing.map((row) => [row.placeId, row.isInside]))
+    const seenBefore = new Set(existing.map((row) => row.placeId))
+    const evaluatedUntil = new Map(
+      existing.map((row) => [row.placeId, row.lastEvaluatedAt.getTime()]),
+    )
+
+    const finalState = new Map<string, { isInside: boolean; since: Date }>()
+
+    for (const place of placeRows) {
+      let wasInside = known.get(place.id) ?? false
+      let since: Date | null = null
+      let firstEvaluation = !seenBefore.has(place.id)
+      const crossings: GeofenceTransition[] = []
+
+      for (const fix of usable) {
+        // A straggler older than what this fence has already seen cannot rewind
+        // its state. Skipping it is what makes retried uploads idempotent here.
+        if (fix.recordedAt.getTime() <= (evaluatedUntil.get(place.id) ?? -Infinity)) continue
+
+        const distance = haversineMeters(
+          { lat: fix.lat, lon: fix.lon },
+          { lat: place.lat, lon: place.lon },
+        )
+        // A fix is a circle, not a point. A crossing counts only once the whole
+        // error circle is clear of the boundary, so a coarse fix can still
+        // decide a wide fence but never a doorstep one. Anything less certain
+        // than that keeps the state it already had, which is the honest answer
+        // and the only one the exit buffer is narrow enough to absorb.
+        // Half the error circle, not all of it. Shrinking the fence by the
+        // whole radius means a fix even slightly coarser than the fence can
+        // never enter it, and never entering means never leaving either, so an
+        // ordinary indoor blend would freeze a small place for good. Half still
+        // refuses a fix far too vague to decide the fence at all.
+        const accuracy = fix.accuracyMeters ?? 0
+        const margin = accuracy / 2
+        const isInside = wasInside
+          ? distance - margin <= place.radiusMeters + DEFAULTS.geofenceExitBufferMeters
+          : distance + margin <= place.radiusMeters
+
+        if (isInside === wasInside && !firstEvaluation) continue
+
+        // The first evaluation only counts as an event if they are inside.
+        // "Not at the park" is not news.
+        const shouldEmit = !firstEvaluation || isInside
+        firstEvaluation = false
+        wasInside = isInside
+        since = fix.recordedAt
+
+        if (!shouldEmit) continue
+
+        crossings.push({
+          placeId: place.id,
+          placeName: place.name,
+          circleId: place.circleId,
+          type: isInside ? "arrive" : "leave",
+          occurredAt: fix.recordedAt,
+          pointId: fix.pointId ?? null,
+        })
+      }
+
+      // Crossings for one fence always alternate, so a pair closer together
+      // than a transit takes cancels out. Dropping both halves leaves the
+      // membership exactly where it started, which is where the person is.
+      const kept: GeofenceTransition[] = []
+      for (const crossing of crossings) {
+        const previous = kept[kept.length - 1]
+        if (
+          previous &&
+          crossing.occurredAt.getTime() - previous.occurredAt.getTime() < TRANSIENT_VISIT_MS
+        ) {
+          kept.pop()
+          continue
+        }
+        kept.push(crossing)
+      }
+      transitions.push(...kept)
+
+      const changed = wasInside !== (known.get(place.id) ?? false)
+      if (changed || !seenBefore.has(place.id)) {
+        finalState.set(place.id, { isInside: wasInside, since: since ?? lastFixAt })
+      }
+    }
+
+    const untouched = placeRows
+      .map((place) => place.id)
+      .filter(
+        (id) =>
+          !finalState.has(id) &&
+          seenBefore.has(id) &&
+          (evaluatedUntil.get(id) ?? -Infinity) < lastFixAt.getTime(),
+      )
+
     for (const [placeId, state] of finalState) {
       await tx
         .insert(placeMemberships)
@@ -170,14 +223,23 @@ export async function evaluateGeofenceBatch(
         })
         .onConflictDoUpdate({
           target: [placeMemberships.placeId, placeMemberships.userId],
-          set: { isInside: state.isInside, since: state.since, lastEvaluatedAt: lastFixAt },
+          set: {
+            isInside: state.isInside,
+            since: state.since,
+            // Forward only. The straggler guard above is what makes an
+            // out-of-order upload safe, and rewinding this watermark hands
+            // those already-judged fixes back to the fence.
+            lastEvaluatedAt: sql`greatest(${placeMemberships.lastEvaluatedAt}, excluded.last_evaluated_at)`,
+          },
         })
     }
 
     if (untouched.length > 0) {
       await tx
         .update(placeMemberships)
-        .set({ lastEvaluatedAt: lastFixAt })
+        .set({
+          lastEvaluatedAt: sql`greatest(${placeMemberships.lastEvaluatedAt}, ${lastFixAt.toISOString()}::timestamptz)`,
+        })
         .where(
           and(eq(placeMemberships.userId, userId), inArray(placeMemberships.placeId, untouched)),
         )
@@ -205,22 +267,30 @@ export async function evaluateGeofenceBatch(
 
     for (const transition of transitions) {
       const verb = transition.type === "arrive" ? "arrived at" : "left"
+      // A backlog uploaded after an outage replays crossings that really
+      // happened, days ago. They belong in the feed, but pushing them now would
+      // tell the family someone is at the park while they are at work.
+      const isCurrent =
+        now.getTime() - transition.occurredAt.getTime() < DEFAULTS.staleAfterSeconds * 1000
       const dto = await recordEvent(tx as unknown as Database, {
         deferBroadcast: true,
         circleId: transition.circleId,
         type: transition.type === "arrive" ? "place_arrive" : "place_leave",
         actorUserId: userId,
+        occurredAt: transition.occurredAt,
         payload: {
           placeId: transition.placeId,
           placeName: transition.placeName,
           occurredAt: transition.occurredAt.toISOString(),
         },
         summary: `${name} ${verb} ${transition.placeName}`,
-        notify: {
-          title: transition.placeName,
-          body: `${name} ${verb} ${transition.placeName}`,
-          data: { placeId: transition.placeId, userId },
-        },
+        notify: isCurrent
+          ? {
+              title: transition.placeName,
+              body: `${name} ${verb} ${transition.placeName}`,
+              data: { placeId: transition.placeId, userId },
+            }
+          : undefined,
       })
       broadcasts.push({ circleId: transition.circleId, event: dto })
     }
@@ -249,8 +319,11 @@ export async function primePlaceMemberships(db: Database, placeId: string): Prom
         cos(radians(p.lat)) * cos(radians(up.lat)) *
         power(sin(radians(up.lon - p.lon) / 2), 2)
       ))) <= p.radius_meters,
-      now(),
-      now()
+      -- Both stamps come from the fix this decision was made on. A watermark
+      -- stamped in the present would make every fix already in flight look
+      -- like a straggler, so the fence would ignore the next real crossing.
+      coalesce(up.recorded_at, now()),
+      coalesce(up.recorded_at, now())
     from places p
     join circle_members cm on cm.circle_id = p.circle_id
     join user_presence up on up.user_id = cm.user_id

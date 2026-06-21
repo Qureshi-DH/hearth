@@ -238,6 +238,8 @@ export const userPresence = pgTable("user_presence", {
   isCharging: boolean("is_charging"),
   /** Set when a low-battery event has already fired, cleared once charged again. */
   lowBatteryNotifiedAt: timestamp("low_battery_notified_at", { withTimezone: true }),
+  /** The level that latch fired at, so a circle with a lower threshold of its own can still be told. */
+  lowBatteryNotifiedLevel: real("low_battery_notified_level"),
   /** Cooldown marker so a long motorway drive raises one alert, not fifty. */
   speedAlertedAt: timestamp("speed_alerted_at", { withTimezone: true }),
   /** Consecutive over-threshold fixes, so a single GPS spike cannot alert. */

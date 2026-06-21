@@ -427,7 +427,10 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
             quickKey: z.enum(QUICK_MESSAGE_KEYS).optional(),
             body: z.string().trim().min(1).max(DEFAULTS.maxMessageLength).optional(),
           })
-          .optional(),
+          // nullish, not optional: a POST with no body at all reaches
+          // validation as null, and a bare nudge that carries no message is
+          // the original shape of this route.
+          .nullish(),
       },
       config: { rateLimit: { max: 6, timeWindow: "10 minutes" } },
     },

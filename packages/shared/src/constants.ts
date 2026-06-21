@@ -171,11 +171,15 @@ export const DEFAULTS = {
   speedAlertCooldownSeconds: 30 * 60,
   /**
    * Incident heuristic. Travelling at least incidentMinSpeedMps, then dropping
-   * to incidentStoppedSpeedMps inside the deceleration window and staying put.
+   * to incidentStoppedSpeedMps and staying there.
+   *
+   * The deceleration window has to be wider than the stillness it then demands,
+   * or the two can never both hold: the fast fix would always have aged out of
+   * the window by the time enough stillness had accumulated behind it.
    */
   incidentMinSpeedMps: 9.7,
   incidentStoppedSpeedMps: 1,
-  incidentDecelerationWindowSeconds: 90,
+  incidentDecelerationWindowSeconds: 300,
   incidentStillnessSeconds: 180,
 } as const
 

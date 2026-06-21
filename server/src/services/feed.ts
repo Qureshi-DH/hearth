@@ -14,6 +14,12 @@ export interface RecordEventInput {
   actorUserId?: string | null
   payload?: Record<string, unknown>
   summary: string
+  /**
+   * When the thing happened, if that is not now. A backlog uploaded after an
+   * outage replays real crossings, and the feed has to show them at the time
+   * they happened rather than at the time the queue drained.
+   */
+  occurredAt?: Date
   notify?: {
     title: string
     body: string
@@ -53,6 +59,7 @@ export async function recordEvent(db: Database, input: RecordEventInput): Promis
       type: input.type,
       payload: input.payload ?? {},
       summary: input.summary,
+      occurredAt: input.occurredAt,
     })
     .returning()
 

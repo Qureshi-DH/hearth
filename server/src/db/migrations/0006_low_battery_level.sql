@@ -1,0 +1,1 @@
+ALTER TABLE "user_presence" ADD COLUMN "low_battery_notified_level" real;

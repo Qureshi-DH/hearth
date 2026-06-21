@@ -43,6 +43,13 @@
       "when": 1788813900000,
       "tag": "0005_drop_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788900000000,
+      "tag": "0006_low_battery_level",
+      "breakpoints": true
     }
   ]
 }
