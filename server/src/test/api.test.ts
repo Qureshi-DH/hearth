@@ -44,6 +44,7 @@ async function uploadFixes(
     lon: number
     recordedAt: string
     accuracyMeters?: number
+    speedMps?: number
     batteryLevel?: number
     isCharging?: boolean
   }>,
@@ -56,6 +57,76 @@ async function uploadFixes(
   })
   expect(response.statusCode).toBe(200)
   return response.json() as { accepted: number; rejected: number; placeEvents: number }
+}
+
+/**
+ * Metres to degrees of latitude on the same sphere the geofence maths uses, so
+ * a point placed N metres north of a fence centre measures N metres from it.
+ */
+const METRES_PER_DEGREE_LAT = (Math.PI * 6_371_008.8) / 180
+
+const northOf = (point: { lat: number; lon: number }, metres: number) => ({
+  lat: point.lat + metres / METRES_PER_DEGREE_LAT,
+  lon: point.lon,
+})
+
+/** A second signed-in device for an account that already exists. */
+async function signInDevice(email: string, deviceId: string) {
+  const response = await ctx.app.inject({
+    method: "POST",
+    url: "/api/v1/auth/login",
+    payload: {
+      email,
+      password: "correct-horse-battery",
+      device: { deviceId, deviceName: "Second Device", platform: "android" },
+    },
+  })
+  expect(response.statusCode).toBe(200)
+  const body = response.json() as { accessToken: string }
+  return { authorization: `Bearer ${body.accessToken}` }
+}
+
+async function setCircleSettings(
+  headers: Record<string, string>,
+  circleId: string,
+  settings: Record<string, unknown>,
+) {
+  const response = await ctx.app.inject({
+    method: "PATCH",
+    url: `/api/v1/circles/${circleId}`,
+    headers,
+    payload: { settings },
+  })
+  expect(response.statusCode).toBe(200)
+}
+
+async function feedItems(headers: Record<string, string>, circleId: string) {
+  const response = await ctx.app.inject({
+    method: "GET",
+    url: `/api/v1/circles/${circleId}/events`,
+    headers,
+  })
+  expect(response.statusCode).toBe(200)
+  return (response.json() as { items: unknown }).items as Array<{
+    type: string
+    summary: string
+    occurredAt: string
+    payload: Record<string, unknown>
+  }>
+}
+
+async function myTrips(headers: Record<string, string>) {
+  const response = await ctx.app.inject({ method: "GET", url: "/api/v1/me/trips", headers })
+  expect(response.statusCode).toBe(200)
+  return response.json() as Array<{
+    startedAt: string
+    endedAt: string
+    distanceMeters: number
+    durationSeconds: number
+    maxSpeedMps: number | null
+    avgSpeedMps: number | null
+    pointCount: number
+  }>
 }
 
 describe("system", () => {
@@ -838,6 +909,82 @@ describe("places and geofencing", () => {
     expect(recipients.has(parent.user.id)).toBe(true)
     expect(recipients.has(kid.user.id)).toBe(false)
   })
+
+  it("stops naming someone inside a place once they pause sharing", async () => {
+    const parent = await registerUser(ctx.app, { displayName: "Parent" })
+    const kid = await registerUser(ctx.app, { displayName: "Kid" })
+    const circle = await createCircle(parent.headers)
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/invites/${circle.invite.code}/accept`,
+      headers: kid.headers,
+    })
+
+    await uploadFixes(kid.headers, [{ ...HOME, recordedAt: iso(-300), accuracyMeters: 10 }])
+    const place = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: parent.headers,
+      payload: { name: "Home", icon: "home", ...HOME, radiusMeters: 150 },
+    })
+    expect(place.statusCode).toBe(201)
+    expect(place.json().membersInside).toContain(kid.user.id)
+
+    const paused = await ctx.app.inject({
+      method: "PATCH",
+      url: `/api/v1/circles/${circle.id}/sharing`,
+      headers: kid.headers,
+      payload: { sharingState: "paused" },
+    })
+    expect(paused.statusCode).toBe(200)
+
+    // Off to school with sharing paused. Nothing evaluates the fence now, so
+    // the membership row is frozen at "at Home" and must not be served as fact.
+    await uploadFixes(kid.headers, [{ ...SCHOOL, recordedAt: iso(-60), accuracyMeters: 10 }])
+
+    const listed = await ctx.app.inject({
+      method: "GET",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: parent.headers,
+    })
+    expect(listed.statusCode).toBe(200)
+    const home = (listed.json() as Array<{ name: string; membersInside: string[] }>).find(
+      (row) => row.name === "Home",
+    )!
+    expect(home.membersInside).not.toContain(kid.user.id)
+  })
+
+  it("does not prime an approximate member into a new place", async () => {
+    const parent = await registerUser(ctx.app, { displayName: "Parent" })
+    const kid = await registerUser(ctx.app, { displayName: "Kid" })
+    const circle = await createCircle(parent.headers)
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/invites/${circle.invite.code}/accept`,
+      headers: kid.headers,
+    })
+
+    const coarse = await ctx.app.inject({
+      method: "PATCH",
+      url: `/api/v1/circles/${circle.id}/sharing`,
+      headers: kid.headers,
+      payload: { sharingState: "approximate" },
+    })
+    expect(coarse.statusCode).toBe(200)
+
+    // Presence is still recorded while approximate, so priming a new place
+    // finds the kid standing in it. Naming a doorstep is what approximate exists
+    // to withhold.
+    await uploadFixes(kid.headers, [{ ...HOME, recordedAt: iso(-60), accuracyMeters: 10 }])
+    const place = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: parent.headers,
+      payload: { name: "Home", icon: "home", ...HOME, radiusMeters: 150 },
+    })
+    expect(place.statusCode).toBe(201)
+    expect(place.json().membersInside).not.toContain(kid.user.id)
+  })
 })
 
 describe("safety", () => {
@@ -1041,6 +1188,31 @@ describe("account ownership", () => {
     expect(circles.json()[0].role).toBe("owner")
     expect(circles.json()[0].memberCount).toBe(1)
   })
+
+  it("streams a multi-point history as one valid export document", async () => {
+    const walker = await registerUser(ctx.app, { displayName: "Walker" })
+    await uploadFixes(walker.headers, [
+      { ...HOME, recordedAt: iso(-300) },
+      { ...HOME, recordedAt: iso(-240) },
+      { ...SCHOOL, recordedAt: iso(-180) },
+    ])
+
+    const exported = await ctx.app.inject({
+      method: "GET",
+      url: "/api/v1/me/export",
+      headers: walker.headers,
+    })
+    expect(exported.statusCode).toBe(200)
+    const body = exported.json() as {
+      profile: { id: string }
+      locationHistory: Array<{ recordedAt: string }>
+    }
+    expect(body.profile.id).toBe(walker.user.id)
+    expect(body.locationHistory).toHaveLength(3)
+    expect(new Date(body.locationHistory[0]!.recordedAt).getTime()).toBeGreaterThan(
+      new Date(body.locationHistory[2]!.recordedAt).getTime(),
+    )
+  })
 })
 
 describe("admin", () => {
@@ -1153,5 +1325,640 @@ describe("admin account state", () => {
       (entry) => entry.id === member.user.id,
     )!
     expect(row.deviceCount).toBe(0)
+  })
+})
+
+describe("trip detection over long and interleaved streams", () => {
+  it("detects a later journey once an earlier run has filled a whole detection pass", async () => {
+    const user = await registerUser(ctx.app)
+    await createCircle(user.headers)
+
+    // A little over 5000 fixes with no gap anywhere near the idle gap, which is
+    // what a long motorway leg looks like on a device delivering on distance.
+    const runStart = new Date(Date.now() - 200 * 60 * 1000)
+    await getDb().execute(sql`
+      insert into location_points
+        (user_id, device_id, recorded_at, lat, lon, accuracy_meters, speed_mps, source)
+      select
+        ${user.user.id}::uuid,
+        'long-leg',
+        ${runStart.toISOString()}::timestamptz + (n * interval '2 seconds'),
+        ${HOME.lat} + n * 0.00024,
+        ${HOME.lon},
+        8,
+        13.3,
+        'background'
+      from generate_series(0, 5000) as n
+    `)
+
+    // A separate, fully settled drive well after the run ended.
+    const secondStart = Date.now() - 25 * 60 * 1000
+    await uploadFixes(
+      user.headers,
+      Array.from({ length: 10 }, (_, i) => ({
+        ...northOf(SCHOOL, i * 600),
+        recordedAt: new Date(secondStart + i * 60 * 1000).toISOString(),
+        accuracyMeters: 8,
+        speedMps: 10,
+      })),
+    )
+
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    expect((await myTrips(user.headers)).length).toBeGreaterThan(0)
+  })
+
+  it("keeps a trip's average speed within the fastest fix it contains", async () => {
+    const user = await registerUser(ctx.app)
+    await createCircle(user.headers)
+    const tablet = await signInDevice(user.email, "device-tablet-merge")
+
+    // A 12 km drive at a steady 10 m/s, twenty minutes long.
+    const driveStart = Date.now() - 40 * 60 * 1000
+    await uploadFixes(
+      user.headers,
+      Array.from({ length: 21 }, (_, i) => ({
+        ...northOf(HOME, i * 600),
+        recordedAt: new Date(driveStart + i * 60 * 1000).toISOString(),
+        accuracyMeters: 8,
+        speedMps: 10,
+      })),
+    )
+
+    // The same account's second device never left the house.
+    await uploadFixes(tablet, [
+      {
+        ...HOME,
+        recordedAt: new Date(driveStart + 10 * 60 * 1000 + 30_000).toISOString(),
+        accuracyMeters: 20,
+        speedMps: 0,
+      },
+    ])
+
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    const [trip] = await myTrips(user.headers)
+    expect(trip).toBeDefined()
+    expect(trip!.avgSpeedMps!).toBeLessThanOrEqual(trip!.maxSpeedMps!)
+    expect(trip!.distanceMeters).toBeLessThan(15_000)
+  })
+
+  it("reports a top speed that two consecutive fixes agree on", async () => {
+    const user = await registerUser(ctx.app)
+    await createCircle(user.headers)
+
+    // A steady 12 m/s drive carrying one impossible sample, the kind an Android
+    // provider switch emits. The positions on either side of it are untouched.
+    const driveStart = Date.now() - 40 * 60 * 1000
+    await uploadFixes(
+      user.headers,
+      Array.from({ length: 21 }, (_, i) => ({
+        ...northOf(HOME, i * 720),
+        recordedAt: new Date(driveStart + i * 60 * 1000).toISOString(),
+        accuracyMeters: 8,
+        speedMps: i === 8 ? 62 : 12,
+      })),
+    )
+
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    const [trip] = await myTrips(user.headers)
+    expect(trip).toBeDefined()
+    expect(trip!.maxSpeedMps).toBe(12)
+  })
+
+  it("never splits one drive into two trips when its last fixes arrive after a sweep", async () => {
+    const user = await registerUser(ctx.app)
+    await createCircle(user.headers)
+
+    const driveStart = Date.now() - 20 * 60 * 1000
+    await uploadFixes(
+      user.headers,
+      Array.from({ length: 17 }, (_, i) => ({
+        ...northOf(HOME, i * 300),
+        recordedAt: new Date(driveStart + i * 30 * 1000).toISOString(),
+        accuracyMeters: 8,
+        speedMps: 10,
+      })),
+    )
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    // The same drive, still under way, whose next fixes only reach the server
+    // after that sweep. Thirty seconds is nowhere near the idle gap.
+    await uploadFixes(
+      user.headers,
+      Array.from({ length: 8 }, (_, i) => ({
+        ...northOf(HOME, 4800 + (i + 1) * 300),
+        recordedAt: new Date(driveStart + (17 + i) * 30 * 1000).toISOString(),
+        accuracyMeters: 8,
+        speedMps: 10,
+      })),
+    )
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    expect((await myTrips(user.headers)).length).toBeLessThanOrEqual(1)
+  })
+
+  it("detects a drive uploaded late by one device after another has already reported", async () => {
+    const user = await registerUser(ctx.app)
+    await createCircle(user.headers)
+    const tablet = await signInDevice(user.email, "device-tablet-watermark")
+
+    // The tablet at home reports first, so the sweep has something to settle.
+    await uploadFixes(tablet, [
+      { ...HOME, recordedAt: iso(-6 * 60), accuracyMeters: 20, speedMps: 0 },
+    ])
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    // The phone, out of signal for the whole drive, flushes its backlog.
+    const driveStart = Date.now() - 40 * 60 * 1000
+    await uploadFixes(
+      user.headers,
+      Array.from({ length: 17 }, (_, i) => ({
+        ...northOf(SCHOOL, i * 300),
+        recordedAt: new Date(driveStart + i * 30 * 1000).toISOString(),
+        accuracyMeters: 8,
+        speedMps: 10,
+      })),
+    )
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    expect(await myTrips(user.headers)).toHaveLength(1)
+  })
+
+  it("does not turn a phone sitting still and pinging on a timer into a trip", async () => {
+    const user = await registerUser(ctx.app)
+    await createCircle(user.headers)
+
+    // An emergency ping repeats on a timer rather than on movement, so someone
+    // sitting still still produces a dense stream. Its path length grows with
+    // every ping while the person has not gone anywhere.
+    const metresPerDegreeLon = METRES_PER_DEGREE_LAT * Math.cos((HOME.lat * Math.PI) / 180)
+    let seed = 7
+    const jitterMetres = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return (seed / 2147483648 - 0.5) * 2 * 26
+    }
+    const start = Date.now() - 60 * 60 * 1000
+    await uploadFixes(
+      user.headers,
+      Array.from({ length: 90 }, (_, i) => ({
+        lat: HOME.lat + jitterMetres() / METRES_PER_DEGREE_LAT,
+        lon: HOME.lon + jitterMetres() / metresPerDegreeLon,
+        recordedAt: new Date(start + i * 20 * 1000).toISOString(),
+        accuracyMeters: 15,
+        speedMps: 0,
+      })),
+    )
+
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    expect(await myTrips(user.headers)).toHaveLength(0)
+  })
+})
+
+describe("geofence accuracy and ordering", () => {
+  it("does not replay stragglers once a newer fix has been evaluated", async () => {
+    const user = await registerUser(ctx.app)
+    const circle = await createCircle(user.headers)
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: user.headers,
+      payload: { name: "Home", icon: "home", ...HOME, radiusMeters: 150 },
+    })
+
+    // Outside, so the fence starts from a known state.
+    await uploadFixes(user.headers, [
+      { ...northOf(HOME, 400), recordedAt: iso(-300), accuracyMeters: 10 },
+    ])
+
+    // A fresh single fix, uploaded on its own the way a nudge reply is.
+    const arrived = await uploadFixes(user.headers, [
+      { ...HOME, recordedAt: iso(-60), accuracyMeters: 10 },
+    ])
+    expect(arrived.placeEvents).toBe(1)
+
+    // The OS now flushes the buffer it was holding while that reply went out.
+    // Every fix in it predates the arrival, so the fence must ignore them.
+    const held = await uploadFixes(user.headers, [
+      { ...northOf(HOME, 400), recordedAt: iso(-120), accuracyMeters: 10 },
+      { ...northOf(HOME, 400), recordedAt: iso(-100), accuracyMeters: 10 },
+    ])
+    expect(held.placeEvents).toBe(0)
+
+    const rest = await uploadFixes(user.headers, [
+      { ...northOf(HOME, 200), recordedAt: iso(-90), accuracyMeters: 10 },
+      { ...northOf(HOME, 200), recordedAt: iso(-85), accuracyMeters: 10 },
+    ])
+    expect(rest.placeEvents).toBe(0)
+  })
+
+  it("ignores a fix whose accuracy circle is wider than the fence it would decide", async () => {
+    const user = await registerUser(ctx.app)
+    const circle = await createCircle(user.headers)
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: user.headers,
+      payload: { name: "School", icon: "school", ...SCHOOL, radiusMeters: 100 },
+    })
+
+    await uploadFixes(user.headers, [{ ...HOME, recordedAt: iso(-300), accuracyMeters: 10 }])
+
+    // An urban wifi fix: 180 m of uncertainty deciding a 100 m fence. Its
+    // reported point lands 60 m from the centre, well inside its own error.
+    const coarse = await uploadFixes(user.headers, [
+      { ...northOf(SCHOOL, 60), recordedAt: iso(-60), accuracyMeters: 180 },
+    ])
+    expect(coarse.placeEvents).toBe(0)
+  })
+
+  it("does not announce an arrival for a phone that only passes through a fence", async () => {
+    const user = await registerUser(ctx.app)
+    const circle = await createCircle(user.headers)
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: user.headers,
+      payload: { name: "School", icon: "school", ...SCHOOL, radiusMeters: 150 },
+    })
+
+    // Driving straight past: one fix lands inside, the next is already gone.
+    const transit = await uploadFixes(user.headers, [
+      { ...northOf(SCHOOL, -400), recordedAt: iso(-180), accuracyMeters: 10, speedMps: 15 },
+      { ...northOf(SCHOOL, 40), recordedAt: iso(-150), accuracyMeters: 10, speedMps: 15 },
+      { ...northOf(SCHOOL, 480), recordedAt: iso(-120), accuracyMeters: 10, speedMps: 15 },
+    ])
+    expect(transit.placeEvents).toBe(0)
+  })
+
+  it("reports the smallest place someone is inside when two fences overlap", async () => {
+    const user = await registerUser(ctx.app)
+    const circle = await createCircle(user.headers)
+    await uploadFixes(user.headers, [{ ...HOME, recordedAt: iso(-60), accuracyMeters: 10 }])
+
+    // A wide neighbourhood fence saved before the doorstep one.
+    for (const payload of [
+      { name: "Neighbourhood", ...HOME, radiusMeters: 2000 },
+      { name: "Home", icon: "home" as const, ...HOME, radiusMeters: 100 },
+    ]) {
+      const created = await ctx.app.inject({
+        method: "POST",
+        url: `/api/v1/circles/${circle.id}/places`,
+        headers: user.headers,
+        payload,
+      })
+      expect(created.statusCode).toBe(201)
+    }
+
+    const presence = (
+      (
+        await ctx.app.inject({
+          method: "GET",
+          url: `/api/v1/circles/${circle.id}/locations`,
+          headers: user.headers,
+        })
+      ).json() as Array<{ userId: string; atPlace: { name: string } | null }>
+    ).find((row) => row.userId === user.user.id)!
+    expect(presence.atPlace?.name).toBe("Home")
+  })
+
+  it("stops listing a member inside a place once they stop sharing precisely", async () => {
+    const parent = await registerUser(ctx.app, { displayName: "Parent" })
+    const teen = await registerUser(ctx.app, { displayName: "Teen" })
+    const circle = await createCircle(parent.headers)
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/invites/${circle.invite.code}/accept`,
+      headers: teen.headers,
+    })
+
+    await uploadFixes(teen.headers, [{ ...HOME, recordedAt: iso(-300), accuracyMeters: 10 }])
+    const place = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: parent.headers,
+      payload: { name: "Home", icon: "home", ...HOME, radiusMeters: 150 },
+    })
+    expect(place.json().membersInside).toContain(teen.user.id)
+
+    await ctx.app.inject({
+      method: "PATCH",
+      url: `/api/v1/circles/${circle.id}/sharing`,
+      headers: teen.headers,
+      payload: { sharingState: "approximate" },
+    })
+    await uploadFixes(teen.headers, [{ ...SCHOOL, recordedAt: iso(-30), accuracyMeters: 10 }])
+
+    const places = (
+      await ctx.app.inject({
+        method: "GET",
+        url: `/api/v1/circles/${circle.id}/places`,
+        headers: parent.headers,
+      })
+    ).json() as Array<{ name: string; membersInside: string[] }>
+    expect(places.find((row) => row.name === "Home")!.membersInside).not.toContain(teen.user.id)
+  })
+
+  it("replays an offline backlog into history without alerting the family in the present", async () => {
+    const parent = await registerUser(ctx.app, { displayName: "Parent" })
+    const teen = await registerUser(ctx.app, { displayName: "Teen" })
+    const circle = await createCircle(parent.headers)
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/invites/${circle.invite.code}/accept`,
+      headers: teen.headers,
+    })
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: parent.headers,
+      payload: { name: "Home", icon: "home", ...HOME, radiusMeters: 150 },
+    })
+
+    // Two days out of signal, then the queue drains all at once.
+    const twoDaysAgo = -48 * 60 * 60
+    await uploadFixes(teen.headers, [
+      { ...northOf(HOME, 900), recordedAt: iso(twoDaysAgo - 3600), accuracyMeters: 10 },
+      { ...HOME, recordedAt: iso(twoDaysAgo), accuracyMeters: 10 },
+    ])
+
+    const pushed = (await getDb().execute(
+      sql`select data->>'type' as type from notification_outbox`,
+    )) as unknown as Array<{ type: string }>
+    expect(pushed.map((row) => row.type)).not.toContain("place_arrive")
+
+    const arrive = (await feedItems(parent.headers, circle.id)).find(
+      (item) => item.type === "place_arrive",
+    )!
+    expect(arrive).toBeDefined()
+    expect(Date.now() - Date.parse(arrive.occurredAt)).toBeGreaterThan(24 * 60 * 60 * 1000)
+  })
+})
+
+describe("driving and battery alerts", () => {
+  it("reports the fastest speed the streak itself sustained", async () => {
+    const user = await registerUser(ctx.app)
+    const family = await createCircle(user.headers, "Family")
+    const roadtrip = await createCircle(user.headers, "Roadtrip")
+    await setCircleSettings(user.headers, family.id, { speedAlertKmh: 100 })
+    await setCircleSettings(user.headers, roadtrip.id, { speedAlertKmh: 130 })
+
+    // One 40 m/s artifact, then a genuine two-fix run at 102.6 km/h.
+    await uploadFixes(user.headers, [
+      { ...northOf(HOME, 0), recordedAt: iso(-240), accuracyMeters: 8, speedMps: 40 },
+      { ...northOf(HOME, 1000), recordedAt: iso(-180), accuracyMeters: 8, speedMps: 10 },
+      { ...northOf(HOME, 2000), recordedAt: iso(-120), accuracyMeters: 8, speedMps: 28.5 },
+      { ...northOf(HOME, 3000), recordedAt: iso(-60), accuracyMeters: 8, speedMps: 28.5 },
+    ])
+
+    const alert = (await feedItems(user.headers, family.id)).find(
+      (item) => item.type === "speed_alert",
+    )!
+    expect(alert).toBeDefined()
+    expect(alert.payload.speedKmh).toBe(103)
+
+    // 103 km/h never crossed this circle's own threshold, so it hears nothing.
+    const other = await feedItems(user.headers, roadtrip.id)
+    expect(other.map((item) => item.type)).not.toContain("speed_alert")
+  })
+
+  it("raises the speed alert for an episode that ended before the batch did", async () => {
+    const user = await registerUser(ctx.app)
+    const circle = await createCircle(user.headers)
+    await setCircleSettings(user.headers, circle.id, { speedAlertKmh: 100 })
+
+    // Fifteen fixes at 120 km/h, then the driver slows down and parks, all in
+    // the one batch a phone flushes when it comes back into signal.
+    const tail = [20, 12, 5, 1, 0, 0]
+    const start = Date.now() - 21 * 30 * 1000
+    await uploadFixes(
+      user.headers,
+      Array.from({ length: 21 }, (_, i) => ({
+        ...northOf(HOME, i * 500),
+        recordedAt: new Date(start + i * 30 * 1000).toISOString(),
+        accuracyMeters: 8,
+        speedMps: i < 15 ? 33.33 : tail[i - 15]!,
+      })),
+    )
+
+    const types = (await feedItems(user.headers, circle.id)).map((item) => item.type)
+    expect(types).toContain("speed_alert")
+  })
+
+  it("does not raise a low battery alert from a reading that is hours old", async () => {
+    const user = await registerUser(ctx.app)
+    const circle = await createCircle(user.headers)
+
+    await uploadFixes(user.headers, [
+      {
+        ...HOME,
+        recordedAt: iso(-4 * 3600),
+        accuracyMeters: 8,
+        batteryLevel: 0.5,
+        isCharging: false,
+      },
+    ])
+    // The backlog a phone drains after a night out of signal. It has been on a
+    // charger since, so 8% is no longer true of anything.
+    await uploadFixes(user.headers, [
+      {
+        ...HOME,
+        recordedAt: iso(-3 * 3600),
+        accuracyMeters: 8,
+        batteryLevel: 0.08,
+        isCharging: false,
+      },
+    ])
+
+    const types = (await feedItems(user.headers, circle.id)).map((item) => item.type)
+    expect(types).not.toContain("low_battery")
+  })
+
+  it("tells a circle with a lower battery threshold when the level reaches it", async () => {
+    const user = await registerUser(ctx.app)
+    const family = await createCircle(user.headers, "Family")
+    const grandparents = await createCircle(user.headers, "Grandparents")
+    await setCircleSettings(user.headers, family.id, { lowBatteryThreshold: 0.15 })
+    await setCircleSettings(user.headers, grandparents.id, { lowBatteryThreshold: 0.05 })
+
+    await uploadFixes(user.headers, [
+      { ...HOME, recordedAt: iso(-600), accuracyMeters: 8, batteryLevel: 0.14, isCharging: false },
+    ])
+    await uploadFixes(user.headers, [
+      { ...HOME, recordedAt: iso(-60), accuracyMeters: 8, batteryLevel: 0.04, isCharging: false },
+    ])
+
+    expect((await feedItems(user.headers, family.id)).map((item) => item.type)).toContain(
+      "low_battery",
+    )
+    expect((await feedItems(user.headers, grandparents.id)).map((item) => item.type)).toContain(
+      "low_battery",
+    )
+  })
+
+  it("raises a possible incident when motorway speed is followed by a hard stop", async () => {
+    const user = await registerUser(ctx.app)
+    const circle = await createCircle(user.headers)
+    await setCircleSettings(user.headers, circle.id, { incidentDetection: true })
+
+    await uploadFixes(user.headers, [
+      { ...northOf(HOME, 0), recordedAt: iso(-300), accuracyMeters: 8, speedMps: 25 },
+      { ...northOf(HOME, 750), recordedAt: iso(-270), accuracyMeters: 8, speedMps: 24 },
+      // Three minutes of not moving. A red light is not this long, which is
+      // the whole reason the stillness has to have a duration.
+      { ...northOf(HOME, 1000), recordedAt: iso(-240), accuracyMeters: 8, speedMps: 0 },
+      { ...northOf(HOME, 1000), recordedAt: iso(-120), accuracyMeters: 8, speedMps: 0 },
+      { ...northOf(HOME, 1000), recordedAt: iso(-30), accuracyMeters: 8, speedMps: 0 },
+    ])
+
+    const types = (await feedItems(user.headers, circle.id)).map((item) => item.type)
+    expect(types).toContain("possible_incident")
+  })
+})
+
+describe("offline detection", () => {
+  it("announces a phone as offline once while it keeps uploading", async () => {
+    const user = await registerUser(ctx.app)
+    const circle = await createCircle(user.headers)
+
+    // Every fix is stamped by a clock over an hour slow, so the device looks
+    // quiet to the sweep while it is in fact reporting normally.
+    await uploadFixes(user.headers, [{ ...HOME, recordedAt: iso(-75 * 60), accuracyMeters: 8 }])
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    await uploadFixes(user.headers, [{ ...HOME, recordedAt: iso(-74 * 60), accuracyMeters: 8 }])
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    const offline = (await feedItems(user.headers, circle.id)).filter(
+      (item) => item.type === "device_offline",
+    )
+    expect(offline).toHaveLength(1)
+  })
+
+  it("alerts every quiet phone even when several in the household go quiet together", async () => {
+    // Three phones missing their background window overnight is routine, not
+    // evidence that the server itself is down.
+    for (const offsetSeconds of [-90 * 60, -90 * 60, -90 * 60, -30, -30]) {
+      const member = await registerUser(ctx.app)
+      await createCircle(member.headers)
+      await uploadFixes(member.headers, [
+        { ...HOME, recordedAt: iso(offsetSeconds), accuracyMeters: 8 },
+      ])
+    }
+
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    const offline = (await getDb().execute(
+      sql`select actor_user_id from events where type = 'device_offline'`,
+    )) as unknown as Array<{ actor_user_id: string }>
+    expect(offline).toHaveLength(3)
+  })
+
+  it("does not report a deactivated account's phone as having broken", async () => {
+    const admin = await registerUser(ctx.app)
+    const member = await registerUser(ctx.app)
+    await createCircle(member.headers)
+    await uploadFixes(member.headers, [{ ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 8 }])
+
+    // Deactivation revokes every session, so the phone cannot report by design.
+    const patch = await ctx.app.inject({
+      method: "PATCH",
+      url: `/api/v1/admin/users/${member.user.id}`,
+      headers: admin.headers,
+      payload: { isActive: false },
+    })
+    expect(patch.statusCode).toBe(200)
+
+    const report = await runJobs(getDb(), getConfig(), ctx.app.log)
+    expect(report.offlineFlagged).toBe(0)
+  })
+})
+
+describe("batch validation", () => {
+  it("keeps a batch in which one fix reports an invalid altitude accuracy", async () => {
+    const user = await registerUser(ctx.app)
+    await createCircle(user.headers)
+
+    // iOS reports a negative verticalAccuracy whenever altitude is unknown,
+    // which is routine for a wifi-derived fix indoors.
+    const response = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/locations/batch",
+      headers: user.headers,
+      payload: {
+        points: [
+          { ...HOME, recordedAt: iso(-120), accuracyMeters: 65 },
+          { ...HOME, recordedAt: iso(-90), accuracyMeters: 65, altitudeAccuracyMeters: -1 },
+          { ...HOME, recordedAt: iso(-60), accuracyMeters: 65 },
+        ],
+      },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json().accepted).toBe(3)
+  })
+})
+
+describe("concurrent uploads from two devices", () => {
+  // One attempt would be a coin toss rather than a regression test, so both of
+  // these repeat the race over several independent accounts.
+  const attempts = 6
+
+  it("emits one arrival when both devices report the same crossing at once", async () => {
+    for (let i = 0; i < attempts; i += 1) {
+      const user = await registerUser(ctx.app)
+      const circle = await createCircle(user.headers)
+      await ctx.app.inject({
+        method: "POST",
+        url: `/api/v1/circles/${circle.id}/places`,
+        headers: user.headers,
+        payload: { name: "Home", icon: "home", ...HOME, radiusMeters: 150 },
+      })
+      await uploadFixes(user.headers, [
+        { ...northOf(HOME, 900), recordedAt: iso(-600), accuracyMeters: 10 },
+      ])
+
+      const second = await signInDevice(user.email, `device-arrive-race-${i}`)
+      await Promise.all([
+        uploadFixes(user.headers, [{ ...HOME, recordedAt: iso(-60), accuracyMeters: 10 }]),
+        uploadFixes(second, [{ ...HOME, recordedAt: iso(-50), accuracyMeters: 10 }]),
+      ])
+    }
+
+    const arrivals = (await getDb().execute(
+      sql`select id from place_events where type = 'arrive'`,
+    )) as unknown as Array<{ id: string }>
+    expect(arrivals).toHaveLength(attempts)
+  })
+
+  it("raises one speed alert when both devices report the same fast run at once", async () => {
+    for (let i = 0; i < attempts; i += 1) {
+      const user = await registerUser(ctx.app)
+      const circle = await createCircle(user.headers)
+      await setCircleSettings(user.headers, circle.id, { speedAlertKmh: 100 })
+
+      // One fix over the threshold, so the stored streak stands at one.
+      await uploadFixes(user.headers, [
+        { ...HOME, recordedAt: iso(-180), accuracyMeters: 8, speedMps: 30 },
+      ])
+
+      const second = await signInDevice(user.email, `device-speed-race-${i}`)
+      await Promise.all([
+        uploadFixes(user.headers, [
+          { ...northOf(HOME, 500), recordedAt: iso(-60), accuracyMeters: 8, speedMps: 31 },
+        ]),
+        uploadFixes(second, [
+          { ...northOf(HOME, 600), recordedAt: iso(-50), accuracyMeters: 8, speedMps: 32 },
+        ]),
+      ])
+    }
+
+    const alerts = (await getDb().execute(
+      sql`select id from events where type = 'speed_alert'`,
+    )) as unknown as Array<{ id: string }>
+    expect(alerts).toHaveLength(attempts)
   })
 })
