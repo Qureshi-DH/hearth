@@ -5,50 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1788642425700,
-      "tag": "0000_last_viper",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1788687963416,
-      "tag": "0001_adorable_switch",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1788723128415,
-      "tag": "0002_mighty_wolverine",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1788786806395,
-      "tag": "0003_flimsy_killraven",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1788788853184,
-      "tag": "0004_resume_to_state",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1788813900000,
-      "tag": "0005_drop_messages",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1788900000000,
-      "tag": "0006_low_battery_level",
+      "when": 1788861593076,
+      "tag": "0000_init",
       "breakpoints": true
     }
   ]

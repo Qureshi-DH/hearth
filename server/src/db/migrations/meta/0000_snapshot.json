@@ -1,5 +1,5 @@
 {
-  "id": "19bd22d8-b48a-401f-ab78-0b8134afe87f",
+  "id": "f5f70ec0-7a53-4618-8aeb-1eb2e376535d",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -67,6 +67,21 @@
               "expression": "created_at",
               "isExpression": false,
               "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "audit_log_actor_idx": {
+          "name": "audit_log_actor_idx",
+          "columns": [
+            {
+              "expression": "actor_user_id",
+              "isExpression": false,
+              "asc": true,
               "nulls": "last"
             }
           ],
@@ -173,6 +188,36 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "check_ins_user_idx": {
+          "name": "check_ins_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "check_ins_place_idx": {
+          "name": "check_ins_place_idx",
+          "columns": [
+            {
+              "expression": "place_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -261,6 +306,12 @@
         "paused_until": {
           "name": "paused_until",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resume_to_state": {
+          "name": "resume_to_state",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -501,6 +552,21 @@
               "expression": "occurred_at",
               "isExpression": false,
               "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "events_actor_idx": {
+          "name": "events_actor_idx",
+          "columns": [
+            {
+              "expression": "actor_user_id",
+              "isExpression": false,
+              "asc": true,
               "nulls": "last"
             }
           ],
@@ -816,21 +882,6 @@
           "method": "btree",
           "with": {}
         },
-        "location_points_recorded_idx": {
-          "name": "location_points_recorded_idx",
-          "columns": [
-            {
-              "expression": "recorded_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "location_points_trip_idx": {
           "name": "location_points_trip_idx",
           "columns": [
@@ -1033,6 +1084,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "notification_outbox_session_idx": {
+          "name": "notification_outbox_session_idx",
+          "columns": [
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -1164,6 +1230,21 @@
               "expression": "occurred_at",
               "isExpression": false,
               "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "place_events_user_idx": {
+          "name": "place_events_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
               "nulls": "last"
             }
           ],
@@ -1915,6 +1996,36 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "trips_start_place_idx": {
+          "name": "trips_start_place_idx",
+          "columns": [
+            {
+              "expression": "start_place_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "trips_end_place_idx": {
+          "name": "trips_end_place_idx",
+          "columns": [
+            {
+              "expression": "end_place_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2036,6 +2147,31 @@
         },
         "low_battery_notified_at": {
           "name": "low_battery_notified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "low_battery_notified_level": {
+          "name": "low_battery_notified_level",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "speed_alerted_at": {
+          "name": "speed_alerted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "over_speed_count": {
+          "name": "over_speed_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "incident_flagged_at": {
+          "name": "incident_flagged_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

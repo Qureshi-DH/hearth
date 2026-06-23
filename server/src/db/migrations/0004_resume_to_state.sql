@@ -1,1 +1,0 @@
-ALTER TABLE "circle_members" ADD COLUMN "resume_to_state" text;
