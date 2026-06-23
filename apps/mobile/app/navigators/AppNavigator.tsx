@@ -138,9 +138,9 @@ const AppStack = () => {
         target.userId
       ) {
         navigationRef.navigate("MemberDetail", { circleId: target.circleId, userId: target.userId })
-      } else if (target.type === "nudge" || target.type === "quick_message") {
-        // A quick message is played over the map, so send the tap there rather
-        // than to the feed's after-the-fact record of it.
+      } else if (target.type === "nudge_requested") {
+        // A nudge is played over the map, so send the tap there rather than to
+        // the feed's after-the-fact record of it.
         navigationRef.navigate("Main", { screen: "Map" })
       } else {
         navigationRef.navigate("Main", { screen: "Activity" })

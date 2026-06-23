@@ -21,7 +21,7 @@ export type PushSetupResult =
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const type = (notification.request.content.data as { type?: string } | undefined)?.type
-    const urgent = type === "sos_started" || type === "nudge"
+    const urgent = type === "sos_started" || type === "nudge_requested"
     return {
       shouldShowBanner: true,
       shouldShowList: true,
@@ -92,7 +92,7 @@ export async function setupPush(serverInfo: ServerInfo): Promise<PushSetupResult
     return {
       kind: "unsupported",
       reason:
-        "Expo push needs an EAS project id. Run `eas init` in apps/mobile, or switch the server to PUSH_PROVIDER=ntfy.",
+        "Expo push needs an EAS project id. Run `npx eas-cli@latest init` in apps/mobile, or switch the server to PUSH_PROVIDER=ntfy.",
     }
   }
 
@@ -122,7 +122,7 @@ export function attachNotificationListeners(
 ): () => void {
   const received = Notifications.addNotificationReceivedListener((notification) => {
     const data = notification.request.content.data as NotificationTarget | undefined
-    if (data?.type === "nudge") void reportNow("nudge")
+    if (data?.type === "nudge_requested") void reportNow("nudge")
   })
 
   const responded = Notifications.addNotificationResponseReceivedListener((response) => {

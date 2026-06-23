@@ -17,7 +17,7 @@ const en = {
   errorScreen: {
     title: "Something went wrong",
     friendlySubtitle:
-      "Hearth hit an unexpected error. Your location data is safe on your server; tap below to reload the app.",
+      "Hearth hit an unexpected error. Your location data is safe on your server. Tap below to reload the app.",
     reset: "Reload app",
   },
   emptyStateComponent: {
@@ -214,7 +214,6 @@ const en = {
   messages: {
     title: "Quick message",
     messageMember: "Send a quick message",
-    sent: "Sent to {{name}}",
   },
   incident: {
     title: "Are you okay?",
