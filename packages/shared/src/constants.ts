@@ -183,7 +183,10 @@ export const DEFAULTS = {
   incidentStillnessSeconds: 180,
 } as const
 
-/** Indexed by a hash of the user id, so reordering changes existing avatars. */
+/**
+ * A hash of the email picks one at signup and the hex is then stored, so
+ * reordering only affects accounts created afterwards.
+ */
 export const AVATAR_COLORS = [
   "#E8734A",
   "#3F8CFF",

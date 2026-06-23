@@ -3,6 +3,7 @@ import { Alert, Pressable, View, type ViewStyle } from "react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import { Ionicons } from "@expo/vector-icons"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
+import { DEFAULTS } from "@hearth/shared"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
 import { SosHoldButton } from "@/components/SosHoldButton"
@@ -18,7 +19,7 @@ import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { relativeTime } from "@/utils/time"
 
-const SOS_PING_MS = 20_000
+const SOS_PING_MS = DEFAULTS.sosPingIntervalSeconds * 1000
 
 /**
  * While an alert is active this screen takes high-accuracy fixes on top of the

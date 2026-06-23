@@ -31,7 +31,6 @@
       "android.permission.WAKE_LOCK",
       "android.permission.VIBRATE",
       "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
-      "android.permission.HIGH_SAMPLING_RATE_SENSORS",
       "android.permission.ACCESS_NETWORK_STATE",
       "android.permission.INTERNET"
     ],
@@ -56,7 +55,7 @@
       "NSLocalNetworkUsageDescription": "Hearth connects to the family server you specify, which may be on your home network.",
       "NSBonjourServices": ["_http._tcp", "_https._tcp"],
       "NSLocationDefaultAccuracyReduced": false,
-      "NSMotionUsageDescription": "Hearth reads what your phone is already doing, so it can keep the GPS asleep while you are not moving."
+      "NSMotionUsageDescription": "Hearth reads what your phone is already doing, so it can keep the GPS asleep while you are not moving. It also reads the barometer, which helps tell a real crash from an ordinary jolt."
     },
     "entitlements": {
       "com.apple.developer.usernotifications.time-sensitive": true

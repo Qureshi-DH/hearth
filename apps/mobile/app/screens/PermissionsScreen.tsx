@@ -51,11 +51,10 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
     [navigation],
   )
   const [snapshot, setSnapshot] = useState<PermissionSnapshot | null>(null)
-  // Only asked for when the server has turned the motion path on, so the
-  // checklist must not demand it otherwise.
+  // Either of these starts the OS classifier (tracker.ts `motionWanted`), so
+  // the checklist has to ask for the permission whenever either is on, and stay
+  // quiet when neither is.
   const nativeMotion = useSettingsStore((state) => state.nativeMotion)
-  // Mirrors whether any circle asked for incident alerts, which is the only
-  // condition under which the sensors below are read at all.
   const incidentDetection = useSettingsStore((state) => state.incidentDetection)
   const [motion, setMotion] = useState<Awaited<ReturnType<typeof motionPermission>>>("unavailable")
   const [busy, setBusy] = useState<string | null>(null)
@@ -146,7 +145,7 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
                 action: { label: translate("permissions:openSettings"), onPress: openAppSettings },
               },
             ]) as Item[]),
-        ...((nativeMotion && motion !== "unavailable"
+        ...(((nativeMotion || incidentDetection) && motion !== "unavailable"
           ? [
               {
                 key: "motion",

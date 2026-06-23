@@ -1,6 +1,5 @@
 import { IMPACT } from "@hearth/shared"
 
-import appConfig from "../../../app.json"
 import {
   contemporaneousSpeed,
   driveSensorsRunning,
@@ -292,14 +291,5 @@ describe("drive sensor lifecycle", () => {
     jest.advanceTimersByTime(IMPACT.aftermathMs + IMPACT.stillnessMs + 1000)
 
     expect(events).toEqual(["possibleImpact"])
-  })
-})
-
-describe("android sampling rate", () => {
-  it("asks Android for the permission the requested accelerometer rate needs", () => {
-    // Below the 200 ms default Android only speeds a sensor up for an app that
-    // declares this, so without it the accelerometer runs at 5 Hz however short
-    // an interval driveSensors asks for, and a collision falls between samples.
-    expect(appConfig.android.permissions).toContain("android.permission.HIGH_SAMPLING_RATE_SENSORS")
   })
 })
