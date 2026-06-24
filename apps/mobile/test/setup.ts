@@ -4,7 +4,6 @@ import * as ReactNative from "react-native"
 
 import mockFile from "./mockFile"
 
-// libraries to mock
 jest.doMock("react-native", () => {
   // Extend ReactNative
   return Object.setPrototypeOf(

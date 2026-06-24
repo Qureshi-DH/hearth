@@ -97,7 +97,7 @@ export function App() {
   }, [])
 
   // Invite links (hearth://join/CODE or https://<server>/join/CODE) can arrive
-  // before there is a session. Park the code; AppNavigator redeems it later.
+  // before there is a session. Park the code. AppNavigator redeems it later.
   useEffect(() => {
     const capture = (url: string | null) => {
       const code = extractInviteCode(url)

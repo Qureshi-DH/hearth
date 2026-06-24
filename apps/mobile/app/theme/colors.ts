@@ -1,8 +1,8 @@
 /**
  * Hearth light palette.
  *
- * Warm, low-chroma neutrals so the map stays the star; a single ember accent
- * for anything interactive; restrained status colours. Every key here must
+ * Warm, low-chroma neutrals so the map stays the star. A single ember accent
+ * for anything interactive, and restrained status colours. Every key here must
  * also exist in colorsDark.ts.
  */
 const palette = {

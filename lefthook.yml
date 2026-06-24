@@ -1,7 +1,8 @@
 # Git hooks. Installed by `pnpm install` via the prepare script.
 #
-# Everything here runs on staged files only, so the hook stays fast enough that
-# nobody is tempted to reach for --no-verify.
+# The pre-commit hooks run on staged files only, so committing stays fast enough
+# that nobody is tempted to reach for --no-verify. Pre-push is where the slow
+# whole-workspace checks live.
 
 pre-commit:
   parallel: true

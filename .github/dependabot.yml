@@ -11,6 +11,14 @@ updates:
       expo:
         patterns: ["expo", "expo-*", "@expo/*", "react-native*"]
 
+  # The docs site is installed on its own, outside the pnpm workspace, so the
+  # entry above never reaches its lockfile.
+  - package-ecosystem: npm
+    directory: /docs
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

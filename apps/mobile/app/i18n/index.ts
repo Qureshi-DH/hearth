@@ -4,7 +4,7 @@ import i18n from "i18next"
 import { initReactI18next } from "react-i18next"
 import "intl-pluralrules"
 
-// v1 ships English only; add a locale by creating `<tag>.ts` typed as
+// v1 ships English only. Add a locale by creating `<tag>.ts` typed as
 // `Translations` and registering it in `resources` below.
 import en, { Translations } from "./en"
 

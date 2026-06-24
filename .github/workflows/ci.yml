@@ -9,10 +9,6 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  PNPM_VERSION: 10.14.0
-  NODE_VERSION: 22
-
 jobs:
   lint:
     name: Lint and format

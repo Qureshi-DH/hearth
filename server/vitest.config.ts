@@ -4,10 +4,10 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
-    // Integration specs boot a real Postgres; keep them serial and patient.
+    // Integration specs boot a real Postgres. Keep them serial and patient.
     testTimeout: 30_000,
     hookTimeout: 60_000,
-    // Integration specs share one Postgres schema; run spec files serially.
+    // Integration specs share one Postgres schema. Run spec files serially.
     fileParallelism: false,
   },
   resolve: {

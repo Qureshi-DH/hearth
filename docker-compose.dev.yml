@@ -9,7 +9,7 @@
 services:
   db:
     ports:
-      # 5432 is usually taken by a local Postgres install; default to 55432.
+      # 5432 is usually taken by a local Postgres install, so this defaults to 55432.
       - "${POSTGRES_PORT:-55432}:5432"
 
   api:

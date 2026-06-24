@@ -25,7 +25,7 @@ config.transformer.getTransformOptions = async () => ({
 })
 
 // Prefer the "react-native"/"browser" conditions so dual-published packages
-// resolve their RN builds; keep "require" for the remaining CJS-only ones.
+// resolve their RN builds. Keep "require" for the remaining CJS-only ones.
 config.resolver.unstable_conditionNames = ["react-native", "browser", "require", "default"]
 
 // Some third-party libraries ship .cjs files.
