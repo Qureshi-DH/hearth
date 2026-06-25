@@ -15,7 +15,7 @@ import { createPushDriver } from "./services/push"
 /**
  * Only ever runs against an empty user table, so restarting a live server with
  * ADMIN_EMAIL still set cannot resurrect or overwrite an account. Editing
- * ADMIN_PASSWORD later therefore does not rotate the password; change it from
+ * ADMIN_PASSWORD later therefore does not rotate the password. Change it from
  * the app instead.
  */
 async function bootstrapAdmin(

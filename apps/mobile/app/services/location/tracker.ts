@@ -400,9 +400,7 @@ let motionStillSince: number | null = null
 /**
  * Play Services and Core Motion already classify movement for the system, so
  * asking them costs far less than waking the GPS to work it out from position.
- * Opt in per server while it is being compared against the GPS only path.
- */
-/**
+ *
  * The OS classifier is the only thing that tells us a journey has started, so
  * crash detection depends on it as much as the battery work does. Gating it on
  * the battery toggle alone meant turning on incident alerts for a circle did

@@ -71,7 +71,7 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://hearth:${POSTGRES_PASSWORD}@db:5432/hearth
-      S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: ${S3_ENDPOINT-http://minio:9000}
     ports:
       - "4000:4000"
 
@@ -94,8 +94,10 @@ S3_ACCESS_KEY_ID=hearth                    # MinIO, for profile pictures
 S3_SECRET_ACCESS_KEY=another-long-random-string
 ```
 
-`.env.example` in the repository lists every remaining variable with its
-default, and none of them have to be set to boot.
+Beyond those, `.env.example` in the repository carries the variables most
+deployments touch, each with its default, and none of that remainder has to be
+set to boot. `server/src/env.ts` is the full list of everything the server
+parses, which is where to look for anything `.env.example` does not name.
 
 The server refuses to start in production without `ADMIN_EMAIL` and
 `ADMIN_PASSWORD`. That account is created once, while the database still has no
@@ -144,8 +146,9 @@ internet, [remote access](remote-access.md) compares the ways to reach the
 server from outside and explains why the usual VPN-first advice fits a location
 app badly.
 
-Both platforms refuse plain HTTP for background traffic, so a TLS-terminating
-proxy is required, not optional.
+A production Android build refuses plain HTTP outright and a production iOS
+build allows it only on private address ranges, so a TLS-terminating proxy is
+required for anything reachable over the internet, not optional.
 
 ### Caddy (simplest)
 
@@ -187,13 +190,36 @@ Leave it `false` for a direct LAN deployment.
 
 ### Traefik
 
-Add the usual router labels to the `api` service. Websockets work out of the box.
+This one assumes you already run Traefik, with an entrypoint on 443 and a
+certificate resolver defined in its static configuration. Substitute your own
+names for `websecure` and `letsencrypt`. Add the labels to the `api` service.
 
 ```yaml
 labels:
+  - "traefik.enable=true"
   - "traefik.http.routers.hearth.rule=Host(`hearth.example.com`)"
+  - "traefik.http.routers.hearth.entrypoints=websecure"
+  - "traefik.http.routers.hearth.tls.certresolver=letsencrypt"
   - "traefik.http.services.hearth.loadbalancer.server.port=4000"
+networks:
+  - default
+  - traefik
 ```
+
+Naming a network drops the implicit `default` one, which is how `api` reaches
+Postgres, so both have to be listed. Traefik reaches the container over a Docker
+network rather than the published port, and that network has to be declared at
+the top level of the file too:
+
+```yaml
+networks:
+  traefik:
+    external: true
+```
+
+If you add Traefik as a service in this same compose file instead, it is already
+on the default network and neither networks block is needed. Websockets work
+with no extra configuration.
 
 ## 4. Connect a phone
 
@@ -232,9 +258,11 @@ makes a picture unguessable rather than any access control.
 
 Any S3 compatible storage works instead. Point `S3_ENDPOINT` at it, set
 `S3_REGION`, and turn off `S3_FORCE_PATH_STYLE` if the provider serves buckets
-as subdomains. Leave `S3_ENDPOINT` empty and uploads switch off entirely, with
-avatars falling back to initials on a colour. The app hides the upload button
-when the server reports no storage, so this degrades quietly.
+as subdomains. The compose file above falls back to the bundled MinIO only when
+`S3_ENDPOINT` is unset, so a value in `.env` wins. Leave `S3_ENDPOINT` empty and
+uploads switch off entirely, with avatars falling back to initials on a colour.
+The app hides the upload button when the server reports no storage, so this
+degrades quietly.
 
 The app resizes to 512 pixels before uploading, which re-encodes the file and
 so strips the EXIF. That matters more here than in most apps: a phone photo
@@ -260,10 +288,11 @@ repository as `docker-compose.redis.yml`.
 docker compose -f docker-compose.yml -f docker-compose.redis.yml up -d --scale api=3
 ```
 
-Drop the `ports:` mapping from the `api` service before you scale it, or the
-second replica fails to start because host port 4000 is already taken, and
-point your reverse proxy at the service instead. One replica is plenty for a
-household several times over, so most installs never need any of this.
+The overlay unpublishes the fixed host port, which only one replica could hold,
+so point your reverse proxy at the `api` service on the compose network rather
+than at `localhost:4000`. The Traefik labels above already do that. Caddy and
+nginx have to move into the compose stack to reach it. One replica is plenty for
+a household several times over, so most installs never need any of this.
 
 ## Operations
 
@@ -271,8 +300,8 @@ household several times over, so most installs never need any of this.
 
 There are two stores, and a Postgres dump alone is not a complete backup.
 
-Postgres holds accounts, circles, positions, places, trips, messages and the
-activity feed:
+Postgres holds accounts, circles, positions, places, trips and the activity
+feed:
 
 ```bash
 docker compose exec -T db pg_dump -U hearth hearth | gzip > hearth-$(date +%F).sql.gz
@@ -292,12 +321,26 @@ it matches the file above. Objects are written once under a random key and never
 rewritten, so the copy does not need the stack stopped. If you pointed `S3_ENDPOINT` at storage you
 run elsewhere, back it up there instead and skip this step.
 
-Restoring both into a fresh stack:
+Restoring means getting the dump in before the API creates the schema, so bring
+up Postgres on its own first:
 
 ```bash
-gunzip -c hearth-2026-09-07.sql.gz | docker compose exec -T db psql -U hearth hearth
+docker compose up -d --wait db
+gunzip -c hearth-2026-09-07.sql.gz | docker compose exec -T db psql -U hearth -v ON_ERROR_STOP=1 hearth
 docker run --rm -v hearth_minio-data:/data -v "$PWD:/backup" alpine \
   tar xzf /backup/hearth-avatars-2026-09-07.tar.gz -C /data
+docker compose up -d
+```
+
+If the stack has already run once, the schema and the bootstrap administrator are
+there, and the dump lands on top of them. Stop the API and recreate the database
+first:
+
+```bash
+docker compose stop api
+docker compose exec -T db psql -U hearth -d postgres -c 'DROP DATABASE hearth' -c 'CREATE DATABASE hearth'
+gunzip -c hearth-2026-09-07.sql.gz | docker compose exec -T db psql -U hearth -v ON_ERROR_STOP=1 hearth
+docker compose up -d api
 ```
 
 ### Upgrades
@@ -380,8 +423,14 @@ come into it.
 pnpm install
 cp .env.example server/.env            # or export the variables
 pnpm --filter @hearth/server build
-DATABASE_URL=postgres://... JWT_SECRET=... pnpm --filter @hearth/server start
+NODE_ENV=production DATABASE_URL=postgres://... JWT_SECRET=... \
+  pnpm --filter @hearth/server start
 ```
 
-You'll need Node 20.10+ and Postgres 14+. Object storage is optional: leave
+Fill in `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `server/.env` before that first
+start. They create the account the server boots with, which is the only way in,
+and in production the server refuses to start without them rather than leaving
+you one nobody can sign into.
+
+You'll need Node 20.18+ and Postgres 14+. Object storage is optional: leave
 `S3_ENDPOINT` unset and profile pictures are simply switched off.

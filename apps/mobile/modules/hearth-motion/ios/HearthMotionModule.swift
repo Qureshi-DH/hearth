@@ -31,7 +31,8 @@ private let maxPendingSamples = 2_000
 
  The module also samples the raw sensors crash detection reads. It does that
  here rather than in JS so the two platforms hand the detector the same batched
- shape, and so fifty readings a second stop crossing the bridge one at a time.
+ shape, and so the accelerometer stream stops crossing the bridge one reading
+ at a time.
  */
 public class HearthMotionModule: Module {
   private let manager = CMMotionActivityManager()

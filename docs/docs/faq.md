@@ -64,7 +64,7 @@ rules, not by anything Hearth does, so budget for that separately.
 ## Does it work at home with no internet?
 
 Almost entirely. The API, Postgres, object storage, the websocket, geofences,
-trips, messages and SOS are all local to your box, and phones on the same
+trips, nudges and SOS are all local to your box, and phones on the same
 network reach it directly.
 
 Two things reach outside, and neither is required:
@@ -104,8 +104,8 @@ and takes a fresh fix if the last one is over 30 minutes old.
 
 While the server is down nobody can see anybody, and after 15 minutes without a
 fix everyone shows as stale. The job that alerts on a phone going quiet skips
-its whole tick when at least four phones are reporting and more than half of
-them went silent at once, on the grounds that a simultaneous outage is the
+its whole tick when at least eight phones have ever reported and not one of
+them has reported recently, on the grounds that a simultaneous outage is the
 server's fault rather than everyone's, so a reboot does not send the family an
 alert each.
 
@@ -117,11 +117,13 @@ GPS is what costs, and nobody has published a measured comparison yet.
 What the code does to keep it down is worth understanding, because it is most of
 the answer. The tracker has two states. **Moving** means continuous OS location
 updates, and on Android that is a foreground service with a notification you
-cannot dismiss. Once the phone has stayed inside a 60 metre circle for five
+cannot dismiss. Once the phone has stayed inside a 90 metre circle for five
 minutes it switches to **stationary**: updates stop, the notification
 disappears, and a 150 metre exit geofence is armed around where it stopped.
-Leaving that circle puts it back into moving. So a phone sitting in a house
-overnight is costing you a geofence, not a GPS.
+That 90 metres is one and a half times the distance filter and never less than
+60, so a circle that asks for coarser updates waits out a wider stop. Leaving
+the geofence puts it back into moving. So a phone sitting in a house overnight
+is costing you a geofence, not a GPS.
 
 Three other things affect it:
 
@@ -133,8 +135,8 @@ Three other things affect it:
   position watch can, which saves GPS. The server receives the same fixes either
   way.
 - **Crash detection**, which samples the accelerometer hard. It runs only when
-  the circle has incident alerts on and the phone has the motion setting on, and
-  only while the OS says you are in a vehicle.
+  a circle you are in has incident alerts on, and only while the OS says you are
+  in a vehicle.
 
 The single biggest cause of background location dying on Android is the battery
 optimiser, which is why the app asks for an exemption during setup.
@@ -166,8 +168,8 @@ to Apple and Google, and no amount of self-hosting changes that.
 Hearth's answer is to make push optional. The default, `PUSH_PROVIDER=none`,
 needs no configuration: the app holds a websocket while it is open, so the map
 and feed update live, it polls presence every 60 seconds as a fallback in case
-that socket is dead, and it shows arrivals and SOS as in-app banners. What you
-lose is alerts while the phone is locked.
+that socket is dead, and an active SOS shows as a banner on the circle's map.
+What you lose is alerts while the phone is locked.
 
 When you want more, `ntfy` is the fully self-hosted route, `expo` is the
 zero-infrastructure one. Either way, alerts are never lost in transit: events
@@ -236,8 +238,8 @@ hand control back to `.env`.
 ## What happens to the data when an account is deleted?
 
 `DELETE /api/v1/me` needs the account's password and is irreversible. Every
-other table cascades from `users.id`, so breadcrumbs, places, trips, alerts,
-messages, sessions and queued notifications all go with it.
+other table cascades from `users.id`, so breadcrumbs, trips, alerts, check-ins,
+sessions and queued notifications all go with it.
 
 Circles need a decision, so the code makes one. A circle you solely own is
 deleted with you. A circle with other members survives and ownership transfers
@@ -272,9 +274,9 @@ More than a household needs. One API replica is comfortably enough for a family
 several times over, which is why nothing about the default setup is clustered.
 
 If you do want replicas, Redis carries realtime events between them. The
-repository ships `docker-compose.redis.yml` as an overlay, and you drop the
-`ports:` mapping from the `api` service before scaling or the second replica
-cannot bind port 4000.
+repository ships `docker-compose.redis.yml` as an overlay, and it unpublishes
+the `api` host port for you, since only one replica could bind it. Your reverse
+proxy routes to the `api` service on the compose network instead.
 
 Postgres is stock. Coordinates are plain double precision columns and there is
 no PostGIS extension to install, so Postgres 14 or newer is the only

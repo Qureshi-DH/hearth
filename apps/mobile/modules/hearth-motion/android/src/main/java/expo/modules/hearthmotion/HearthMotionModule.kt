@@ -43,11 +43,10 @@ private const val SENSOR_THREAD = "hearth-motion-sensors"
 private const val BATCH_INTERVAL_MS = 250L
 
 /**
- * Matching iOS. Not SENSOR_DELAY_FASTEST: with the high sampling rate
- * permission granted that is several hundred hertz on modern hardware, and the
- * stillness the detector looks for is a spread measured over whatever lands in
- * the window. A wider band reads as more vibration, which is the gate every
- * crash has to pass.
+ * Matching iOS. Not SENSOR_DELAY_FASTEST, which is hundreds of hertz on modern
+ * hardware, and the stillness the detector looks for is a spread measured over
+ * whatever lands in the window. A wider band reads as more vibration, which is
+ * the gate every crash has to pass.
  */
 private const val ACCELEROMETER_PERIOD_US = 20_000
 

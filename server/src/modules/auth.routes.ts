@@ -226,7 +226,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["auth"],
         summary: "Exchange a refresh token for a new pair",
-        description: "Refresh tokens are single-use; each call rotates the token.",
+        description: "Refresh tokens are single-use. Each call rotates the token.",
         body: z.object({ refreshToken: z.string().min(10).max(512) }),
       },
     },
@@ -458,7 +458,8 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["account"],
         summary: "Export everything this server holds about you",
-        description: "A single JSON document: profile, circles, breadcrumbs, places and trips.",
+        description:
+          "A single JSON document: profile, circles, breadcrumbs, places, trips and check-ins.",
       },
     },
     async (request, reply) => {
@@ -559,8 +560,9 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["account"],
         summary: "Delete your account and all of your data",
         description:
-          "Irreversible. Circles you solely own are deleted with you; circles with other " +
-          "members survive and ownership transfers to the longest-standing admin.",
+          "Irreversible. Circles you solely own are deleted with you. Circles with other " +
+          "members survive, and ownership passes to the longest-standing admin, or to the " +
+          "longest-standing member when there is no admin.",
         body: z.object({ password: z.string().min(1).max(512) }),
       },
     },
@@ -603,7 +605,9 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         }
       }
 
-      // Every other table cascades from users.id.
+      // The rows that belong to them go with them. The ones that only credit
+      // them, like who created a circle or resolved an alert, are set null, so
+      // deleting an account never deletes somebody else's circle.
       await db.delete(users).where(eq(users.id, user.id))
       return { ok: true }
     },

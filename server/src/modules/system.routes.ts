@@ -10,7 +10,7 @@ import { storageEnabled } from "../services/storage"
 
 declare const __HEARTH_VERSION__: string | undefined
 
-/** Baked in by tsup for the bundle; falls back to the package manager in dev. */
+/** Baked in by tsup for the bundle. Falls back to the package manager in dev. */
 export const VERSION =
   typeof __HEARTH_VERSION__ === "string"
     ? __HEARTH_VERSION__

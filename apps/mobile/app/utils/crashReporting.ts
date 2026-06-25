@@ -1,7 +1,5 @@
-/** Wire up a crash reporter here. Called once from `app/app.tsx`. */
-export const initCrashReporting = () => {
-  // Nothing is wired up yet.
-}
+/** Wire up a crash reporter here. Nothing calls it yet. */
+export const initCrashReporting = () => {}
 
 export enum ErrorType {
   /** Red screen in dev. The user has to sign out and restart. */

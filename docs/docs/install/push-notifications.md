@@ -73,10 +73,10 @@ How Hearth uses it:
 Lock it down. Run ntfy with `NTFY_AUTH_DEFAULT_ACCESS=deny-all`, create a user
 for Hearth with write access to `hearth-*`, and give the phones read-only access
 tokens. The compose overlay `docker-compose.ntfy.yml` in the repository starts
-ntfy with auth enabled, and its comments carry the `ntfy user add` and
-`ntfy access` commands. Put `NTFY_TOKEN` in `.env` so the server authenticates
-when publishing. `NTFY_TOPIC_PREFIX` renames the `hearth-` part if you are
-sharing an ntfy instance with something else.
+ntfy with auth enabled, and you create the accounts yourself with `ntfy user add`
+and `ntfy access` inside the running container. Put `NTFY_TOKEN` in `.env` so the
+server authenticates when publishing. `NTFY_TOPIC_PREFIX` renames the `hearth-`
+part if you are sharing an ntfy instance with something else.
 
 Android is the good case here. UnifiedPush is battery-friendly and instant. iOS
 works through the ntfy iOS app, which itself uses APNs via ntfy's public
@@ -93,15 +93,17 @@ and Expo relays to APNs/FCM using credentials attached to your Expo project.
 
 Setup, if you are building the app yourself:
 
-1. `cd apps/mobile && eas init` for an Expo project id. The free tier is fine.
+1. `cd apps/mobile && npx eas-cli@latest init` for an Expo project id. The free
+   tier is fine.
 2. For Android, create a Firebase project, add an Android app with the package
    name from `app.json`, and put the downloaded `google-services.json` in
    `apps/mobile/`. It is gitignored on purpose, so a build from a fork registers
    devices in that fork's Firebase project rather than somebody else's.
    `google-services.example.json` shows the shape. Then upload the FCM V1
-   service account key to Expo with `eas credentials -p android`. Without that
-   upload, tokens register and nothing is ever delivered.
-3. For iOS, `eas credentials -p ios` and let EAS hold the APNs key.
+   service account key to Expo with `npx eas-cli@latest credentials -p android`.
+   Without that upload, tokens register and nothing is ever delivered.
+3. For iOS, `npx eas-cli@latest credentials -p ios` and let EAS hold the APNs
+   key.
 4. Set `PUSH_PROVIDER=expo` on the server, plus `EXPO_ACCESS_TOKEN` if you
    enabled enhanced push security on your Expo account.
 
@@ -141,8 +143,9 @@ ntfy.
 ## Silent pushes and "nudges"
 
 When a member taps _Ask for location_, the server queues a high-priority push
-with `data.type = "nudge"`. On receipt the app takes a fresh high-accuracy fix
-and uploads it. Whether that wakes a backgrounded app depends on the provider:
+with `data.type = "nudge_requested"`. On receipt the app takes a fresh
+high-accuracy fix and uploads it. Whether that wakes a backgrounded app depends
+on the provider:
 
 - `expo`: yes on both platforms (`priority: high`).
 - `ntfy`: yes on Android. On iOS the user must tap the notification.

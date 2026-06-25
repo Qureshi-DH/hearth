@@ -222,7 +222,7 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["locations"],
         summary: "Erase your own breadcrumbs",
-        description: "Deletes stored history for a time range; the live position is unaffected.",
+        description: "Deletes stored history for a time range. The live position is unaffected.",
         querystring: z.object({
           before: z.string().datetime().optional(),
         }),

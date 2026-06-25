@@ -9,6 +9,7 @@ The compose files themselves live at the repository root:
 `docker-compose.ntfy.yml` (self-hosted push) and `docker-compose.redis.yml`
 (multi-replica realtime).
 
-To run a released build rather than your own, swap the `api` service's `build:`
-for `image: dhqureshi/hearth-api:latest`. [docs/docs/install/self-hosting.md](../docs/docs/install/self-hosting.md)
-has the whole file written that way.
+To run a released build rather than your own, delete the `api` service's `build:`
+block and point its existing `image:` at `dhqureshi/hearth-api:latest`.
+[docs/docs/install/self-hosting.md](../docs/docs/install/self-hosting.md) has
+the whole file written that way.

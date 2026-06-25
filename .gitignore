@@ -44,3 +44,6 @@ apps/mobile/app-dependency-graph.*
 build-*.apk
 build-*.aab
 build-*.ipa
+
+# Local editor and assistant configuration.
+.claude/

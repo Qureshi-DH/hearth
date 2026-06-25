@@ -32,7 +32,7 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "Raise an SOS alert",
         description:
           "Notifies every other member at the highest priority the transport allows, and " +
-          "overrides the sender's sharing state for the duration of the alert. An SOS from " +
+          "switches the sender's sharing back to precise and leaves it there. An SOS from " +
           "someone whose location is paused would be useless.",
         params: circleIdParam,
         body: z.object({ note: z.string().max(500).nullish() }),

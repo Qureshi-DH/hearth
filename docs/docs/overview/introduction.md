@@ -35,8 +35,9 @@ There is nothing in between: no relay, no broker, no account with anybody.
   snaps you to a 750 metre grid and hides your trail, your trips and which place
   you are at. Paused shares nothing. Everyone can see which mode you picked.
 - **SOS.** Hold for three seconds and the circle gets a high-priority alert with
-  your position, refreshed every 20 seconds until it is cleared. SOS overrides a
-  paused state, because an emergency is not the moment to respect ghost mode.
+  your position, refreshed every 20 seconds while the SOS screen is open. SOS
+  overrides a paused state, because an emergency is not the moment to respect
+  ghost mode.
 - **Check-ins, nudges and quick messages.** One tap to say you are fine, a way
   to ask a phone for a fresh fix, and a one-tap word to one person, "On my way"
   or "Please slow down", which plays on their map for a moment, arrives as a

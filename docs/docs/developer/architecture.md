@@ -135,12 +135,14 @@ replica left in `sending`. See [push notifications](../install/push-notification
 ### Background jobs (`jobs/scheduler.ts`, every `JOB_INTERVAL_SECONDS`)
 
 drain push → lapse pauses → flag offline devices (>1 h silent, once per
-outage, and skipped entirely when more than half of all reporting phones went
-quiet at once, which means the outage was the server's) → detect trips (paged
-over active users, one advisory lock per user so replicas never double-detect)
-→ prune history (per-circle retention under the server-wide ceiling, in
-5 000-row batches so a big sweep never holds locks for minutes) → prune outbox →
-prune dead sessions. Each step is isolated. One failure never stops the rest.
+outage, and withheld entirely when at least eight phones have reported at some
+point and none of them has reported recently, which means the outage was the
+server's) → detect
+trips (paged over active users, one advisory lock per user so replicas never
+double-detect) → prune history (per-circle retention under the server-wide
+ceiling, in 5 000-row batches so a big sweep never holds locks for minutes) →
+prune outbox → prune dead sessions. Each step is isolated. One failure never
+stops the rest.
 
 The sweep reads the ceiling from `server_settings` on every tick, falling back to
 `MAX_HISTORY_RETENTION_DAYS`. Reading the env value instead was the bug: changing
@@ -158,16 +160,16 @@ are tagged with the trip id. Start and end are matched to places for
 
 Ignite conventions with a few deliberate substitutions:
 
-| Concern             | Choice                                                 | Why                                                              |
-| ------------------- | ------------------------------------------------------ | ---------------------------------------------------------------- |
-| Server state        | TanStack Query                                         | cache is written directly by the websocket                       |
-| Client state        | zustand + MMKV                                         | synchronous hydration, no flash of empty UI                      |
-| Secrets             | expo-secure-store (`stores/tokenVault.ts`)             | refresh tokens never touch MMKV                                  |
-| Map                 | MapLibre RN + OpenFreeMap style                        | no Google key, swappable to self-hosted tiles                    |
-| Background location | expo-location + expo-task-manager                      | `startLocationUpdatesAsync` with a foreground service on Android |
-| Periodic sync       | expo-background-task                                   | flushes the offline queue when the OS allows                     |
-| Motion class        | a small native module over Core Motion / Play Services | a device-level opt-in, so the GPS can sleep without polling      |
-| Crash sensing       | expo-sensors + `shared/impact.ts`                      | the verdict is testable against recorded traces, off the device  |
+| Concern             | Choice                                                                  | Why                                                                                                                          |
+| ------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Server state        | TanStack Query                                                          | cache is written directly by the websocket                                                                                   |
+| Client state        | zustand + MMKV                                                          | synchronous hydration, no flash of empty UI                                                                                  |
+| Secrets             | expo-secure-store (`stores/tokenVault.ts`)                              | refresh tokens never touch MMKV                                                                                              |
+| Map                 | MapLibre RN + OpenFreeMap style                                         | no Google key, swappable to self-hosted tiles                                                                                |
+| Background location | expo-location + expo-task-manager                                       | `startLocationUpdatesAsync` with a foreground service on Android                                                             |
+| Periodic sync       | expo-background-task                                                    | flushes the offline queue when the OS allows                                                                                 |
+| Motion class        | a small native module over Core Motion / Play Services                  | a device-level opt-in, so the GPS can sleep without polling                                                                  |
+| Crash sensing       | `modules/hearth-motion` (expo-sensors as fallback) + `shared/impact.ts` | native batched sampling that keeps going with the screen off, and a verdict testable against recorded traces, off the device |
 
 ### Location pipeline on the phone (`services/location/tracker.ts`)
 
@@ -201,7 +203,7 @@ cache. Screens just render query data.
   unknown emails.
 - Authorisation is always "is the caller a member of this circle with role ≥ X",
   computed from the database per request, never from the token.
-- SOS overrides a paused sharing state for the duration of the alert and
+- SOS switches a paused sharing state back to precise and leaves it there, and
   bypasses notification mutes. Nothing else does.
 - Invite codes: 8 chars, Crockford base32, rejection-sampled, single
   conditional `UPDATE` to claim a seat.

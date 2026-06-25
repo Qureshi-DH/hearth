@@ -31,7 +31,7 @@ and the reason is that this app has to work when nobody is paying attention.
 ## Never expose plain HTTP
 
 Whatever you choose, do not forward port 4000 to the internet as it is.
-Location data, session tokens and messages would cross the network in the clear,
+Location data, session tokens and nudges would cross the network in the clear,
 readable by every network between the phone and your house.
 
 The apps enforce a good deal of this for you. A production Android build refuses
@@ -108,7 +108,7 @@ gaps in location history will follow the tunnel's uptime rather than the app's.
 
 ## What Hearth needs from whichever you choose
 
-**Websockets must pass through.** The live map, messages and SOS all arrive over
+**Websockets must pass through.** The live map, nudges and SOS all arrive over
 a websocket at `/api/v1/ws`. A proxy that buffers or strips upgrade headers will
 leave the map looking frozen while everything else works. Caddy and Traefik do
 this correctly with no configuration. For nginx see the config in

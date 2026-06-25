@@ -101,8 +101,10 @@ export interface RawCirclePresence {
 }
 
 /**
- * The websocket layer fetches this once per bus message and projects it for
- * every connected viewer in memory, rather than re-querying per socket.
+ * Unprojected rows for one circle. Every viewer projects them for itself, so
+ * precise, approximate and paused all come out of one query. The REST presence
+ * endpoint and a newly connected socket read them here. A live update carries
+ * its own rows on the bus instead.
  */
 export async function loadRawCirclePresence(
   db: Database,

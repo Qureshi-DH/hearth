@@ -110,7 +110,7 @@ watching for.
 
 ## It is off unless a circle turns it on
 
-Two switches, and both have to be on.
+One switch turns it on, and everything else follows from it.
 
 **The circle setting.** An admin of the circle turns on "Possible-incident
 alerts" in circle settings. It is **off by default** on every circle, including
@@ -175,8 +175,9 @@ easy to hit through a pocket. An optional note goes with it.
 **What the server does.** In one transaction it forces your sharing state in
 that circle to precise and cancels any pause, then creates the alert. An SOS
 from somebody whose location is paused would be useless, so the emergency wins
-over the privacy setting for as long as the alert is open. A second SOS while
-one is already active is refused rather than duplicated.
+over the privacy setting. Resolving the alert does not put the old setting
+back, so somebody who was paused or approximate has to set it again. A second
+SOS while one is already active is refused rather than duplicated.
 
 **Who is told.** Every other member of that circle, at the highest priority the
 transport allows, as "SOS from _name_" with your note as the body. This is the
@@ -186,10 +187,10 @@ that bypasses Do Not Disturb. On iOS it is marked time sensitive. Delivery
 still depends on how you have set up [push
 notifications](install/push-notifications.md).
 
-**While it is open.** The phone takes a highest-accuracy fix every 20 seconds on
-top of its normal cadence, so the circle sees movement in near real time. A red
-banner sits on the circle's map for as long as the alert is open, and tapping it
-jumps to that person.
+**While it is open.** With the SOS screen up the phone takes a highest-accuracy
+fix every 20 seconds on top of its normal cadence, so the circle sees movement
+in near real time. A red banner sits on the circle's map for as long as the
+alert is open, and tapping it jumps to that person.
 
 **Ending it.** The person who raised it, or any admin of the circle, marks it
 resolved. A resolution notice then goes to the circle, the person who raised it
@@ -206,7 +207,7 @@ it produces a notification that looks similar and means something quite
 different.
 
 When it sees that somebody was driving at roughly 35 km/h or faster within the
-last 90 seconds, their latest fix has them stopped, and nothing has moved for
+last five minutes, their latest fix has them stopped, and nothing has moved for
 three minutes, it tells the circle: "Check on _name_. They stopped suddenly
 after driving at _N_ km/h and have not moved since."
 
@@ -219,7 +220,8 @@ telling a circle they stopped hard somewhere is precise information about
 somebody who may have chosen to be approximate.
 
 The on-phone detector described above is the accurate one. This is the fallback
-that works when the phone-side switches are off.
+that works when the phone cannot sample for itself, and it runs whether or not
+the on-phone detector does.
 
 ## Limits
 
@@ -244,8 +246,8 @@ nothing else. If somebody needs an ambulance, a person has to call for one.
 
 **It only runs in a moving vehicle.** A crash on a bicycle or on foot, or one in
 the first moments of a drive before the OS classifier has caught up, is not
-seen. Neither is anything at all when either switch is off, which is the default
-state.
+seen. Neither is anything at all while the circle setting is off, which is the
+default state.
 
 **Escalation needs a working phone and a working connection.** A phone that is
 destroyed, out of battery, or has no route to your server sends nothing. If the

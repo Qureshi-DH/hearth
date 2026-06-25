@@ -37,9 +37,9 @@ export interface GeofenceTransition {
  * Several safeguards keep this from spamming the family. Fixes worse than
  * `geofenceMaxAccuracyMeters` are dropped outright, because a 2 km cell-tower
  * fix would "arrive" everywhere at once, and every fix that survives still has
- * to clear the boundary by its own error circle before it may change anything.
- * Leaving requires clearing the radius plus a buffer, so a phone resting on a
- * boundary cannot oscillate.
+ * to clear the boundary by half its own error circle before it may change
+ * anything. Leaving requires clearing the radius plus a buffer, so a phone
+ * resting on a boundary cannot oscillate.
  */
 export async function evaluateGeofenceBatch(
   db: Database,
@@ -142,7 +142,7 @@ export async function evaluateGeofenceBatch(
           { lat: fix.lat, lon: fix.lon },
           { lat: place.lat, lon: place.lon },
         )
-        // A fix is a circle, not a point. A crossing counts only once the whole
+        // A fix is a circle, not a point. A crossing counts only once half the
         // error circle is clear of the boundary, so a coarse fix can still
         // decide a wide fence but never a doorstep one. Anything less certain
         // than that keeps the state it already had, which is the honest answer

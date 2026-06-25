@@ -366,10 +366,6 @@ export function useMarkFeedRead(circleId: string) {
   })
 }
 
-/**
- * Nothing is cached: the message is shown to the recipient once and recorded in
- * their feed by the server, so the sender has no list to keep in step.
- */
 export function useActiveSos(circleId: string | null) {
   return useQuery({
     queryKey: queryKeys.sos(circleId ?? ""),
@@ -410,6 +406,10 @@ export function useCheckIn(circleId: string) {
   })
 }
 
+/**
+ * Nothing is cached: the message is shown to the recipient once and recorded in
+ * their feed by the server, so the sender has no list to keep in step.
+ */
 export function useNudge(circleId: string) {
   return useMutation({
     mutationFn: (input: { userId: string; quickKey?: QuickMessageKey; body?: string }) =>

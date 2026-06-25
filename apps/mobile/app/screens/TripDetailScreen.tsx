@@ -81,7 +81,7 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
           {trip.endPlaceName ?? translate("trips:unknownPlace")}
         </Text>
         <Text size="xs" style={{ color: theme.colors.textDim }}>
-          {formatWhen(trip.startedAt)} – {formatWhen(trip.endedAt)}
+          {formatWhen(trip.startedAt)} to {formatWhen(trip.endedAt)}
         </Text>
       </View>
 
@@ -103,12 +103,12 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
         <StatTile
           icon="speedometer-outline"
           label={translate("trips:topSpeed")}
-          value={formatSpeed(trip.maxSpeedMps, units) ?? "–"}
+          value={formatSpeed(trip.maxSpeedMps, units) ?? "-"}
         />
         <StatTile
           icon="pulse-outline"
           label={translate("trips:avgSpeed")}
-          value={formatSpeed(trip.avgSpeedMps, units) ?? "–"}
+          value={formatSpeed(trip.avgSpeedMps, units) ?? "-"}
         />
       </View>
     </Screen>

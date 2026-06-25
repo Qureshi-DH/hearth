@@ -425,11 +425,11 @@ describe("detectDriveEvent", () => {
   /* ---------------------------------------------------------------- */
 
   it("still reports a crash when one sample of the aftermath is disturbed", () => {
-    // Everything the stillness test asks for is there: six seconds of tail,
-    // resting vibration of 0.005 g against a ceiling of 0.05, and a run up
-    // whose ratio allows 0.019. The only difference from the crash the suite
-    // already reports is one 0.25 g sample four seconds after the impact, which
-    // is a door being forced or somebody reaching for the phone.
+    // Everything the stillness test asks for is there: six seconds of tail and
+    // resting vibration far below IMPACT.restNoiseG. The only difference from
+    // the crash the suite already reports is one 0.25 g sample four seconds
+    // after the impact, which is a door being forced or somebody reaching for
+    // the phone.
     const crash = (): DriveSample[] => {
       const rng = noise(17)
       return [

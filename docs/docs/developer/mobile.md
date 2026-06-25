@@ -15,8 +15,8 @@ store), so **Expo Go will not work**. You need a development build.
 pnpm install                     # from the repo root
 cd apps/mobile
 npx expo prebuild                # generates ios/ and android/ (git-ignored)
-npx expo run:ios                 # simulator; needs Xcode
-npx expo run:android             # emulator or device; needs Android Studio / SDK
+npx expo run:ios                 # simulator, needs Xcode
+npx expo run:android             # emulator or device, needs Android Studio / SDK
 ```
 
 After that, `pnpm start` (which runs `expo start --dev-client`) is enough for
@@ -65,18 +65,18 @@ Hearth asks for exactly what background family tracking needs. A checklist
 (_Set up Hearth_) shows up on first sign-in and can be revisited from
 _You → Tracking status_.
 
-| Permission                     | iOS                                                                           | Android                                                     | Why                                                                              | Requested                                      |
-| ------------------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Location, foreground           | `NSLocationWhenInUseUsageDescription`                                         | `ACCESS_FINE_LOCATION` (+ coarse)                           | Show you on the map                                                              | Onboarding, step 1                             |
-| Location, **Always**           | `NSLocationAlwaysAndWhenInUseUsageDescription`, `UIBackgroundModes: location` | `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE_LOCATION` | Updates while the app is closed, plus arrive/leave alerts                        | Onboarding, step 1 (second prompt)             |
-| Precise location               | `NSLocationDefaultAccuracyReduced = false`                                    | fine vs coarse detected                                     | Places and trips need GPS accuracy                                               | Detected, checklist links to Settings          |
-| Notifications                  | runtime                                                                       | `POST_NOTIFICATIONS`                                        | Arrivals, battery, **SOS**. Local SOS banners need it even with no push provider | Onboarding, step 2                             |
-| Battery optimisation exemption | n/a                                                                           | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`                      | Doze and vendor power managers are the #1 reason background location dies        | Onboarding (Android), opens the system dialog  |
-| Background refresh / tasks     | `UIBackgroundModes: fetch, processing`, `BGTaskSchedulerPermittedIdentifiers` | `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`                       | Flush the offline queue when the OS allows                                       | Declared, checklist explains the iOS toggle    |
-| Camera                         | `NSCameraUsageDescription`                                                    | `CAMERA` (via plugin)                                       | Scan an invite QR                                                                | Only when you tap _Scan_                       |
-| Local network                  | `NSLocalNetworkUsageDescription`, `NSBonjourServices`                         | n/a                                                         | Self-hosted servers on your LAN                                                  | Prompted by iOS on first LAN connection        |
-| Motion and activity            | `NSMotionUsageDescription`                                                    | `ACTIVITY_RECOGNITION` (+ the Play Services variant)        | Let the OS say when you are driving or still, so the GPS can sleep               | Only if this phone turns the motion setting on |
-| Photo library                  | `NSPhotoLibraryUsageDescription` (picker plugin)                              | system picker, no permission                                | Choose one profile picture                                                       | Only when you tap your avatar                  |
+| Permission                     | iOS                                                                           | Android                                                     | Why                                                                              | Requested                                                                       |
+| ------------------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Location, foreground           | `NSLocationWhenInUseUsageDescription`                                         | `ACCESS_FINE_LOCATION` (+ coarse)                           | Show you on the map                                                              | Onboarding, step 1                                                              |
+| Location, **Always**           | `NSLocationAlwaysAndWhenInUseUsageDescription`, `UIBackgroundModes: location` | `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE_LOCATION` | Updates while the app is closed, plus arrive/leave alerts                        | Onboarding, step 1 (second prompt)                                              |
+| Precise location               | `NSLocationDefaultAccuracyReduced = false`                                    | fine vs coarse detected                                     | Places and trips need GPS accuracy                                               | Detected, checklist links to Settings                                           |
+| Notifications                  | runtime                                                                       | `POST_NOTIFICATIONS`                                        | Arrivals, battery, **SOS**. Local SOS banners need it even with no push provider | Onboarding, step 2                                                              |
+| Battery optimisation exemption | n/a                                                                           | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`                      | Doze and vendor power managers are the #1 reason background location dies        | Onboarding (Android), opens the system dialog                                   |
+| Background refresh / tasks     | `UIBackgroundModes: fetch, processing`, `BGTaskSchedulerPermittedIdentifiers` | `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`                       | Flush the offline queue when the OS allows                                       | Declared, checklist explains the iOS toggle                                     |
+| Camera                         | `NSCameraUsageDescription`                                                    | `CAMERA` (via plugin)                                       | Scan an invite QR                                                                | Only when you tap _Scan_                                                        |
+| Local network                  | `NSLocalNetworkUsageDescription`, `NSBonjourServices`                         | n/a                                                         | Self-hosted servers on your LAN                                                  | Prompted by iOS on first LAN connection                                         |
+| Motion and activity            | `NSMotionUsageDescription`                                                    | `ACTIVITY_RECOGNITION` (+ the Play Services variant)        | Let the OS say when you are driving or still, so the GPS can sleep               | If this phone turns the motion setting on, or a circle turns on incident alerts |
+| Photo library                  | `NSPhotoLibraryUsageDescription` (picker plugin)                              | system picker, no permission                                | Choose one profile picture                                                       | Only when you tap your avatar                                                   |
 
 _Use the phone's motion sensor_ lives under _You → Tracking status_ and belongs
 to the handset, not to the server and not to the circle. The server receives the same
@@ -163,11 +163,12 @@ around the clock is what makes that notification permanent and what actually
 drains the battery, because the GPS never sleeps.
 
 So the tracker has two states. **Moving** is continuous updates, and it is the
-state that shows the notification. Once the phone has stayed inside a 60 m
-circle for five minutes, it switches to **stationary**: updates stop, the
-notification disappears, and an exit geofence is armed around where it stopped.
-Leaving that circle wakes the app and puts it back into moving. The geofence is
-cheap because it rides on the location the system computes anyway.
+state that shows the notification. Once the phone has stayed for five minutes
+inside a circle of 60 m, or 1.5 times the policy's distance filter where that
+is wider, it switches to **stationary**: updates stop, the notification
+disappears, and an exit geofence is armed around where it stopped. Leaving that
+circle wakes the app and puts it back into moving. The geofence is cheap because
+it rides on the location the system computes anyway.
 
 With _Use the phone's motion sensor_ on, the OS classifier can call a stop
 sooner than the position watch can, and can end one the instant you start
@@ -175,18 +176,34 @@ moving. That is the whole difference the setting makes.
 
 ### Crash detection
 
-`app/services/location/driveSensors.ts` samples the accelerometer fast enough to
-catch an impact, the gyroscope and barometer far more slowly, and keeps a
-rolling window. The verdict comes from `detectDriveEvent()` in
-`packages/shared/src/impact.ts`, which is where the reasoning about what the
-sensors can and cannot claim is written down.
+`apps/mobile/modules/hearth-motion`, a local Expo native module written in
+Kotlin and Swift, does the sampling. The accelerometer runs fast enough to catch
+an impact (20 ms), and the gyroscope and barometer run far slower (100 ms and
+200 ms) because rotation and pressure move on human timescales. Samples cross
+the bridge batched roughly four times a second rather than one call per sample.
 
-Two switches gate it, and it samples only between them. The circle has to have
-_Possible-incident alerts_ on, which the app mirrors into device storage because
-the detector runs from a background task where the query cache may be cold. The
-phone has to have the motion setting on, because sampling that hard is only
-worth its battery inside a vehicle and the OS classifier is what says you are in
-one. Leave the motion setting off and the sensors are never read.
+On Android the module registers its `SensorManager` listener from the
+application context. expo-sensors drops its listener the moment the Activity
+pauses, and a screen going off or a map app on top is the state a phone is in
+for most of a drive, so the detector used to run only while somebody was
+watching it. Registering from the application context keeps samples arriving for
+as long as the process lives, which the location foreground service already
+guarantees while the phone is moving.
+
+`app/services/location/driveSensors.ts` receives those batches, assembles the
+rolling window, and calls `detectDriveEvent()` in
+`packages/shared/src/impact.ts`, which is where the reasoning about what the
+sensors can and cannot claim is written down. expo-sensors is the fallback only,
+for an install built without the module. It is also the path the
+`ACCEL_INTERVAL_MS`, `GYRO_INTERVAL_MS` and `BARO_INTERVAL_MS` constants in
+`driveSensors.ts` belong to, since the native sampler sets its own rates.
+
+One switch gates it, and it samples only between the two ends of a drive. The
+circle has to have _Possible-incident alerts_ on, which the app mirrors into
+device storage because the detector runs from a background task where the query
+cache may be cold. Either that or the phone's own motion setting then starts the
+OS classifier, which is what says you are in a vehicle, because sampling this
+hard is only worth its battery while you are driving.
 
 A verdict does not alert anybody. It goes into a persisted store and the app
 asks the person, with a countdown. Answering dismisses it. Silence escalates to
@@ -213,7 +230,7 @@ app/
   components/   Avatar, GlassPanel, MemberMarker, SosHoldButton, IncidentPrompt, ListRow,
                 HearthMap and the rest
   screens/      Server, Login, Register, Permissions, Map, MemberDetail, Places,
-                PlaceEditor, PlaceDetail, Activity, Messages, Circle, CircleSettings,
+                PlaceEditor, PlaceDetail, Activity, Circle, CircleSettings,
                 Invites, Sharing, NotificationPrefs, You, Devices, PrivacyData,
                 ChangePassword, Sos, CheckIn, Trips, TripDetail, Admin,
                 CreateCircle, JoinCircle
@@ -221,9 +238,12 @@ app/
   hooks/        queries.ts (TanStack Query), queryKeys.ts, useActiveCircle.ts
   services/     api/ (fetch client + typed endpoints), realtime.ts, notifications.ts,
                 location/ (tracker.ts, motion.ts, driveSensors.ts)
-  stores/       zustand: auth, settings, tracking, incident, toast. tokenVault (SecureStore)
+  stores/       zustand: auth, settings, tracking, incident, nudge, push, toast.
+                mmkv (persisted-store adapter), tokenVault (SecureStore)
   theme/        Ignite theming with Hearth's light/dark palettes
   i18n/         en.ts. v1 is English only, and a locale is a file typed as `Translations`
+modules/        hearth-motion: the Expo native module behind the motion setting
+                and the batched sensor samples
 ```
 
 ## Design notes

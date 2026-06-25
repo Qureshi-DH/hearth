@@ -12,7 +12,7 @@ sees it.
 | Data                                                                            | Where                               | Retention                                                                                                                    |
 | ------------------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Account: email, display name, scrypt password hash                              | `users`                             | Until the account is deleted                                                                                                 |
-| Devices: name, platform, app version, push token, hashed refresh token, last IP | `sessions`                          | Until signed out. Expired/revoked rows pruned after 30 days                                                                  |
+| Devices: name, platform, app version, push token, hashed refresh token, last IP | `sessions`                          | Until signed out. Revoked rows pruned 30 days later, expired rows as soon as they lapse                                      |
 | Live position (one row per user)                                                | `user_presence`                     | Overwritten by each fix                                                                                                      |
 | Breadcrumb history: coordinates, accuracy, speed, heading, battery, activity    | `location_points`                   | Per-circle setting (default 30 d), under a server-wide ceiling (90 d out of the box, admin-editable). 0 = live position only |
 | Places and arrive/leave events                                                  | `places`, `place_events`            | Until the place or circle is deleted                                                                                         |
@@ -49,8 +49,9 @@ You always see yourself exactly. Circle admins get _no_ extra visibility into
 members' locations. Roles only govern circle management.
 
 SOS is the one exception. Raising an SOS switches the sender to precise sharing
-in that circle for the duration and notifies everyone regardless of mutes. The
-sender (or an admin) resolves it.
+in that circle and notifies everyone regardless of mutes. The sender (or an
+admin) resolves it, and sharing stays precise after that until they set it back
+themselves.
 
 A quick message wakes only the person it names, but the circle's activity feed
 records it with both names and the line itself. It is a short word said in front
@@ -59,10 +60,10 @@ of the family rather than a private channel, and there is no chat to read back.
 ## What leaves the server
 
 Push notifications carry a title, a body and identifiers (`{type, circleId,
-eventId, placeId?, userId?}`). Coordinates are never included. The app fetches
-them from your server when the notification is tapped. Point
-`PUSH_PROVIDER=ntfy` at your own ntfy instance and nothing leaves your
-infrastructure.
+eventId?, placeId?, userId?, alertId?, fromUserId?}`). Coordinates are never
+included. The app fetches them from your server when the notification is
+tapped. Point `PUSH_PROVIDER=ntfy` at your own ntfy instance and nothing leaves
+your infrastructure.
 
 Map tiles also leave. The phone requests them from the style URL your server
 advertises, OpenFreeMap by default, so the tile host sees the viewed area, as
@@ -70,22 +71,28 @@ with any map. Self-host tiles to avoid it.
 
 ## Your rights, built in
 
-- `GET /api/v1/me/export` returns everything the server holds about you, as
-  JSON. Also in the app under _You → Privacy & data → Export_.
-- `DELETE /api/v1/me/history` erases your breadcrumbs and keeps the account.
-- `DELETE /api/v1/me` deletes the account. Every table cascades. Circles you
-  solely own are deleted, shared circles pass to the longest-standing admin.
-  The one thing outside that cascade is a profile picture already in the
-  bucket. Nothing points at it once the row is gone and its key is random, but
-  removing the object itself is the operator's job.
+- `GET /api/v1/me/export` returns your profile, circle memberships,
+  breadcrumbs, trips, check-ins and the places you created, as JSON. Also in
+  the app under _You → Privacy & data → Export_.
+- `DELETE /api/v1/me/history` erases your breadcrumbs, and the trips derived
+  from them, and keeps the account.
+- `DELETE /api/v1/me` deletes the account. Rows keyed to you go with it:
+  sessions, breadcrumbs, trips, check-ins, place history and circle
+  memberships. Circles you solely own are deleted, shared circles pass to the
+  longest-standing admin. Three things sit outside that. An activity feed line
+  in a circle that outlives you loses the link to your account but keeps the
+  text it was written with, which usually names you. An admin audit row does
+  the same and keeps the IP the action came from. And a profile picture already
+  in the bucket is untouched. Nothing points at it once the row is gone and its
+  key is random, but removing the object itself is the operator's job.
 
 ## Children
 
 Hearth is designed for families and therefore for tracking minors by their
 guardians. That's a decision for each family and, in many jurisdictions, a
 legal one. The tracked person gets the same controls as everyone else (pause,
-approximate, leave) unless the circle owner disables pausing. That setting is
-visible to every member.
+approximate, leave) unless an admin of the circle disables pausing. That
+setting is visible to every member.
 
 ## What the app asks the phone for
 
@@ -94,15 +101,17 @@ battery-optimisation exemption on Android. Camera only when you scan a QR code,
 and the photo library only when you pick a profile picture, through the system
 picker that hands back the one file you chose rather than the album.
 
-Motion and activity is the only other one, and it is asked for only if you turn
-on _Use the phone's motion sensor_. That is a per-device setting, not something
-your server or your circle decides, and it exists to let the GPS sleep while you
-are still. Leave it off and the app works out the same thing from position.
+Motion and activity is the only other one. It is asked for when you turn on
+_Use the phone's motion sensor_, a per-device setting that lets the GPS sleep
+while you are still, and also when any circle you belong to turns on
+possible-incident alerts, because crash detection needs the same classifier to
+know that a drive has started. With neither of those on, the app works the same
+thing out from position and never asks.
 
 Hearth never requests contacts, microphone, Bluetooth or an advertising
-identifier. Crash detection is the one thing that reads a sensor without asking:
-the accelerometer, gyroscope and barometer need no permission on either platform
-at the rates it samples them, so it is listed on the setup checklist instead,
+identifier. Crash detection needs no permission of its own beyond that one: the
+accelerometer, gyroscope and barometer need no permission on either platform at
+the rates it samples them, so it is listed on the setup checklist instead,
 where you can at least see that it is running. See
 [the mobile app page](developer/mobile.md#permissions) for the full table and the
 reason for each.

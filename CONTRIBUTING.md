@@ -5,7 +5,7 @@ short.
 
 ## Getting set up
 
-You need Node 20.10 or newer, pnpm 9+, and a Postgres you can create databases
+You need Node 20.18 or newer, pnpm 9+, and a Postgres you can create databases
 in.
 
 ```bash
@@ -50,8 +50,7 @@ the database would test the mock.
 
 ## Conventions
 
-The full set lives in [.claude/skills](.claude/skills), which is plain markdown
-and worth ten minutes. The rules that come up most:
+The rules that come up most:
 
 **Comments explain why, not what.** If the name says it, don't write it. Never
 write a comment that restates a value, because it goes stale the moment somebody

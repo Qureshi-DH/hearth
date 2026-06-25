@@ -344,8 +344,8 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["circles"],
         summary: "Change a member's role or nickname",
         description:
-          "Admins may set nicknames and promote up to their own level. Only the owner can " +
-          "transfer ownership, and doing so demotes them to admin.",
+          "Admins may set nicknames. Only the owner can grant admin or transfer ownership, " +
+          "and a transfer demotes the owner to admin.",
         params: circleIdParam.extend({ userId: z.string().uuid() }),
         body: z.object({
           role: z.enum(CIRCLE_ROLES).optional(),

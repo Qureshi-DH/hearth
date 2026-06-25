@@ -84,7 +84,7 @@ class ExpoDriver implements PushDriver {
           interruptionLevel: message.channel === "sos" ? "time-sensitive" : undefined,
           priority: message.priority === "high" ? "high" : "default",
           channelId: message.channel ?? "default",
-          // SOS must survive Doze / low-power mode on Android.
+          // So an SOS is still shown when the recipient already has the app open.
           _displayInForeground: message.channel === "sos",
         },
       ]),

@@ -69,8 +69,6 @@ export const IMPACT = {
   harshBrakeG: 0.35,
   /** Below this a spike is road noise, not a candidate for anything. */
   impactG: 3,
-  /** A loss of speed no pothole causes. */
-  speedDropMps: 5.5,
   /** A spin, not a swerve. */
   rotationRps: 3.5,
   /**
@@ -114,8 +112,8 @@ const IMPACT_LEAD_MS = 500
 const PRESSURE_BASELINE_MS = 1000
 // Wide enough for a barometer that reports about once a second, which is what
 // iOS gives whatever interval is asked for. At 600ms the airbag rise landed
-// between two samples and was never seen. The slope subtraction above is what
-// keeps a descent from filling a window this wide.
+// between two samples and was never seen. The slope subtraction in
+// pressureJump is what keeps a descent from filling a window this wide.
 const PRESSURE_STEP_MS = 1800
 /** The run up, less RUN_UP_GAP_MS, in which the impact is already happening. */
 const RUN_UP_MS = 6000
@@ -129,8 +127,8 @@ const speeds = (samples: DriveSample[]): number[] =>
   samples.map((s) => s.speedMps).filter((v): v is number => v != null)
 
 /**
- * Standard deviation of magnitude, which is vibration with gravity and the
- * phone's resting orientation subtracted out by construction.
+ * Spread of magnitude, which is vibration with gravity and the phone's resting
+ * orientation subtracted out by construction.
  */
 function jitterG(samples: DriveSample[]): number {
   if (samples.length < 2) return 0
@@ -290,7 +288,7 @@ function cameToRest(after: DriveSample[], peakAt: number, baselineJitter: number
   const covered = tail[tail.length - 1]!.t - tail[0]!.t
   if (covered < IMPACT.stillnessMs) return false
   // Not every sample: a single knock while somebody reaches for their phone,
-  // or one dropped reading, should not undo five seconds of stillness. The
+  // or one dropped reading, should not undo an otherwise still tail. The
   // vibration test below is what actually decides whether the vehicle moved.
   const disturbed = tail.filter((sample) => deltaG(sample) >= IMPACT.stillDeltaG).length
   if (disturbed > Math.max(1, Math.floor(tail.length * IMPACT.restDisturbedRatio))) return false

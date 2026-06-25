@@ -48,7 +48,7 @@ fields you sent, so saving one field pins the current value of the others.
 
 Avatar uploads are `multipart/form-data` with one image field: JPEG, PNG or
 WebP, at most 2 MB, and the content type is decided by sniffing the bytes rather
-than by trusting the part header. They return `404` on a server with no object
+than by trusting the part header. They return `400` on a server with no object
 storage configured, which `GET /server-info` reports as `features.avatars`.
 
 A quick message goes to one person, never to the circle.
@@ -57,15 +57,15 @@ A quick message goes to one person, never to the circle.
 POST /circles/:circleId/nudge/:userId    { quickKey?, body? }
 ```
 
-`toUserId` has to be another member of that circle. The text is either a
-`quickKey` from `QUICK_MESSAGES` in `packages/shared` ("Please slow down.", "On
-my way.") or a short line of your own, and a `201` returns the `QuickMessage`
-that went out. Sending one records a `nudge_requested` event in the circle's
-activity feed, queues a push for the recipient alone, and publishes a
-`nudge` frame on the recipient's own topic. Nothing is
-kept as a conversation, so there is no endpoint to list them back. The feed
-entry names both people and quotes the line, so this is a short word in front of
-the family rather than a private channel.
+The `:userId` in the path has to be another member of that circle. The text is
+either a `quickKey` from `QUICK_MESSAGES` in `packages/shared` ("Please slow
+down.", "On my way.") or a short line of your own, and a `200` returns
+`{ ok: true }`. Sending one records a `nudge_requested` event in the circle's
+activity feed, queues a push for the recipient alone, and publishes a `nudge`
+frame on the recipient's own topic. Nothing is kept as a conversation, so there
+is no endpoint to list them back. The feed entry names both people and quotes
+the line, so this is a short word in front of the family rather than a private
+channel.
 
 ## Uploading location
 
@@ -125,7 +125,6 @@ Server → client messages (`WsServerMessage` in the shared package):
 | `location`   | `{ circleId, presence }`, one member moved                   |
 | `event`      | `{ circleId, event }`, new activity-feed entry               |
 | `sos`        | `{ circleId, alert }`                                        |
-| `nudge`      | `{ circleId, fromUserId }`, the device should report a fix   |
 | `nudge`      | `{ circleId, nudge }`, on the recipient's own topic          |
 | `pong`       | `{ serverTime }`                                             |
 | `error`      | `{ message }`, the socket could not honour what you sent     |
@@ -159,7 +158,6 @@ Routes with their own budget:
 | `GET /join/:code`                 | 60 per minute  |
 | `POST /auth/me/avatar`            | 10 per minute  |
 | `POST /circles/:id/nudge/:userId` | 6 per 10 min   |
-| `POST /circles/:id/nudge/*`       | 6 per 10 min   |
 | `POST /circles/:id/sos`           | 3 per 10 min   |
 | `POST /push/test`                 | 5 per 5 min    |
 

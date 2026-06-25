@@ -25,13 +25,13 @@ export interface PermissionSnapshot {
  * One snapshot, so the onboarding checklist and the settings screen show the
  * same truth.
  *
- * Hearth asks for location, notifications, and (only where the server has
- * turned the motion path on) activity recognition, which is what lets the GPS
- * sleep while the phone is not moving. The photo picker is reached through the
- * OS picker for a profile picture, which grants access to the one chosen file
- * rather than the library. Nothing here asks for contacts, Bluetooth, or the
- * advertising identifier. Invites are codes and QR, and there are no hardware
- * tags.
+ * Hearth asks for location, notifications, and (only where this phone has the
+ * motion toggle on, or a circle has asked for incident alerts) activity
+ * recognition, which is what lets the GPS sleep while the phone is not moving.
+ * The photo picker is reached through the OS picker for a profile picture,
+ * which grants access to the one chosen file rather than the library. Nothing
+ * here asks for contacts, Bluetooth, or the advertising identifier. Invites are
+ * codes and QR, and there are no hardware tags.
  */
 export async function getPermissionSnapshot(): Promise<PermissionSnapshot> {
   const [foreground, background, notifications, servicesEnabled, taskStatus] = await Promise.all([

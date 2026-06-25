@@ -96,7 +96,7 @@ export function TripCard({
         <Stat label={translate("trips:duration")} value={formatDuration(trip.durationSeconds)} />
         <Stat
           label={translate("trips:topSpeed")}
-          value={formatSpeed(trip.maxSpeedMps, units) ?? "–"}
+          value={formatSpeed(trip.maxSpeedMps, units) ?? "-"}
         />
       </View>
     </Pressable>

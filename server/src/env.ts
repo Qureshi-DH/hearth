@@ -26,7 +26,7 @@ const schema = z.object({
    */
   HOST: z.string().default("::"),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
-  /** Used to build invite links and push payloads. */
+  /** The address phones reach. Invite links, the join page and the API docs all quote it. */
   PUBLIC_URL: z.string().default("http://localhost:4000"),
   /** Deep-link scheme registered by the mobile app. */
   APP_SCHEME: z.string().default("hearth"),

@@ -11,7 +11,7 @@
   <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
   <a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Qureshi-DH/hearth/ci.yml?branch=main"></a>
   <img alt="Expo SDK 55" src="https://img.shields.io/badge/Expo-SDK%2055-000020?logo=expo">
-  <img alt="Node 20+" src="https://img.shields.io/badge/node-%E2%89%A520.10-5FA04E?logo=node.js&logoColor=white">
+  <img alt="Node 20.18+" src="https://img.shields.io/badge/node-%E2%89%A520.18-5FA04E?logo=node.js&logoColor=white">
   <img alt="Postgres 14+" src="https://img.shields.io/badge/postgres-%E2%89%A514-336791?logo=postgresql&logoColor=white">
 </p>
 
@@ -53,14 +53,15 @@ trail, your trips and which place you're at. Paused shares nothing at all. The
 choice is yours, per circle, and everyone can see which mode you picked.
 
 **Safety.** Hold the SOS button for three seconds and everyone gets a
-high-priority alert with your live position, updated every twenty seconds until
-you clear it. SOS overrides a paused sharing state, because an emergency isn't
-the moment to respect ghost mode. There's also a one-tap check-in, and you can
-ask somebody's phone for a fresh fix.
+high-priority alert with your live position, refreshed every twenty seconds
+while the SOS screen is open. SOS overrides a paused sharing state, because an emergency isn't
+the moment to respect ghost mode. There's also a one-tap check-in.
 
-**Messages.** A short thread per circle with one-tap replies like "Please slow
-down" and "On my way". It's there so the alerts have an obvious answer, not to
-replace your group chat.
+**Nudges.** A one-way prod rather than a conversation. Ask somebody's phone for
+a fresh position, or attach one short canned line like "Please slow down" or "On
+my way". It shows on their screen for a few seconds, buzzes their phone and
+lands in the activity feed. There's no thread to read back. It's there so an
+alert has an obvious answer, not to replace your group chat.
 
 **Driving alerts, if you want them.** Off by default. Turn on a speed threshold
 and the circle hears about it. Turn on incident alerts and the phone watches its
@@ -181,7 +182,6 @@ packages/shared/   Types, constants, geo maths and the crash heuristic.
 deploy/            Reverse-proxy examples.
 web/               The landing page. Static, no build step.
 docs/              Everything below.
-.claude/skills/    Conventions, for humans and agents alike.
 ```
 
 `packages/shared` is consumed as TypeScript source by both sides, so if a
