@@ -200,6 +200,12 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         if (count === 0) throw badRequest("The server must keep at least one administrator.")
       }
 
+      const [before] = await db
+        .select({ isAdmin: users.isAdmin })
+        .from(users)
+        .where(eq(users.id, request.params.userId))
+        .limit(1)
+
       const [updated] = await db
         .update(users)
         .set({ ...request.body, updatedAt: new Date() })
@@ -208,8 +214,11 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!updated) throw notFound("No such account.")
 
       // Deactivation has to end the sessions too, or the account keeps its
-      // access token and its websocket until they expire.
-      if (request.body.isActive === false) await revokeAllSessions(db, updated.id)
+      // access token and its websocket until they expire. Demotion is the same
+      // move against an administrator who has gone bad, so it ends them as
+      // well, but only when it actually took something away.
+      const demoted = request.body.isAdmin === false && before?.isAdmin === true
+      if (request.body.isActive === false || demoted) await revokeAllSessions(db, updated.id)
 
       await db.insert(auditLog).values({
         actorUserId: auth.userId,

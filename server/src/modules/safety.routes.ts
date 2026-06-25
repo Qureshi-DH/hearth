@@ -1,4 +1,11 @@
-import { DEFAULTS, haversineMeters, QUICK_MESSAGE_KEYS, QUICK_MESSAGES } from "@hearth/shared"
+import {
+  coarsenLocation,
+  DEFAULTS,
+  haversineMeters,
+  QUICK_MESSAGE_KEYS,
+  QUICK_MESSAGES,
+  type SharingState,
+} from "@hearth/shared"
 import { and, desc, eq, isNull } from "drizzle-orm"
 import { alias } from "drizzle-orm/pg-core"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
@@ -9,14 +16,74 @@ import { checkIns, circleMembers, places, sosAlerts, userPresence, users } from 
 import { badRequest, conflict, forbidden, notFound } from "../lib/errors"
 import { circleTopic, userTopic } from "../lib/bus"
 import { toPublicUser } from "../lib/serialize"
-import { requireAuth, requireMembership } from "../plugins/auth"
+import { rateLimitKey, requireAuth, requireMembership } from "../plugins/auth"
 import { getBus } from "../runtime"
 import { recordEvent } from "../services/feed"
+import { effectiveSharingState, projectPresence } from "../services/presence"
 import { enqueuePush } from "../services/push"
 
 const circleIdParam = z.object({ circleId: z.string().uuid() })
 
 const resolver = alias(users, "resolver")
+// The row's subject, which is rarely the caller, so it cannot reuse the
+// membership row requireMembership already loaded.
+const subject = alias(circleMembers, "subject_member")
+
+/**
+ * Characters that carry no width but change how a line reads. Kept to the ones
+ * with no legitimate use in a sentence: the tab and the two line breaks are
+ * deliberately absent, because \s+ below folds them away anyway.
+ */
+const INVISIBLE =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u180E\u200B\u202A-\u202E\u2060\uFEFF]/gu
+
+/** Anything Unicode calls a combining mark. */
+const COMBINING_RUN = /\p{M}{4,}/gu
+
+/**
+ * Flattens one composed line. A push title, a push body and a feed summary are
+ * each a single line of text built from things a member typed, and a newline
+ * in any of them forges a second line in everybody else's notification while
+ * seventy stacked accents smear over the rows underneath.
+ *
+ * This runs where the line is built rather than where the text is stored,
+ * because a check-in note and a nudge message are legitimately several lines
+ * and the stored copy has to keep them.
+ */
+function singleLine(value: string): string {
+  return value
+    .normalize("NFC")
+    .replace(INVISIBLE, "")
+    .replace(COMBINING_RUN, (run) => [...run].slice(0, 3).join(""))
+    .replace(/\s+/gu, " ")
+    .trim()
+}
+
+/**
+ * What one circle may be told about a check-in. The button reports a position
+ * like any other fix, so it answers to the same per-circle setting: a circle on
+ * the coarse grid is told the cell and never the building, and one that is
+ * paused hears that she is fine and nothing about where. Without this, checking
+ * in every minute would hand out the exact doorstep the map is refusing to show.
+ */
+function projectCheckIn(
+  state: SharingState,
+  point: { lat: number; lon: number },
+  place: { id: string; name: string } | null,
+): { lat: number | null; lon: number | null; placeId: string | null; placeName: string | null } {
+  if (state === "paused") return { lat: null, lon: null, placeId: null, placeName: null }
+  if (state === "approximate") {
+    const coarse = coarsenLocation(point)
+    return { lat: coarse.lat, lon: coarse.lon, placeId: null, placeName: null }
+  }
+  return {
+    lat: point.lat,
+    lon: point.lon,
+    placeId: place?.id ?? null,
+    placeName: place?.name ?? null,
+  }
+}
 
 export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
@@ -26,7 +93,26 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
     {
       preHandler: app.authenticate,
       // SOS bypasses mutes and fires at top priority, so spamming it must be hard.
-      config: { rateLimit: { max: 3, timeWindow: "10 minutes" } },
+      config: {
+        rateLimit: {
+          max: 3,
+          timeWindow: "10 minutes",
+          // Per circle, not per account. Spamming means badgering an audience,
+          // and the audience is one circle. Somebody in four circles holding
+          // the button in each is one emergency reaching everyone who might be
+          // near them, and an account-wide budget answers the last circle 429
+          // and tells nobody in it anything.
+          keyGenerator: (request) => {
+            const account = rateLimitKey(app, request)
+            // An unauthenticated caller falls back to their address, and
+            // splitting that per path parameter would hand anyone an unlimited
+            // supply of fresh buckets by inventing circle ids.
+            if (!account.startsWith("user:")) return account
+            const { circleId } = request.params as { circleId?: string }
+            return `${account}:${circleId ?? ""}`
+          },
+        },
+      },
       schema: {
         tags: ["safety"],
         summary: "Raise an SOS alert",
@@ -50,7 +136,11 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         // leave the other lit with nothing able to clear it.
         await tx
           .update(circleMembers)
-          .set({ sharingState: "precise", pausedUntil: null })
+          // resume_to_state goes with the pause it belonged to. Left behind, the
+          // next pause coalesces onto it, and one raised during an approximate
+          // pause would make an unrelated pause weeks later resume to
+          // approximate rather than to the precise state this line just set.
+          .set({ sharingState: "precise", pausedUntil: null, resumeToState: null })
           .where(
             and(
               eq(circleMembers.circleId, membership.circleId),
@@ -94,14 +184,16 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(eq(users.id, auth.userId))
         .limit(1)
 
-      const name = actor?.displayName ?? "Someone"
+      // A display name reaches this circle through a push title and a feed
+      // line, and it is stored as typed.
+      const name = singleLine(actor?.displayName ?? "") || "Someone"
 
       await recordEvent(db, {
         circleId: membership.circleId,
         type: "sos_started",
         actorUserId: auth.userId,
         payload: { alertId: alert.id, note: alert.note },
-        summary: `${name} raised an SOS`,
+        summary: singleLine(`${name} raised an SOS`),
       })
 
       // No mute filter. This is the one alert an earlier "mute this circle" tap
@@ -121,7 +213,7 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
           userId,
           circleId: membership.circleId,
           title: `🚨 SOS from ${name}`,
-          body: alert.note ?? "Tap to see their location.",
+          body: singleLine(alert.note ?? "") || "Tap to see their location.",
           channel: "sos" as const,
           priority: "high" as const,
           data: { type: "sos_started", alertId: alert.id, circleId: membership.circleId },
@@ -191,11 +283,17 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         alert.userId === auth.userId ? "member" : "admin",
       )
 
+      // The read above is a courtesy, not a guard: two admins tapping at the
+      // same moment both pass it. Putting the same condition in the WHERE makes
+      // the close itself the arbiter, so only one request writes the row, the
+      // feed entry and the pushes, and the loser gets the answer a retry after
+      // a lost response would have got anyway.
       const [resolved] = await db
         .update(sosAlerts)
         .set({ resolvedAt: new Date(), resolvedBy: auth.userId })
-        .where(eq(sosAlerts.id, alert.id))
+        .where(and(eq(sosAlerts.id, alert.id), isNull(sosAlerts.resolvedAt)))
         .returning()
+      if (!resolved) return { ok: true, alreadyResolved: true }
 
       const [actor] = await db
         .select({ displayName: users.displayName })
@@ -217,7 +315,7 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         },
       })
 
-      return { ok: true, resolvedAt: resolved?.resolvedAt?.toISOString() ?? null }
+      return { ok: true, resolvedAt: resolved.resolvedAt?.toISOString() ?? null }
     },
   )
 
@@ -240,14 +338,24 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request) => {
+      const auth = requireAuth(request)
       const membership = await requireMembership(request, request.params.circleId)
+      const now = new Date()
 
       const rows = await db
-        .select({ alert: sosAlerts, user: users, resolver, presence: userPresence })
+        .select({ alert: sosAlerts, user: users, resolver, presence: userPresence, subject })
         .from(sosAlerts)
         .innerJoin(users, eq(users.id, sosAlerts.userId))
         .leftJoin(resolver, eq(resolver.id, sosAlerts.resolvedBy))
         .leftJoin(userPresence, eq(userPresence.userId, sosAlerts.userId))
+        // Left, not inner: somebody can leave a circle with an alert still
+        // open, and the alert stays in the circle's own record. Their presence
+        // row keeps updating from the circles they are still in, so without
+        // this join the list would follow them around after they left.
+        .leftJoin(
+          subject,
+          and(eq(subject.circleId, sosAlerts.circleId), eq(subject.userId, sosAlerts.userId)),
+        )
         .where(
           and(
             eq(sosAlerts.circleId, membership.circleId),
@@ -257,18 +365,51 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .orderBy(desc(sosAlerts.startedAt))
         .limit(request.query.limit)
 
-      return rows.map((row) => ({
-        id: row.alert.id,
-        circleId: row.alert.circleId,
-        user: toPublicUser(row.user),
-        startedAt: row.alert.startedAt.toISOString(),
-        resolvedAt: row.alert.resolvedAt?.toISOString() ?? null,
-        resolvedBy: row.resolver ? toPublicUser(row.resolver) : null,
-        note: row.alert.note,
-        lastLat: row.alert.resolvedAt ? null : (row.presence?.lat ?? null),
-        lastLon: row.alert.resolvedAt ? null : (row.presence?.lon ?? null),
-        lastFixAt: row.presence?.recordedAt?.toISOString() ?? null,
-      }))
+      return rows.map((row) => {
+        // Raising an SOS un-pauses the raiser by writing sharingState, so an
+        // ordinary open alert still hands the circle an exact live position.
+        // Reading user_presence raw would make it a read-time bypass on top of
+        // that write, and this list would keep tracking somebody who set their
+        // sharing back or left the circle, while the map honoured them.
+        const seen =
+          row.subject && !row.alert.resolvedAt
+            ? projectPresence(
+                {
+                  userId: row.alert.userId,
+                  sharingState: row.subject.sharingState,
+                  pausedUntil: row.subject.pausedUntil,
+                  resumeToState: row.subject.resumeToState,
+                  lat: row.presence?.lat ?? null,
+                  lon: row.presence?.lon ?? null,
+                  accuracyMeters: row.presence?.accuracyMeters ?? null,
+                  recordedAt: row.presence?.recordedAt ?? null,
+                  batteryLevel: row.presence?.batteryLevel ?? null,
+                  isCharging: row.presence?.isCharging ?? null,
+                  activity: row.presence?.activity ?? null,
+                  speedMps: row.presence?.speedMps ?? null,
+                  headingDegrees: row.presence?.headingDegrees ?? null,
+                },
+                auth.userId,
+                { atPlace: null, sosAlertId: row.alert.id, now },
+              )
+            : null
+
+        return {
+          id: row.alert.id,
+          circleId: row.alert.circleId,
+          user: toPublicUser(row.user),
+          startedAt: row.alert.startedAt.toISOString(),
+          resolvedAt: row.alert.resolvedAt?.toISOString() ?? null,
+          resolvedBy: row.resolver ? toPublicUser(row.resolver) : null,
+          note: row.alert.note,
+          lastLat: seen?.lat ?? null,
+          lastLon: seen?.lon ?? null,
+          // On its own this still says the phone reported a moment ago, which
+          // is the one thing a pause is meant to withhold, so it follows the
+          // coordinates rather than being served unconditionally.
+          lastFixAt: seen?.recordedAt ?? null,
+        }
+      })
     },
   )
 
@@ -291,6 +432,26 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
     async (request, reply) => {
       const auth = requireAuth(request)
       const membership = await requireMembership(request, request.params.circleId)
+
+      // The membership row stops short of resume_to_state, and a pause that has
+      // run out has to land on the state its owner chose before it, or checking
+      // in publishes the exact position that state was turned down to hide.
+      const [gate] = await db
+        .select({ resumeToState: circleMembers.resumeToState })
+        .from(circleMembers)
+        .where(
+          and(
+            eq(circleMembers.circleId, membership.circleId),
+            eq(circleMembers.userId, auth.userId),
+          ),
+        )
+        .limit(1)
+      const shared = effectiveSharingState(
+        membership.sharingState,
+        membership.pausedUntil,
+        new Date(),
+        gate?.resumeToState ?? null,
+      )
 
       const nearby = await db
         .select({
@@ -329,8 +490,17 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .from(users)
         .where(eq(users.id, auth.userId))
         .limit(1)
-      const name = actor?.displayName ?? "Someone"
-      const where = match ? ` at ${match.name}` : ""
+      const name = singleLine(actor?.displayName ?? "") || "Someone"
+
+      // The row keeps what she reported. The feed keeps what this circle is
+      // allowed to know, and it keeps it forever, so the coarsening happens
+      // before the write rather than on the way out.
+      const seen = projectCheckIn(
+        shared,
+        { lat: created.lat, lon: created.lon },
+        match ? { id: match.id, name: match.name } : null,
+      )
+      const where = seen.placeName ? ` at ${seen.placeName}` : ""
 
       await recordEvent(db, {
         circleId: membership.circleId,
@@ -338,15 +508,17 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         actorUserId: auth.userId,
         payload: {
           checkInId: created.id,
-          lat: created.lat,
-          lon: created.lon,
-          placeId: created.placeId,
+          lat: seen.lat,
+          lon: seen.lon,
+          placeId: seen.placeId,
           note: created.note,
         },
-        summary: `${name} checked in${where}`,
+        summary: singleLine(`${name} checked in${where}`),
         notify: {
           title: "Check-in",
-          body: `${name} checked in${where}.${created.note ? ` "${created.note}"` : ""}`,
+          body: singleLine(
+            `${name} checked in${where}.${created.note ? ` "${created.note}"` : ""}`,
+          ),
         },
       })
 
@@ -361,6 +533,8 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(eq(users.id, auth.userId))
         .limit(1)
 
+      // Unprojected: this reply goes to the one person who just checked in,
+      // and the confirmation screen names the place she is standing in.
       return reply.code(201).send({
         id: created.id,
         circleId: created.circleId,
@@ -388,26 +562,57 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (request) => {
       const membership = await requireMembership(request, request.params.circleId)
+      const now = new Date()
       const rows = await db
-        .select({ checkIn: checkIns, user: users, placeName: places.name })
+        .select({ checkIn: checkIns, user: users, placeName: places.name, subject })
         .from(checkIns)
         .innerJoin(users, eq(users.id, checkIns.userId))
         .leftJoin(places, eq(places.id, checkIns.placeId))
+        // Left, not inner: a check-in belongs to the circle's own record and
+        // stays in it after the person who made it leaves.
+        .leftJoin(
+          subject,
+          and(eq(subject.circleId, checkIns.circleId), eq(subject.userId, checkIns.userId)),
+        )
         .where(eq(checkIns.circleId, membership.circleId))
         .orderBy(desc(checkIns.createdAt))
         .limit(request.query.limit)
 
-      return rows.map((row) => ({
-        id: row.checkIn.id,
-        circleId: row.checkIn.circleId,
-        user: toPublicUser(row.user),
-        lat: row.checkIn.lat,
-        lon: row.checkIn.lon,
-        note: row.checkIn.note,
-        placeId: row.checkIn.placeId,
-        placeName: row.placeName,
-        createdAt: row.checkIn.createdAt.toISOString(),
-      }))
+      return rows.map((row) => {
+        // Read time, like the map: turning sharing down has to take the old
+        // check-ins with it, and somebody who has left the circle leaves no
+        // position behind in it. Your own are always yours.
+        const state: SharingState =
+          row.checkIn.userId === membership.userId
+            ? "precise"
+            : row.subject
+              ? effectiveSharingState(
+                  row.subject.sharingState,
+                  row.subject.pausedUntil,
+                  now,
+                  row.subject.resumeToState,
+                )
+              : "paused"
+        const seen = projectCheckIn(
+          state,
+          { lat: row.checkIn.lat, lon: row.checkIn.lon },
+          row.checkIn.placeId && row.placeName
+            ? { id: row.checkIn.placeId, name: row.placeName }
+            : null,
+        )
+
+        return {
+          id: row.checkIn.id,
+          circleId: row.checkIn.circleId,
+          user: toPublicUser(row.user),
+          lat: seen.lat,
+          lon: seen.lon,
+          note: row.checkIn.note,
+          placeId: seen.placeId,
+          placeName: seen.placeName,
+          createdAt: row.checkIn.createdAt.toISOString(),
+        }
+      })
     },
   )
 
@@ -442,7 +647,12 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
       }
 
       const [target] = await db
-        .select({ userId: circleMembers.userId, sharingState: circleMembers.sharingState })
+        .select({
+          userId: circleMembers.userId,
+          sharingState: circleMembers.sharingState,
+          pausedUntil: circleMembers.pausedUntil,
+          resumeToState: circleMembers.resumeToState,
+        })
         .from(circleMembers)
         .where(
           and(
@@ -452,7 +662,16 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         )
         .limit(1)
       if (!target) throw notFound("That person is not in this circle.")
-      if (target.sharingState === "paused") {
+      // Through the same helper the map reads, so a pause that has run out
+      // stops refusing here at the moment it stops hiding her on the map. A
+      // stale phone during a lapsed pause is the case a nudge is for.
+      const targetState = effectiveSharingState(
+        target.sharingState,
+        target.pausedUntil,
+        new Date(),
+        target.resumeToState,
+      )
+      if (targetState === "paused") {
         throw forbidden("That member has paused location sharing.")
       }
 
@@ -466,12 +685,15 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .from(users)
         .where(eq(users.id, auth.userId))
         .limit(1)
-      const name = actor?.displayName ?? "Someone"
+      const name = singleLine(actor?.displayName ?? "") || "Someone"
 
       const quickKey = request.body?.quickKey ?? null
       const messageBody =
         request.body?.body ??
         (quickKey ? (QUICK_MESSAGES.find((m) => m.key === quickKey)?.body ?? null) : null)
+      // The message keeps its own shape in the payload, which the app renders
+      // as a block of text. The feed line and the push are one line each.
+      const oneLine = messageBody ? singleLine(messageBody) : ""
 
       // recordEvent puts it in the feed and queues the push through the path
       // that honours each member's mute settings, narrowed to the one person
@@ -481,10 +703,10 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         type: "nudge_requested",
         actorUserId: auth.userId,
         payload: { targetUserId: target.userId, quickKey, body: messageBody },
-        summary: messageBody ? `${name}: ${messageBody}` : `${name} asked for a location update`,
+        summary: oneLine ? `${name}: ${oneLine}` : `${name} asked for a location update`,
         notify: {
-          title: messageBody ? name : "Location requested",
-          body: messageBody ?? `${name} asked where you are.`,
+          title: oneLine ? name : "Location requested",
+          body: oneLine || `${name} asked where you are.`,
           channel: "alerts",
           priority: "high",
           onlyUserIds: [target.userId],

@@ -1,3 +1,5 @@
+import net from "node:net"
+
 import multipart from "@fastify/multipart"
 import websocket from "@fastify/websocket"
 import { API_PREFIX } from "@hearth/shared"
@@ -37,12 +39,45 @@ const VERSION =
     ? __HEARTH_VERSION__
     : (process.env.npm_package_version ?? "0.0.0-dev")
 
+/** A reverse proxy reaches the API over loopback or a private network. */
+const proxyPeers = new net.BlockList()
+proxyPeers.addSubnet("127.0.0.0", 8, "ipv4")
+proxyPeers.addSubnet("10.0.0.0", 8, "ipv4")
+proxyPeers.addSubnet("172.16.0.0", 12, "ipv4")
+proxyPeers.addSubnet("192.168.0.0", 16, "ipv4")
+proxyPeers.addSubnet("169.254.0.0", 16, "ipv4")
+proxyPeers.addAddress("::1", "ipv6")
+proxyPeers.addSubnet("fc00::", 7, "ipv6")
+proxyPeers.addSubnet("fe80::", 10, "ipv6")
+
+/**
+ * `trustProxy: true` believes the whole X-Forwarded-For chain, and the
+ * left-hand end of that chain is whatever the caller typed. The rate limiter
+ * and the login throttle are keyed on request.ip, so a caller that picks its
+ * own address gets a fresh bucket per request and unlimited password guesses.
+ * Trusting only the immediate peer, and only when it sits on a private
+ * network, leaves request.ip as the address the proxy itself appended.
+ *
+ * Two proxies in a row still attribute the request to the second one. That
+ * under-counts, which costs an operator nothing but a shared rate-limit
+ * bucket, where over-trusting costs them the throttle.
+ */
+export function proxyTrust(
+  trustProxy: boolean,
+): ((address: string, hop: number) => boolean) | false {
+  if (!trustProxy) return false
+  return (address, hop) =>
+    hop === 0 &&
+    net.isIP(address) !== 0 &&
+    proxyPeers.check(address, net.isIPv6(address) ? "ipv6" : "ipv4")
+}
+
 export async function buildApp(): Promise<FastifyInstance> {
   const config = getConfig()
 
   const app = Fastify({
     logger: loggerOptions(),
-    trustProxy: config.TRUST_PROXY,
+    trustProxy: proxyTrust(config.TRUST_PROXY),
     // Location batches are the largest thing a client sends.
     bodyLimit: 2 * 1024 * 1024,
     genReqId: () => crypto.randomUUID(),

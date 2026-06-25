@@ -1,4 +1,4 @@
-import type { PushProvider } from "@hearth/shared"
+import { MUTABLE_EVENT_TYPES, type PushProvider } from "@hearth/shared"
 import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
@@ -13,6 +13,12 @@ export interface PushMessage {
   data?: Record<string, unknown>
   channel?: "default" | "alerts" | "sos"
   priority?: "normal" | "high"
+  /**
+   * Hold the send until this time. Used where the thing being announced might
+   * be contradicted moments later, so the family is buzzed once about what
+   * happened rather than twice about what turned out not to have.
+   */
+  notBefore?: Date
 }
 
 export interface DeliveryTarget {
@@ -226,6 +232,7 @@ export async function enqueuePush(db: Database, messages: PushMessage[]): Promis
       data: message.data ?? {},
       channel: message.channel ?? ("default" as const),
       priority: message.priority ?? ("normal" as const),
+      ...(message.notBefore ? { nextAttemptAt: message.notBefore } : {}),
     })),
   )
 }
@@ -242,9 +249,16 @@ export async function resolveCircleRecipients(
     .where(eq(circleMembers.circleId, circleId))
 
   const now = Date.now()
+  const silenceable = (MUTABLE_EVENT_TYPES as readonly string[]).includes(eventType)
+
   return rows
     .filter((row) => !excludeUserIds.includes(row.userId))
     .filter((row) => {
+      // The product decides which alerts a member may silence, and a mute-all
+      // is only a shortcut for muting those. An SOS, a possible incident or a
+      // resolved alert has to arrive however deep in an evening's quiet the
+      // recipient is, so neither mute reaches it.
+      if (!silenceable) return true
       const prefs = row.notifications
       if (prefs.mutedUntil && Date.parse(prefs.mutedUntil) > now) return false
       return !prefs.muted.includes(eventType as never)
@@ -275,9 +289,12 @@ export async function drainOutbox(
 
   // SKIP LOCKED claims rows atomically, so several API replicas, or an admin
   // "flush now" racing the scheduler, cannot deliver the same alert twice.
+  // Claiming also stamps next_attempt_at with the moment of the claim, which is
+  // what lets requeueStuckSends tell a send that is still in flight from one
+  // abandoned by a replica that died holding it.
   const raw = (await db.execute(sql`
     update notification_outbox
-    set status = 'sending'
+    set status = 'sending', next_attempt_at = ${now.toISOString()}::timestamptz
     where id in (
       select id from notification_outbox
       where status = 'pending' and next_attempt_at <= ${now.toISOString()}::timestamptz
@@ -288,7 +305,10 @@ export async function drainOutbox(
     returning *
   `)) as unknown as Array<Record<string, unknown>>
 
-  const claimed = raw.map(rowFromDriver)
+  const allClaimed = raw.map(rowFromDriver)
+  if (allClaimed.length === 0) return summary
+
+  const claimed = await dropRowsForFormerMembers(db, allClaimed, now, summary)
   if (claimed.length === 0) return summary
 
   if (driver.provider === "none") {
@@ -301,8 +321,8 @@ export async function drainOutbox(
           claimed.map((row) => row.id),
         ),
       )
-    summary.processed = claimed.length
-    summary.skipped = claimed.length
+    summary.processed += claimed.length
+    summary.skipped += claimed.length
     return summary
   }
 
@@ -410,6 +430,53 @@ export async function drainOutbox(
   return summary
 }
 
+/**
+ * Membership is checked again at delivery time, not only when the row was
+ * queued. A backlog can sit in the outbox for hours behind a broken provider,
+ * and somebody removed from the circle in the meantime must not be handed the
+ * family's whereabouts on the way out. Rows with no circle, such as the
+ * "test your notifications" push, belong to nobody's membership and stay.
+ */
+async function dropRowsForFormerMembers(
+  db: Database,
+  claimed: OutboxRow[],
+  now: Date,
+  summary: DrainSummary,
+): Promise<OutboxRow[]> {
+  const scoped = claimed.filter((row): row is OutboxRow & { circleId: string } => !!row.circleId)
+  if (scoped.length === 0) return claimed
+
+  const memberRows = await db
+    .select({ userId: circleMembers.userId, circleId: circleMembers.circleId })
+    .from(circleMembers)
+    .where(
+      and(
+        inArray(circleMembers.userId, [...new Set(scoped.map((row) => row.userId))]),
+        inArray(circleMembers.circleId, [...new Set(scoped.map((row) => row.circleId))]),
+      ),
+    )
+
+  const key = (userId: string, circleId: string) => `${userId}:${circleId}`
+  const stillIn = new Set(memberRows.map((row) => key(row.userId, row.circleId)))
+  const gone = scoped.filter((row) => !stillIn.has(key(row.userId, row.circleId)))
+  if (gone.length === 0) return claimed
+
+  await db
+    .update(notificationOutbox)
+    .set({ status: "skipped", sentAt: now, lastError: "no longer a member of that circle" })
+    .where(
+      inArray(
+        notificationOutbox.id,
+        gone.map((row) => row.id),
+      ),
+    )
+  summary.processed += gone.length
+  summary.skipped += gone.length
+
+  const dropped = new Set(gone.map((row) => row.id))
+  return claimed.filter((row) => !dropped.has(row.id))
+}
+
 /** A raw db.execute comes back in snake_case, not the Drizzle row shape. */
 function rowFromDriver(raw: Record<string, unknown>): OutboxRow {
   return {
@@ -433,16 +500,18 @@ function rowFromDriver(raw: Record<string, unknown>): OutboxRow {
 
 /**
  * A replica that dies mid-drain leaves rows stuck in "sending" with nobody to
- * retry them.
+ * retry them. Only rows claimed before the cutoff are freed: a send still
+ * waiting on the provider's HTTP response was claimed moments ago, and
+ * reviving that one is how a family gets told twice about the same arrival.
  */
-export async function requeueStuckSends(db: Database, olderThan: Date): Promise<number> {
+export async function requeueStuckSends(db: Database, claimedBefore: Date): Promise<number> {
   const rows = await db
     .update(notificationOutbox)
     .set({ status: "pending" })
     .where(
       and(
         eq(notificationOutbox.status, "sending"),
-        lte(notificationOutbox.nextAttemptAt, olderThan),
+        lte(notificationOutbox.nextAttemptAt, claimedBefore),
       ),
     )
     .returning({ id: notificationOutbox.id })

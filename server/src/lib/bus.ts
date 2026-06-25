@@ -1,4 +1,7 @@
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
+
+import { getConfig } from "../env"
 
 /**
  * Realtime fan-out between the HTTP handlers that mutate state and the
@@ -46,6 +49,54 @@ class MemoryBus implements RealtimeBus {
 
 const REDIS_CHANNEL = "hearth:realtime"
 const PUBLISH_TIMEOUT_MS = 2000
+const FRAME_VERSION = "h1"
+
+/*
+ * Redis is not a trusted party. The overlay ships it with no password on a
+ * private compose network, so anything that reaches that network could publish
+ * a forged position for a child, or simply subscribe and read every member's
+ * precise coordinates as they are broadcast, because the rows on the bus are
+ * unprojected by design.
+ *
+ * Sealing the envelope makes the shared server secret, not network placement,
+ * the thing that decides who may speak on the bus and who may read it. Replicas
+ * already have to agree on JWT_SECRET or they could not verify each other's
+ * tokens, so this needs no new configuration.
+ */
+
+function busKey(secret: string): Buffer {
+  return Buffer.from(hkdfSync("sha256", secret, "", "hearth realtime bus", 32))
+}
+
+export function sealEnvelope(key: Buffer, envelope: BusEnvelope): string {
+  const iv = randomBytes(12)
+  const cipher = createCipheriv("aes-256-gcm", key, iv)
+  const body = Buffer.concat([cipher.update(JSON.stringify(envelope), "utf8"), cipher.final()])
+  return [
+    FRAME_VERSION,
+    iv.toString("base64url"),
+    cipher.getAuthTag().toString("base64url"),
+    body.toString("base64url"),
+  ].join(".")
+}
+
+/** Null for anything not sealed by a server holding the same secret. */
+export function openEnvelope(key: Buffer, frame: string): BusEnvelope | null {
+  const [version, iv, tag, body] = frame.split(".")
+  if (version !== FRAME_VERSION || !iv || !tag || !body) return null
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"))
+    decipher.setAuthTag(Buffer.from(tag, "base64url"))
+    const plain = Buffer.concat([
+      decipher.update(Buffer.from(body, "base64url")),
+      decipher.final(),
+    ]).toString("utf8")
+    const envelope = JSON.parse(plain) as BusEnvelope
+    return typeof envelope?.topic === "string" ? envelope : null
+  } catch {
+    return null
+  }
+}
 
 class RedisBus implements RealtimeBus {
   readonly kind = "redis" as const
@@ -54,14 +105,15 @@ class RedisBus implements RealtimeBus {
   private constructor(
     private readonly pub: import("ioredis").Redis,
     private readonly sub: import("ioredis").Redis,
+    private readonly key: Buffer,
   ) {
     this.local.setMaxListeners(0)
     this.sub.on("message", (_channel: string, raw: string) => {
-      try {
-        this.local.emit("message", JSON.parse(raw) as BusEnvelope)
-      } catch {
-        // A malformed frame from another (mismatched) version is not fatal.
-      }
+      const envelope = openEnvelope(this.key, raw)
+      // Dropped silently: a frame we cannot open is either from a mismatched
+      // version or from something that is not a Hearth replica at all, and
+      // neither is worth a log line per message.
+      if (envelope) this.local.emit("message", envelope)
     })
   }
 
@@ -78,12 +130,12 @@ class RedisBus implements RealtimeBus {
     })
     const sub = new Redis(url, { maxRetriesPerRequest: null, lazyConnect: false })
     await sub.subscribe(REDIS_CHANNEL)
-    return new RedisBus(pub, sub)
+    return new RedisBus(pub, sub, busKey(getConfig().jwtSecret))
   }
 
   async publish(topic: string, payload: unknown): Promise<void> {
     try {
-      await this.pub.publish(REDIS_CHANNEL, JSON.stringify({ topic, payload }))
+      await this.pub.publish(REDIS_CHANNEL, sealEnvelope(this.key, { topic, payload }))
     } catch {
       // Fan-out is best effort. Losing a frame while Redis is down is far
       // better than failing the write that produced it.

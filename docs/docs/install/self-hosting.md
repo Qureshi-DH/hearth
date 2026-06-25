@@ -183,10 +183,13 @@ server {
 }
 ```
 
-Set `TRUST_PROXY=true` in `.env` only once a proxy really is in front. While it
-is on, Hearth believes the `X-Forwarded-For` header, so anything that can reach
-the API directly can forge its own address and walk past the per-IP rate limit.
-Leave it `false` for a direct LAN deployment.
+Set `TRUST_PROXY=true` in `.env` once a proxy really is in front, or the rate
+limiter sees your whole family as one client. Hearth only believes
+`X-Forwarded-For` from the machine that connected to it, and only when that
+machine is on a private network, so a caller on the internet cannot pick its own
+address and walk past the login throttle. Two proxies in a row attribute the
+request to the second one, which shares a rate-limit bucket rather than losing
+the limit. Leave it `false` for a direct LAN deployment.
 
 ### Traefik
 

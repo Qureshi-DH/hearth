@@ -1,24 +1,62 @@
 import type { WsClientMessage, WsServerMessage } from "@hearth/shared"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { alias } from "drizzle-orm/pg-core"
 import type { FastifyInstance, FastifyRequest } from "fastify"
+import { z } from "zod"
 
 import { getDb } from "../db/client"
-import { circleMembers, sessions, sosAlerts, userPresence, users } from "../db/schema"
+import { circleMembers, sosAlerts, userPresence, users } from "../db/schema"
 import { circleTopic, userTopic, type BusEnvelope } from "../lib/bus"
 import { toPublicUser } from "../lib/serialize"
-import { extractToken, type AccessTokenClaims } from "../plugins/auth"
+import { extractToken, resolveSession, type AccessTokenClaims } from "../plugins/auth"
 import { getBus } from "../runtime"
 import {
   getCirclePresence,
   projectCirclePresence,
+  projectPresence,
   type RawCirclePresence,
 } from "../services/presence"
 
 const HEARTBEAT_MS = 30_000
 const REAUTH_MS = 60_000
 
+/** Phone, tablet and a browser tab or two, with room for stale sockets a flaky network left behind. */
+const MAX_SOCKETS_PER_USER = 12
+
+/** 4401 tells the client its token is dead and to stop reconnecting. This one means try again later. */
+const CLOSE_TOO_MANY = 4429
+
+/** Room for a subscribe and a ping or two sent before the connect queries finish. */
+const MAX_PENDING_FRAMES = 16
+
 const resolver = alias(users, "resolver")
+
+/** The raiser's membership of the circle the alert belongs to, which may be gone. */
+const alertMember = alias(circleMembers, "alert_member")
+
+/**
+ * A frame arrives as whatever the peer felt like sending. The compile-time
+ * WsClientMessage says nothing at runtime, so every frame is parsed before a
+ * single field of it is touched.
+ */
+const clientMessage: z.ZodType<WsClientMessage> = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("ping") }),
+  z.object({ type: z.literal("subscribe"), circleIds: z.array(z.string()) }),
+])
+
+/** Only close() and identity are needed, and typing it this way keeps the ws types out of the module. */
+interface TrackedSocket {
+  close(code?: number, reason?: string): void
+}
+
+/**
+ * Every open socket holds a heartbeat, a re-authorisation timer that queries
+ * the database each minute, and a bus subscription, so one account must not be
+ * able to pile them up without bound. The count is per user rather than per
+ * address because a household shares one address, and behind a reverse proxy
+ * every connection arrives from the proxy's.
+ */
+const socketsByUser = new Map<string, Set<TrackedSocket>>()
 
 /**
  * The bus carries word that something changed, never a rendered payload. What a
@@ -29,8 +67,7 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
   const db = getDb()
 
   app.get("/ws", { websocket: true }, async (socket, request: FastifyRequest) => {
-    // Empty rather than null, so the same verify below rejects a missing token
-    // and the value stays a string for the re-check on the timer.
+    // Empty rather than null, so the same verify below rejects a missing token.
     const token = extractToken(request) ?? ""
 
     let claims: AccessTokenClaims
@@ -41,9 +78,77 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
       return
     }
 
-    const userId = claims.sub
     const sessionId = claims.sid
     const bus = getBus()
+
+    // The peer can hang up during any of the awaits below, and a close listener
+    // attached afterwards would never fire, leaving the timers and the bus
+    // subscription running for the life of the process.
+    let closed = false
+    const disposers: Array<() => void> = []
+    const onClose = (dispose: () => void) => {
+      if (closed) dispose()
+      else disposers.push(dispose)
+    }
+    socket.on("close", () => {
+      closed = true
+      for (const dispose of disposers.splice(0)) dispose()
+    })
+
+    // A client may send the moment the socket opens, while the queries below
+    // are still running, and ws drops any frame that has no listener yet. Hold
+    // those until the state they act on exists, and only as many as a client
+    // could plausibly mean to send in that window.
+    const pending: Buffer[] = []
+    let acceptingFrames = false
+    socket.on("message", (raw: Buffer) => {
+      if (acceptingFrames) handleFrame(raw)
+      else if (pending.length < MAX_PENDING_FRAMES) pending.push(raw)
+    })
+
+    /**
+     * A signature says nothing about the session behind it. REST re-checks the
+     * session row on every request, and a socket outlives the request that
+     * opened it, so it has to check at connect and then keep checking. Without
+     * the check at connect, a signed-out token opens fresh sockets and is
+     * primed with live coordinates for as long as the token itself is valid.
+     * It goes through the helper the REST path uses, so a token naming a
+     * subject that does not own the session is refused here too.
+     */
+    const liveSession = async () => {
+      const resolved = await resolveSession(claims)
+      return resolved?.isActive ? resolved : null
+    }
+
+    const session = await liveSession()
+    if (!session) {
+      socket.close(4401, "unauthorized")
+      return
+    }
+
+    // From the row rather than from the token's subject, so everything below
+    // is authorised as the account that actually owns this session.
+    const userId = session.userId
+
+    const openForUser = socketsByUser.get(userId) ?? new Set<TrackedSocket>()
+    socketsByUser.set(userId, openForUser)
+    // The oldest goes rather than the newcomer: a phone reconnecting through a
+    // bad network would otherwise be locked out by the sockets it abandoned.
+    while (openForUser.size >= MAX_SOCKETS_PER_USER) {
+      const oldest = openForUser.values().next().value
+      if (!oldest) break
+      openForUser.delete(oldest)
+      oldest.close(CLOSE_TOO_MANY, "too many connections")
+    }
+    openForUser.add(socket)
+    onClose(() => {
+      openForUser.delete(socket)
+      // An evicted socket is dropped from the set before it closes, so by the
+      // time this runs the map may already hold a newer set for this user.
+      if (openForUser.size === 0 && socketsByUser.get(userId) === openForUser) {
+        socketsByUser.delete(userId)
+      }
+    })
 
     const loadMemberships = async () =>
       new Set(
@@ -79,6 +184,7 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
     const unsubscribe = bus?.onMessage((envelope: BusEnvelope) => {
       void handleEnvelope(envelope)
     })
+    onClose(() => unsubscribe?.())
 
     async function reauthorise(): Promise<void> {
       // Revocation is checked against the session row rather than by
@@ -87,13 +193,7 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
       // close every healthy connection on a timer. The session row is what
       // signing out, changing a password or deactivating an account updates,
       // and it is the thing that has to stop the feed.
-      const [session] = await db
-        .select({ revokedAt: sessions.revokedAt, isActive: users.isActive })
-        .from(sessions)
-        .innerJoin(users, eq(users.id, sessions.userId))
-        .where(eq(sessions.id, sessionId))
-        .limit(1)
-      if (!session || session.revokedAt || !session.isActive) {
+      if (!(await liveSession())) {
         socket.close(4401, "unauthorized")
         return
       }
@@ -127,6 +227,17 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
 
       try {
         switch (payload.type) {
+          case "session_revoked": {
+            // Signing out has to cut the feed now, not at the next timer pass.
+            // Only ever published on the user's own topic. A missing sessionId
+            // means every session of theirs went.
+            if (!isMine) break
+            const revoked = payload.sessionId
+            if (typeof revoked !== "string" || revoked === sessionId) {
+              socket.close(4401, "unauthorized")
+            }
+            break
+          }
           case "location": {
             const raw = payload.raw as RawCirclePresence | undefined
             const presences = raw
@@ -162,14 +273,56 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
                 user: users,
                 resolver,
                 presence: userPresence,
+                member: alertMember,
               })
               .from(sosAlerts)
               .innerJoin(users, eq(users.id, sosAlerts.userId))
               .leftJoin(resolver, eq(resolver.id, sosAlerts.resolvedBy))
               .leftJoin(userPresence, eq(userPresence.userId, sosAlerts.userId))
+              // Left, not inner: somebody can leave a circle with an alert
+              // still open, and the alert stays in that circle's record while
+              // their presence row goes on updating from the circles they are
+              // still in.
+              .leftJoin(
+                alertMember,
+                and(
+                  eq(alertMember.circleId, sosAlerts.circleId),
+                  eq(alertMember.userId, sosAlerts.userId),
+                ),
+              )
               .where(eq(sosAlerts.id, payload.alertId as string))
               .limit(1)
             if (!alert) break
+
+            // The same projection the REST list uses, because the same map
+            // screen reads both. Raising an SOS un-pauses the raiser by
+            // writing their sharing state, so an open alert already hands the
+            // circle an exact position. Reading user_presence raw on top of
+            // that would keep tracking somebody who set their sharing back or
+            // left the circle, while every other surface honoured them.
+            const seen =
+              alert.member && !alert.alert.resolvedAt
+                ? projectPresence(
+                    {
+                      userId: alert.alert.userId,
+                      sharingState: alert.member.sharingState,
+                      pausedUntil: alert.member.pausedUntil,
+                      resumeToState: alert.member.resumeToState,
+                      lat: alert.presence?.lat ?? null,
+                      lon: alert.presence?.lon ?? null,
+                      accuracyMeters: alert.presence?.accuracyMeters ?? null,
+                      recordedAt: alert.presence?.recordedAt ?? null,
+                      batteryLevel: alert.presence?.batteryLevel ?? null,
+                      isCharging: alert.presence?.isCharging ?? null,
+                      activity: alert.presence?.activity ?? null,
+                      speedMps: alert.presence?.speedMps ?? null,
+                      headingDegrees: alert.presence?.headingDegrees ?? null,
+                    },
+                    userId,
+                    { atPlace: null, sosAlertId: alert.alert.id },
+                  )
+                : null
+
             send({
               type: "sos",
               circleId: circleId!,
@@ -181,9 +334,12 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
                 resolvedAt: alert.alert.resolvedAt?.toISOString() ?? null,
                 resolvedBy: alert.resolver ? toPublicUser(alert.resolver) : null,
                 note: alert.alert.note,
-                lastLat: alert.alert.resolvedAt ? null : (alert.presence?.lat ?? null),
-                lastLon: alert.alert.resolvedAt ? null : (alert.presence?.lon ?? null),
-                lastFixAt: alert.presence?.recordedAt?.toISOString() ?? null,
+                lastLat: seen?.lat ?? null,
+                lastLon: seen?.lon ?? null,
+                // On its own this still says the phone reported a moment ago,
+                // which is the one thing a pause is meant to withhold, so it
+                // follows the coordinates rather than being sent regardless.
+                lastFixAt: seen?.recordedAt ?? null,
               },
             })
             break
@@ -226,34 +382,41 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
 
     const reauth = setInterval(() => void reauthorise(), REAUTH_MS)
 
-    socket.on("message", (raw: Buffer) => {
-      let message: WsClientMessage
+    onClose(() => {
+      clearInterval(heartbeat)
+      clearInterval(reauth)
+    })
+
+    // Nothing in here may throw. The listener that calls it runs synchronously
+    // inside the socket's receiver, so an escaping error becomes an
+    // uncaughtException and takes the server down for every household on it.
+    function handleFrame(raw: Buffer): void {
       try {
-        message = JSON.parse(raw.toString()) as WsClientMessage
-      } catch {
-        send({ type: "error", message: "malformed frame" })
-        return
-      }
+        const parsed = clientMessage.safeParse(JSON.parse(raw.toString()))
+        if (!parsed.success) {
+          send({ type: "error", message: "malformed frame" })
+          return
+        }
+        const message = parsed.data
 
-      if (message.type === "ping") {
-        send({ type: "pong", serverTime: new Date().toISOString() })
-        return
-      }
+        if (message.type === "ping") {
+          send({ type: "pong", serverTime: new Date().toISOString() })
+          return
+        }
 
-      if (message.type === "subscribe") {
         // A subscribe may narrow the set, never widen it past current membership.
         const requested = new Set(message.circleIds)
         const allowed = [...memberOf].filter((circleId) => requested.has(circleId))
         subscribed.clear()
         for (const circleId of allowed) subscribed.add(circleId)
         send({ type: "subscribed", circleIds: [...subscribed] })
+      } catch (error) {
+        request.log.warn({ err: error }, "websocket frame rejected")
+        send({ type: "error", message: "malformed frame" })
       }
-    })
+    }
 
-    socket.on("close", () => {
-      clearInterval(heartbeat)
-      clearInterval(reauth)
-      unsubscribe?.()
-    })
+    acceptingFrames = true
+    for (const raw of pending.splice(0)) handleFrame(raw)
   })
 }

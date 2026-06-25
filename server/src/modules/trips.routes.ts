@@ -1,4 +1,4 @@
-import { DEFAULTS } from "@hearth/shared"
+import { DEFAULTS, haversineMeters } from "@hearth/shared"
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
@@ -8,6 +8,21 @@ import { circleMembers, circles, locationPoints, places, trips } from "../db/sch
 import { forbidden, notFound } from "../lib/errors"
 import { toTrip } from "../lib/serialize"
 import { requireAuth, requireMembership } from "../plugins/auth"
+
+// Postgres has no year zero, so "0000-01-01T00:00:00Z" satisfies zod's calendar
+// check and then aborts the query inside the driver, turning a query string
+// into a 500 that logs the statement and its bound parameters. No trip is
+// stamped outside this window, so the edge is where it gets rejected.
+const MIN_TIMESTAMP_MS = Date.UTC(1970, 0, 1)
+const MAX_TIMESTAMP_MS = Date.UTC(9999, 11, 31, 23, 59, 59, 999)
+
+const isoTimestamp = z
+  .string()
+  .datetime()
+  .refine((value) => {
+    const ms = Date.parse(value)
+    return ms >= MIN_TIMESTAMP_MS && ms <= MAX_TIMESTAMP_MS
+  }, "Timestamp is out of the supported range.")
 
 export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
@@ -25,8 +40,8 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
           "person shares precise location with.",
         params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
         querystring: z.object({
-          from: z.string().datetime().optional(),
-          to: z.string().datetime().optional(),
+          from: isoTimestamp.optional(),
+          to: isoTimestamp.optional(),
           limit: z.coerce.number().int().min(1).max(200).default(50),
         }),
       },
@@ -83,7 +98,8 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
         .orderBy(desc(trips.startedAt))
         .limit(request.query.limit)
 
-      return withPlaceNames(rows)
+      if (userId === auth.userId) return withPlaceNames(rows)
+      return withCirclePlaceNames(rows, [circleId])
     },
   )
 
@@ -128,6 +144,10 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
         .limit(1)
       if (!trip) throw notFound("No such trip.")
 
+      // Null while the trip is the viewer's own, where every place they can
+      // see is theirs to read.
+      let viewerCircleIds: string[] | null = null
+
       if (trip.userId !== auth.userId) {
         // A trip path is history, so it clears the same bar as the history
         // endpoint. The owner shares precisely and the circle allows history.
@@ -135,6 +155,7 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
           .select({
             circleId: circleMembers.circleId,
             sharingState: circleMembers.sharingState,
+            joinedAt: circleMembers.joinedAt,
             settings: circles.settings,
           })
           .from(circleMembers)
@@ -148,11 +169,34 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
               .where(eq(circleMembers.userId, auth.userId))
           ).map((row) => row.circleId),
         )
-        const allowed = shared.some(
+        const qualifying = shared.filter(
           (row) =>
             mine.has(row.circleId) && row.sharingState === "precise" && row.settings.allowHistory,
         )
-        if (!allowed) throw forbidden("You cannot view this trip.")
+        if (qualifying.length === 0) throw forbidden("You cannot view this trip.")
+
+        // And the same lower bound, which the trips list and the breadcrumb
+        // history both apply: nothing from before this person joined, nothing
+        // older than the circle's retention. Whichever of the circles we share
+        // reaches furthest back is the one that decides, because that circle
+        // would show these breadcrumbs in the list.
+        const earliestVisible = Math.min(
+          ...qualifying.map((row) => {
+            const retentionDays = row.settings.historyRetentionDays ?? DEFAULTS.historyRetentionDays
+            return Math.max(
+              row.joinedAt.getTime(),
+              Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+            )
+          }),
+        )
+        // The whole trip, not just the part of the path that falls inside the
+        // window: the summary is derived from position too, and its start
+        // coordinates and place name are exactly what the list withholds.
+        if (trip.startedAt.getTime() < earliestVisible) {
+          throw forbidden("You cannot view this trip.")
+        }
+
+        viewerCircleIds = qualifying.map((row) => row.circleId)
       }
 
       const path = await db
@@ -166,7 +210,9 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(eq(locationPoints.tripId, trip.id))
         .orderBy(locationPoints.recordedAt)
 
-      const [detailed] = await withPlaceNames([trip])
+      const [detailed] = viewerCircleIds
+        ? await withCirclePlaceNames([trip], viewerCircleIds)
+        : await withPlaceNames([trip])
       return {
         ...detailed,
         path: path.map((point) => ({
@@ -202,6 +248,41 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
         row,
         row.startPlaceId ? (names.get(row.startPlaceId) ?? null) : null,
         row.endPlaceId ? (names.get(row.endPlaceId) ?? null) : null,
+      ),
+    )
+  }
+
+  /**
+   * The same trips, named the way these circles name things. The detector
+   * stores one place id, chosen from every place the person who made the trip
+   * can see, so reading that id back would hand a circle a label written
+   * inside one it is not a member of. The coordinates decide instead, against
+   * the places these circles hold themselves.
+   */
+  async function withCirclePlaceNames(
+    rows: (typeof trips.$inferSelect)[],
+    circleIds: string[],
+  ): Promise<ReturnType<typeof toTrip>[]> {
+    if (rows.length === 0) return []
+
+    const placeRows = await db
+      .select({
+        name: places.name,
+        lat: places.lat,
+        lon: places.lon,
+        radiusMeters: places.radiusMeters,
+      })
+      .from(places)
+      .where(inArray(places.circleId, circleIds))
+
+    const nameFor = (point: { lat: number; lon: number }) =>
+      placeRows.find((place) => haversineMeters(point, place) <= place.radiusMeters)?.name ?? null
+
+    return rows.map((row) =>
+      toTrip(
+        row,
+        nameFor({ lat: row.startLat, lon: row.startLon }),
+        nameFor({ lat: row.endLat, lon: row.endLon }),
       ),
     )
   }

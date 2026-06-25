@@ -5,35 +5,23 @@
  *   no_server  -> Server (enter your self-hosted URL)
  *   signed_out -> Login / Register
  *   signed_in  -> Main tabs plus every detail screen
+ *
+ * The detail screens are registered with getComponent rather than component.
+ * Metro's inlineRequires rewrites a top level import into a require at the
+ * identifier's use site, and for a screen list that site is this render, so
+ * `component` evaluates all twenty screen module graphs (react-native-svg and
+ * expo-camera among them) in the same commit that paints the first frame.
+ * getComponent defers each graph to the first time its route is shown.
  */
 import { useEffect, useRef } from "react"
 import { NavigationContainer } from "@react-navigation/native"
 import { createNativeStackNavigator } from "@react-navigation/native-stack"
 
 import Config from "@/config"
-import { AdminScreen } from "@/screens/AdminScreen"
-import { ChangePasswordScreen } from "@/screens/ChangePasswordScreen"
-import { CheckInScreen } from "@/screens/CheckInScreen"
-import { CircleScreen } from "@/screens/CircleScreen"
-import { CircleSettingsScreen } from "@/screens/CircleSettingsScreen"
-import { CreateCircleScreen } from "@/screens/CreateCircleScreen"
-import { DevicesScreen } from "@/screens/DevicesScreen"
 import { ErrorBoundary } from "@/screens/ErrorScreen/ErrorBoundary"
-import { InvitesScreen } from "@/screens/InvitesScreen"
-import { JoinCircleScreen } from "@/screens/JoinCircleScreen"
 import { LoginScreen } from "@/screens/LoginScreen"
-import { MemberDetailScreen } from "@/screens/MemberDetailScreen"
-import { NotificationPrefsScreen } from "@/screens/NotificationPrefsScreen"
-import { PermissionsScreen } from "@/screens/PermissionsScreen"
-import { PlaceDetailScreen } from "@/screens/PlaceDetailScreen"
-import { PlaceEditorScreen } from "@/screens/PlaceEditorScreen"
-import { PrivacyDataScreen } from "@/screens/PrivacyDataScreen"
 import { RegisterScreen } from "@/screens/RegisterScreen"
 import { ServerScreen } from "@/screens/ServerScreen"
-import { SharingScreen } from "@/screens/SharingScreen"
-import { SosScreen } from "@/screens/SosScreen"
-import { TripDetailScreen } from "@/screens/TripDetailScreen"
-import { TripsScreen } from "@/screens/TripsScreen"
 import { endpoints } from "@/services/api"
 import { attachNotificationListeners, setupPush } from "@/services/notifications"
 import { useRealtimeConnection } from "@/services/realtime"
@@ -181,29 +169,89 @@ const AppStack = () => {
       ) : (
         <>
           <Stack.Screen name="Main" component={MainTabNavigator} />
-          <Stack.Screen name="Permissions" component={PermissionsScreen} />
-          <Stack.Screen name="CreateCircle" component={CreateCircleScreen} options={sheet} />
-          <Stack.Screen name="JoinCircle" component={JoinCircleScreen} options={sheet} />
-          <Stack.Screen name="MemberDetail" component={MemberDetailScreen} />
-          <Stack.Screen name="PlaceEditor" component={PlaceEditorScreen} />
-          <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
-          <Stack.Screen name="Circle" component={CircleScreen} />
-          <Stack.Screen name="CircleSettings" component={CircleSettingsScreen} />
-          <Stack.Screen name="Invites" component={InvitesScreen} />
-          <Stack.Screen name="Sharing" component={SharingScreen} />
-          <Stack.Screen name="NotificationPrefs" component={NotificationPrefsScreen} />
-          <Stack.Screen name="Devices" component={DevicesScreen} />
-          <Stack.Screen name="PrivacyData" component={PrivacyDataScreen} />
-          <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} options={sheet} />
+          <Stack.Screen
+            name="Permissions"
+            getComponent={() => require("@/screens/PermissionsScreen").PermissionsScreen}
+          />
+          <Stack.Screen
+            name="CreateCircle"
+            getComponent={() => require("@/screens/CreateCircleScreen").CreateCircleScreen}
+            options={sheet}
+          />
+          <Stack.Screen
+            name="JoinCircle"
+            getComponent={() => require("@/screens/JoinCircleScreen").JoinCircleScreen}
+            options={sheet}
+          />
+          <Stack.Screen
+            name="MemberDetail"
+            getComponent={() => require("@/screens/MemberDetailScreen").MemberDetailScreen}
+          />
+          <Stack.Screen
+            name="PlaceEditor"
+            getComponent={() => require("@/screens/PlaceEditorScreen").PlaceEditorScreen}
+          />
+          <Stack.Screen
+            name="PlaceDetail"
+            getComponent={() => require("@/screens/PlaceDetailScreen").PlaceDetailScreen}
+          />
+          <Stack.Screen
+            name="Circle"
+            getComponent={() => require("@/screens/CircleScreen").CircleScreen}
+          />
+          <Stack.Screen
+            name="CircleSettings"
+            getComponent={() => require("@/screens/CircleSettingsScreen").CircleSettingsScreen}
+          />
+          <Stack.Screen
+            name="Invites"
+            getComponent={() => require("@/screens/InvitesScreen").InvitesScreen}
+          />
+          <Stack.Screen
+            name="Sharing"
+            getComponent={() => require("@/screens/SharingScreen").SharingScreen}
+          />
+          <Stack.Screen
+            name="NotificationPrefs"
+            getComponent={() =>
+              require("@/screens/NotificationPrefsScreen").NotificationPrefsScreen
+            }
+          />
+          <Stack.Screen
+            name="Devices"
+            getComponent={() => require("@/screens/DevicesScreen").DevicesScreen}
+          />
+          <Stack.Screen
+            name="PrivacyData"
+            getComponent={() => require("@/screens/PrivacyDataScreen").PrivacyDataScreen}
+          />
+          <Stack.Screen
+            name="ChangePassword"
+            getComponent={() => require("@/screens/ChangePasswordScreen").ChangePasswordScreen}
+            options={sheet}
+          />
           <Stack.Screen
             name="Sos"
-            component={SosScreen}
+            getComponent={() => require("@/screens/SosScreen").SosScreen}
             options={{ presentation: "fullScreenModal", headerShown: false }}
           />
-          <Stack.Screen name="CheckIn" component={CheckInScreen} options={sheet} />
-          <Stack.Screen name="Trips" component={TripsScreen} />
-          <Stack.Screen name="TripDetail" component={TripDetailScreen} />
-          <Stack.Screen name="Admin" component={AdminScreen} />
+          <Stack.Screen
+            name="CheckIn"
+            getComponent={() => require("@/screens/CheckInScreen").CheckInScreen}
+            options={sheet}
+          />
+          <Stack.Screen
+            name="Trips"
+            getComponent={() => require("@/screens/TripsScreen").TripsScreen}
+          />
+          <Stack.Screen
+            name="TripDetail"
+            getComponent={() => require("@/screens/TripDetailScreen").TripDetailScreen}
+          />
+          <Stack.Screen
+            name="Admin"
+            getComponent={() => require("@/screens/AdminScreen").AdminScreen}
+          />
         </>
       )}
     </Stack.Navigator>

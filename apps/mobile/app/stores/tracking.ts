@@ -2,6 +2,8 @@ import type { LocationFixInput } from "@hearth/shared"
 import { create } from "zustand"
 import { createJSONStorage, persist } from "zustand/middleware"
 
+import { storage } from "@/utils/storage"
+
 import { mmkvStorage } from "./mmkv"
 
 export type PermissionLevel = "unknown" | "denied" | "foreground" | "always"
@@ -33,6 +35,12 @@ interface TrackingState {
   mode: TrackingMode
   /** Where the phone settled, and when it got there. Survives a process kill. */
   stillAnchor: { lat: number; lon: number; since: string } | null
+  /**
+   * Outlives the process for the same reason the anchor does: a parked phone
+   * runs no foreground service, so the OS reclaims it between sync wakes and
+   * anything held in module scope is back to zero on every one of them.
+   */
+  lastDriftCheckAt: string | null
   lastFix: LocationFixInput | null
   lastUploadAt: string | null
   lastError: string | null
@@ -49,6 +57,7 @@ interface TrackingState {
   setPolicy(policy: TrackingPolicy): void
   setMode(mode: TrackingMode): void
   setStillAnchor(anchor: { lat: number; lon: number; since: string } | null): void
+  markDriftChecked(): void
   enqueue(fixes: LocationFixInput[]): void
   dequeue(fixes: LocationFixInput[]): void
   recordUpload(accepted: number): void
@@ -58,6 +67,166 @@ interface TrackingState {
 
 /** An offline week of breadcrumbs must not blow up storage. The newest win. */
 const MAX_QUEUE = 2000
+
+/**
+ * zustand's persist rewrites a store's whole partialized state after every set,
+ * with no check on what actually changed. While the queue lived in there, a
+ * `setError` on a phone holding a day of backlog serialised half a megabyte to
+ * disk, and so did every mode change, permission read and stillness re-anchor.
+ * The queue gets its own keys, written only by the actions that change it.
+ *
+ * Chunked rather than kept as one blob because a single blob makes an outage
+ * quadratic: each new fix rewrites every fix already waiting. A delivery now
+ * touches the tail chunk, and a drained batch drops whole leading chunks.
+ */
+const QUEUE_KEY = "hearth.tracking.queue.v1"
+const QUEUE_CHUNK_SIZE = 100
+
+interface QueueChunk {
+  id: number
+  fixes: LocationFixInput[]
+}
+
+interface QueueIndex {
+  chunkIds: number[]
+  nextChunkId: number
+  lastFix: LocationFixInput | null
+}
+
+let chunks: QueueChunk[] = []
+let nextChunkId = 0
+
+const chunkKey = (id: number) => `${QUEUE_KEY}.${id}`
+
+const flatten = () => chunks.flatMap((chunk) => chunk.fixes)
+
+const queueLength = () => chunks.reduce((total, chunk) => total + chunk.fixes.length, 0)
+
+/**
+ * Surviving chunks, then the index, then the keys nothing points at any more.
+ * A process killed part way through leaves a chunk the index has not adopted
+ * yet, which the next launch sweeps, rather than an index naming a chunk that
+ * was never written.
+ */
+function commitQueue(dirty: Set<number>, removed: number[], lastFix: LocationFixInput | null) {
+  for (const chunk of chunks) {
+    if (dirty.has(chunk.id)) storage.set(chunkKey(chunk.id), JSON.stringify(chunk.fixes))
+  }
+  const index: QueueIndex = { chunkIds: chunks.map((chunk) => chunk.id), nextChunkId, lastFix }
+  storage.set(QUEUE_KEY, JSON.stringify(index))
+  for (const id of removed) storage.delete(chunkKey(id))
+}
+
+function readIndex(): QueueIndex | null {
+  try {
+    const raw = storage.getString(QUEUE_KEY)
+    return raw ? (JSON.parse(raw) as QueueIndex) : null
+  } catch {
+    return null
+  }
+}
+
+function readChunk(id: number): LocationFixInput[] | null {
+  try {
+    const raw = storage.getString(chunkKey(id))
+    const fixes = raw ? (JSON.parse(raw) as LocationFixInput[]) : null
+    return Array.isArray(fixes) ? fixes : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Anything the index does not name is a chunk a kill orphaned, or one left by
+ * an account that signed out here. Breadcrumbs must not outlive either.
+ */
+function sweepOrphans() {
+  const referenced = new Set(chunks.map((chunk) => chunk.id))
+  const prefix = `${QUEUE_KEY}.`
+  for (const key of storage.getAllKeys()) {
+    if (!key.startsWith(prefix)) continue
+    if (!referenced.has(Number(key.slice(prefix.length)))) storage.delete(key)
+  }
+}
+
+function hydrateQueue(): { queue: LocationFixInput[]; lastFix: LocationFixInput | null } {
+  const index = readIndex()
+  const ids = Array.isArray(index?.chunkIds) ? index.chunkIds : []
+  chunks = []
+  for (const id of ids) {
+    const fixes = readChunk(id)
+    // A chunk that will not parse is a few minutes of breadcrumbs, not a reason
+    // to launch with no queue at all.
+    if (fixes && fixes.length > 0) chunks.push({ id, fixes })
+  }
+  nextChunkId = Math.max(index?.nextChunkId ?? 0, ...ids.map((id) => id + 1), 0)
+  sweepOrphans()
+  return { queue: flatten(), lastFix: index?.lastFix ?? null }
+}
+
+function pushFixes(fixes: LocationFixInput[], lastFix: LocationFixInput | null) {
+  const dirty = new Set<number>()
+  for (const fix of fixes) {
+    let tail = chunks[chunks.length - 1]
+    if (!tail || tail.fixes.length >= QUEUE_CHUNK_SIZE) {
+      tail = { id: nextChunkId++, fixes: [] }
+      chunks.push(tail)
+    }
+    tail.fixes.push(fix)
+    dirty.add(tail.id)
+  }
+
+  const removed: number[] = []
+  let over = queueLength() - MAX_QUEUE
+  while (over > 0 && chunks.length > 0) {
+    const head = chunks[0]
+    if (head.fixes.length > over) {
+      head.fixes = head.fixes.slice(over)
+      dirty.add(head.id)
+      break
+    }
+    chunks.shift()
+    dirty.delete(head.id)
+    removed.push(head.id)
+    over -= head.fixes.length
+  }
+
+  commitQueue(dirty, removed, lastFix)
+  return flatten()
+}
+
+function dropFixes(sent: Set<string>, lastFix: LocationFixInput | null) {
+  const dirty = new Set<number>()
+  const removed: number[] = []
+  const kept: QueueChunk[] = []
+  for (const chunk of chunks) {
+    const fixes = chunk.fixes.filter((fix) => !sent.has(fix.recordedAt))
+    if (fixes.length === chunk.fixes.length) {
+      kept.push(chunk)
+      continue
+    }
+    if (fixes.length === 0) {
+      removed.push(chunk.id)
+      continue
+    }
+    chunk.fixes = fixes
+    dirty.add(chunk.id)
+    kept.push(chunk)
+  }
+  chunks = kept
+  commitQueue(dirty, removed, lastFix)
+  return flatten()
+}
+
+function clearQueue() {
+  const removed = chunks.map((chunk) => chunk.id)
+  chunks = []
+  storage.delete(QUEUE_KEY)
+  for (const id of removed) storage.delete(chunkKey(id))
+  sweepOrphans()
+}
+
+const restored = hydrateQueue()
 
 export const useTrackingStore = create<TrackingState>()(
   persist(
@@ -71,10 +240,11 @@ export const useTrackingStore = create<TrackingState>()(
       policy: { minUpdateIntervalSeconds: 30, distanceFilterMeters: 60 },
       mode: "off",
       stillAnchor: null,
-      lastFix: null,
+      lastDriftCheckAt: null,
+      lastFix: restored.lastFix,
       lastUploadAt: null,
       lastError: null,
-      queue: [],
+      queue: restored.queue,
       uploadedCount: 0,
 
       setEnabled: (enabled) => set({ enabled }),
@@ -87,19 +257,17 @@ export const useTrackingStore = create<TrackingState>()(
       setPolicy: (policy) => set({ policy }),
       setMode: (mode) => set({ mode }),
       setStillAnchor: (stillAnchor) => set({ stillAnchor }),
+      markDriftChecked: () => set({ lastDriftCheckAt: new Date().toISOString() }),
       enqueue: (fixes) => {
-        const merged = [...get().queue, ...fixes]
-        set({
-          queue: merged.length > MAX_QUEUE ? merged.slice(merged.length - MAX_QUEUE) : merged,
-          lastFix: fixes[fixes.length - 1] ?? get().lastFix,
-        })
+        const lastFix = fixes[fixes.length - 1] ?? get().lastFix
+        set({ queue: pushFixes(fixes, lastFix), lastFix })
       },
       dequeue: (fixes) => {
         // Match by timestamp, not position. `enqueue` may have trimmed the head
         // while an upload was in flight, and a positional slice would then throw
         // away fixes that were never sent.
         const sent = new Set(fixes.map((fix) => fix.recordedAt))
-        set({ queue: get().queue.filter((fix) => !sent.has(fix.recordedAt)) })
+        set({ queue: dropFixes(sent, get().lastFix) })
       },
       recordUpload: (accepted) =>
         set({
@@ -108,20 +276,24 @@ export const useTrackingStore = create<TrackingState>()(
           uploadedCount: get().uploadedCount + accepted,
         }),
       setError: (lastError) => set({ lastError }),
-      reset: () =>
+      reset: () => {
+        clearQueue()
         set({
           backgroundActive: false,
           mode: "off",
           stillAnchor: null,
+          lastDriftCheckAt: null,
           lastFix: null,
           lastUploadAt: null,
           lastError: null,
           queue: [],
           uploadedCount: 0,
-        }),
+        })
+      },
     }),
     {
       name: "hearth.tracking.v1",
+      version: 1,
       storage: createJSONStorage(() => mmkvStorage),
       partialize: (state) => ({
         enabled: state.enabled,
@@ -131,10 +303,19 @@ export const useTrackingStore = create<TrackingState>()(
         policy: state.policy,
         mode: state.mode,
         stillAnchor: state.stillAnchor,
-        queue: state.queue,
-        lastFix: state.lastFix,
+        lastDriftCheckAt: state.lastDriftCheckAt,
         lastUploadAt: state.lastUploadAt,
       }),
+      // v0 carried the queue and lastFix in this blob. Dropping them here
+      // instead would hand the merge a stale queue that overwrites the one just
+      // read from the new keys, and lose whatever was waiting to upload.
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Partial<TrackingState>
+        if (version >= 1) return state as TrackingState
+        const { queue, lastFix, ...rest } = state
+        const carried = queue?.length ? pushFixes(queue, lastFix ?? null) : restored.queue
+        return { ...rest, queue: carried, lastFix: lastFix ?? restored.lastFix } as TrackingState
+      },
     },
   ),
 )

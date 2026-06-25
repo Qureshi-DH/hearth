@@ -72,6 +72,14 @@ export const sessions = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     /** SHA-256 of the refresh token. The plaintext never touches the database. */
     refreshTokenHash: text("refresh_token_hash").notNull(),
+    /**
+     * The hash this session rotated away from. A presented token that matches
+     * it is either a phone retrying a response it never received, or a stolen
+     * token being replayed, and those are told apart by how long ago the
+     * rotation happened.
+     */
+    previousRefreshTokenHash: text("previous_refresh_token_hash"),
+    previousRotatedAt: timestamp("previous_rotated_at", { withTimezone: true }),
     deviceId: text("device_id").notNull(),
     deviceName: text("device_name"),
     platform: text("platform").$type<Platform>(),
@@ -89,6 +97,7 @@ export const sessions = pgTable(
   (table) => [
     uniqueIndex("sessions_refresh_token_hash_key").on(table.refreshTokenHash),
     index("sessions_user_idx").on(table.userId),
+    index("sessions_previous_refresh_token_hash_idx").on(table.previousRefreshTokenHash),
     uniqueIndex("sessions_user_device_key").on(table.userId, table.deviceId),
   ],
 )
@@ -146,6 +155,15 @@ export const circleMembers = pgTable(
      * location was silently upgraded to an exact one by waiting.
      */
     resumeToState: text("resume_to_state").$type<SharingState>(),
+    /**
+     * Per-circle alert latches. The equivalents on user_presence are shared by
+     * every circle the member belongs to, so the first circle to be told spent
+     * the cooldown for all of them, and a circle whose own threshold was
+     * stricter, or that was paused when the alert fired, was never told at all.
+     */
+    speedAlertedAt: timestamp("speed_alerted_at", { withTimezone: true }),
+    lowBatteryNotifiedAt: timestamp("low_battery_notified_at", { withTimezone: true }),
+    lowBatteryNotifiedLevel: real("low_battery_notified_level"),
     notifications: jsonb("notifications")
       .$type<MemberNotificationPrefsJson>()
       .notNull()
@@ -328,9 +346,16 @@ export const events = pgTable(
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
     summary: text("summary").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * When the row appeared, which is not when it happened. A backlog uploaded
+     * after an outage carries old occurredAt values and the feed orders by
+     * those, but the unread badge counts what is new to the reader.
+     */
+    createdAt: createdAt(),
   },
   (table) => [
     index("events_circle_occurred_idx").on(table.circleId, table.occurredAt.desc()),
+    index("events_circle_created_idx").on(table.circleId, table.createdAt.desc()),
     index("events_actor_idx").on(table.actorUserId),
   ],
 )

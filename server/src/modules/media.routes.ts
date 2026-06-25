@@ -4,13 +4,22 @@ import { z } from "zod"
 import { notFound } from "../lib/errors"
 import { AVATAR_PREFIX, getObject, storageEnabled } from "../services/storage"
 
-/** Random keys, so possessing the URL is the permission. */
+/** The 128 random bits in the name are what stands in for a permission. */
 const KEY_PATTERN = /^avatars\/[0-9a-f]{32}\.(jpg|png|webp)$/
 
 /**
  * Serving objects through the API keeps the bucket off the public internet, so
  * a self-hoster needs one hostname and one certificate rather than exposing
  * MinIO alongside the app.
+ *
+ * This is the one read route with no token check. The app draws avatars with
+ * an image view that sends no headers of its own, so asking for one here would
+ * turn every face in the app into a broken image. Holding the key is the whole
+ * permission, and what that costs is a removed member keeping a working link
+ * to a face they had already loaded, until that person replaces the photo and
+ * the old object is deleted. Making removal revoke instead means signing and
+ * dating the link wherever a user is serialized, and teaching the client to go
+ * back for a fresh one, so the trade is deliberate rather than forgotten.
  */
 export const mediaRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(

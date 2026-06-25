@@ -1,0 +1,2 @@
+ALTER TABLE "events" ADD COLUMN "created_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
+CREATE INDEX "events_circle_created_idx" ON "events" USING btree ("circle_id","created_at" DESC NULLS LAST);

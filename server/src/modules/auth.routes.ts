@@ -54,6 +54,52 @@ const DeviceSchema = z.object({
 /** How many breadcrumbs the export holds in memory at once. */
 const EXPORT_PAGE_SIZE = 5_000
 
+/**
+ * Format characters that either draw nothing or reverse what follows them.
+ * ZWJ and the variation selectors are deliberately absent: ZWJ is what holds an
+ * emoji family together, and stripping either would break ordinary names.
+ */
+const INVISIBLE =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u180E\u200B\u202A-\u202E\u2060\uFEFF]/gu
+
+/** Anything Unicode calls a combining mark. */
+const COMBINING_RUN = /\p{M}{4,}/gu
+
+/**
+ * A display name is read back to every circle the account is in: push titles,
+ * feed lines, the member list, "was driving at 50 km/h". All of those are one
+ * line of text. Left raw, a member can put a newline in their name and forge a
+ * second line in everybody else's notifications, flip the reading direction of
+ * the rest of the line, or stack seventy accents on one letter and smear them
+ * over the rows underneath.
+ *
+ * It runs where the name is stored rather than where each line is built,
+ * because a display name is a single-line field by nature and nothing in it
+ * that only survives as a line break is worth keeping.
+ */
+function singleLine(value: string): string {
+  return value
+    .normalize("NFC")
+    .replace(INVISIBLE, "")
+    .replace(COMBINING_RUN, (run) => [...run].slice(0, 3).join(""))
+    .replace(/\s+/gu, " ")
+    .trim()
+}
+
+/**
+ * Counted in code points, so an emoji or an accented letter costs what it looks
+ * like it costs rather than what UTF-16 happens to store it in.
+ */
+const displayNameSchema = z
+  .string()
+  .max(400)
+  .describe("At most 80 characters once invisible and direction-changing ones are removed.")
+  .transform(singleLine)
+  .refine((value) => value.length > 0 && [...value].length <= 80, {
+    message: "A display name has to be between 1 and 80 characters.",
+  })
+
 const emailSchema = z
   .string()
   .trim()
@@ -104,7 +150,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         body: z.object({
           email: emailSchema,
           password: z.string().min(1).max(512),
-          displayName: z.string().trim().min(1).max(80),
+          displayName: displayNameSchema,
           inviteCode: z.string().trim().min(4).max(16).optional(),
           device: DeviceSchema,
         }),
@@ -122,8 +168,10 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         .limit(1)
       const isFirstUser = count === 0
 
-      // No exemption for the first account. The admin comes from ADMIN_EMAIL at
-      // boot, so an empty server is never claimable by whoever finds it first.
+      // No exemption for the first account: the registration mode is enforced
+      // whether or not the server has any users yet. In invite and closed mode
+      // that is what keeps an empty server from being claimed, since a valid
+      // invite can only come from an account that does not exist yet.
       const mode = await registrationMode(db)
       if (mode === "closed") {
         throw forbidden("This server is not accepting new accounts.")
@@ -150,6 +198,11 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           passwordHash: await hashPassword(password),
           displayName,
           avatarColor: avatarColorFor(emailNormalized),
+          // The zero-config escape hatch for a server started with no
+          // ADMIN_EMAIL, and the reason an open-mode server must be given one:
+          // without a seeded administrator, open mode hands the server to the
+          // first stranger who finds it. env.ts refuses to start without
+          // ADMIN_EMAIL outside development for exactly that reason.
           isAdmin: isFirstUser,
         })
         .onConflictDoNothing({ target: users.emailNormalized })
@@ -158,6 +211,17 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       // Two signups racing on the same address both clear the check above, and
       // the loser would otherwise surface the unique violation as a 500.
       if (!created) throw conflict("An account with that email already exists.")
+
+      // Fires at most once in a server's life, and only for the configuration
+      // that has no seeded administrator to hand the role to instead. Silently
+      // handing it to a stranger is the part that would be hard to notice.
+      if (isFirstUser && !config.ADMIN_EMAIL) {
+        request.log.warn(
+          { userId: created.id, registrationMode: mode },
+          "the first account on this empty server was made an administrator: set ADMIN_EMAIL " +
+            "and ADMIN_PASSWORD so the role goes to you at boot instead",
+        )
+      }
 
       if (inviteCode) {
         // A bad code must not strand an account that was just created.
@@ -230,7 +294,11 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         body: z.object({ refreshToken: z.string().min(10).max(512) }),
       },
     },
-    async (request) => rotateSession(app, db, request.body.refreshToken),
+    async (request) =>
+      rotateSession(app, db, request.body.refreshToken, {
+        ip: request.ip,
+        userAgent: request.headers["user-agent"] ?? null,
+      }),
   )
 
   app.post(
@@ -260,7 +328,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["auth"],
         summary: "Update profile",
         body: z.object({
-          displayName: z.string().trim().min(1).max(80).optional(),
+          displayName: displayNameSchema.optional(),
           locale: z.string().max(16).nullish(),
           units: z.enum(["metric", "imperial"]).optional(),
         }),

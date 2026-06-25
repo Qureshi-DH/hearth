@@ -18,6 +18,7 @@ import { queryClient } from "@/services/queryClient"
 import { useAuthStore } from "@/stores/auth"
 import { toast } from "@/stores/toast"
 import { tokenVault } from "@/stores/tokenVault"
+import { useTrackingStore } from "@/stores/tracking"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { relativeTime } from "@/utils/time"
@@ -86,6 +87,10 @@ export const PrivacyDataScreen: FC<AppStackScreenProps<"PrivacyData">> = ({ navi
       // stop must not strand the app signed in to it.
       await stopTracking().catch(() => {})
       await tokenVault.set(null)
+      // Stopping the tracker leaves whatever it had already queued on the
+      // phone. Nothing is left to upload those fixes to, and they describe
+      // where somebody who asked to be forgotten has been.
+      useTrackingStore.getState().reset()
       queryClient.clear()
       signedOut()
     } catch (error) {

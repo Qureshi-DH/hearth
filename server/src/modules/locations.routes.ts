@@ -30,6 +30,21 @@ const fixSchema = z.object({
   source: z.enum(LOCATION_SOURCES).optional(),
 })
 
+// Postgres has no year zero, so "0000-01-01T00:00:00Z" clears zod's calendar
+// check and then aborts the query inside the driver, turning a query string
+// into a 500 on routes that read and delete history. Nothing Hearth stores is
+// stamped outside this window, so the edge is where it gets rejected.
+const MIN_TIMESTAMP_MS = Date.UTC(1970, 0, 1)
+const MAX_TIMESTAMP_MS = Date.UTC(9999, 11, 31, 23, 59, 59, 999)
+
+const isoTimestamp = z
+  .string()
+  .datetime()
+  .refine((value) => {
+    const ms = Date.parse(value)
+    return ms >= MIN_TIMESTAMP_MS && ms <= MAX_TIMESTAMP_MS
+  }, "Timestamp is out of the supported range.")
+
 export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
 
@@ -129,8 +144,8 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           "currently sharing approximately or not at all.",
         params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
         querystring: z.object({
-          from: z.string().datetime().optional(),
-          to: z.string().datetime().optional(),
+          from: isoTimestamp.optional(),
+          to: isoTimestamp.optional(),
           limit: z.coerce.number().int().min(1).max(5000).default(1000),
         }),
       },
@@ -224,7 +239,7 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "Erase your own breadcrumbs",
         description: "Deletes stored history for a time range. The live position is unaffected.",
         querystring: z.object({
-          before: z.string().datetime().optional(),
+          before: isoTimestamp.optional(),
         }),
       },
     },

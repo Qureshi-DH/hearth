@@ -6,30 +6,33 @@ export function loggerOptions() {
   // still surface. Silencing them lets a green run hide a broken feature.
   if (config.isTest) return { level: "error" }
 
-  if (config.isProduction) {
-    return {
-      level: config.LOG_LEVEL,
-      // Never let credentials or tokens reach the log sink.
-      redact: {
-        paths: [
-          "req.headers.authorization",
-          "req.headers.cookie",
-          "body.password",
-          "body.refreshToken",
-          "body.token",
-        ],
-        censor: "[redacted]",
+  // Scrubbing belongs to every environment that serves real phones. A
+  // self-hoster who starts the built server without NODE_ENV=production still
+  // gets live access tokens through their logs, and those replay.
+  const base = {
+    level: config.LOG_LEVEL,
+    // Never let credentials or tokens reach the log sink.
+    redact: {
+      paths: [
+        "req.headers.authorization",
+        "req.headers.cookie",
+        "body.password",
+        "body.refreshToken",
+        "body.token",
+      ],
+      censor: "[redacted]",
+    },
+    serializers: {
+      req(request: { method: string; url: string; ip: string }) {
+        return { method: request.method, url: scrubUrl(request.url), ip: request.ip }
       },
-      serializers: {
-        req(request: { method: string; url: string; ip: string }) {
-          return { method: request.method, url: scrubUrl(request.url), ip: request.ip }
-        },
-      },
-    }
+    },
   }
 
+  if (config.isProduction) return base
+
   return {
-    level: config.LOG_LEVEL,
+    ...base,
     transport: {
       target: "pino-pretty",
       options: { colorize: true, translateTime: "HH:MM:ss", ignore: "pid,hostname" },

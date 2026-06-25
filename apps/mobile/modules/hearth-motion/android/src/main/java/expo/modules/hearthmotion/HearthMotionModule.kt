@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.content.ContextCompat
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
@@ -34,6 +35,7 @@ private const val DETECTION_INTERVAL_MS = 30_000L
 private const val PREFS = "expo.modules.hearthmotion"
 private const val KEY_ASKED = "activityRecognitionAsked"
 private const val SENSOR_THREAD = "hearth-motion-sensors"
+private const val TAG = "HearthMotion"
 
 /**
  * Slow enough that a drive costs a handful of bridge crossings a second rather
@@ -41,6 +43,37 @@ private const val SENSOR_THREAD = "hearth-motion-sensors"
  * starts within a couple of samples of the jolt that armed it.
  */
 private const val BATCH_INTERVAL_MS = 250L
+
+/**
+ * What the sensor hub is asked to hold in its own FIFO before it wakes the
+ * application processor. The module already spends this long buffering samples
+ * in software, so spending it a layer lower costs nothing that was not being
+ * spent already and saves an interrupt per sample for the length of a drive.
+ * Hardware with no FIFO ignores it and delivers exactly as it did before.
+ *
+ * The two waits compose, so a sample can be half a second old by the time the
+ * JS side sees it. That side arms its verdict on a sample and then waits a
+ * second longer than the aftermath it has to read, which is the room this
+ * spends. Lengthening either wait without the other growing too eats it.
+ */
+private const val MAX_REPORT_LATENCY_US = (BATCH_INTERVAL_MS * 1_000L).toInt()
+
+/**
+ * How many readings of the slower sensors to keep. Deep enough that a reading
+ * outlives its own delivery by several batches, so it is still there to answer
+ * for accelerometer samples that were sitting in another FIFO when it arrived,
+ * and deep enough to hold a batch even on a device that reports faster than we
+ * asked because another app wanted it sooner.
+ */
+private const val SLOW_SENSOR_HISTORY = 32
+
+/**
+ * What fraction of a shared FIFO to ask for when the sensor reserves us none of
+ * it. A reservation is a guarantee and can be spent to the last event. A share
+ * of a pool every app on the phone draws from is not, so most of it is left
+ * alone rather than counted on.
+ */
+private const val SHARED_FIFO_DIVISOR = 4
 
 /**
  * Matching iOS. Not SENSOR_DELAY_FASTEST, which is hundreds of hertz on modern
@@ -91,9 +124,6 @@ class HearthMotionModule : Module() {
   private var sensorThread: HandlerThread? = null
   private val batchHandler = Handler(Looper.getMainLooper())
   private val pending = ArrayDeque<Map<String, Any>>()
-  /** Carried onto each accelerometer sample. Written by the sensor thread, cleared by ours. */
-  @Volatile private var latestRotation = 0.0
-  @Volatile private var latestPressure: Double? = null
   private var bootEpochMs = 0L
 
   private val flush =
@@ -273,6 +303,12 @@ class HearthMotionModule : Module() {
 
     val thread = HandlerThread(SENSOR_THREAD).apply { start() }
     val handler = Handler(thread.looper)
+    // Held by the listener rather than by the module, so the drive that owns
+    // them is the only thing that can write to them. Unregistering can leave a
+    // reading queued behind it, and a stop followed straight away by a start is
+    // two sensor threads for that moment. Neither can reach the other's.
+    val rotation = SensorHistory(SLOW_SENSOR_HISTORY)
+    val pressure = SensorHistory(SLOW_SENSOR_HISTORY)
     val listener =
       object : SensorEventListener {
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
@@ -280,13 +316,19 @@ class HearthMotionModule : Module() {
         override fun onSensorChanged(event: SensorEvent?) {
           val reading = event ?: return
           when (reading.sensor.type) {
-            // Only the accelerometer produces a sample. The other two are read
-            // as whatever they last said, because a collision is decided on the
-            // timescale of the accelerometer and nothing else moves that fast.
+            // Only the accelerometer produces a sample. The other two are kept
+            // with their own timestamps and read back at the instant of the
+            // sample they belong to, because the hub is free to flush the three
+            // sensors in any order it likes.
             Sensor.TYPE_ACCELEROMETER ->
-              collect(reading.timestamp, magnitude(reading.values) / SensorManager.GRAVITY_EARTH)
-            Sensor.TYPE_GYROSCOPE -> latestRotation = magnitude(reading.values)
-            Sensor.TYPE_PRESSURE -> latestPressure = reading.values[0].toDouble()
+              collect(
+                reading.timestamp,
+                magnitude(reading.values) / SensorManager.GRAVITY_EARTH,
+                rotation.at(reading.timestamp) ?: 0.0,
+                pressure.at(reading.timestamp),
+              )
+            Sensor.TYPE_GYROSCOPE -> rotation.add(reading.timestamp, magnitude(reading.values))
+            Sensor.TYPE_PRESSURE -> pressure.add(reading.timestamp, reading.values[0].toDouble())
           }
         }
       }
@@ -294,14 +336,14 @@ class HearthMotionModule : Module() {
     // Delivery goes to a thread of our own. At the fastest rate a device
     // offers this is a callback every few milliseconds, and the main looper is
     // also what draws the map and drains the batches.
-    manager.registerListener(listener, accelerometer, ACCELEROMETER_PERIOD_US, handler)
+    register(manager, listener, accelerometer, ACCELEROMETER_PERIOD_US, handler)
     manager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let { gyroscope ->
-      manager.registerListener(listener, gyroscope, GYROSCOPE_PERIOD_US, handler)
+      register(manager, listener, gyroscope, GYROSCOPE_PERIOD_US, handler)
     }
     // Plenty of Android devices have no barometer. Its absence costs one
     // corroborating signal rather than the whole feature.
     manager.getDefaultSensor(Sensor.TYPE_PRESSURE)?.let { barometer ->
-      manager.registerListener(listener, barometer, PRESSURE_PERIOD_US, handler)
+      register(manager, listener, barometer, PRESSURE_PERIOD_US, handler)
     }
 
     sensors = manager
@@ -311,15 +353,45 @@ class HearthMotionModule : Module() {
     return true
   }
 
+  /**
+   * Registered through here rather than inline so that what the hardware was
+   * asked for is recorded. Whether a handset batches or fell back to an
+   * interrupt per sample is invisible from the JS side, which sees the same
+   * quarter second of samples either way, and the counts differ enough between
+   * devices that the answer is per handset. `adb logcat -s HearthMotion` at the
+   * start of a drive is the whole story.
+   */
+  private fun register(
+    manager: SensorManager,
+    listener: SensorEventListener,
+    sensor: Sensor,
+    periodUs: Int,
+    handler: Handler,
+  ) {
+    val latencyUs =
+      batchLatencyUs(sensor.fifoMaxEventCount, sensor.fifoReservedEventCount, periodUs)
+    Log.i(
+      TAG,
+      "batching ${sensor.stringType} periodUs=$periodUs fifoMax=${sensor.fifoMaxEventCount} " +
+        "fifoReserved=${sensor.fifoReservedEventCount} maxReportLatencyUs=$latencyUs",
+    )
+    manager.registerListener(listener, sensor, periodUs, latencyUs, handler)
+  }
+
   /** Runs on the sensor thread. */
-  private fun collect(timestampNanos: Long, accelG: Double) {
+  private fun collect(
+    timestampNanos: Long,
+    accelG: Double,
+    rotationRps: Double,
+    pressureHpa: Double?,
+  ) {
     val sample =
       mutableMapOf<String, Any>(
         "t" to bootEpochMs + timestampNanos / 1_000_000L,
         "accelG" to accelG,
-        "rotationRps" to latestRotation,
+        "rotationRps" to rotationRps,
       )
-    latestPressure?.let { hPa -> sample["pressure"] = hPa }
+    pressureHpa?.let { hPa -> sample["pressure"] = hPa }
     synchronized(pending) {
       if (pending.size >= MAX_PENDING_SAMPLES) pending.removeFirst()
       pending.addLast(sample)
@@ -340,8 +412,6 @@ class HearthMotionModule : Module() {
     sensorThread?.quitSafely()
     sensorThread = null
     synchronized(pending) { pending.clear() }
-    latestRotation = 0.0
-    latestPressure = null
   }
 
   private fun magnitude(values: FloatArray): Double {
@@ -349,5 +419,86 @@ class HearthMotionModule : Module() {
     val y = values[1].toDouble()
     val z = values[2].toDouble()
     return sqrt(x * x + y * y + z * z)
+  }
+}
+
+/**
+ * How long the hub may sit on a sensor's readings before handing them over.
+ *
+ * The two FIFO counts hold two different zeroes, and reading them as one costs
+ * a whole class of handset the batching. A max of zero is hardware with no
+ * FIFO, where there is nothing to ask for. A reserved of zero alongside a
+ * non-zero max is hardware that batches perfectly well, out of a pool shared
+ * with every other app rather than a slice held for this sensor, and that is a
+ * common way for a device to be configured.
+ *
+ * So the max decides whether to ask at all and the reserved decides how boldly.
+ * A reservation is ours and can be spent to the last event. A share of a pool
+ * can be taken by somebody else first, and a FIFO that fills before the latency
+ * is up drops readings, which on the accelerometer means dropping the crash.
+ *
+ * Takes the counts rather than the Sensor so the decision can be read, and
+ * checked, without a handset.
+ */
+internal fun batchLatencyUs(
+  fifoMaxEventCount: Int,
+  fifoReservedEventCount: Int,
+  periodUs: Int,
+): Int {
+  if (fifoMaxEventCount <= 0) return 0
+  val events =
+    if (fifoReservedEventCount > 0) fifoReservedEventCount
+    else fifoMaxEventCount / SHARED_FIFO_DIVISOR
+  return minOf(MAX_REPORT_LATENCY_US.toLong(), events.toLong() * periodUs).toInt()
+}
+
+/**
+ * The recent readings of one slow sensor, so an accelerometer sample can carry
+ * what was true at its own instant rather than whatever arrived most recently.
+ *
+ * Batching is what makes those two different things. The hub hands over a
+ * quarter second of accelerometer in one burst and a quarter second of
+ * gyroscope in another, in whichever order they happen to fill, so during a
+ * burst the newest rotation or pressure reading can be one taken after the
+ * sample it would otherwise be attached to. Pressure is where that does damage:
+ * an airbag is recognised as a step above the pressure of the second before the
+ * impact, and a baseline stamped with pressure from after it is a collision the
+ * detector cannot see.
+ *
+ * Not thread safe and does not need to be. Every callback for every sensor is
+ * delivered on the one handler, and a history never outlives the registration
+ * that made it.
+ */
+internal class SensorHistory(capacity: Int) {
+  private val times = LongArray(capacity)
+  private val values = DoubleArray(capacity)
+  private var count = 0
+  private var next = 0
+
+  fun add(timestampNanos: Long, value: Double) {
+    times[next] = timestampNanos
+    values[next] = value
+    next = (next + 1) % times.size
+    if (count < times.size) count += 1
+  }
+
+  /**
+   * What the sensor last said at or before that instant, and null when it had
+   * said nothing by then. Null rather than the nearest reading in either
+   * direction, because a reading from afterwards is the thing this exists to
+   * keep out, and a missing pressure costs the detector one signal it never
+   * had rather than handing it a wrong one.
+   */
+  fun at(timestampNanos: Long): Double? {
+    var best: Double? = null
+    var bestAt = Long.MIN_VALUE
+    for (i in 0 until count) {
+      val t = times[i]
+      if (t <= timestampNanos && (best == null || t > bestAt)) {
+        bestAt = t
+        best = values[i]
+      }
+    }
+    return best
   }
 }

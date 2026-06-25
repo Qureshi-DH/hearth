@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type FC } from "react"
+import { memo, useCallback, useMemo, type FC } from "react"
 import { Pressable, RefreshControl, SectionList, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import type { FeedEvent } from "@hearth/shared"
@@ -21,8 +21,9 @@ import { dayLabel, formatClock } from "@/utils/time"
 export const ActivityScreen: FC<MainTabScreenProps<"Activity">> = ({ navigation }) => {
   const { themed, theme } = useAppTheme()
   const { circle } = useActiveCircle()
-  const events = useEvents(circle?.id ?? null)
-  const markRead = useMarkFeedRead(circle?.id ?? "")
+  const circleId = circle?.id ?? null
+  const events = useEvents(circleId)
+  const markRead = useMarkFeedRead(circleId ?? "")
 
   useFocusEffect(
     useCallback(() => {
@@ -31,34 +32,50 @@ export const ActivityScreen: FC<MainTabScreenProps<"Activity">> = ({ navigation 
     }, [circle?.id, circle?.unreadEventCount]),
   )
 
+  /**
+   * Every websocket frame, page fetch and refresh hands this a new `data`
+   * object, so it runs often and on the JS thread. Bucket on the local midnight
+   * an event falls in rather than on its rendered label: the label costs an Intl
+   * format, and this way it is paid once per day on screen instead of once per
+   * loaded event. One `now` for the whole pass keeps "Today" from straddling
+   * midnight halfway down the list.
+   */
   const sections = useMemo(() => {
-    const items = events.data?.pages.flatMap((page) => page.items) ?? []
-    const byDay = new Map<string, FeedEvent[]>()
-    for (const item of items) {
-      const key = dayLabel(item.occurredAt)
-      byDay.set(key, [...(byDay.get(key) ?? []), item])
+    const now = new Date()
+    const byDay = new Map<number, FeedEvent[]>()
+    for (const page of events.data?.pages ?? []) {
+      for (const item of page.items) {
+        const at = new Date(item.occurredAt)
+        const key = new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime()
+        const bucket = byDay.get(key)
+        if (bucket) bucket.push(item)
+        else byDay.set(key, [item])
+      }
     }
-    return [...byDay.entries()].map(([title, data]) => ({ title, data }))
+    return [...byDay.values()].map((data) => ({ title: dayLabel(data[0]!.occurredAt, now), data }))
   }, [events.data])
 
-  const openEvent = (event: FeedEvent) => {
-    if (!circle) return
-    const userId = (event.payload.userId as string | undefined) ?? event.actor?.id
-    if (
-      (event.type === "place_arrive" ||
-        event.type === "place_leave" ||
-        event.type === "check_in" ||
-        event.type === "sos_started") &&
-      userId
-    ) {
-      navigation.navigate("MemberDetail", { circleId: circle.id, userId })
-    } else if (event.type.startsWith("place_") && event.payload.placeId) {
-      navigation.navigate("PlaceDetail", {
-        circleId: circle.id,
-        placeId: event.payload.placeId as string,
-      })
-    }
-  }
+  const openEvent = useCallback(
+    (event: FeedEvent) => {
+      if (!circleId) return
+      const userId = (event.payload.userId as string | undefined) ?? event.actor?.id
+      if (
+        (event.type === "place_arrive" ||
+          event.type === "place_leave" ||
+          event.type === "check_in" ||
+          event.type === "sos_started") &&
+        userId
+      ) {
+        navigation.navigate("MemberDetail", { circleId, userId })
+      } else if (event.type.startsWith("place_") && event.payload.placeId) {
+        navigation.navigate("PlaceDetail", {
+          circleId,
+          placeId: event.payload.placeId as string,
+        })
+      }
+    },
+    [circleId, navigation],
+  )
 
   return (
     <Screen preset="fixed" safeAreaEdges={["top"]} contentContainerStyle={themed($container)}>
@@ -93,7 +110,7 @@ export const ActivityScreen: FC<MainTabScreenProps<"Activity">> = ({ navigation 
             {section.title.toUpperCase()}
           </Text>
         )}
-        renderItem={({ item }) => <EventRow event={item} onPress={() => openEvent(item)} />}
+        renderItem={({ item }) => <EventRow event={item} onPress={openEvent} />}
         ListEmptyComponent={
           events.isLoading ? null : (
             <EmptyState
@@ -108,15 +125,31 @@ export const ActivityScreen: FC<MainTabScreenProps<"Activity">> = ({ navigation 
   )
 }
 
-function EventRow({ event, onPress }: { event: FeedEvent; onPress: () => void }) {
+/**
+ * A new event prepends into page 0 and leaves every other event's identity
+ * alone, and the unread count that rides along with it re-renders this screen
+ * even while the user is on another tab. Without the memo each frame reconciles
+ * every mounted row, Intl clock and all: VirtualizedSectionList builds its own
+ * `renderItem` wrapper on each render and hands it to a PureComponent cell, so
+ * the memo has to sit on the row. `onPress` takes the event for the same reason,
+ * so the list can pass one stable function down rather than a fresh arrow per row.
+ */
+const EventRow = memo(function EventRow({
+  event,
+  onPress,
+}: {
+  event: FeedEvent
+  onPress: (event: FeedEvent) => void
+}) {
   const { theme } = useAppTheme()
   const visual = eventVisual(event.type)
   const color = toneColor(visual.tone, theme.colors)
+  const handlePress = useCallback(() => onPress(event), [onPress, event])
 
   return (
     <View style={{ paddingHorizontal: theme.spacing.md, paddingVertical: 6 }}>
       <Pressable
-        onPress={onPress}
+        onPress={handlePress}
         accessibilityRole="button"
         accessibilityLabel={event.summary}
         style={({ pressed }) => ({
@@ -178,7 +211,7 @@ function EventRow({ event, onPress }: { event: FeedEvent; onPress: () => void })
       </Pressable>
     </View>
   )
-}
+})
 
 const $container: ThemedStyle<ViewStyle> = ({ colors }) => ({
   flex: 1,

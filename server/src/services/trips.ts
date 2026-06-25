@@ -1,8 +1,18 @@
-import { DEFAULTS, haversineMeters, pathDistanceMeters } from "@hearth/shared"
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm"
+import { DEFAULTS, haversineMeters, pathDistanceMeters, type FeedEvent } from "@hearth/shared"
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
-import { circleMembers, locationPoints, places, trips, userPresence } from "../db/schema"
+import {
+  circleMembers,
+  circles,
+  locationPoints,
+  places,
+  trips,
+  userPresence,
+  users,
+} from "../db/schema"
+import { broadcastEvent, recordEvent } from "./feed"
+import { effectiveSharingState } from "./presence"
 
 const MAX_POINTS_PER_PASS = 5000
 
@@ -16,8 +26,48 @@ const MAX_POINTS_PER_PASS = 5000
  */
 const BACKFILL_LOOKBACK_MS = 6 * 60 * 60 * 1000
 
+/**
+ * How long after a breadcrumb lands the detector still owes it a pass. A day
+ * out of signal drains a queue recorded far below the lookback above, so the
+ * floor has to drop to reach it, and `received_at` is what separates those
+ * breadcrumbs from the old ones this user has already been scanned on.
+ * Generous on purpose: a restart between the upload and the next sweep must
+ * not be able to swallow the drive.
+ */
+const BACKFILL_ARRIVAL_WINDOW_MS = 6 * 60 * 60 * 1000
+
+/**
+ * Ingest refuses fixes older than this, so nothing below it can be a late
+ * arrival and the probe for one never grows with the retention window.
+ */
+const MAX_BACKDATE_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
+ * How recently a journey has to have ended for finishing it to be worth a
+ * buzz. The feed line is always written, dated when the drive actually ended,
+ * but a phone that comes back on Wi-Fi hands over a whole day at once, and
+ * "Aisha travelled 12 km" about yesterday's commute is the false alarm that
+ * costs the family's trust. Comfortably wider than one idle gap plus a sweep
+ * interval, so an ordinary drive still announces itself.
+ */
+const TRIP_PUSH_FRESHNESS_MS = 60 * 60 * 1000
+
 /** Any real journey gets at least this far from where it started. */
 const MIN_EXCURSION_METERS = 150
+
+/**
+ * How far apart two receivers riding in one vehicle can look at the same
+ * instant. Wide enough for a sparse sampler interpolated across a bend and for
+ * the seconds of clock skew between two handsets, far tighter than the gap
+ * between two people who merely happened to be moving at the same time.
+ */
+const SAME_JOURNEY_TOLERANCE_METERS = 250
+
+/** How much of a run has to sit on a recorded path to be the same journey. */
+const SAME_JOURNEY_AGREEMENT = 0.8
+
+/** And how much of the run has to fall inside that journey's window at all. */
+const SAME_JOURNEY_OVERLAP = 0.6
 
 interface Fix {
   recordedAt: Date
@@ -26,12 +76,47 @@ interface Fix {
   speedMps: number | null
 }
 
+/** Where a device was, without the extras a trip's totals are built from. */
+type Trace = Pick<Fix, "recordedAt" | "lat" | "lon">
+
 interface Candidate extends Fix {
   id: number
   deviceId: string | null
 }
 
-type PlaceRow = { id: string; lat: number; lon: number; radiusMeters: number }
+interface PlaceRow {
+  id: string
+  circleId: string
+  name: string
+  lat: number
+  lon: number
+  radiusMeters: number
+}
+
+/** A frame the caller sends once the transaction it holds has committed. */
+export interface PendingBroadcast {
+  circleId: string
+  event: FeedEvent
+}
+
+/** Who may be told a journey finished, and the name to tell them. */
+interface Audience {
+  name: string
+  circleIds: string[]
+}
+
+/** What one detection pass needs beyond the breadcrumbs themselves. */
+interface Pass {
+  userId: string
+  now: Date
+  gapMs: number
+  places: PlaceRow[]
+  /** Read on the first trip of the pass, so a quiet pass costs no queries. */
+  audience: () => Promise<Audience>
+  broadcasts: PendingBroadcast[]
+}
+
+type TripColumns = ReturnType<typeof tripColumns>
 
 /**
  * A trip is a run of fixes from one device with no gap longer than
@@ -46,6 +131,13 @@ export async function detectTripsForUser(
   db: Database,
   userId: string,
   now: Date = new Date(),
+  /**
+   * Where to leave the websocket frames for the journeys this pass announced.
+   * The sweep calls this inside a transaction it commits afterwards, and a
+   * publish cannot be unsent, so a caller holding one passes an array and
+   * flushes it after the commit. Without one the frames go out here.
+   */
+  deferred?: PendingBroadcast[],
 ): Promise<number> {
   const gapMs = DEFAULTS.tripIdleGapSeconds * 1000
   const settleBefore = new Date(now.getTime() - gapMs)
@@ -57,7 +149,7 @@ export async function detectTripsForUser(
     .limit(1)
 
   const since = presence?.processedUntil ?? new Date(0)
-  const scanFrom = new Date(Math.max(0, since.getTime() - BACKFILL_LOOKBACK_MS))
+  const scanFrom = await scanFloor(db, userId, since, now)
 
   const rows = await db
     .select({
@@ -89,7 +181,15 @@ export async function detectTripsForUser(
   // continuation joins the same trip on the next pass.
   const truncated = rows.length === MAX_POINTS_PER_PASS
 
-  const placeRows = await placesVisibleTo(db, userId)
+  let audience: Promise<Audience> | null = null
+  const pass: Pass = {
+    userId,
+    now,
+    gapMs,
+    places: await placesVisibleTo(db, userId),
+    audience: () => (audience ??= loadAudience(db, userId, now)),
+    broadcasts: [],
+  }
 
   let created = 0
   // The oldest segment still under way across the account's devices. The
@@ -104,7 +204,7 @@ export async function detectTripsForUser(
     const closed = lastIsClosed ? segments : segments.slice(0, -1)
 
     for (const segment of closed) {
-      if (await persistSegment(db, userId, deviceId, segment, placeRows, gapMs)) created += 1
+      if (await persistSegment(db, pass, deviceId, segment)) created += 1
     }
 
     if (!lastIsClosed) {
@@ -117,7 +217,42 @@ export async function detectTripsForUser(
   // full next pass, so the watermark stops just before it.
   const watermark = openFrom ? new Date(openFrom.getTime() - 1) : rows[rows.length - 1]!.recordedAt
   if (watermark > since) await advanceWatermark(db, userId, watermark)
+
+  if (deferred) deferred.push(...pass.broadcasts)
+  else for (const pending of pass.broadcasts) await broadcastEvent(pending.circleId, pending.event)
+
   return created
+}
+
+/**
+ * Where this pass starts reading. One lookback behind the watermark normally,
+ * but a phone that was out of signal hands over breadcrumbs recorded far below
+ * that, and the watermark only ever moves forward, so the floor drops to the
+ * oldest of those instead. `received_at` is what tells the two apart: a fix
+ * recorded yesterday and received today has never been offered a pass, while
+ * one received when it was recorded has already been judged and is left alone.
+ */
+async function scanFloor(db: Database, userId: string, since: Date, now: Date): Promise<Date> {
+  const floor = new Date(Math.max(0, since.getTime() - BACKFILL_LOOKBACK_MS))
+
+  const [late] = await db
+    .select({ recordedAt: locationPoints.recordedAt })
+    .from(locationPoints)
+    .where(
+      and(
+        eq(locationPoints.userId, userId),
+        isNull(locationPoints.tripId),
+        lte(locationPoints.recordedAt, floor),
+        gt(locationPoints.recordedAt, new Date(now.getTime() - MAX_BACKDATE_MS)),
+        gt(locationPoints.receivedAt, new Date(now.getTime() - BACKFILL_ARRIVAL_WINDOW_MS)),
+      ),
+    )
+    .orderBy(asc(locationPoints.recordedAt))
+    .limit(1)
+
+  if (!late) return floor
+  // The scan's lower bound is exclusive, so step back off the fix itself.
+  return new Date(late.recordedAt.getTime() - 1)
 }
 
 export function segmentByIdleGap(points: Candidate[], gapMs: number): Candidate[][] {
@@ -142,14 +277,17 @@ export function segmentByIdleGap(points: Candidate[], gapMs: number): Candidate[
  * path across town and back on every fix it sends, which multiplies the trip's
  * distance and its average speed.
  */
-function groupByDevice(rows: Candidate[]): Map<string | null, Candidate[]> {
+function groupByDevice(rows: Candidate[]): Array<[string | null, Candidate[]]> {
   const byDevice = new Map<string | null, Candidate[]>()
   for (const row of rows) {
     const bucket = byDevice.get(row.deviceId)
     if (bucket) bucket.push(row)
     else byDevice.set(row.deviceId, [row])
   }
-  return byDevice
+  // Densest reporter first, so when two devices rode along together the copy
+  // that becomes the trip is the better sampled one. The sort is stable, so
+  // devices that reported equally often keep earliest-fix-first order.
+  return [...byDevice].sort((a, b) => b[1].length - a[1].length)
 }
 
 const deviceMatches = (deviceId: string | null) =>
@@ -159,6 +297,12 @@ const deviceMatches = (deviceId: string | null) =>
  * The newest segment counts as closed only if this device has been quiet for a
  * full idle gap since. Otherwise the journey may still be under way, and
  * cutting it here would turn one drive into two trips.
+ *
+ * Breadcrumbs that already belong to a trip do not count as reporting. A
+ * retried upload lands the START of a drive whose remainder is already a trip,
+ * and treating the fixes on the far side of it as "still to come" holds that
+ * segment open on every pass, so it is never merged into the trip it belongs
+ * to and its breadcrumbs belong to nothing for good.
  */
 async function hasGoneQuiet(
   db: Database,
@@ -177,6 +321,7 @@ async function hasGoneQuiet(
         eq(locationPoints.userId, userId),
         deviceMatches(deviceId),
         gt(locationPoints.recordedAt, lastFixAt),
+        isNull(locationPoints.tripId),
       ),
     )
     .orderBy(asc(locationPoints.recordedAt))
@@ -187,28 +332,47 @@ async function hasGoneQuiet(
 
 async function persistSegment(
   db: Database,
-  userId: string,
+  pass: Pass,
   deviceId: string | null,
   segment: Candidate[],
-  placeRows: PlaceRow[],
-  gapMs: number,
 ): Promise<boolean> {
   const first = segment[0]!
+  const last = segment[segment.length - 1]!
 
   // The head of this run may already be a trip. A device draining a backlog
   // hands us the rest of a journey after the sweep that closed it, and a run
   // long enough to fill a whole page is closed early on purpose. Growing that
   // trip keeps one drive one trip instead of cutting it at whichever boundary
   // the upload or the page limit happened to fall on.
-  const previous = await lastTrippedPoint(db, userId, deviceId, first.recordedAt)
-  if (previous && first.recordedAt.getTime() - previous.recordedAt.getTime() <= gapMs) {
-    await extendTrip(db, previous.tripId, segment, placeRows)
+  const previous = await lastTrippedPoint(db, pass.userId, deviceId, first.recordedAt)
+  const joinsPrevious =
+    previous && first.recordedAt.getTime() - previous.recordedAt.getTime() <= pass.gapMs
+
+  // And so may its tail. The upload holding the first half of a drive can fail
+  // while the batches behind it get through, so the retry has to find the trip
+  // that already owns the rest of the journey rather than file the beginning
+  // of it as a second one.
+  const next = await firstTrippedPoint(db, pass.userId, deviceId, last.recordedAt)
+  const joinsNext = next && next.recordedAt.getTime() - last.recordedAt.getTime() <= pass.gapMs
+
+  if (joinsPrevious && joinsNext && previous.tripId !== next.tripId) {
+    // This run closes the gap between two trips, so by the same idle gap that
+    // decides every other boundary the three of them are one journey.
+    await absorbTrip(db, pass, previous.tripId, next.tripId, segment)
+    return false
+  }
+  if (joinsPrevious) {
+    await extendTrip(db, pass, previous.tripId, segment)
+    return false
+  }
+  if (joinsNext) {
+    await extendTrip(db, pass, next.tripId, segment)
     return false
   }
 
   if (segment.length < 3) return false
 
-  const columns = tripColumns(segment, placeRows)
+  const columns = tripColumns(segment, pass.places)
   const durationSeconds = (columns.endedAt.getTime() - columns.startedAt.getTime()) / 1000
   if (durationSeconds < DEFAULTS.tripMinDurationSeconds) return false
   if (columns.distanceMeters < DEFAULTS.tripMinDistanceMeters) return false
@@ -219,14 +383,22 @@ async function persistSegment(
   // the phone ever got from where it started does not grow with sampling.
   if (excursionMeters(segment) < MIN_EXCURSION_METERS) return false
 
+  // A phone in the cradle and a tablet in the footwell both report the drive
+  // they shared, and one journey is one line in the history. The second copy
+  // is left as breadcrumbs rather than filed as a journey of its own.
+  if (await duplicatesRecordedJourney(db, pass.userId, segment)) return false
+
   const [trip] = await db
     .insert(trips)
-    .values({ userId, ...columns })
+    .values({ userId: pass.userId, ...columns })
     .returning({ id: trips.id })
 
   if (!trip) return false
 
   await claimPoints(db, trip.id, segment)
+  // Only here, never on the two merge paths above. A trip that grows when a
+  // straggler lands has already been announced, and one drive is one line.
+  await announceTrip(db, pass, columns)
   return true
 }
 
@@ -253,16 +425,65 @@ async function lastTrippedPoint(
   return row?.tripId ? { tripId: row.tripId, recordedAt: row.recordedAt } : null
 }
 
+/** The first breadcrumb from this device, after `after`, that belongs to a trip. */
+async function firstTrippedPoint(
+  db: Database,
+  userId: string,
+  deviceId: string | null,
+  after: Date,
+): Promise<{ tripId: string; recordedAt: Date } | null> {
+  const [row] = await db
+    .select({ tripId: locationPoints.tripId, recordedAt: locationPoints.recordedAt })
+    .from(locationPoints)
+    .where(
+      and(
+        eq(locationPoints.userId, userId),
+        deviceMatches(deviceId),
+        gt(locationPoints.recordedAt, after),
+        isNotNull(locationPoints.tripId),
+      ),
+    )
+    .orderBy(asc(locationPoints.recordedAt))
+    .limit(1)
+  return row?.tripId ? { tripId: row.tripId, recordedAt: row.recordedAt } : null
+}
+
 async function extendTrip(
   db: Database,
+  pass: Pass,
   tripId: string,
   segment: Candidate[],
-  placeRows: PlaceRow[],
 ): Promise<void> {
   await claimPoints(db, tripId, segment)
+  await recomputeTrip(db, pass, tripId)
+}
 
-  // Recompute from every breadcrumb the trip now owns rather than patching the
-  // stored totals, so the summary matches the path the detail screen draws.
+/**
+ * Folds `victim` into `target` and drops it. The breadcrumbs move first, so a
+ * pass interrupted between the two statements leaves every fix on a trip that
+ * exists rather than on one that does not.
+ */
+async function absorbTrip(
+  db: Database,
+  pass: Pass,
+  targetId: string,
+  victimId: string,
+  segment: Candidate[],
+): Promise<void> {
+  await claimPoints(db, targetId, segment)
+  await db
+    .update(locationPoints)
+    .set({ tripId: targetId })
+    .where(and(eq(locationPoints.userId, pass.userId), eq(locationPoints.tripId, victimId)))
+  await db.delete(trips).where(eq(trips.id, victimId))
+  await recomputeTrip(db, pass, targetId)
+}
+
+/**
+ * Recompute from every breadcrumb the trip now owns rather than patching the
+ * stored totals, so the summary matches the path the detail screen draws.
+ */
+async function recomputeTrip(db: Database, pass: Pass, tripId: string): Promise<void> {
   const points = await db
     .select({
       recordedAt: locationPoints.recordedAt,
@@ -275,7 +496,7 @@ async function extendTrip(
     .orderBy(asc(locationPoints.recordedAt))
   if (points.length === 0) return
 
-  await db.update(trips).set(tripColumns(points, placeRows)).where(eq(trips.id, tripId))
+  await db.update(trips).set(tripColumns(points, pass.places)).where(eq(trips.id, tripId))
 }
 
 async function claimPoints(db: Database, tripId: string, segment: Candidate[]): Promise<void> {
@@ -288,6 +509,100 @@ async function claimPoints(db: Database, tripId: string, segment: Candidate[]): 
         segment.map((p) => p.id),
       ),
     )
+}
+
+/**
+ * Tells the circles that may hear it that a journey finished.
+ *
+ * A distance, a top speed and "Home to School" are all things derived from
+ * where somebody was, so this goes only to circles they currently share
+ * precisely with, and only where the circle keeps history at all. The places
+ * are resolved against that circle's own, or the line would name somewhere
+ * defined in a circle these members cannot see.
+ */
+async function announceTrip(db: Database, pass: Pass, columns: TripColumns): Promise<void> {
+  const audience = await pass.audience()
+  if (audience.circleIds.length === 0) return
+
+  // Pushing a drive that finished hours ago would announce a backlog as if it
+  // were happening now. The feed still gets the line, dated when it happened.
+  const fresh = pass.now.getTime() - columns.endedAt.getTime() < TRIP_PUSH_FRESHNESS_MS
+
+  for (const circleId of audience.circleIds) {
+    const from = placeNameIn(pass.places, circleId, {
+      lat: columns.startLat,
+      lon: columns.startLon,
+    })
+    const to = placeNameIn(pass.places, circleId, { lat: columns.endLat, lon: columns.endLon })
+    const summary = tripSummary(audience.name, columns.distanceMeters, from, to)
+
+    const event = await recordEvent(db, {
+      circleId,
+      type: "trip_completed",
+      actorUserId: pass.userId,
+      occurredAt: columns.endedAt,
+      deferBroadcast: true,
+      payload: {
+        distanceMeters: columns.distanceMeters,
+        durationSeconds: Math.max(
+          0,
+          Math.round((columns.endedAt.getTime() - columns.startedAt.getTime()) / 1000),
+        ),
+        startPlaceName: from,
+        endPlaceName: to,
+        endedAt: columns.endedAt.toISOString(),
+      },
+      summary,
+      notify: fresh ? { title: "Trip finished", body: `${summary}.` } : undefined,
+    })
+    pass.broadcasts.push({ circleId, event })
+  }
+}
+
+function tripSummary(
+  name: string,
+  distanceMeters: number,
+  from: string | null,
+  to: string | null,
+): string {
+  const distance =
+    distanceMeters >= 1000 ? `${(distanceMeters / 1000).toFixed(1)} km` : `${distanceMeters} m`
+  if (from && to) return `${name} travelled ${distance} from ${from} to ${to}`
+  if (to) return `${name} travelled ${distance} to ${to}`
+  if (from) return `${name} travelled ${distance} from ${from}`
+  return `${name} travelled ${distance}`
+}
+
+async function loadAudience(db: Database, userId: string, now: Date): Promise<Audience> {
+  const [actor] = await db
+    .select({ displayName: users.displayName })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+
+  const rows = await db
+    .select({
+      circleId: circleMembers.circleId,
+      sharingState: circleMembers.sharingState,
+      pausedUntil: circleMembers.pausedUntil,
+      resumeToState: circleMembers.resumeToState,
+      settings: circles.settings,
+    })
+    .from(circleMembers)
+    .innerJoin(circles, eq(circles.id, circleMembers.circleId))
+    .where(eq(circleMembers.userId, userId))
+
+  return {
+    name: actor?.displayName ?? "Someone",
+    circleIds: rows
+      .filter(
+        (row) =>
+          row.settings.allowHistory &&
+          effectiveSharingState(row.sharingState, row.pausedUntil, now, row.resumeToState) ===
+            "precise",
+      )
+      .map((row) => row.circleId),
+  }
 }
 
 function tripColumns(points: Fix[], placeRows: PlaceRow[]) {
@@ -331,6 +646,97 @@ function confirmedMaxSpeedMps(points: Fix[]): number | null {
   return confirmed
 }
 
+/**
+ * Whether this run is a second device's copy of a journey already on record.
+ *
+ * Time overlap alone would be wrong: a phone in a car and a tablet somebody
+ * else took on a bus move at the same moment and are two journeys. So the run
+ * is compared against where the recorded journey actually was at each of these
+ * instants, and only a run that travelled with it counts as the same drive.
+ */
+async function duplicatesRecordedJourney(
+  db: Database,
+  userId: string,
+  segment: Candidate[],
+): Promise<boolean> {
+  const first = segment[0]!
+  const last = segment[segment.length - 1]!
+  const spanMs = last.recordedAt.getTime() - first.recordedAt.getTime()
+
+  const overlapping = await db
+    .select({ id: trips.id, startedAt: trips.startedAt, endedAt: trips.endedAt })
+    .from(trips)
+    .where(
+      and(
+        eq(trips.userId, userId),
+        lt(trips.startedAt, last.recordedAt),
+        gt(trips.endedAt, first.recordedAt),
+      ),
+    )
+
+  for (const trip of overlapping) {
+    const shared =
+      Math.min(last.recordedAt.getTime(), trip.endedAt.getTime()) -
+      Math.max(first.recordedAt.getTime(), trip.startedAt.getTime())
+    // A brush past the end of an earlier drive is a different journey, however
+    // close the two happened to pass.
+    if (spanMs > 0 && shared / spanMs < SAME_JOURNEY_OVERLAP) continue
+
+    const path = await db
+      .select({
+        recordedAt: locationPoints.recordedAt,
+        lat: locationPoints.lat,
+        lon: locationPoints.lon,
+      })
+      .from(locationPoints)
+      .where(eq(locationPoints.tripId, trip.id))
+      .orderBy(asc(locationPoints.recordedAt))
+
+    if (rodeAlong(segment, path)) return true
+  }
+
+  return false
+}
+
+/**
+ * Whether these fixes sit on that path at the same instants. Each one is
+ * measured against where the path was between the two fixes either side of it,
+ * not against the nearest recorded fix: two receivers in one car sample on
+ * their own schedules, and at motorway speed the nearest recorded fix can be
+ * half a sampling interval down the road.
+ */
+function rodeAlong(segment: Candidate[], path: Trace[]): boolean {
+  if (path.length < 2) return false
+  const from = path[0]!.recordedAt.getTime()
+  const to = path[path.length - 1]!.recordedAt.getTime()
+
+  let bracket = 0
+  let compared = 0
+  let agreed = 0
+
+  for (const fix of segment) {
+    const at = fix.recordedAt.getTime()
+    if (at < from || at > to) continue
+    while (bracket + 2 < path.length && path[bracket + 1]!.recordedAt.getTime() < at) bracket += 1
+    compared += 1
+    const where = positionBetween(path[bracket]!, path[bracket + 1]!, at)
+    if (haversineMeters(fix, where) <= SAME_JOURNEY_TOLERANCE_METERS) agreed += 1
+  }
+
+  if (compared < 3) return false
+  return agreed / compared >= SAME_JOURNEY_AGREEMENT
+}
+
+function positionBetween(from: Trace, to: Trace, atMs: number): { lat: number; lon: number } {
+  const span = to.recordedAt.getTime() - from.recordedAt.getTime()
+  const travelled =
+    span > 0 ? Math.min(1, Math.max(0, (atMs - from.recordedAt.getTime()) / span)) : 0
+  return {
+    lat: from.lat + (to.lat - from.lat) * travelled,
+    lon: from.lon + (to.lon - from.lon) * travelled,
+  }
+}
+
 /** The furthest any fix in the segment got from where the segment started. */
 function excursionMeters(points: Fix[]): number {
   const first = points[0]!
@@ -351,10 +757,26 @@ function placeContaining(placeRows: PlaceRow[], point: { lat: number; lon: numbe
   return undefined
 }
 
+function placeNameIn(
+  placeRows: PlaceRow[],
+  circleId: string,
+  point: { lat: number; lon: number },
+): string | null {
+  for (const place of placeRows) {
+    if (place.circleId !== circleId) continue
+    if (haversineMeters(point, { lat: place.lat, lon: place.lon }) <= place.radiusMeters) {
+      return place.name
+    }
+  }
+  return null
+}
+
 async function placesVisibleTo(db: Database, userId: string) {
   return db
     .select({
       id: places.id,
+      circleId: places.circleId,
+      name: places.name,
       lat: places.lat,
       lon: places.lon,
       radiusMeters: places.radiusMeters,

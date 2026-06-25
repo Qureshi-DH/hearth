@@ -1,5 +1,5 @@
 import { DEFAULTS, PLACE_ICONS } from "@hearth/shared"
-import { and, desc, eq, inArray } from "drizzle-orm"
+import { and, desc, eq, inArray, or } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
@@ -10,7 +10,7 @@ import { toPlace, toPublicUser } from "../lib/serialize"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { recordEvent } from "../services/feed"
 import { primePlaceMemberships } from "../services/geofence"
-import { effectiveSharingState } from "../services/presence"
+import { effectiveSharingState, sharesPreciselySql } from "../services/presence"
 
 const circleIdParam = z.object({ circleId: z.string().uuid() })
 const placeParams = circleIdParam.extend({ placeId: z.string().uuid() })
@@ -21,8 +21,55 @@ const radiusSchema = z
   .min(DEFAULTS.minPlaceRadiusMeters)
   .max(DEFAULTS.maxPlaceRadiusMeters)
 
+/**
+ * Everything here is invisible on screen and therefore useless in a name, or
+ * changes how the text around it reads. U+202A-U+202E embed and override the
+ * writing direction, which is what lets "Clinic" be followed by reversed text
+ * that appears to come from somewhere else. The zero-width joiners U+200C and
+ * U+200D are deliberately absent: Persian and several Indic scripts need ZWNJ
+ * inside ordinary words, and ZWJ is what holds an emoji sequence together.
+ */
+const INVISIBLE =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u180E\u200B\u202A-\u202E\u2060\uFEFF]/gu
+
+/** Anything Unicode calls a combining mark. */
+const COMBINING_RUN = /\p{M}{4,}/gu
+
+/**
+ * A place name is read back to the whole circle in push titles and feed lines,
+ * both of which are one line of text. Left raw, a member can put a newline in
+ * a name and forge a second line in everybody else's notifications, or stack
+ * seventy accents on one letter and smear them over the rows underneath.
+ *
+ * This runs at the point the name is stored rather than at the point each
+ * summary is built, because a name is a single-line field by nature and there
+ * is nothing in it worth keeping that survives only as a line break.
+ */
+function singleLine(value: string): string {
+  return value
+    .normalize("NFC")
+    .replace(INVISIBLE, "")
+    .replace(COMBINING_RUN, (run) => [...run].slice(0, 3).join(""))
+    .replace(/\s+/gu, " ")
+    .trim()
+}
+
+/**
+ * Counted in code points, so an emoji or an accented letter costs what it looks
+ * like it costs rather than what UTF-16 happens to store it in.
+ */
+const placeName = z
+  .string()
+  .max(400)
+  .describe("At most 80 characters once invisible and direction-changing ones are removed.")
+  .transform(singleLine)
+  .refine((value) => value.length > 0 && [...value].length <= 80, {
+    message: "A place name has to be between 1 and 80 characters.",
+  })
+
 const placeFields = {
-  name: z.string().trim().min(1).max(80),
+  name: placeName,
   icon: z.enum(PLACE_ICONS).nullish(),
   color: z
     .string()
@@ -63,6 +110,7 @@ export const placeRoutes: FastifyPluginAsyncZod = async (app) => {
         userId: placeMemberships.userId,
         sharingState: circleMembers.sharingState,
         pausedUntil: circleMembers.pausedUntil,
+        resumeToState: circleMembers.resumeToState,
       })
       .from(placeMemberships)
       .innerJoin(
@@ -76,7 +124,8 @@ export const placeRoutes: FastifyPluginAsyncZod = async (app) => {
 
     const byPlace = new Map<string, string[]>()
     for (const row of rows) {
-      if (effectiveSharingState(row.sharingState, row.pausedUntil, now) !== "precise") continue
+      const state = effectiveSharingState(row.sharingState, row.pausedUntil, now, row.resumeToState)
+      if (state !== "precise") continue
       byPlace.set(row.placeId, [...(byPlace.get(row.placeId) ?? []), row.userId])
     }
     return byPlace
@@ -254,6 +303,7 @@ export const placeRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request) => {
+      const auth = requireAuth(request)
       const membership = await requireMembership(request, request.params.circleId)
 
       const rows = await db
@@ -264,6 +314,16 @@ export const placeRoutes: FastifyPluginAsyncZod = async (app) => {
           and(
             eq(placeEvents.placeId, request.params.placeId),
             eq(placeEvents.circleId, membership.circleId),
+            // Every row here says where somebody was and what the circle calls
+            // that spot, so it answers to the state they share now rather than
+            // the state they shared when they walked in. Same rule as the feed,
+            // and for the same reason: turning sharing down has to take the
+            // trail with it, including for somebody who joined afterwards.
+            // Your own arrivals are always yours to read.
+            or(
+              eq(placeEvents.userId, auth.userId),
+              sharesPreciselySql(placeEvents.circleId, placeEvents.userId),
+            ),
           ),
         )
         .orderBy(desc(placeEvents.occurredAt))

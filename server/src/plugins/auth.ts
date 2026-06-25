@@ -15,10 +15,14 @@ export interface AuthContext {
   isAdmin: boolean
 }
 
+/**
+ * Identity only. The admin flag deliberately does not travel on the token: it
+ * is read from the user row on every request, so a demotion takes effect at
+ * once instead of at the next refresh.
+ */
 export interface AccessTokenClaims {
   sub: string
   sid: string
-  adm: boolean
 }
 
 declare module "fastify" {
@@ -72,6 +76,36 @@ export function rateLimitKey(app: FastifyInstance, request: FastifyRequest): str
   }
 }
 
+export interface ResolvedSession {
+  userId: string
+  isActive: boolean
+  isAdmin: boolean
+}
+
+/**
+ * The signature alone says nothing about the account behind the token, so a
+ * signed-out device, a deactivated account or a demoted administrator would
+ * keep working until the access token expired. Everything a request is
+ * authorised with is read here, from the session and the user row, never from
+ * the claims: the token only says which session to look up.
+ */
+export async function resolveSession(claims: AccessTokenClaims): Promise<ResolvedSession | null> {
+  const db = getDb()
+  const [row] = await db
+    .select({ userId: sessions.userId, isActive: users.isActive, isAdmin: users.isAdmin })
+    .from(sessions)
+    .innerJoin(users, eq(users.id, sessions.userId))
+    .where(and(eq(sessions.id, claims.sid), isNull(sessions.revokedAt)))
+    .limit(1)
+
+  if (!row) return null
+  // Neither signing path ever puts a subject on a token that is not the
+  // session's own owner, so a mismatch is a forged or muddled token rather than
+  // a client, and it must not authorise the account it names.
+  if (row.userId !== claims.sub) return null
+  return row
+}
+
 export const authPlugin = fp(async (app: FastifyInstance) => {
   const config = getConfig()
 
@@ -91,21 +125,15 @@ export const authPlugin = fp(async (app: FastifyInstance) => {
       throw unauthorized("Invalid or expired token.")
     }
 
-    // The signature alone says nothing about the session behind it, so a
-    // signed-out device or a deactivated account would keep working until the
-    // access token expired.
-    const db = getDb()
-    const [session] = await db
-      .select({ isActive: users.isActive })
-      .from(sessions)
-      .innerJoin(users, eq(users.id, sessions.userId))
-      .where(and(eq(sessions.id, claims.sid), isNull(sessions.revokedAt)))
-      .limit(1)
-
+    const session = await resolveSession(claims)
     if (!session) throw unauthorized("This session is no longer valid.")
     if (!session.isActive) throw forbidden("This account has been deactivated.")
 
-    request.auth = { userId: claims.sub, sessionId: claims.sid, isAdmin: claims.adm === true }
+    request.auth = {
+      userId: session.userId,
+      sessionId: claims.sid,
+      isAdmin: session.isAdmin,
+    }
   })
 
   app.decorate("requireAdmin", async (request: FastifyRequest, reply: FastifyReply) => {

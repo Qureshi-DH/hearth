@@ -1,12 +1,13 @@
 import {
   DEFAULTS,
   activityFromSpeed,
+  haversineMeters,
   isValidLatLng,
   type ActivityType,
   type LocationFixInput,
   type LocationSource,
 } from "@hearth/shared"
-import { and, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm"
+import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import {
@@ -29,6 +30,57 @@ const MAX_BACKDATE_MS = 7 * 24 * 60 * 60 * 1000
 /** Small tolerance for devices whose clock runs slightly fast. */
 const MAX_FUTURE_MS = 5 * 60 * 1000
 const LOW_BATTERY_COOLDOWN_MS = 6 * 60 * 60 * 1000
+const INCIDENT_COOLDOWN_MS = 60 * 60 * 1000
+/**
+ * The stop counts as sudden only if the last fix that was still moving was
+ * doing more than this. Every ordinary journey ends with a crawl onto a drive
+ * or up to a drive-through window, and a stop that follows one of those
+ * happened over the minute before, not in the gap the alert would blame.
+ */
+const INCIDENT_MOVING_AT_STOP_MPS = 2
+/**
+ * The same bar, raised, for a stop whose stillness rests entirely on fixes too
+ * coarse to place someone inside a city block. Nothing there can show the car
+ * stayed put, only that nobody can prove it moved, so the story has to be
+ * crash shaped on its own: still at road speed at the last measurement anyone
+ * has, and then nothing. A car that had already slowed to the speed of a ramp
+ * or a car park before its fixes went dark is a car arriving somewhere.
+ */
+const INCIDENT_MOVING_AT_COARSE_STOP_MPS = DEFAULTS.incidentMinSpeedMps
+/** Bounds the window read. The tracker's 30 s cadence fills 300 s with ten. */
+const INCIDENT_WINDOW_MAX_FIXES = 200
+/** Bounds the read of the run so far. Two consecutive fixes make a run. */
+const SPEED_RUN_MAX_PRIOR_FIXES = 200
+/** How far apart two consecutive speeds can be and still be one measurement. */
+const SPEED_AGREEMENT_TOLERANCE = 0.1
+
+/**
+ * What two consecutive fixes support between them. A Doppler speed carries a
+ * few percent of noise, so a pair this close is one measurement read twice and
+ * the faster of the two is a number both fixes stand behind. Further apart than
+ * that and only the slower one is supported, which is what keeps the lone
+ * impossible velocity a provider switch emits out of an alert that quotes it.
+ */
+function agreedSpeedMps(a: number | null | undefined, b: number | null | undefined): number | null {
+  if (a == null || b == null) return null
+  const faster = Math.max(a, b)
+  const slower = Math.min(a, b)
+  return faster - slower <= faster * SPEED_AGREEMENT_TOLERANCE ? faster : slower
+}
+
+/**
+ * How the phone itself said the member was travelling. The activity recogniser
+ * is the only thing that can tell a bike from a car at 60 km/h, and a family
+ * reading "driving" about a teenager on Park Street is being told something
+ * that is not true. Anything else, including a label the OS never made up its
+ * mind about, is reported as driving.
+ */
+const TRAVEL_VERBS: Partial<Record<ActivityType, string>> = {
+  walking: "walking",
+  running: "running",
+  cycling: "cycling",
+  driving: "driving",
+}
 
 export interface IngestOptions {
   userId: string
@@ -52,11 +104,16 @@ interface AlertCircle {
 /** The alert bookkeeping as it stood before this batch touched presence. */
 interface AlertPresence {
   recordedAt: Date | null
-  speedAlertedAt: Date | null
-  overSpeedCount: number
   incidentFlaggedAt: Date | null
   lowBatteryNotifiedAt: Date | null
   lowBatteryNotifiedLevel: number | null
+}
+
+/** The three fields a speeding run is judged on, from history or from a batch. */
+interface RunFix {
+  recordedAt: Date
+  speedMps: number | null
+  activity: ActivityType | null
 }
 
 interface NormalizedFix {
@@ -84,8 +141,18 @@ function normalize(input: LocationFixInput, now: Date): NormalizedFix | null {
   if (delta > MAX_FUTURE_MS) return null
   if (-delta > MAX_BACKDATE_MS) return null
 
-  const clampFinite = (value: number | null | undefined, min: number, max: number) =>
-    value == null || !Number.isFinite(value) ? null : Math.min(max, Math.max(min, value))
+  // Every column this feeds is a Postgres `real`, and a double too small for
+  // float32 (5e-324, 1e-300, either sign) is finite and inside the bounds yet
+  // still "out of range for type real" on insert, which loses the whole batch
+  // over one sentinel field. It lands as the zero the column would have held.
+  // Everything else keeps its full precision: rounding the lot to float32 would
+  // put a battery reading of exactly 15% a hair above the threshold it means to
+  // equal, and the alert that threshold exists for would never fire.
+  const clampFinite = (value: number | null | undefined, min: number, max: number) => {
+    if (value == null || !Number.isFinite(value)) return null
+    const clamped = Math.min(max, Math.max(min, value))
+    return Math.fround(clamped) === 0 ? 0 : clamped
+  }
 
   const speedMps = clampFinite(input.speedMps, 0, 400)
 
@@ -169,8 +236,6 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
   const [presence] = await db
     .select({
       recordedAt: userPresence.recordedAt,
-      speedAlertedAt: userPresence.speedAlertedAt,
-      overSpeedCount: userPresence.overSpeedCount,
       incidentFlaggedAt: userPresence.incidentFlaggedAt,
       lowBatteryNotifiedAt: userPresence.lowBatteryNotifiedAt,
       lowBatteryNotifiedLevel: userPresence.lowBatteryNotifiedLevel,
@@ -221,6 +286,24 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
       setWhere: sql`${userPresence.recordedAt} is null or ${userPresence.recordedAt} < excluded.recorded_at`,
     })
 
+  // A buffered or retried upload can be older than the presence row it lost
+  // to. The upsert already refuses to rewind, and the alerts have to refuse
+  // too, or a stale 4% reading raises "low battery" about a phone that has
+  // been on the charger for hours.
+  const isCurrent =
+    !presence?.recordedAt || presence.recordedAt.getTime() < latest.recordedAt.getTime()
+
+  // That refusal leaves the whole row alone, updated_at included, so a phone
+  // that lands after a day abroad and drains a queue of yesterday's fixes has
+  // nothing anywhere that says it is back. The scheduler's scan for a member
+  // worth looking at is what reads this.
+  if (!isCurrent) {
+    await db
+      .update(userPresence)
+      .set({ updatedAt: now })
+      .where(eq(userPresence.userId, options.userId))
+  }
+
   // Only genuinely new fixes enter the geofence replay. A retried batch or an
   // out-of-order straggler must not re-derive transitions the circle has
   // already been told about.
@@ -245,19 +328,13 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
     },
   )
 
-  // A buffered or retried upload can be older than the presence row it lost
-  // to. The upsert already refuses to rewind, and the alerts have to refuse
-  // too, or a stale 4% reading raises "low battery" about a phone that has
-  // been on the charger for hours.
-  const isCurrent =
-    !presence?.recordedAt || presence.recordedAt.getTime() < latest.recordedAt.getTime()
   // Newest the server has seen is not the same as recent. A phone flushing a
   // weekend of queued fixes passes that test on its oldest batch first, so the
   // alerts need the wall clock as well. History, presence and the geofence
   // replay still take the old batch.
   const isRecent = now.getTime() - latest.recordedAt.getTime() < DEFAULTS.staleAfterSeconds * 1000
 
-  if (isCurrent && isRecent) {
+  if (isCurrent) {
     const alertCircleIds = [...sharing.entries()]
       .filter(([, state]) => state !== "paused")
       .map(([id]) => id)
@@ -272,12 +349,22 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
     await maybeRaiseDrivingAlerts(
       db,
       options.userId,
+      options.deviceId,
       freshFixes,
       now,
       alertCircles.filter((circle) => sharing.get(circle.id) === "precise"),
       presence,
+      isRecent,
     )
-    await maybeRaiseBatteryAlert(db, options.userId, latest, now, alertCircles, presence)
+    // A battery reading keeps its meaning until the phone counts as offline.
+    // The presence window is shorter because it is about where somebody is, and
+    // a phone that has said nothing since it reported 4 percent is the case the
+    // family most wants to hear about.
+    const batteryStillMeansSomething =
+      now.getTime() - latest.recordedAt.getTime() < DEFAULTS.offlineAfterSeconds * 1000
+    if (batteryStillMeansSomething) {
+      await maybeRaiseBatteryAlert(db, options.userId, latest, now, alertCircles)
+    }
   }
 
   await broadcastPresence(db, options.userId, [...sharing.keys()])
@@ -330,10 +417,13 @@ export async function broadcastPresence(
 async function maybeRaiseDrivingAlerts(
   db: Database,
   userId: string,
+  deviceId: string,
   fixes: NormalizedFix[],
   now: Date,
   preciseCircles: AlertCircle[],
   presence: AlertPresence | undefined,
+  /** Whether this batch still describes the present, or replays a drained queue. */
+  isLive: boolean,
 ): Promise<void> {
   if (fixes.length === 0) return
 
@@ -353,43 +443,96 @@ async function maybeRaiseDrivingAlerts(
 
   if (speedCircles.length > 0) {
     const lowestThresholdKmh = Math.min(...speedCircles.map((row) => row.settings.speedAlertKmh))
-    // A count only carries across batches while the fixes are consecutive. A
-    // gap means that run ended, whatever number the last batch left behind, or
-    // one fast fix on Friday and another on Monday add up to a streak.
-    const continues =
-      !!presence?.recordedAt &&
-      sorted[0]!.recordedAt.getTime() - presence.recordedAt.getTime() <
-        DEFAULTS.staleAfterSeconds * 1000
 
-    let streak = continues ? (presence?.overSpeedCount ?? 0) : 0
+    // The run belongs to the phone in the car. Carried on the member row it
+    // belonged to whichever device uploaded last, so a tablet on the kitchen
+    // table reporting 0 m/s between the phone's uploads broke the streak every
+    // time and a household with two devices was never told about a fast drive
+    // at all. Reading the device's own tail instead costs one bounded query and
+    // is the same fixes the loop below would have seen in one batch.
+    const runFrom = new Date(sorted[0]!.recordedAt.getTime() - DEFAULTS.staleAfterSeconds * 1000)
+    const priorFixes = (
+      await db
+        .select({
+          recordedAt: locationPoints.recordedAt,
+          speedMps: locationPoints.speedMps,
+          activity: locationPoints.activity,
+        })
+        .from(locationPoints)
+        .where(
+          and(
+            eq(locationPoints.userId, userId),
+            eq(locationPoints.deviceId, deviceId),
+            gte(locationPoints.recordedAt, runFrom),
+            lt(locationPoints.recordedAt, sorted[0]!.recordedAt),
+          ),
+        )
+        .orderBy(desc(locationPoints.recordedAt))
+        .limit(SPEED_RUN_MAX_PRIOR_FIXES)
+    ).reverse()
+
+    let streak = 0
     let runPeakMps = 0
-    // Written back below. Absolute once this batch has broken a run, relative
-    // otherwise, so a batch landing beside another cannot clobber its count.
-    let trailing = 0
-    let sawReset = !continues
 
     // The run that satisfied the streak rule decides both the speed reported
     // and which circles hear it. Taking the maximum over the whole batch would
     // hand the alert back the lone GPS spike that rule exists to discard.
     let alertPeakMps = 0
+    // What the phone called the run, and when the run ended. The alert is
+    // about that stretch, so it is worded and dated from it rather than from
+    // whatever the batch happened to end with.
+    let runActivities = new Set<ActivityType>()
+    let runEndAt: Date | null = null
+    let alertActivities = new Set<ActivityType>()
+    let alertAt: Date | null = null
     const closeRun = () => {
-      if (streak >= DEFAULTS.speedAlertConsecutiveFixes) {
-        alertPeakMps = Math.max(alertPeakMps, runPeakMps)
+      if (streak >= DEFAULTS.speedAlertConsecutiveFixes && runPeakMps > alertPeakMps) {
+        alertPeakMps = runPeakMps
+        alertActivities = new Set(runActivities)
+        alertAt = runEndAt
       }
     }
 
-    for (const fix of sorted) {
-      const speedMps = fix.speedMps ?? 0
+    // Speeds pair off these two so the reported peak is one two fixes agreed on,
+    // and the timestamps apply the gap rule: a gap means that run ended, or one
+    // fast fix on Friday and another on Monday add up to a streak.
+    let previousMps: number | null = null
+    let previousAt: number | null = null
+
+    const breakRun = () => {
+      closeRun()
+      streak = 0
+      runPeakMps = 0
+      previousMps = null
+      runActivities = new Set()
+      runEndAt = null
+    }
+
+    const runFixes: RunFix[] = [...priorFixes, ...sorted]
+    for (const fix of runFixes) {
+      const recordedAt = fix.recordedAt.getTime()
+      if (previousAt !== null && recordedAt - previousAt >= DEFAULTS.staleAfterSeconds * 1000) {
+        breakRun()
+      }
+      previousAt = recordedAt
+
+      // A null speed is a speed the platform could not measure, which is what
+      // a cell-derived fix reports mid-drive. It confirms nothing, but reading
+      // it as a zero would break a run the car never came out of.
+      const speedMps = fix.speedMps
+      if (speedMps == null) continue
+
       if (speedMps * 3.6 > lowestThresholdKmh) {
         streak += 1
-        trailing += 1
-        runPeakMps = Math.max(runPeakMps, speedMps)
+        const agreed = agreedSpeedMps(previousMps, speedMps)
+        if (agreed !== null) runPeakMps = Math.max(runPeakMps, agreed)
+        previousMps = speedMps
+        // A fix with no label at all is not a dissenting opinion about how the
+        // run was travelling, so it does not force the wording back to driving.
+        if (fix.activity) runActivities.add(fix.activity)
+        runEndAt = fix.recordedAt
       } else {
-        closeRun()
-        streak = 0
-        trailing = 0
-        runPeakMps = 0
-        sawReset = true
+        breakRun()
       }
     }
     // A run that ended before the batch did still happened. Testing only the
@@ -405,116 +548,229 @@ async function maybeRaiseDrivingAlerts(
       (circle) => alertPeakMps * 3.6 > circle.settings.speedAlertKmh,
     )
 
-    let alerted = false
+    let telling: AlertCircle[] = []
     if (overThreshold.length > 0) {
-      // Claiming the cooldown is the emit decision. Read it first and two
-      // uploads arriving together both pass a latch neither has spent yet.
       const cooldownStart = new Date(now.getTime() - DEFAULTS.speedAlertCooldownSeconds * 1000)
-      const claimed = await db
-        .update(userPresence)
-        .set({ speedAlertedAt: now, overSpeedCount: 0 })
-        .where(
-          and(
-            eq(userPresence.userId, userId),
-            or(isNull(userPresence.speedAlertedAt), lt(userPresence.speedAlertedAt, cooldownStart)),
-          ),
+      const circleIds = sql.join(
+        overThreshold.map((circle) => sql`${circle.id}::uuid`),
+        sql`, `,
+      )
+      // Claiming the cooldown is the emit decision, so it is one statement:
+      // read the latch first and two devices flushing the same run both pass a
+      // latch neither has spent yet.
+      //
+      // The latch that matters is the per-circle one, because the threshold is
+      // per circle and so is sharing. A circle that was paused for the last run,
+      // or whose own stricter threshold this drive is the first ever to cross,
+      // has been told nothing and has no cooldown to be inside. The member row
+      // is still read under a lock and still moves: it is what serialises two
+      // devices, and an aged member window releases every circle at once.
+      const claimed = (await db.execute(sql`
+        with previous as (
+          select speed_alerted_at as at
+          from user_presence
+          where user_id = ${userId}::uuid
+          for update
+        ),
+        member as (
+          update user_presence
+          set speed_alerted_at = ${now.toISOString()}::timestamptz
+          where user_id = ${userId}::uuid
+          returning user_id
         )
-        .returning({ userId: userPresence.userId })
-      alerted = claimed.length > 0
+        update circle_members
+        set speed_alerted_at = ${now.toISOString()}::timestamptz
+        from previous
+        where circle_members.user_id = ${userId}::uuid
+          and circle_members.circle_id in (${circleIds})
+          and (circle_members.speed_alerted_at is null
+               or circle_members.speed_alerted_at < ${cooldownStart.toISOString()}::timestamptz
+               or previous.at is null
+               or previous.at < ${cooldownStart.toISOString()}::timestamptz)
+        returning circle_members.circle_id as circle_id
+      `)) as unknown as Array<{ circle_id: string }>
+      const claimedIds = new Set(claimed.map((row) => row.circle_id))
+      telling = overThreshold.filter((circle) => claimedIds.has(circle.id))
 
-      if (alerted) {
+      if (telling.length > 0) {
         const peakKmh = Math.round(alertPeakMps * 3.6)
-        const at = latest.recordedAt.toISOString()
-        for (const circle of overThreshold) {
+        const verb = alertActivities.size === 1 ? TRAVEL_VERBS[[...alertActivities][0]!] : undefined
+        const wording = `${name} was ${verb ?? "driving"} at ${peakKmh} km/h`
+        const happenedAt = alertAt ?? latest.recordedAt
+        for (const circle of telling) {
           await recordEvent(db, {
             circleId: circle.id,
             type: "speed_alert",
             actorUserId: userId,
-            payload: { speedKmh: peakKmh, thresholdKmh: circle.settings.speedAlertKmh, at },
-            summary: `${name} was driving at ${peakKmh} km/h`,
-            notify: {
-              title: "Speed alert",
-              body: `${name} was driving at ${peakKmh} km/h.`,
-              channel: "alerts",
+            occurredAt: happenedAt,
+            payload: {
+              speedKmh: peakKmh,
+              thresholdKmh: circle.settings.speedAlertKmh,
+              at: happenedAt.toISOString(),
             },
+            summary: wording,
+            // A queue that drained an hour late replays a run that really
+            // happened, and it belongs in the feed at the time it happened.
+            // Buzzing a parent about it now would say the car is doing 150
+            // while it is on a driveway.
+            notify: isLive
+              ? { title: "Speed alert", body: `${wording}.`, channel: "alerts" }
+              : undefined,
           })
         }
       }
     }
 
-    if (!alerted) {
-      await db
-        .update(userPresence)
-        .set({
-          overSpeedCount: sawReset ? trailing : sql`${userPresence.overSpeedCount} + ${trailing}`,
-        })
-        .where(eq(userPresence.userId, userId))
-    }
+    // Left on the member row as a record of where the run stands, and no longer
+    // read back by anything. The run above is rebuilt from the driving device's
+    // own history each time, so a tablet uploading beside the phone can no
+    // longer wipe a count the next alert depends on.
+    await db
+      .update(userPresence)
+      .set({ overSpeedCount: telling.length > 0 ? 0 : streak })
+      .where(eq(userPresence.userId, userId))
   }
 
+  // Everything below is a claim about right now: they stopped hard and have not
+  // moved since. A backlog says nothing about the present, and the stop it
+  // describes was over before the queue drained.
+  if (!isLive) return
   if (incidentCircles.length === 0) return
   const alreadyFlagged =
     presence?.incidentFlaggedAt &&
-    now.getTime() - presence.incidentFlaggedAt.getTime() < 60 * 60 * 1000
+    now.getTime() - presence.incidentFlaggedAt.getTime() < INCIDENT_COOLDOWN_MS
   if (alreadyFlagged) return
 
+  // A null speed is an unknown speed, not a measured zero. The platform sends
+  // it whenever it has no Doppler to offer, which is most of what a phone
+  // reports from a tunnel or a car park, so only a speed the device actually
+  // measured can rule the stop out here. Everything else is settled from
+  // position below.
   if ((latest.speedMps ?? 0) > DEFAULTS.incidentStoppedSpeedMps) return
 
   const windowStart = new Date(
     latest.recordedAt.getTime() - DEFAULTS.incidentDecelerationWindowSeconds * 1000,
   )
 
-  // The moment they stopped, which is the newest fix that was still moving.
-  // Everything after it is stationary by definition, so the stillness below is
-  // measured from here rather than from the fast fix, and a normal arrival that
-  // is simply old cannot qualify: no moving fix inside the window means they
-  // parked a while ago, not just now.
-  const [lastMoving] = await db
-    .select({ recordedAt: locationPoints.recordedAt })
-    .from(locationPoints)
-    .where(
-      and(
-        eq(locationPoints.userId, userId),
-        gte(locationPoints.recordedAt, windowStart),
-        lte(locationPoints.recordedAt, latest.recordedAt),
-        gt(locationPoints.speedMps, DEFAULTS.incidentStoppedSpeedMps),
-      ),
-    )
-    .orderBy(desc(locationPoints.recordedAt))
-    .limit(1)
-  if (!lastMoving) return
+  // One device's own history. The stop and the speed it came off have to be the
+  // same phone, or a tablet on the kitchen table supplies the stillness for a
+  // car that is still on the motorway. Read newest first so the limit keeps the
+  // fixes nearest the stop, then flip it: everything below reads forwards.
+  const windowFixes = (
+    await db
+      .select({
+        recordedAt: locationPoints.recordedAt,
+        speedMps: locationPoints.speedMps,
+        lat: locationPoints.lat,
+        lon: locationPoints.lon,
+        accuracyMeters: locationPoints.accuracyMeters,
+      })
+      .from(locationPoints)
+      .where(
+        and(
+          eq(locationPoints.userId, userId),
+          eq(locationPoints.deviceId, deviceId),
+          gte(locationPoints.recordedAt, windowStart),
+          lte(locationPoints.recordedAt, latest.recordedAt),
+        ),
+      )
+      .orderBy(desc(locationPoints.recordedAt))
+      .limit(INCIDENT_WINDOW_MAX_FIXES)
+  ).reverse()
+  if (windowFixes.length < 2) return
 
-  // Stillness is the other half of the signal. Without a minimum span the
-  // window is only as long as the gap between two fixes, so slowing from
-  // 40 km/h and stopping thirty seconds later reads as a crash rather than as
-  // the red light it was.
-  const stillFor = latest.recordedAt.getTime() - lastMoving.recordedAt.getTime()
+  // Two fixes are only in different places if they are further apart than the
+  // pair of error circles they sit in. Under that, the phone has not been shown
+  // to have moved, and above it, it has.
+  const movedBetween = (a: (typeof windowFixes)[number], b: (typeof windowFixes)[number]) =>
+    haversineMeters(a, b) > (a.accuracyMeters ?? 0) + (b.accuracyMeters ?? 0)
+  // A fix that cannot place someone inside a city block is the fix a phone
+  // reports from a tunnel or an underground car park. It is not thrown away:
+  // whether it moved is decided by `movedBetween` on its own error bars, so
+  // 6 km of tunnel is still movement and five metres is still stillness. What
+  // it may not do is supply a number of its own. Same bar the geofence sets
+  // before it will act on a fix at all.
+  const believable = (fix: (typeof windowFixes)[number]) =>
+    fix.accuracyMeters == null || fix.accuracyMeters <= DEFAULTS.geofenceMaxAccuracyMeters
+
+  let lastMovingIndex = -1
+  for (let i = 0; i < windowFixes.length; i += 1) {
+    const speed = windowFixes[i]!.speedMps
+    if (speed != null && speed > DEFAULTS.incidentStoppedSpeedMps) lastMovingIndex = i
+  }
+  if (lastMovingIndex < 0 || lastMovingIndex === windowFixes.length - 1) return
+
+  // Movement between two fixes belongs to the interval, not to the fix that
+  // ended it, so the earliest the stillness can have begun is the later of the
+  // two. Without this a drive on cell coverage, which reports no speed at all,
+  // reads as three minutes of not having moved while the car covers six
+  // kilometres of tunnel.
+  let stillFromIndex = lastMovingIndex + 1
+  for (let i = stillFromIndex + 1; i < windowFixes.length; i += 1) {
+    if (movedBetween(windowFixes[i - 1]!, windowFixes[i]!)) stillFromIndex = i
+  }
+
+  const stillFor = latest.recordedAt.getTime() - windowFixes[stillFromIndex]!.recordedAt.getTime()
   if (stillFor < DEFAULTS.incidentStillnessSeconds * 1000) return
 
-  // And the stop has to have come off real speed. The search ends at the stop
-  // itself, so a fix taken after it can never supply the speed that a stop is
-  // then blamed on.
-  const [fastest] = await db
-    .select({ speedMps: locationPoints.speedMps, recordedAt: locationPoints.recordedAt })
-    .from(locationPoints)
-    .where(
-      and(
-        eq(locationPoints.userId, userId),
-        gte(locationPoints.recordedAt, windowStart),
-        lte(locationPoints.recordedAt, lastMoving.recordedAt),
-        gte(locationPoints.speedMps, DEFAULTS.incidentMinSpeedMps),
-      ),
-    )
-    .orderBy(desc(locationPoints.speedMps))
-    .limit(1)
-  if (!fastest) return
+  const settled = windowFixes.slice(stillFromIndex)
+  const stopFix = settled[0]
+  const stillTo = settled[settled.length - 1]
+  if (!stopFix || !stillTo) return
+  if (movedBetween(stopFix, stillTo)) return
 
-  await db
+  // "Stopped suddenly" has to be true of the stop itself, not only of the fast
+  // stretch somewhere behind it. An arrival decelerates through this band and a
+  // collision does not.
+  const lastMoving = windowFixes[lastMovingIndex]!
+  const stopBarMps = settled.some(believable)
+    ? INCIDENT_MOVING_AT_STOP_MPS
+    : INCIDENT_MOVING_AT_COARSE_STOP_MPS
+  if ((lastMoving.speedMps ?? 0) < stopBarMps) return
+
+  // And the stop has to have come off real speed. A second fix agreeing is the
+  // strongest form of that, and a neighbour that measured something slower is a
+  // contradiction: the parked phone emitting one impossible sample between two
+  // measured zeroes is the case this exists for. A neighbour that measured
+  // nothing contradicts nothing, and at the mouth of a tunnel that lone reading
+  // is the only speed anybody will ever have. The search ends at the stop, so a
+  // fix taken after it can never supply the speed the stop is blamed on.
+  let fromMps = 0
+  for (let i = 0; i <= lastMovingIndex; i += 1) {
+    const fix = windowFixes[i]!
+    if (fix.speedMps == null || !believable(fix)) continue
+    const before = i > 0 ? windowFixes[i - 1]!.speedMps : null
+    const after = i + 1 < windowFixes.length ? windowFixes[i + 1]!.speedMps : null
+    const supported =
+      before == null && after == null
+        ? fix.speedMps
+        : Math.max(
+            agreedSpeedMps(before, fix.speedMps) ?? 0,
+            agreedSpeedMps(fix.speedMps, after) ?? 0,
+          )
+    if (supported > fromMps) fromMps = supported
+  }
+  if (fromMps < DEFAULTS.incidentMinSpeedMps) return
+
+  // Claiming the cooldown is the emit decision, the same way the speed alert
+  // above claims its own. Read it first and two devices reporting the same stop
+  // both pass a latch neither has spent yet.
+  const claimed = await db
     .update(userPresence)
     .set({ incidentFlaggedAt: now })
-    .where(eq(userPresence.userId, userId))
+    .where(
+      and(
+        eq(userPresence.userId, userId),
+        or(
+          isNull(userPresence.incidentFlaggedAt),
+          lt(userPresence.incidentFlaggedAt, new Date(now.getTime() - INCIDENT_COOLDOWN_MS)),
+        ),
+      ),
+    )
+    .returning({ userId: userPresence.userId })
+  if (claimed.length === 0) return
 
-  const fromKmh = Math.round((fastest.speedMps ?? 0) * 3.6)
+  const fromKmh = Math.round(fromMps * 3.6)
   for (const circle of incidentCircles) {
     await recordEvent(db, {
       circleId: circle.id,
@@ -542,13 +798,14 @@ export async function sharingStateByCircle(
       circleId: circleMembers.circleId,
       sharingState: circleMembers.sharingState,
       pausedUntil: circleMembers.pausedUntil,
+      resumeToState: circleMembers.resumeToState,
     })
     .from(circleMembers)
     .where(eq(circleMembers.userId, userId))
   return new Map(
     rows.map((row) => [
       row.circleId,
-      effectiveSharingState(row.sharingState, row.pausedUntil, now),
+      effectiveSharingState(row.sharingState, row.pausedUntil, now, row.resumeToState),
     ]),
   )
 }
@@ -559,7 +816,6 @@ async function maybeRaiseBatteryAlert(
   latest: NormalizedFix,
   now: Date,
   activeCircles: AlertCircle[],
-  presence: AlertPresence | undefined,
 ): Promise<void> {
   if (activeCircles.length === 0) return
   const level = latest.batteryLevel
@@ -580,34 +836,51 @@ async function maybeRaiseBatteryAlert(
     const recovered = activeCircles.every(
       (circle) => level >= Math.min(thresholdFor(circle) + 0.1, 1),
     )
-    if (presence?.lowBatteryNotifiedAt && recovered) {
+    if (recovered) {
+      // Both latches, or the next drain is announced to nobody: the per-circle
+      // rows are what the claim below reads, and a stale one reads as "already
+      // told" for a drain that has not happened yet.
       await db
         .update(userPresence)
         .set({ lowBatteryNotifiedAt: null, lowBatteryNotifiedLevel: null })
         .where(eq(userPresence.userId, userId))
+      await db
+        .update(circleMembers)
+        .set({ lowBatteryNotifiedAt: null, lowBatteryNotifiedLevel: null })
+        .where(eq(circleMembers.userId, userId))
     }
     return
   }
 
-  const lastNotified = presence?.lowBatteryNotifiedAt?.getTime() ?? 0
-  const notifiedLevel = presence?.lowBatteryNotifiedLevel ?? null
-  // The latch is per user but the threshold is per circle. Inside the cooldown
-  // a circle is still told the first time the drain reaches its own threshold,
-  // or the circle that asked to hear later hears nothing for the whole drain
-  // because a circle with a higher threshold already spent the latch.
-  const notifyCircles =
-    now.getTime() - lastNotified < LOW_BATTERY_COOLDOWN_MS
-      ? lowCircles.filter((circle) => notifiedLevel != null && thresholdFor(circle) < notifiedLevel)
-      : lowCircles
-  if (notifyCircles.length === 0) return
+  // Each circle carries its own latch. A user-level one is spent by whichever
+  // circle is told first, so a circle that was paused at that moment, or whose
+  // threshold is stricter, hears nothing for the rest of the drain. The claim
+  // is the emit decision and it reads what it claims, so two devices flushing
+  // together cannot both pass a latch neither has spent.
+  const cooldownStart = new Date(now.getTime() - LOW_BATTERY_COOLDOWN_MS)
+  const claimed = (await db.execute(sql`
+    update circle_members
+    set low_battery_notified_at = ${now.toISOString()}::timestamptz,
+        low_battery_notified_level = ${level}::real
+    where user_id = ${userId}::uuid
+      and circle_id in (${sql.join(
+        lowCircles.map((circle) => sql`${circle.id}::uuid`),
+        sql`, `,
+      )})
+      and (low_battery_notified_at is null
+           or low_battery_notified_at < ${cooldownStart.toISOString()}::timestamptz)
+    returning circle_id
+  `)) as unknown as Array<{ circle_id: string }>
+  if (claimed.length === 0) return
 
+  // Kept in step so the recovery reset above still has something to clear.
   await db
     .update(userPresence)
-    .set({
-      lowBatteryNotifiedAt: now,
-      lowBatteryNotifiedLevel: Math.min(level, notifiedLevel ?? 1),
-    })
+    .set({ lowBatteryNotifiedAt: now, lowBatteryNotifiedLevel: level })
     .where(eq(userPresence.userId, userId))
+
+  const told = new Set(claimed.map((row) => row.circle_id))
+  const notifyCircles = lowCircles.filter((circle) => told.has(circle.id))
 
   const percent = Math.round(level * 100)
   for (const circle of notifyCircles) {
@@ -642,6 +915,27 @@ export async function resumeExpiredPauses(db: Database, userId: string, now: Dat
       ),
     )
     .returning({ circleId: circleMembers.circleId })
+
+  if (expired.length > 0) {
+    // The fence stopped being evaluated for this circle while the pause ran, so
+    // its rows describe wherever the member was when it started. Picking up
+    // from there would replay a crossing nobody was allowed to see, and the
+    // family would be told about a departure hours after it happened.
+    await db.execute(sql`
+      update place_memberships pm
+      set last_evaluated_at = greatest(pm.last_evaluated_at, up.recorded_at)
+      from user_presence up
+      where up.user_id = ${userId}::uuid
+        and pm.user_id = ${userId}::uuid
+        and up.recorded_at is not null
+        and pm.place_id in (
+          select id from places where circle_id in (${sql.join(
+            expired.map((row) => sql`${row.circleId}::uuid`),
+            sql`, `,
+          )})
+        )
+    `)
+  }
 
   for (const row of expired) {
     await recordEvent(db, {

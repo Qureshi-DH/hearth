@@ -6,15 +6,19 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { Text } from "@/components/Text"
 import { useCircles } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
-import { ActivityScreen } from "@/screens/ActivityScreen"
 import { MapScreen } from "@/screens/MapScreen"
-import { PlacesScreen } from "@/screens/PlacesScreen"
-import { YouScreen } from "@/screens/YouScreen"
 import { useSettingsStore } from "@/stores/settings"
 import { useAppTheme } from "@/theme/context"
 
 import type { MainTabParamList } from "./navigationTypes"
 
+/**
+ * The three tabs behind the first one are registered with getComponent for the
+ * same reason the detail screens in AppNavigator are: `component` reads the
+ * identifier here, and Metro's inlineRequires turns that read into the require,
+ * so all four module graphs are evaluated in the commit that paints the first
+ * frame. Map keeps `component` because it is the tab that frame shows.
+ */
 const Tab = createBottomTabNavigator<MainTabParamList>()
 
 export function MainTabNavigator() {
@@ -29,6 +33,10 @@ export function MainTabNavigator() {
       screenOptions={{
         headerShown: false,
         tabBarHideOnKeyboard: true,
+        // A tab stays mounted once visited, so without this every websocket
+        // frame reconciles Places, Activity and You behind whatever the user is
+        // actually looking at.
+        freezeOnBlur: true,
         tabBarActiveTintColor: theme.colors.tint,
         tabBarInactiveTintColor: theme.colors.textFaint,
         tabBarStyle: {
@@ -60,7 +68,7 @@ export function MainTabNavigator() {
       />
       <Tab.Screen
         name="Places"
-        component={PlacesScreen}
+        getComponent={() => require("@/screens/PlacesScreen").PlacesScreen}
         options={{
           tabBarLabel: translate("places:title"),
           tabBarIcon: ({ color, focused }) => (
@@ -70,7 +78,7 @@ export function MainTabNavigator() {
       />
       <Tab.Screen
         name="Activity"
-        component={ActivityScreen}
+        getComponent={() => require("@/screens/ActivityScreen").ActivityScreen}
         options={{
           tabBarLabel: translate("activity:title"),
           tabBarIcon: ({ color, focused }) => (
@@ -106,7 +114,7 @@ export function MainTabNavigator() {
       />
       <Tab.Screen
         name="You"
-        component={YouScreen}
+        getComponent={() => require("@/screens/YouScreen").YouScreen}
         options={{
           tabBarLabel: translate("settings:title"),
           tabBarIcon: ({ color, focused }) => (

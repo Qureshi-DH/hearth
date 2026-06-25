@@ -121,8 +121,9 @@ and not the container's address.
 
 **Set `TRUST_PROXY=true` when you run behind a proxy.** Otherwise every request
 appears to come from the proxy, and the rate limiter treats your whole family as
-one client. Only set it when a proxy really is in front, because it makes the
-server believe a header any client can send.
+one client. The header is only believed when the machine that connected is on a
+private network, so turning this on does not let somebody on the internet choose
+the address their password guesses are counted against.
 
 **Long-lived connections need a generous timeout.** Phones hold a websocket
 open. A proxy that closes idle connections after 30 seconds will cause a

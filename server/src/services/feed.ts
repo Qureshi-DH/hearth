@@ -30,6 +30,8 @@ export interface RecordEventInput {
     /** Narrows delivery. Each member's mutes still apply on top. */
     onlyUserIds?: string[]
     data?: Record<string, unknown>
+    /** Hold the send back until this time. See PushMessage.notBefore. */
+    notBefore?: Date
   }
   /**
    * Hold the websocket fan-out back and let the caller send it after its
@@ -101,6 +103,7 @@ export async function recordEvent(db: Database, input: RecordEventInput): Promis
         body: input.notify!.body,
         channel: input.notify!.channel ?? "default",
         priority: input.notify!.priority ?? "normal",
+        notBefore: input.notify!.notBefore,
         data: {
           type: input.type,
           circleId: input.circleId,

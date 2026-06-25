@@ -1,7 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react"
-import { Pressable, View, type ViewStyle } from "react-native"
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FC,
+} from "react"
+import { AppState, Pressable, View, type AppStateStatus, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet"
+import type { CircleMember, MemberPresence } from "@hearth/shared"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
@@ -38,6 +48,99 @@ const FALLBACK_CENTER: [number, number] = [-0.1276, 51.5072]
 const CONTROLS_HEIGHT = 96
 /** Any taller and the tops of the check in and SOS buttons peek out under it. */
 const COLLAPSED_BAR_HEIGHT = 52
+
+// The rows below are memoised, so a member who has stopped moving stops
+// producing renders, and the relative time in their status line would sit at
+// "just now" until they moved again. One shared interval keeps every mounted
+// row's clock honest without waking the screen around them.
+//
+// It runs only while the sheet is in front of somebody. The tab navigator keeps
+// this screen mounted after its first visit, so a ticker tied to the mount
+// would go on re-rendering every row behind Places, Activity and You, and
+// behind a backgrounded app. Nothing is lost by stopping: coming back is what
+// catches the clocks up, and it does so at once rather than at the next minute.
+const minuteListeners = new Set<() => void>()
+let minuteTimer: ReturnType<typeof setInterval> | undefined
+let minuteCount = 0
+let minuteVisible = false
+/** Set only by a stop, so the first start of all is not mistaken for a return. */
+let minutePausedAt: number | undefined
+
+function notifyMinute() {
+  minuteCount += 1
+  for (const notify of [...minuteListeners]) notify()
+}
+
+function syncMinuteTimer() {
+  const shouldRun = minuteVisible && minuteListeners.size > 0
+  if (shouldRun === (minuteTimer !== undefined)) return
+  if (shouldRun) {
+    minuteTimer = setInterval(notifyMinute, 60_000)
+  } else {
+    clearInterval(minuteTimer)
+    minuteTimer = undefined
+  }
+}
+
+function subscribeToMinute(listener: () => void): () => void {
+  minuteListeners.add(listener)
+  syncMinuteTimer()
+  return () => {
+    minuteListeners.delete(listener)
+    syncMinuteTimer()
+  }
+}
+
+/** Driven by the one screen the rows live on. */
+function setMinuteTickerVisible(visible: boolean) {
+  if (visible === minuteVisible) return
+  minuteVisible = visible
+  if (!visible) {
+    minutePausedAt = Date.now()
+  } else if (minutePausedAt !== undefined && Date.now() - minutePausedAt >= 60_000) {
+    // Long enough away that the times on screen are wrong right now. Waiting
+    // for the first tick would leave them wrong for up to another minute.
+    notifyMinute()
+  }
+  syncMinuteTimer()
+}
+
+interface SheetRowProps {
+  member: CircleMember
+  presence: MemberPresence | undefined
+  isSelf: boolean
+  units: "metric" | "imperial"
+  onPress: (userId: string) => void
+  onLongPress: (userId: string) => void
+}
+
+// A `location` frame replaces one entry in the presence array and leaves every
+// other member's object identity alone, so the props here compare equal for
+// everybody who did not move. Without the memo all of the rows re-render on
+// every frame: VirtualizedList hands `renderItem` down to a PureComponent cell
+// and that closure is new on each render of the screen. The handlers take a
+// user id for the same reason, so the list can pass one stable function down
+// rather than a fresh arrow per row.
+const SheetRow = memo(function SheetRow({
+  member,
+  presence,
+  isSelf,
+  units,
+  onPress,
+  onLongPress,
+}: SheetRowProps) {
+  useSyncExternalStore(subscribeToMinute, () => minuteCount)
+  return (
+    <MemberRow
+      member={member}
+      presence={presence}
+      isSelf={isSelf}
+      units={units}
+      onPress={() => onPress(member.userId)}
+      onLongPress={() => onLongPress(member.userId)}
+    />
+  )
+})
 
 export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const { themed, theme } = useAppTheme()
@@ -101,6 +204,21 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
     }, []),
   )
 
+  useFocusEffect(
+    useCallback(() => {
+      // Only "background" means nobody can see the sheet. iOS reports
+      // "inactive" for a control centre pull or a call banner, which is not
+      // worth tearing the interval down and rebuilding it for.
+      const sync = (state: AppStateStatus) => setMinuteTickerVisible(state !== "background")
+      sync(AppState.currentState)
+      const subscription = AppState.addEventListener("change", sync)
+      return () => {
+        subscription.remove()
+        setMinuteTickerVisible(false)
+      }
+    }, []),
+  )
+
   // Fit everyone once per circle, on its first data. After that the camera
   // belongs to the user. Keyed on the circle rather than a plain flag, because
   // switching between two circles with the same number of located members
@@ -145,6 +263,14 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
     }
   }, [])
 
+  const openMember = useCallback(
+    (userId: string) => {
+      if (!circleId) return
+      navigation.navigate("MemberDetail", { circleId, userId })
+    },
+    [circleId, navigation],
+  )
+
   // The tab navigator already insets this screen above the tab bar, so bottom:0
   // here is the top of the bar. Do not add its height again.
   const restingSheetHeight = 210
@@ -153,15 +279,19 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const snapPoints = useMemo(() => [COLLAPSED_BAR_HEIGHT, restingSheetHeight, "55%", "92%"], [])
 
   // The controls ride the sheet rather than jumping between two fixed offsets.
-  // `animatedPosition` is the sheet's top edge as a shared value, so driving
-  // `top` from it keeps them glued to the sheet on the UI thread.
+  // `animatedPosition` is the sheet's top edge as a shared value, so this runs
+  // on the UI thread and keeps them glued to the sheet. It has to be a
+  // translation and not `top`: a layout prop would dirty the shadow node and
+  // run Yoga over this subtree on every frame of every drag and snap.
   const sheetTop = useSharedValue(0)
   const [containerHeight, setContainerHeight] = useState(0)
   const controlsStyle = useAnimatedStyle(() => {
     // Once the sheet is dismissed it parks off-screen, so clamp the controls to
     // just above the collapsed bar rather than letting them follow it down.
     const floor = containerHeight > 0 ? containerHeight - COLLAPSED_BAR_HEIGHT : sheetTop.value
-    return { top: Math.min(sheetTop.value, floor) - CONTROLS_HEIGHT - 12 }
+    return {
+      transform: [{ translateY: Math.min(sheetTop.value, floor) - CONTROLS_HEIGHT - 12 }],
+    }
   })
 
   if (!isLoading && circles.length === 0) {
@@ -449,16 +579,13 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
           keyExtractor={(member) => member.userId}
           contentContainerStyle={{ paddingBottom: theme.spacing.lg }}
           renderItem={({ item }) => (
-            <MemberRow
+            <SheetRow
               member={item}
               presence={presenceByUser.get(item.userId)}
               isSelf={item.userId === me?.id}
               units={units}
-              onPress={() => focusMember(item.userId)}
-              onLongPress={() =>
-                circle &&
-                navigation.navigate("MemberDetail", { circleId: circle.id, userId: item.userId })
-              }
+              onPress={focusMember}
+              onLongPress={openMember}
             />
           )}
           ListFooterComponent={
@@ -511,6 +638,9 @@ const $top: ThemedStyle<ViewStyle> = ({ spacing }) => ({
 })
 const $controls: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   position: "absolute",
+  // The animated style translates from here, so the origin has to be pinned
+  // rather than left to fall out of the flow position.
+  top: 0,
   right: spacing.sm,
   gap: spacing.xs,
 })

@@ -221,11 +221,12 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
 
 export async function reportNow(
   source: LocationSource = "manual",
+  accuracy: Location.Accuracy = source === "sos"
+    ? Location.Accuracy.Highest
+    : Location.Accuracy.High,
 ): Promise<LocationFixInput | null> {
   try {
-    const location = await Location.getCurrentPositionAsync({
-      accuracy: source === "sos" ? Location.Accuracy.Highest : Location.Accuracy.High,
-    })
+    const location = await Location.getCurrentPositionAsync({ accuracy })
     const battery = await batterySnapshot()
     const fix = toFix(location, source, battery)
     useTrackingStore.getState().enqueue([fix])
@@ -272,11 +273,10 @@ TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
 
 /** Waking the location stack is the one thing "stationary" exists to avoid. */
 const DRIFT_CHECK_MS = 60 * 60 * 1000
-let lastDriftCheck = 0
 
 TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
   try {
-    const { enabled, mode, policy, stillAnchor } = useTrackingStore.getState()
+    const { enabled, mode, policy, stillAnchor, lastDriftCheckAt } = useTrackingStore.getState()
 
     // Android forgets geofences when the app process is killed, and expo's
     // geofencing does not restart a terminated app the way iOS does. Rather
@@ -286,8 +286,10 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
     if (enabled && mode === "stationary" && stillAnchor) {
       const rearmed = !(await geofenceRunning())
       if (rearmed) await enterStationary(stillAnchor.lat, stillAnchor.lon)
-      if (rearmed || Date.now() - lastDriftCheck > DRIFT_CHECK_MS) {
-        lastDriftCheck = Date.now()
+      const checkedAt = lastDriftCheckAt ? Date.parse(lastDriftCheckAt) : NaN
+      const due = !Number.isFinite(checkedAt) || Date.now() - checkedAt > DRIFT_CHECK_MS
+      if (rearmed || due) {
+        useTrackingStore.getState().markDriftChecked()
         try {
           const here = await Location.getCurrentPositionAsync({
             accuracy: Location.Accuracy.Balanced,
@@ -331,10 +333,18 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
     // Read back rather than reused from above, because the drift check may
     // have just reported a fix and a second wake of the GPS in the same pass is
     // the cost stationary mode exists to avoid.
-    const { lastFix } = useTrackingStore.getState()
+    //
+    // Signing out leaves `enabled` true, because it is the user's switch rather
+    // than the session's, so without the mode check a signed-out phone holding
+    // "Always" woke the receiver every half hour for good and queued fixes no
+    // session could ever upload.
+    const { mode: currentMode, lastFix } = useTrackingStore.getState()
     const stale = !lastFix || Date.now() - Date.parse(lastFix.recordedAt) > STALE_FIX_MS
-    if (enabled && stale && (await currentPermission()) === "always") {
-      await reportNow("significant")
+    if (enabled && currentMode !== "off" && stale && (await currentPermission()) === "always") {
+      // Balanced, like the drift check: this repeats on a timer for as long as
+      // the phone stays put, and it is the wake the rest of this task is built
+      // to avoid paying for.
+      await reportNow("significant", Location.Accuracy.Balanced)
     } else {
       await flush()
     }
@@ -663,6 +673,10 @@ export async function stopTracking(): Promise<void> {
   store.setMode("off")
   store.setStillAnchor(null)
   store.setBackgroundActive(false)
+  // Sign-out, a server change and a deleted account all land here, and none of
+  // them turn the master switch off, so the wake had nothing left to stop it.
+  // startTracking registers it again, and that is the only way back from "off".
+  await unregisterBackgroundSync()
 }
 
 let lastPolicyRestart = 0
@@ -688,6 +702,18 @@ export async function registerBackgroundSync(): Promise<void> {
     }
   } catch {
     // Background tasks are a nice-to-have. Location updates still flow without them.
+  }
+}
+
+export async function unregisterBackgroundSync(): Promise<void> {
+  if (Platform.OS === "web") return
+  try {
+    if (await TaskManager.isTaskRegisteredAsync(BACKGROUND_SYNC_TASK)) {
+      await BackgroundTask.unregisterTaskAsync(BACKGROUND_SYNC_TASK)
+    }
+  } catch {
+    // Same as registering. A wake we could not cancel is caught by the mode
+    // gate in the task body instead.
   }
 }
 

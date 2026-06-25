@@ -3,14 +3,15 @@ import {
   DEFAULTS,
   MUTABLE_EVENT_TYPES,
   SHARING_STATES,
+  haversineMeters,
   roleAtLeast,
   type CircleRole,
 } from "@hearth/shared"
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm"
+import { and, desc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
-import { getDb } from "../db/client"
+import { getDb, type Database } from "../db/client"
 import {
   circleMembers,
   circles,
@@ -18,6 +19,7 @@ import {
   invites,
   placeMemberships,
   places,
+  userPresence,
   users,
 } from "../db/schema"
 import type { CircleSettingsJson } from "../db/schema"
@@ -26,6 +28,7 @@ import { toPublicUser } from "../lib/serialize"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { recordEvent } from "../services/feed"
 import { acceptInvite, createInvite, inviteUrl, previewInvite } from "../services/invites"
+import { POSITION_DERIVED_EVENT_TYPES, sharesPreciselySql } from "../services/presence"
 
 const defaultSettings = (): CircleSettingsJson => ({
   historyRetentionDays: DEFAULTS.historyRetentionDays,
@@ -50,6 +53,20 @@ const settingsSchema = z.object({
 })
 
 const circleIdParam = z.object({ circleId: z.string().uuid() })
+
+// Postgres has no year zero, so "0000-01-01T00:00:00Z" clears zod's calendar
+// check and then aborts the query inside the driver, turning a stored instant
+// into a 500. Nothing Hearth stores is stamped outside this window.
+const MIN_TIMESTAMP_MS = Date.UTC(1970, 0, 1)
+const MAX_TIMESTAMP_MS = Date.UTC(9999, 11, 31, 23, 59, 59, 999)
+
+const isoTimestamp = z
+  .string()
+  .datetime()
+  .refine((value) => {
+    const ms = Date.parse(value)
+    return ms >= MIN_TIMESTAMP_MS && ms <= MAX_TIMESTAMP_MS
+  }, "Timestamp is out of the supported range.")
 
 function toCircleDto(
   row: typeof circles.$inferSelect,
@@ -94,6 +111,67 @@ async function loadMemberDto(db: ReturnType<typeof getDb>, circleId: string, use
     .limit(1)
   if (!row) throw notFound("That person is not in this circle.")
   return toMemberDto(row.member, row.user)
+}
+
+/**
+ * Puts one member's fences for one circle back where they were, silently.
+ * Sharing anything less than "precise" deletes those rows, so without this the
+ * first fix after resuming looks like a first evaluation and the circle is told
+ * they have just arrived somewhere they never left.
+ *
+ * Same two rules as `primePlaceMemberships`, and for the same reason: this
+ * writes "inside" for a fix the fence never judged, so a cell-tower fix that
+ * cannot decide a doorstep seeds nothing and the first honest fix decides from
+ * scratch. Both stamps come from that fix rather than from the clock, or the
+ * uploads already in flight would all read as stragglers and be skipped.
+ */
+async function primeMemberPlaceMemberships(
+  db: Pick<Database, "select" | "insert">,
+  circleId: string,
+  userId: string,
+): Promise<void> {
+  const [presence] = await db
+    .select({
+      lat: userPresence.lat,
+      lon: userPresence.lon,
+      accuracyMeters: userPresence.accuracyMeters,
+      recordedAt: userPresence.recordedAt,
+    })
+    .from(userPresence)
+    .where(eq(userPresence.userId, userId))
+    .limit(1)
+  if (!presence) return
+
+  const { lat, lon, accuracyMeters, recordedAt } = presence
+  if (lat == null || lon == null || recordedAt == null) return
+  if (accuracyMeters != null && accuracyMeters > DEFAULTS.geofenceMaxAccuracyMeters) return
+
+  const circlePlaces = await db
+    .select({
+      id: places.id,
+      lat: places.lat,
+      lon: places.lon,
+      radiusMeters: places.radiusMeters,
+    })
+    .from(places)
+    .where(eq(places.circleId, circleId))
+  if (circlePlaces.length === 0) return
+
+  const margin = (accuracyMeters ?? 0) / 2
+  await db
+    .insert(placeMemberships)
+    .values(
+      circlePlaces.map((place) => ({
+        placeId: place.id,
+        userId,
+        isInside: haversineMeters({ lat, lon }, place) + margin <= place.radiusMeters,
+        since: recordedAt,
+        lastEvaluatedAt: recordedAt,
+      })),
+    )
+    // A row still here was written after the rows for this circle were dropped,
+    // by the fence or by a place created mid-pause, so it is the newer answer.
+    .onConflictDoNothing({ target: [placeMemberships.placeId, placeMemberships.userId] })
 }
 
 export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -141,7 +219,15 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(
           and(
             inArray(events.circleId, circleIds),
-            sql`${events.occurredAt} > coalesce(${circleMembers.feedReadAt}, '-infinity'::timestamptz)`,
+            sql`${events.createdAt} > coalesce(${circleMembers.feedReadAt}, '-infinity'::timestamptz)`,
+            // The same predicate the feed itself applies. A badge over a feed
+            // that renders nothing is a broken UI, and the number on its own
+            // still reports how often a paused member sets something off.
+            or(
+              notInArray(events.type, [...POSITION_DERIVED_EVENT_TYPES]),
+              eq(events.actorUserId, auth.userId),
+              sharesPreciselySql(events.circleId, events.actorUserId),
+            ),
           ),
         )
         .groupBy(events.circleId)
@@ -493,7 +579,7 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         params: circleIdParam,
         body: z.object({
           sharingState: z.enum(SHARING_STATES),
-          pausedUntil: z.string().datetime().nullish(),
+          pausedUntil: isoTimestamp.nullish(),
         }),
       },
     },
@@ -515,7 +601,6 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         request.body.sharingState === "paused" && request.body.pausedUntil
           ? new Date(request.body.pausedUntil)
           : null
-
       // Postgres evaluates SET expressions against the pre-update row, so this
       // captures the state being replaced without a second read. The coalesce
       // makes pausing twice keep the original rather than recording "paused".
@@ -523,36 +608,54 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         request.body.sharingState === "paused"
           ? sql`coalesce(${circleMembers.resumeToState}, ${circleMembers.sharingState})`
           : null
-      await db
-        .update(circleMembers)
-        .set({ sharingState: request.body.sharingState, pausedUntil, resumeToState })
-        .where(
-          and(
-            eq(circleMembers.circleId, request.params.circleId),
-            eq(circleMembers.userId, auth.userId),
-          ),
-        )
+      const memberFilter = and(
+        eq(circleMembers.circleId, request.params.circleId),
+        eq(circleMembers.userId, auth.userId),
+      )
 
-      // Fences stop being evaluated for a circle the moment sharing is not
-      // precise. Left in place, "inside Home" freezes and is still served as
-      // where they are now, then replayed as a departure from wherever they
-      // have got to by the time sharing resumes.
-      if (request.body.sharingState !== "precise") {
-        await db
-          .delete(placeMemberships)
-          .where(
-            and(
-              eq(placeMemberships.userId, auth.userId),
-              inArray(
-                placeMemberships.placeId,
-                db
-                  .select({ id: places.id })
-                  .from(places)
-                  .where(eq(places.circleId, request.params.circleId)),
-              ),
-            ),
-          )
-      }
+      // The fence rows and the state that gates them move together, or a
+      // failure between the two leaves the member sharing precisely from a
+      // frozen fence, which is the bug this whole block exists to avoid.
+      await db.transaction(async (tx) => {
+        const [before] = await tx
+          .select({ sharingState: circleMembers.sharingState })
+          .from(circleMembers)
+          .where(memberFilter)
+          .limit(1)
+
+        // Priming happens before the circle can see anything again, so an
+        // upload landing mid-request cannot read the gap as a first evaluation
+        // and announce an arrival at a place she has been sitting in all along.
+        if (request.body.sharingState === "precise" && before?.sharingState !== "precise") {
+          await primeMemberPlaceMemberships(tx, request.params.circleId, auth.userId)
+        }
+
+        await tx
+          .update(circleMembers)
+          .set({ sharingState: request.body.sharingState, pausedUntil, resumeToState })
+          .where(memberFilter)
+
+        // The rows stay. Fences stop being evaluated for a circle the moment
+        // sharing is not precise, and the read paths already refuse to report a
+        // membership belonging to somebody who is not sharing precisely, so a
+        // frozen row discloses nothing. Deleting instead made resuming look
+        // like arriving: the next fix was a first evaluation with the member
+        // already inside, which is exactly what the fence announces.
+        //
+        // What does have to move is the watermark. Sharing again means the
+        // fence starts reading this circle's places from now, not from wherever
+        // the member was when they paused, or resuming announces a departure
+        // that happened while nobody was allowed to watch.
+        await tx.execute(sql`
+          update place_memberships pm
+          set last_evaluated_at = greatest(pm.last_evaluated_at, up.recorded_at)
+          from user_presence up
+          where up.user_id = ${auth.userId}
+            and pm.user_id = ${auth.userId}
+            and up.recorded_at is not null
+            and pm.place_id in (select id from places where circle_id = ${request.params.circleId})
+        `)
+      })
 
       await recordEvent(db, {
         circleId: request.params.circleId,
@@ -579,7 +682,7 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         params: circleIdParam,
         body: z.object({
           muted: z.array(z.enum(MUTABLE_EVENT_TYPES)).max(32).optional(),
-          mutedUntil: z.string().datetime().nullish(),
+          mutedUntil: isoTimestamp.nullish(),
         }),
       },
     },

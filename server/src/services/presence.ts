@@ -1,5 +1,11 @@
-import { DEFAULTS, coarsenLocation, type MemberPresence, type SharingState } from "@hearth/shared"
-import { and, asc, eq, inArray, isNull } from "drizzle-orm"
+import {
+  DEFAULTS,
+  coarsenLocation,
+  type EventType,
+  type MemberPresence,
+  type SharingState,
+} from "@hearth/shared"
+import { and, asc, eq, inArray, isNull, sql, type AnyColumn, type SQL } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import { circleMembers, placeMemberships, places, sosAlerts, userPresence } from "../db/schema"
@@ -8,17 +14,61 @@ export function effectiveSharingState(
   state: SharingState,
   pausedUntil: Date | null,
   now: Date,
+  resumeToState: SharingState | null = null,
 ): SharingState {
   if (state !== "paused") return state
   // A pause with an expiry lapses on read, so the read path needs no write.
-  if (pausedUntil && pausedUntil.getTime() <= now.getTime()) return "precise"
+  // It has to land on the same state the two write-path healers pick with
+  // coalesce(resume_to_state, 'precise'), or somebody who chose approximate and
+  // then paused is served their exact position the moment the pause runs out.
+  if (pausedUntil && pausedUntil.getTime() <= now.getTime()) return resumeToState ?? "precise"
   return "paused"
 }
+
+/**
+ * The same rule in SQL, for read paths that have to drop rows in the database
+ * rather than project them one at a time. Postgres decides "now", so no
+ * JavaScript Date goes near the template.
+ */
+export function sharesPreciselySql(circleId: SQL | AnyColumn, userId: SQL | AnyColumn): SQL {
+  return sql`exists (
+    select 1
+    from ${circleMembers} gate
+    where gate.circle_id = ${circleId}
+      and gate.user_id = ${userId}
+      and (
+        gate.sharing_state = 'precise'
+        or (
+          gate.sharing_state = 'paused'
+          and gate.paused_until is not null
+          and gate.paused_until <= now()
+          and coalesce(gate.resume_to_state, 'precise') = 'precise'
+        )
+      )
+  )`
+}
+
+/**
+ * Feed rows that only exist because the server watched somebody move. A circle
+ * they share approximately with, or not at all, must not go on reading the
+ * trail they built while they were precise, and one they left must not keep it
+ * at all. Everything else in the feed (joins, messages, check-ins, battery)
+ * survives a change of sharing state, because none of it says where anyone is.
+ */
+export const POSITION_DERIVED_EVENT_TYPES = [
+  "place_arrive",
+  "place_leave",
+  "speed_alert",
+  "possible_incident",
+  "trip_completed",
+] as const satisfies readonly EventType[]
 
 export interface PresenceRow {
   userId: string
   sharingState: SharingState
   pausedUntil: Date | null
+  /** What a lapsed pause falls back to. Omitting it reads as "precise". */
+  resumeToState?: SharingState | null
   lat: number | null
   lon: number | null
   accuracyMeters: number | null
@@ -41,7 +91,9 @@ export function projectPresence(
 ): MemberPresence {
   const now = extras.now ?? new Date()
   const isSelf = row.userId === viewerId
-  const state = isSelf ? "precise" : effectiveSharingState(row.sharingState, row.pausedUntil, now)
+  const state = isSelf
+    ? "precise"
+    : effectiveSharingState(row.sharingState, row.pausedUntil, now, row.resumeToState ?? null)
 
   const hasFix = row.lat != null && row.lon != null
   const stale =
@@ -115,6 +167,7 @@ export async function loadRawCirclePresence(
       userId: circleMembers.userId,
       sharingState: circleMembers.sharingState,
       pausedUntil: circleMembers.pausedUntil,
+      resumeToState: circleMembers.resumeToState,
       lat: userPresence.lat,
       lon: userPresence.lon,
       accuracyMeters: userPresence.accuracyMeters,
@@ -181,6 +234,7 @@ export async function loadRawPresenceByCircle(
       userId: circleMembers.userId,
       sharingState: circleMembers.sharingState,
       pausedUntil: circleMembers.pausedUntil,
+      resumeToState: circleMembers.resumeToState,
       lat: userPresence.lat,
       lon: userPresence.lon,
       accuracyMeters: userPresence.accuracyMeters,
@@ -235,6 +289,7 @@ export async function loadRawPresenceByCircle(
       userId: row.userId,
       sharingState: row.sharingState,
       pausedUntil: row.pausedUntil,
+      resumeToState: row.resumeToState,
       lat: row.lat,
       lon: row.lon,
       accuracyMeters: row.accuracyMeters,
