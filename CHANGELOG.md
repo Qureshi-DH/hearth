@@ -6,6 +6,54 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-26
+
+A correctness and security pass over the server, the alert logic and the mobile
+app. This release fixes 58 defects and adds the tests that hold them in place.
+
+### Security
+
+- A single websocket frame from any signed-in account could take the whole
+  server down, ending live location, SOS and check-ins for every family on it
+- The activity feed and the place-events endpoint ignored the target's sharing
+  state, so a circle somebody had stepped back from could still read the named
+  places they had been to
+- A timed pause that lapsed resolved to precise rather than to the state it
+  replaced, handing exact coordinates to a circle that had been given a grid
+  square. Fixed in all three places that resolve it
+- Server-admin was read from the access token rather than the database, so
+  demoting an administrator did not demote them, and within the token's life
+  they could promote themselves back permanently
+- The login throttle no longer believes a forwarded address from anywhere but a
+  proxy on a private network
+- Refresh tokens rotate with the superseded hash remembered, so a replay is told
+  apart from a phone retrying a response it never received
+
+### Fixed
+
+- A car passing through a tunnel read as a crash, because a fix carrying no
+  speed was treated as a measured zero rather than as unknown
+- An ordinary arrival raised a crash alert off a single stray sample. Two fixes
+  now have to agree before a speed is evidence
+- Alert cooldowns lived on the account, so the first circle told spent the
+  cooldown for every other circle, and a circle that was paused at that moment
+  heard nothing for the rest of the drain. Speed and battery latches are per
+  circle now
+- Trips merged every device on an account, so a tablet left at home teleported
+  the driving phone's route and inflated its distance and average speed
+- A completed trip was never announced at all
+- Pausing sharing and resuming it announced a fresh arrival at a place the
+  member had never left
+- Driving past a place no longer buzzes the family. The entry push is held for
+  the length of a transit and cancelled by the departure
+
+### Changed
+
+- Member rows, the activity feed and the map no longer re-render on every
+  location frame
+- The background sync task stops waking the GPS once the phone signs out
+- The location queue no longer rewrites itself in full on every fix
+
 ## [0.1.3] - 2026-06-25
 
 Everything since 0.1.0. The 0.1.1 and 0.1.2 images went out without release
@@ -96,6 +144,7 @@ security audit and there are no store builds yet.
   trusting the token
 - Push payloads never carry coordinates
 
-[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Qureshi-DH/hearth/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/Qureshi-DH/hearth/compare/v0.1.0...v0.1.3
 [0.1.0]: https://github.com/Qureshi-DH/hearth/releases/tag/v0.1.0
