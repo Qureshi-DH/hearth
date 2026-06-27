@@ -1,14 +1,16 @@
-import { useCallback, useRef } from "react"
+import { forwardRef, useCallback, useRef, type ComponentRef, type Ref } from "react"
 import { View, type ViewStyle } from "react-native"
 import BottomSheet, {
   BottomSheetBackdrop,
   BottomSheetScrollView,
+  BottomSheetTextInput,
   BottomSheetView,
   type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet"
 import { useNavigation } from "@react-navigation/native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
+import { TextField, type TextFieldProps } from "@/components/TextField"
 import { useAppTheme } from "@/theme/context"
 
 export interface SheetScreenProps {
@@ -49,7 +51,13 @@ export function SheetScreen({ children, snapPoints, scroll = false }: SheetScree
     [],
   )
 
-  const Body = scroll ? BottomSheetScrollView : BottomSheetView
+  const body = (
+    <>
+      {children}
+      {/* Home indicator, plus room so the last control is not flush. */}
+      <View style={{ height: insets.bottom + theme.spacing.md }} />
+    </>
+  )
 
   return (
     <BottomSheet
@@ -60,6 +68,9 @@ export function SheetScreen({ children, snapPoints, scroll = false }: SheetScree
       // short form wants. A tall checklist passes its own instead.
       enableDynamicSizing={!snapPoints}
       enablePanDownToClose
+      // Settles the sheet back down once the keyboard goes. Rising to meet it
+      // in the first place takes a SheetTextField, see below.
+      keyboardBlurBehavior="restore"
       // Dragging it away and tapping the backdrop both end the route, so the
       // sheet never lingers as an empty transparent screen.
       onClose={() => navigation.goBack()}
@@ -68,13 +79,37 @@ export function SheetScreen({ children, snapPoints, scroll = false }: SheetScree
       backgroundStyle={{ backgroundColor: theme.colors.background }}
       style={{ marginHorizontal: 0 }}
     >
-      <Body style={$body}>
-        {children}
-        {/* Home indicator, plus room so the last control is not flush. */}
-        <View style={{ height: insets.bottom + theme.spacing.md }} />
-      </Body>
+      {scroll ? (
+        // Same as Screen. With the keyboard up, a ScrollView's default is to
+        // spend the first tap on dismissing it, so Save under a raised sheet
+        // took two presses and the sheet dropped away under the finger.
+        <BottomSheetScrollView style={$body} keyboardShouldPersistTaps="handled">
+          {body}
+        </BottomSheetScrollView>
+      ) : (
+        <BottomSheetView style={$body}>{body}</BottomSheetView>
+      )}
     </BottomSheet>
   )
 }
+
+/**
+ * The TextField to use inside any bottom sheet, this one or PromptDialog's.
+ *
+ * A plain TextField leaves the sheet where it is and lets the keyboard slide
+ * over it. The sheet library only offsets itself for a keyboard it can tie to
+ * one of its own inputs, and Android is no help under edge-to-edge because the
+ * window is never resized for the keyboard. Baking the input in here means no
+ * sheet form has to remember to opt in.
+ *
+ * Rendering it outside a sheet throws, because the library's input reads the
+ * sheet context unconditionally.
+ */
+export const SheetTextField = forwardRef(function SheetTextField(
+  props: TextFieldProps,
+  ref: Ref<ComponentRef<typeof TextField>>,
+) {
+  return <TextField ref={ref} InputComponent={BottomSheetTextInput} {...props} />
+})
 
 const $body: ViewStyle = { flexGrow: 1 }

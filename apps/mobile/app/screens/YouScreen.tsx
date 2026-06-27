@@ -18,7 +18,7 @@ import { useMe, useRemoveAvatar, useUpdateMe, useUploadAvatar } from "@/hooks/qu
 import { translate } from "@/i18n/translate"
 import type { MainTabScreenProps } from "@/navigators/navigationTypes"
 import { endpoints } from "@/services/api"
-import { refreshMotionWatch, stopTracking } from "@/services/location/tracker"
+import { stopTracking } from "@/services/location/tracker"
 import { disablePush } from "@/services/notifications"
 import { queryClient } from "@/services/queryClient"
 import { useAuthStore } from "@/stores/auth"
@@ -60,8 +60,6 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
   const setUnits = useSettingsStore((state) => state.setUnits)
   const hapticsEnabled = useSettingsStore((state) => state.hapticsEnabled)
   const setHaptics = useSettingsStore((state) => state.setHaptics)
-  const nativeMotion = useSettingsStore((state) => state.nativeMotion)
-  const setNativeMotion = useSettingsStore((state) => state.setNativeMotion)
   const backgroundActive = useTrackingStore((state) => state.backgroundActive)
   const permission = useTrackingStore((state) => state.permission)
   const queuedCount = useTrackingStore((state) => state.queue.length)
@@ -220,16 +218,6 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
           icon={backgroundActive ? "radio-outline" : "radio-button-off-outline"}
           iconTone={backgroundActive ? "success" : "warning"}
           onPress={() => navigation.navigate("Permissions")}
-        />
-        <ListRow
-          tx="settings:nativeMotion"
-          subtitleTx="settings:nativeMotionHint"
-          icon="walk-outline"
-          value={nativeMotion}
-          onValueChange={(on) => {
-            setNativeMotion(on)
-            void refreshMotionWatch()
-          }}
         />
         {lastError ? (
           <Text

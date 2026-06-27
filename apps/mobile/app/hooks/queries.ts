@@ -110,7 +110,9 @@ export function useCircles() {
 
   // Crash detection runs the sensors hard and can raise an SOS, so it may only
   // run where a circle has actually asked for it. The tracker reads this from
-  // the background, long after any of this is mounted.
+  // the background, long after any of this is mounted. The refresh is what
+  // releases the drive sensors when the last circle turns it off, because the
+  // classifier keeps running and nothing else would stop them mid drive.
   const circles = query.data
   useEffect(() => {
     if (!circles) return

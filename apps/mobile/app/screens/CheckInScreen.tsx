@@ -4,9 +4,8 @@ import { Ionicons } from "@expo/vector-icons"
 import { haversineMeters } from "@hearth/shared"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
-import { SheetScreen } from "@/components/SheetScreen"
+import { SheetScreen, SheetTextField } from "@/components/SheetScreen"
 import { Text } from "@/components/Text"
-import { TextField } from "@/components/TextField"
 import { useCheckIn, usePlaces } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
@@ -92,7 +91,7 @@ export const CheckInScreen: FC<AppStackScreenProps<"CheckIn">> = ({ navigation, 
           )}
         </View>
 
-        <TextField
+        <SheetTextField
           value={note}
           onChangeText={setNote}
           labelTx="checkIn:note"

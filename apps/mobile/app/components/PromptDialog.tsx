@@ -9,8 +9,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
+import { SheetTextField } from "@/components/SheetScreen"
 import { Text, type TextProps } from "@/components/Text"
-import { TextField } from "@/components/TextField"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 
@@ -51,18 +51,33 @@ export function PromptDialog({
   const { themed, theme } = useAppTheme()
   const insets = useSafeAreaInsets()
   const sheet = useRef<BottomSheetModal>(null)
+  // dismiss() on a modal that was never presented leaves the library's status
+  // machine stuck in DISMISSING, after which its portal drops every present().
+  // Callers mount this with visible false, and the library's own onDismiss
+  // arrives after it has reset itself, so dismiss() only runs once a present()
+  // has gone through. present() does its work a frame later, so flipping
+  // visible true and back inside one frame would still trip it.
+  const presented = useRef(false)
   const [value, setValue] = useState(initialValue ?? "")
 
   // The same sheet is reused for different rows, so each opening starts from
-  // that row's current value rather than whatever was typed last time.
+  // that row's current value rather than whatever was typed last time. Only
+  // the visible edge resets it: a refetch that changes initialValue while the
+  // sheet is open must not present() again or clobber what was typed.
   useEffect(() => {
     if (visible) {
       setValue(initialValue ?? "")
+      presented.current = true
       sheet.current?.present()
-    } else {
+    } else if (presented.current) {
       sheet.current?.dismiss()
     }
-  }, [visible, initialValue])
+  }, [visible]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDismiss = () => {
+    presented.current = false
+    onCancel()
+  }
 
   const renderBackdrop = useCallback(
     (props: BottomSheetBackdropProps) => (
@@ -86,19 +101,20 @@ export function PromptDialog({
       ref={sheet}
       enableDynamicSizing
       enablePanDownToClose
-      // The sheet rides the keyboard instead of being pushed off the bottom,
-      // which is what keeps its background flush with the screen edge.
+      // The sheet offsets itself for the keyboard, which keeps its background
+      // flush with the screen edge. It has to, because edge-to-edge stops the
+      // OS from resizing the window, so asking for adjustResize here would only
+      // make the library stand down and wait for a resize that never comes.
       keyboardBehavior="interactive"
       keyboardBlurBehavior="restore"
-      android_keyboardInputMode="adjustResize"
-      onDismiss={onCancel}
+      onDismiss={handleDismiss}
       backdropComponent={renderBackdrop}
       handleIndicatorStyle={{ backgroundColor: theme.colors.tintInactive }}
       backgroundStyle={{ backgroundColor: theme.colors.background }}
     >
       <BottomSheetView style={themed($sheet)}>
         <Text preset="subheading" tx={titleTx} text={title} />
-        <TextField
+        <SheetTextField
           value={value}
           onChangeText={setValue}
           autoFocus

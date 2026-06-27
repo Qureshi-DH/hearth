@@ -2,9 +2,8 @@ import { useState, type FC } from "react"
 import { Pressable, View, type ViewStyle } from "react-native"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
-import { SheetScreen } from "@/components/SheetScreen"
+import { SheetScreen, SheetTextField } from "@/components/SheetScreen"
 import { Text } from "@/components/Text"
-import { TextField } from "@/components/TextField"
 import { useCreateCircle } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
@@ -56,7 +55,7 @@ export const CreateCircleScreen: FC<AppStackScreenProps<"CreateCircle">> = ({ na
           ))}
         </View>
 
-        <TextField
+        <SheetTextField
           value={name}
           onChangeText={setName}
           labelTx="circles:nameLabel"

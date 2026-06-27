@@ -5,7 +5,7 @@ import { REGISTRATION_MODES, type AdminUserSummary, type RegistrationMode } from
 import { ListGroup, ListRow } from "@/components/ListRow"
 import { OptionSheet } from "@/components/OptionSheet"
 import { Pill } from "@/components/Pill"
-import { PromptDialog } from "@/components/PromptDialog"
+import { PromptDialog, type PromptDialogProps } from "@/components/PromptDialog"
 import { PrimaryButton } from "@/components/PrimaryButton"
 import { Screen } from "@/components/Screen"
 import { SectionHeader } from "@/components/SectionHeader"
@@ -52,11 +52,48 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
     navigation,
   ])
 
-  const [editing, setEditing] = useState<"serverName" | "retention" | null>(null)
+  // One sheet serves both rows. Which row it shows is kept apart from whether
+  // it is open, so the copy stays put while the sheet slides away after a close.
+  const [field, setField] = useState<"serverName" | "retention">("serverName")
+  const [editing, setEditing] = useState(false)
   const [managing, setManaging] = useState<AdminUserSummary | null>(null)
+
+  const edit = (next: typeof field) => {
+    setField(next)
+    setEditing(true)
+  }
 
   const save = (patch: Parameters<typeof updateSettings.mutate>[0]) =>
     updateSettings.mutate(patch, { onError: (error) => toast.error((error as Error).message) })
+
+  const prompt: Omit<PromptDialogProps, "visible" | "onCancel"> =
+    field === "serverName"
+      ? {
+          titleTx: "admin:serverName",
+          helper: translate("admin:serverNameHint"),
+          initialValue: settings.data?.serverName,
+          maxLength: 80,
+          onSubmit: (value) => {
+            if (value) save({ serverName: value })
+          },
+        }
+      : {
+          titleTx: "admin:maxRetention",
+          helper: translate("admin:retentionHelper"),
+          initialValue: settings.data?.maxHistoryRetentionDays?.toString() ?? "",
+          keyboardType: "number-pad",
+          maxLength: 4,
+          onSubmit: (value) => {
+            // Empty means no cap, which is a real answer here rather than a
+            // refusal to answer, so it is sent as null instead of ignored.
+            if (value === "") return save({ maxHistoryRetentionDays: null })
+            const days = Number(value)
+            if (!Number.isInteger(days) || days < 1 || days > 3650) {
+              return toast.error(translate("admin:retentionHelper"))
+            }
+            save({ maxHistoryRetentionDays: days })
+          },
+        }
 
   const drain = async () => {
     try {
@@ -163,7 +200,7 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
           tx="admin:serverName"
           subtitle={settings.data?.serverName}
           icon="pricetag-outline"
-          onPress={() => setEditing("serverName")}
+          onPress={() => edit("serverName")}
         />
         <ListRow
           tx="admin:maxRetention"
@@ -180,7 +217,7 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
           }
           icon="hourglass-outline"
           iconTone="warning"
-          onPress={() => setEditing("retention")}
+          onPress={() => edit("retention")}
         />
         <ListRow
           tx="admin:queueTitle"
@@ -242,37 +279,7 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
         style={{ marginHorizontal: theme.spacing.md }}
       />
 
-      <PromptDialog
-        visible={editing === "serverName"}
-        titleTx="admin:serverName"
-        helper={translate("admin:serverNameHint")}
-        initialValue={settings.data?.serverName}
-        maxLength={80}
-        onCancel={() => setEditing(null)}
-        onSubmit={(value) => {
-          if (value) save({ serverName: value })
-        }}
-      />
-
-      <PromptDialog
-        visible={editing === "retention"}
-        titleTx="admin:maxRetention"
-        helper={translate("admin:retentionHelper")}
-        initialValue={settings.data?.maxHistoryRetentionDays?.toString() ?? ""}
-        keyboardType="number-pad"
-        maxLength={4}
-        onCancel={() => setEditing(null)}
-        onSubmit={(value) => {
-          // Empty means no cap, which is a real answer here rather than a
-          // refusal to answer, so it is sent as null instead of ignored.
-          if (value === "") return save({ maxHistoryRetentionDays: null })
-          const days = Number(value)
-          if (!Number.isInteger(days) || days < 1 || days > 3650) {
-            return toast.error(translate("admin:retentionHelper"))
-          }
-          save({ maxHistoryRetentionDays: days })
-        }}
-      />
+      <PromptDialog {...prompt} visible={editing} onCancel={() => setEditing(false)} />
 
       <OptionSheet
         visible={managing !== null}

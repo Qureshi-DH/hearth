@@ -2,9 +2,8 @@ import { useState, type FC } from "react"
 import { View, type ViewStyle } from "react-native"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
-import { SheetScreen } from "@/components/SheetScreen"
+import { SheetScreen, SheetTextField } from "@/components/SheetScreen"
 import { Text } from "@/components/Text"
-import { TextField } from "@/components/TextField"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { endpoints } from "@/services/api"
@@ -37,23 +36,30 @@ export const ChangePasswordScreen: FC<AppStackScreenProps<"ChangePassword">> = (
     <SheetScreen scroll>
       <View style={themed($container)}>
         <Text preset="heading" tx="settings:changePassword" />
-        <TextField
+        <Text
+          tx="settings:changePasswordSubtitle"
+          size="sm"
+          style={{ color: theme.colors.textDim }}
+        />
+        <SheetTextField
           value={current}
           onChangeText={setCurrent}
           labelTx="settings:currentPassword"
           secureTextEntry
           autoComplete="current-password"
           inputWrapperStyle={themed($input)}
+          containerStyle={{ marginTop: theme.spacing.lg }}
         />
-        <TextField
+        <SheetTextField
           value={next}
           onChangeText={setNext}
           labelTx="settings:newPassword"
-          helperTx="register:passwordHint"
+          // Passing the hint as helperTx alongside this would win over the
+          // server's reason, which then only ever turned the hint red.
+          helper={error ?? translate("register:passwordHint")}
           secureTextEntry
           autoComplete="new-password"
           status={error ? "error" : undefined}
-          helper={error ?? undefined}
           containerStyle={{ marginTop: theme.spacing.md }}
           inputWrapperStyle={themed($input)}
         />

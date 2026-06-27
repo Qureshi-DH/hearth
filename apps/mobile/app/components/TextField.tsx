@@ -1,4 +1,4 @@
-import { ComponentType, forwardRef, Ref, useImperativeHandle, useRef } from "react"
+import { ComponentType, ElementType, forwardRef, Ref, useImperativeHandle, useRef } from "react"
 import {
   ImageStyle,
   StyleProp,
@@ -46,6 +46,14 @@ export interface TextFieldProps extends Omit<TextInputProps, "ref"> {
   RightAccessory?: ComponentType<TextFieldAccessoryProps>
   /** Memoize this. A new component identity remounts the accessory. */
   LeftAccessory?: ComponentType<TextFieldAccessoryProps>
+  /**
+   * What draws the input itself. A bottom sheet only rides the keyboard for
+   * inputs it knows about, so sheet forms swap in the sheet library's own.
+   * Typed loosely because that one is a memo around a forwardRef, which
+   * ComponentType<TextInputProps> rejects. Whatever is passed must forward its
+   * ref to a native TextInput so focus() keeps working.
+   */
+  InputComponent?: ElementType
 }
 
 /** @see https://docs.infinite.red/ignite-cli/boilerplate/app/components/TextField/ */
@@ -65,6 +73,7 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
     LeftAccessory,
     HelperTextProps,
     LabelTextProps,
+    InputComponent = TextInput,
     style: $inputStyleOverride,
     containerStyle: $containerStyleOverride,
     inputWrapperStyle: $inputWrapperStyleOverride,
@@ -147,7 +156,7 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
           />
         )}
 
-        <TextInput
+        <InputComponent
           ref={input}
           underlineColorAndroid={colors.transparent}
           textAlignVertical="top"

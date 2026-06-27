@@ -4,9 +4,8 @@ import { CameraView, useCameraPermissions } from "expo-camera"
 import { Ionicons } from "@expo/vector-icons"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
-import { SheetScreen } from "@/components/SheetScreen"
+import { SheetScreen, SheetTextField } from "@/components/SheetScreen"
 import { Text } from "@/components/Text"
-import { TextField } from "@/components/TextField"
 import { useAcceptInvite, useInvitePreview } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
@@ -105,7 +104,7 @@ export const JoinCircleScreen: FC<AppStackScreenProps<"JoinCircle">> = ({ naviga
           </Pressable>
         )}
 
-        <TextField
+        <SheetTextField
           value={code}
           onChangeText={(value) => setCode(value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
           labelTx="join:codeLabel"
