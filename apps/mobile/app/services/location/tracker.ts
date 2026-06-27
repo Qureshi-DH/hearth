@@ -18,7 +18,7 @@ import { useTrackingStore, type PermissionLevel, type TrackingPolicy } from "@/s
 
 export const BACKGROUND_LOCATION_TASK = "hearth-background-location"
 /** Must match BGTaskSchedulerPermittedIdentifiers in app.json. */
-export const BACKGROUND_SYNC_TASK = "app.hearth.mobile.sync"
+export const BACKGROUND_SYNC_TASK = "com.binary.rewind.hearth.sync"
 /** Armed around wherever the phone stopped, so leaving wakes us back up. */
 export const STATIONARY_GEOFENCE_TASK = "hearth-stationary-geofence"
 

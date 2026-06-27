@@ -147,7 +147,7 @@ All of this lives in `app/services/location/tracker.ts`.
    and an Android foreground service notification.
 3. Each delivery → `toFix()` (adds battery) → `thin()` (drops near-duplicates)
    → MMKV-persisted queue → `flush()` (single-flight upload, oldest first).
-4. `expo-background-task` registers `app.hearth.mobile.sync` to flush the queue
+4. `expo-background-task` registers `com.binary.rewind.hearth.sync` to flush the queue
    (and take a fix if the last one is >30 min old) when the OS grants time.
 5. The server's response carries the current policy. If it changed, updates
    restart with the new intervals, throttled to once a minute.

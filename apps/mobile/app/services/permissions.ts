@@ -103,7 +103,7 @@ export async function requestNotifications(): Promise<SimpleStatus> {
  */
 export async function requestBatteryExemption(): Promise<void> {
   if (Platform.OS !== "android") return
-  const packageName = Constants.expoConfig?.android?.package ?? "app.hearth.mobile"
+  const packageName = Constants.expoConfig?.android?.package ?? "com.binary.rewind.hearth"
   try {
     await IntentLauncher.startActivityAsync(
       "android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",

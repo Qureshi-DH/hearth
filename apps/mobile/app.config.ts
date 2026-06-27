@@ -47,7 +47,7 @@ const appLinkHost = process.env.HEARTH_APP_LINK_HOST?.trim()
  * running prebuild still works without it. Push is simply off in that build.
  *
  * google-services.example.json shows the shape. Get the real one from the
- * Firebase console, Project settings, Your apps, for package app.hearth.mobile.
+ * Firebase console, Project settings, Your apps, for package com.binary.rewind.hearth.
  */
 const googleServicesFile = existsSync(resolve(__dirname, "google-services.json"))
   ? "./google-services.json"

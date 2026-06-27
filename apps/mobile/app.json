@@ -14,7 +14,7 @@
   "assetBundlePatterns": ["**/*"],
   "android": {
     "icon": "./assets/images/app-icon-android-legacy.png",
-    "package": "app.hearth.mobile",
+    "package": "com.binary.rewind.hearth",
     "adaptiveIcon": {
       "foregroundImage": "./assets/images/app-icon-android-adaptive-foreground.png",
       "backgroundImage": "./assets/images/app-icon-android-adaptive-background.png"
@@ -43,13 +43,13 @@
   "ios": {
     "icon": "./assets/images/app-icon-ios.png",
     "supportsTablet": false,
-    "bundleIdentifier": "app.hearth.mobile",
+    "bundleIdentifier": "com.binary.rewind.hearth",
     "infoPlist": {
       "UIBackgroundModes": ["location", "fetch", "processing", "remote-notification"],
       "NSLocationWhenInUseUsageDescription": "Hearth shows your position to the circles you choose to share it with.",
       "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow \"Always\" so your family can still see you when the app is closed. You can pause sharing at any time.",
       "NSCameraUsageDescription": "Scan a circle's invite QR code.",
-      "BGTaskSchedulerPermittedIdentifiers": ["app.hearth.mobile.sync"],
+      "BGTaskSchedulerPermittedIdentifiers": ["com.binary.rewind.hearth.sync"],
       "ITSAppUsesNonExemptEncryption": false,
       "NSLocationAlwaysUsageDescription": "Allow \"Always\" so your family can still see you when the app is closed. You can pause sharing at any time.",
       "NSLocalNetworkUsageDescription": "Hearth connects to the family server you specify, which may be on your home network.",
