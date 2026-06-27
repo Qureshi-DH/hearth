@@ -104,3 +104,9 @@ export async function registerUser(
     headers: { authorization: `Bearer ${body.accessToken}` },
   }
 }
+
+/** The session claim a token carries, read without verifying it. */
+export const sessionIdOf = (accessToken: string): string => {
+  const [, claims] = accessToken.split(".")
+  return (JSON.parse(Buffer.from(claims ?? "", "base64url").toString()) as { sid: string }).sid
+}

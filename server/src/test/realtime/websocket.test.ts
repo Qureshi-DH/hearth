@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 
 import { openEnvelope, sealEnvelope, userTopic } from "../../lib/bus"
 import { getBus } from "../../runtime"
-import { registerUser, startTestApp, type TestContext } from "../helpers"
+import { registerUser, sessionIdOf, startTestApp, type TestContext } from "../helpers"
 
 /**
  * `ws` ships with @fastify/websocket but has no type package here, so the
@@ -70,11 +70,6 @@ async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<boo
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
   return predicate()
-}
-
-const sessionIdOf = (accessToken: string): string => {
-  const [, claims] = accessToken.split(".")
-  return (JSON.parse(Buffer.from(claims ?? "", "base64url").toString()) as { sid: string }).sid
 }
 
 beforeAll(async () => {

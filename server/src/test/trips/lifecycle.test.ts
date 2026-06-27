@@ -1,9 +1,11 @@
+import type { LocationSource } from "@hearth/shared"
 import { sql } from "drizzle-orm"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 
 import { getDb } from "../../db/client"
 import { getConfig } from "../../env"
 import { runJobs } from "../../jobs/scheduler"
+import { detectTripsForUser } from "../../services/trips"
 import { registerUser, startTestApp, type TestContext } from "../helpers"
 
 /**
@@ -41,6 +43,7 @@ interface Fix extends LatLon {
   recordedAt: string
   accuracyMeters?: number
   speedMps?: number
+  source?: LocationSource
 }
 
 const minutesAgo = (minutes: number) => Date.now() - minutes * 60 * 1000
@@ -64,6 +67,18 @@ function drive(options: {
     recordedAt: new Date(startMs + i * intervalSeconds * 1000).toISOString(),
     accuracyMeters: 8,
     speedMps,
+  }))
+}
+
+/** What the app sends while it is open and the phone sits still. */
+function heartbeats(options: { at: LatLon; startMs: number; count: number }): Fix[] {
+  const { at, startMs, count } = options
+  return Array.from({ length: count }, (_, i) => ({
+    ...at,
+    recordedAt: new Date(startMs + i * 30 * 1000).toISOString(),
+    accuracyMeters: 12,
+    speedMps: 0,
+    source: "heartbeat",
   }))
 }
 
@@ -172,6 +187,10 @@ async function pushRows(type: string) {
 }
 
 const sweep = () => runJobs(getDb(), getConfig(), ctx.app.log)
+
+/** One detection pass with the clock the sweep would have seen at that moment. */
+const sweepAt = (userId: string, whenMs: number) =>
+  detectTripsForUser(getDb(), userId, new Date(whenMs))
 
 /**
  * A trip and one breadcrumb of its path, at a date the ingest back-date limit
@@ -573,5 +592,94 @@ describe("telling the circle a journey finished", () => {
     expect(items).toHaveLength(1)
     expect(items[0]!.occurredAt).toBe(fixes[fixes.length - 1]!.recordedAt)
     expect(await pushRows("trip_completed")).toBe(0)
+  })
+})
+
+describe("a phone parked with the app open", () => {
+  const lastOf = (fixes: Fix[]) => fixes[fixes.length - 1]!
+  const ms = (fix: Fix) => Date.parse(fix.recordedAt)
+
+  async function heartbeatRows(userId: string) {
+    const rows = (await getDb().execute(
+      sql`select count(*)::int as total,
+                 count(trip_id)::int as tripped
+          from location_points
+          where user_id = ${userId}::uuid and source = 'heartbeat'`,
+    )) as unknown as Array<{ total: number; tripped: number }>
+    return rows[0]!
+  }
+
+  it("closes the drive behind it, and starts the next one fresh", async () => {
+    const user = await registerUser(ctx.app, { deviceId: "phone-heartbeat" })
+    const circle = await createCircle(user.headers)
+
+    const out = drive({
+      from: HOME,
+      startMs: minutesAgo(40),
+      intervalSeconds: 30,
+      count: 11,
+      speedMps: 13,
+      bearingDeg: 20,
+    })
+    // Ten minutes on the driveway with the app on screen, so the heartbeats
+    // run twice the idle gap.
+    const parkedThere = heartbeats({
+      at: lastOf(out),
+      startMs: ms(lastOf(out)) + 30_000,
+      count: 20,
+    })
+    await uploadFixes(user.headers, [...out, ...parkedThere])
+
+    // The sweep lands while the phone is still reporting from the driveway.
+    expect(await sweepAt(user.user.id, ms(parkedThere[13]!))).toBe(1)
+
+    const [first] = await myTrips(user.headers)
+    expect(first).toBeDefined()
+    expect(first!.startedAt).toBe(out[0]!.recordedAt)
+    expect(first!.endedAt).toBe(lastOf(out).recordedAt)
+    expect(first!.pointCount).toBe(out.length)
+    expect(await heartbeatRows(user.user.id)).toEqual({ total: 20, tripped: 0 })
+
+    // Then the drive back, and the app left open at the far end until now.
+    const back = drive({
+      from: lastOf(out),
+      startMs: ms(lastOf(parkedThere)) + 30_000,
+      intervalSeconds: 30,
+      count: 11,
+      speedMps: 13,
+      bearingDeg: 200,
+    })
+    const parkedHome = heartbeats({
+      at: lastOf(back),
+      startMs: ms(lastOf(back)) + 30_000,
+      count: Math.floor((Date.now() - 30_000 - ms(lastOf(back))) / 30_000),
+    })
+    await uploadFixes(user.headers, [...back, ...parkedHome])
+    await sweep()
+
+    const trips = await myTrips(user.headers)
+    expect(trips).toHaveLength(2)
+    expect(trips[0]!.id).toBe(first!.id)
+    expect(trips[0]!.pointCount).toBe(out.length)
+    expect(trips[1]!.startedAt).toBe(back[0]!.recordedAt)
+    expect(trips[1]!.endedAt).toBe(lastOf(back).recordedAt)
+    expect(trips[1]!.pointCount).toBe(back.length)
+    expect(await heartbeatRows(user.user.id)).toEqual({
+      total: parkedThere.length + parkedHome.length,
+      tripped: 0,
+    })
+
+    // To everything but the trip detector a heartbeat is an ordinary fix, and
+    // the row on the map is fresh because of it.
+    const presence = await ctx.app.inject({
+      method: "GET",
+      url: `/api/v1/circles/${circle.id}/locations`,
+      headers: user.headers,
+    })
+    expect(presence.statusCode).toBe(200)
+    const me = (
+      presence.json() as Array<{ userId: string; recordedAt: string; stale: boolean }>
+    ).find((row) => row.userId === user.user.id)
+    expect(me).toMatchObject({ recordedAt: lastOf(parkedHome).recordedAt, stale: false })
   })
 })

@@ -343,6 +343,37 @@ describe("possible incident: the evidence has to be about this stop", () => {
     expect(await pushesOfType("possible_incident")).toEqual([])
   })
 
+  it("says nothing about an arrival the app then reports from on a timer", async () => {
+    const { driver, watcher, circle } = await drivingFamily()
+
+    // 47 km/h up the road, the turn onto the drive, engine off. The distance
+    // filter delivers nothing after the arrival fix, and before heartbeats
+    // existed nothing else did either.
+    await uploadFixes(driver.headers, [
+      { ...northOf(HOME, -1100), recordedAt: at(-330), accuracyMeters: 8, speedMps: 13.0 },
+      { ...northOf(HOME, -710), recordedAt: at(-300), accuracyMeters: 8, speedMps: 13.0 },
+      { ...northOf(HOME, -320), recordedAt: at(-270), accuracyMeters: 8, speedMps: 13.0 },
+      { ...northOf(HOME, -60), recordedAt: at(-255), accuracyMeters: 9, speedMps: 3.0 },
+      { ...HOME, recordedAt: at(-240), accuracyMeters: 9, speedMps: 0 },
+    ])
+    // Then the app open on the dashboard mount, asking for a fix every 30 s
+    // and uploading each one as it lands.
+    for (let i = 0; i < 7; i += 1) {
+      await uploadFixes(driver.headers, [
+        {
+          ...HOME,
+          recordedAt: at(-210 + i * 30),
+          accuracyMeters: 12,
+          speedMps: 0,
+          source: "heartbeat",
+        },
+      ])
+    }
+
+    expect(await eventsOfType(watcher.headers, circle.id, "possible_incident")).toEqual([])
+    expect(await pushesOfType("possible_incident")).toEqual([])
+  })
+
   it("still raises one alert, quoting the confirmed speed, for a real hard stop", async () => {
     const { driver, watcher, circle } = await drivingFamily()
 

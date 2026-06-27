@@ -1,5 +1,5 @@
 import { PLATFORMS } from "@hearth/shared"
-import { and, desc, eq, isNull, lte, sql } from "drizzle-orm"
+import { and, desc, eq, gt, isNull, lte, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { Readable } from "node:stream"
 import { z } from "zod"
@@ -471,10 +471,18 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     { preHandler: app.authenticate, schema: { tags: ["auth"], summary: "List signed-in devices" } },
     async (request) => {
       const auth = requireAuth(request)
+      // A lapsed row can no longer refresh, so it is not a signed-in device
+      // whatever the prune job has got round to.
       const rows = await db
         .select()
         .from(sessions)
-        .where(and(eq(sessions.userId, auth.userId), isNull(sessions.revokedAt)))
+        .where(
+          and(
+            eq(sessions.userId, auth.userId),
+            isNull(sessions.revokedAt),
+            gt(sessions.expiresAt, new Date()),
+          ),
+        )
         .orderBy(desc(sessions.lastUsedAt))
       return rows.map((row) => toSessionSummary(row, auth.sessionId))
     },

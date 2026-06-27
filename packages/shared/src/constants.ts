@@ -30,6 +30,11 @@ export type SharingState = (typeof SHARING_STATES)[number]
 
 export const COARSE_GRID_METERS = 750
 
+/**
+ * "heartbeat" is a fix the app takes on a timer while it is open and the phone
+ * is parked. It keeps the member's own row fresh and is otherwise an ordinary
+ * fix, except to trip detection and the incident check, which both ignore it.
+ */
 export const LOCATION_SOURCES = [
   "background",
   "foreground",
@@ -38,6 +43,7 @@ export const LOCATION_SOURCES = [
   "manual",
   "sos",
   "nudge",
+  "heartbeat",
 ] as const
 export type LocationSource = (typeof LOCATION_SOURCES)[number]
 

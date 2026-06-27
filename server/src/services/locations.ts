@@ -7,7 +7,7 @@ import {
   type LocationFixInput,
   type LocationSource,
 } from "@hearth/shared"
-import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm"
+import { and, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import {
@@ -648,6 +648,14 @@ async function maybeRaiseDrivingAlerts(
   // position below.
   if ((latest.speedMps ?? 0) > DEFAULTS.incidentStoppedSpeedMps) return
 
+  // A heartbeat is the app asking where a parked phone is, on a timer, while
+  // somebody looks at the map. It says nothing about how the phone came to a
+  // stop, so it neither anchors this check nor counts towards the stillness.
+  // Otherwise a car pulling onto the drive with the app on the mount reads as
+  // three minutes of not having moved, right behind the fixes that had it at
+  // road speed a minute earlier, and every ordinary arrival becomes an alert.
+  if (latest.source === "heartbeat") return
+
   const windowStart = new Date(
     latest.recordedAt.getTime() - DEFAULTS.incidentDecelerationWindowSeconds * 1000,
   )
@@ -672,6 +680,7 @@ async function maybeRaiseDrivingAlerts(
           eq(locationPoints.deviceId, deviceId),
           gte(locationPoints.recordedAt, windowStart),
           lte(locationPoints.recordedAt, latest.recordedAt),
+          ne(locationPoints.source, "heartbeat"),
         ),
       )
       .orderBy(desc(locationPoints.recordedAt))

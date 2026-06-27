@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { getDb } from "../db/client"
 import { getConfig } from "../env"
 import { runJobs } from "../jobs/scheduler"
-import { registerUser, startTestApp, type TestContext } from "./helpers"
+import { registerUser, sessionIdOf, startTestApp, type TestContext } from "./helpers"
 
 // A quiet residential street and a school ~1.2 km away, both in Bristol.
 const HOME = { lat: 51.4545, lon: -2.5879 }
@@ -84,6 +84,12 @@ async function signInDevice(email: string, deviceId: string) {
   expect(response.statusCode).toBe(200)
   const body = response.json() as { accessToken: string }
   return { authorization: `Bearer ${body.accessToken}` }
+}
+
+async function listSessions(headers: Record<string, string>) {
+  const response = await ctx.app.inject({ method: "GET", url: "/api/v1/auth/sessions", headers })
+  expect(response.statusCode).toBe(200)
+  return response.json() as Array<{ id: string; platform: string | null; current: boolean }>
 }
 
 async function setCircleSettings(
@@ -287,6 +293,48 @@ describe("auth", () => {
       payload: { refreshToken: user.refreshToken },
     })
     expect(refresh.statusCode).toBe(401)
+  })
+
+  it("lists one row per device and hides one that has lapsed", async () => {
+    const phone = await registerUser(ctx.app, { deviceId: "device-a" })
+    await signInDevice(phone.email, "device-b")
+
+    const both = await listSessions(phone.headers)
+    expect(both).toHaveLength(2)
+    expect(both.filter((row) => row.current).map((row) => row.id)).toEqual([
+      sessionIdOf(phone.accessToken),
+    ])
+
+    // Signing in again from the same device reuses its row.
+    const again = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: {
+        email: phone.email,
+        password: "correct-horse-battery",
+        device: { deviceId: "device-a", deviceName: "Test Phone", platform: "ios" },
+      },
+    })
+    expect(again.statusCode).toBe(200)
+    expect(await listSessions(phone.headers)).toHaveLength(2)
+
+    // And so does a refresh.
+    const refreshed = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      payload: { refreshToken: (again.json() as { refreshToken: string }).refreshToken },
+    })
+    expect(refreshed.statusCode).toBe(200)
+    expect(await listSessions(phone.headers)).toHaveLength(2)
+
+    // A row past its expiry can no longer refresh, so it is not signed in,
+    // however long the prune job takes to get to it.
+    await getDb().execute(sql`
+      update sessions set expires_at = now() - interval '1 minute'
+      where user_id = ${phone.user.id}::uuid and device_id = 'device-b'
+    `)
+    const remaining = await listSessions(phone.headers)
+    expect(remaining.map((row) => row.platform)).toEqual(["ios"])
   })
 })
 

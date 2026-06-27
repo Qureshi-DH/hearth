@@ -1,5 +1,5 @@
 import { DEFAULTS, haversineMeters, pathDistanceMeters, type FeedEvent } from "@hearth/shared"
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm"
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import {
@@ -167,6 +167,7 @@ export async function detectTripsForUser(
         gt(locationPoints.recordedAt, scanFrom),
         lt(locationPoints.recordedAt, settleBefore),
         isNull(locationPoints.tripId),
+        notHeartbeat(),
       ),
     )
     .orderBy(asc(locationPoints.recordedAt))
@@ -245,6 +246,7 @@ async function scanFloor(db: Database, userId: string, since: Date, now: Date): 
         lte(locationPoints.recordedAt, floor),
         gt(locationPoints.recordedAt, new Date(now.getTime() - MAX_BACKDATE_MS)),
         gt(locationPoints.receivedAt, new Date(now.getTime() - BACKFILL_ARRIVAL_WINDOW_MS)),
+        notHeartbeat(),
       ),
     )
     .orderBy(asc(locationPoints.recordedAt))
@@ -294,6 +296,15 @@ const deviceMatches = (deviceId: string | null) =>
   deviceId === null ? isNull(locationPoints.deviceId) : eq(locationPoints.deviceId, deviceId)
 
 /**
+ * A parked phone with the app open reports on a timer. Those fixes say the
+ * phone is still there, not that it is going anywhere, so they must neither
+ * extend a trip nor keep it from closing: read as candidates they would pad a
+ * drive with stationary points, and read as "still reporting" they would hold
+ * the idle gap open for as long as the app stayed on screen.
+ */
+const notHeartbeat = () => ne(locationPoints.source, "heartbeat")
+
+/**
  * The newest segment counts as closed only if this device has been quiet for a
  * full idle gap since. Otherwise the journey may still be under way, and
  * cutting it here would turn one drive into two trips.
@@ -322,6 +333,7 @@ async function hasGoneQuiet(
         deviceMatches(deviceId),
         gt(locationPoints.recordedAt, lastFixAt),
         isNull(locationPoints.tripId),
+        notHeartbeat(),
       ),
     )
     .orderBy(asc(locationPoints.recordedAt))
