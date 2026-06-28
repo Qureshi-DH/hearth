@@ -75,16 +75,18 @@ _You → Tracking status_.
 | Background refresh / tasks     | `UIBackgroundModes: fetch, processing`, `BGTaskSchedulerPermittedIdentifiers` | `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`                       | Flush the offline queue when the OS allows                                       | Declared, checklist explains the iOS toggle                                     |
 | Camera                         | `NSCameraUsageDescription`                                                    | `CAMERA` (via plugin)                                       | Scan an invite QR                                                                | Only when you tap _Scan_                                                        |
 | Local network                  | `NSLocalNetworkUsageDescription`, `NSBonjourServices`                         | n/a                                                         | Self-hosted servers on your LAN                                                  | Prompted by iOS on first LAN connection                                         |
-| Motion and activity            | `NSMotionUsageDescription`                                                    | `ACTIVITY_RECOGNITION` (+ the Play Services variant)        | Let the OS say when you are driving or still, so the GPS can sleep               | If this phone turns the motion setting on, or a circle turns on incident alerts |
+| Motion and activity            | `NSMotionUsageDescription`                                                    | `ACTIVITY_RECOGNITION` (+ the Play Services variant)        | Let the OS say when you are driving or still, so the GPS can sleep               | Onboarding, right after location. Hidden on a phone that cannot classify motion |
 | Photo library                  | `NSPhotoLibraryUsageDescription` (picker plugin)                              | system picker, no permission                                | Choose one profile picture                                                       | Only when you tap your avatar                                                   |
 
-_Use the phone's motion sensor_ lives under _You → Tracking status_ and belongs
-to the handset, not to the server and not to the circle. The server receives the same
-fixes either way. All that changes is whether this phone works out that it has
-stopped from Core Motion and Play Services, which have already classified the
-movement for the system, or from watching its own position, which costs GPS.
-Turning it on is what triggers the permission prompt, so a phone that leaves it
-off is never asked.
+The motion classifier runs whenever tracking does. Core Motion and Play
+Services have already classified the movement for the system, so asking them
+costs far less than watching the phone's own position, which is what the GPS
+fallback does. The checklist asks once, from its own Allow button, and nothing
+the tracker runs in the background ever raises the dialog: Android answers a
+request made from a process with no Activity as denied without showing
+anything, and the module then reports denied for good. A phone that refuses,
+or one that cannot classify motion at all, works stops out from position
+instead. The server receives the same fixes either way.
 
 The accelerometer, gyroscope and barometer need no permission on either
 platform at the rates Hearth samples them, which is what makes crash detection
@@ -147,9 +149,18 @@ All of this lives in `app/services/location/tracker.ts`.
    and an Android foreground service notification.
 3. Each delivery → `toFix()` (adds battery) → `thin()` (drops near-duplicates)
    → MMKV-persisted queue → `flush()` (single-flight upload, oldest first).
-4. `expo-background-task` registers `com.binary.rewind.hearth.sync` to flush the queue
-   (and take a fix if the last one is >30 min old) when the OS grants time.
-5. The server's response carries the current policy. If it changed, updates
+4. While the app is in the foreground, a heartbeat asks for one `Balanced` fix
+   at the circle's interval whenever the last fix is older than that, tagged
+   `source: "heartbeat"`. The OS delivers nothing inside the distance filter
+   and a parked phone has stopped asking, so without it your own row went
+   stale while you watched the map. It reads the moving/stationary mode and
+   never changes it, swallows a failed acquisition rather than showing it as
+   an error, and trip detection and the possible-incident check both ignore
+   its fixes.
+5. `expo-background-task` registers `com.binary.rewind.hearth.sync` to flush the queue
+   (and take a fix if the last one is >30 min old) when the OS grants time,
+   which is never while the app is open.
+6. The server's response carries the current policy. If it changed, updates
    restart with the new intervals, throttled to once a minute.
 
 Turning off _Share my location_ in the app stops the OS updates entirely. No
@@ -170,9 +181,11 @@ disappears, and an exit geofence is armed around where it stopped. Leaving that
 circle wakes the app and puts it back into moving. The geofence is cheap because
 it rides on the location the system computes anyway.
 
-With _Use the phone's motion sensor_ on, the OS classifier can call a stop
-sooner than the position watch can, and can end one the instant you start
-moving. That is the whole difference the setting makes.
+The OS classifier is the normal path for both ends of a stop: it calls one
+after ninety seconds of the phone reading still, and ends one the instant you
+start moving, before a geofence or the periodic wake would have. The position
+watch above is the fallback, for a phone that refused the permission or cannot
+classify motion.
 
 ### Crash detection
 
@@ -201,9 +214,9 @@ for an install built without the module. It is also the path the
 One switch gates it, and it samples only between the two ends of a drive. The
 circle has to have _Possible-incident alerts_ on, which the app mirrors into
 device storage because the detector runs from a background task where the query
-cache may be cold. Either that or the phone's own motion setting then starts the
-OS classifier, which is what says you are in a vehicle, because sampling this
-hard is only worth its battery while you are driving.
+cache may be cold. The OS classifier, which runs whenever tracking does, is what
+says you are in a vehicle, because sampling this hard is only worth its battery
+while you are driving.
 
 A verdict does not alert anybody. It goes into a persisted store and the app
 asks the person, with a countdown. Answering dismisses it. Silence escalates to
@@ -242,7 +255,7 @@ app/
                 mmkv (persisted-store adapter), tokenVault (SecureStore)
   theme/        Ignite theming with Hearth's light/dark palettes
   i18n/         en.ts. v1 is English only, and a locale is a file typed as `Translations`
-modules/        hearth-motion: the Expo native module behind the motion setting
+modules/        hearth-motion: the Expo native module behind the motion classifier
                 and the batched sensor samples
 ```
 

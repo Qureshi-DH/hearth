@@ -124,14 +124,13 @@ says you are in a vehicle. Parked or walking, none of it runs, which is both a
 battery decision and an honesty one: a violent spike while somebody is walking
 is a dropped phone, not a crash, and reading it as one would be guessing.
 
-That classifier is also what the "Use the phone's motion sensor" switch on the
-You screen turns on, where it exists to save battery on the location side.
-Enabling incident alerts for a circle starts the classifier on its own, so you
-do not have to find that switch as well.
-
-Either one asks for Motion and Fitness on iOS, or activity recognition on
-Android. That is the only permission anywhere in this feature, and it belongs
-to the vehicle detection rather than to the crash sensing.
+That classifier runs whenever location sharing does, because the location
+side needs it to let the GPS sleep. Turning on incident alerts for a circle
+does not have to start anything. It is asked for on the setup checklist as
+Motion and Fitness on iOS, or activity recognition on Android. That is the
+only permission anywhere in this feature, and it belongs to the vehicle
+detection rather than to the crash sensing. A phone that refused it never
+knows a drive has started, so crash detection cannot run there.
 
 ## What happens when it escalates
 

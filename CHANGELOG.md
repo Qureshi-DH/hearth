@@ -6,6 +6,31 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Added
+
+- A heartbeat location source. While the app is open and the phone is parked
+  it takes one cheap fix at the circle's interval, so your own row no longer
+  goes stale on the map. Trip detection and the possible-incident check both
+  ignore those fixes, since a phone reporting on a timer says nothing about how
+  it came to a stop
+
+### Changed
+
+- The phone's motion classifier is no longer a switch on the You screen. It
+  runs whenever location sharing does, and the Motion and Fitness or physical
+  activity permission is asked for on the setup checklist like location is.
+  Refusing it leaves the phone working stops out from position, as before.
+  Existing installs are walked through the checklist once more to see the new
+  row
+- The tracker only ever checks the motion permission. The checklist's Allow
+  button is the one place that asks, so a background wake can no longer make a
+  request that Android answers as denied without showing a dialog
+
+### Fixed
+
+- Signed-in devices no longer lists a session whose refresh token has lapsed.
+  It could not sign in again, so it was never a device to sign out
+
 ## [0.2.0] - 2026-06-26
 
 A correctness and security pass over the server, the alert logic and the mobile

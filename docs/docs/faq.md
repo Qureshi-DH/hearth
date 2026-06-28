@@ -96,8 +96,9 @@ The details worth knowing:
   fix cannot wedge the pipeline forever.
 - The server ignores duplicates by device and timestamp, so a retried upload is
   safe.
-- A parked phone is in stationary mode and takes no fixes at all, so the queue
-  does not fill while nothing is happening.
+- A parked phone in the background is in stationary mode and takes no fixes at
+  all, so the queue does not fill while nothing is happening. With the app open
+  it takes one at the circle's interval, to keep your own row fresh.
 
 The background sync task also flushes the queue whenever the OS grants it time,
 and takes a fresh fix if the last one is over 30 minutes old.
@@ -130,10 +131,11 @@ Three other things affect it:
 - **Your circles.** The update policy is the strictest of every circle you are
   in, defaulting to one fix per 30 seconds or 60 metres. One circle asking for
   fast updates makes every phone in it report fast.
-- **The motion setting.** _Use the phone's motion sensor_ is per device and off
-  until you turn it on. It lets the OS classifier call a stop sooner than the
-  position watch can, which saves GPS. The server receives the same fixes either
-  way.
+- **The motion permission.** Motion and Fitness on iOS, or physical activity
+  on Android, asked for during setup. With it granted the OS classifier calls a
+  stop sooner than the position watch can and ends one the instant you move,
+  which saves GPS. Refused, the phone works it out from position and spends
+  more battery doing so. The server receives the same fixes either way.
 - **Crash detection**, which samples the accelerometer hard. It runs only when
   a circle you are in has incident alerts on, and only while the OS says you are
   in a vehicle.

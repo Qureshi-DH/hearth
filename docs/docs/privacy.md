@@ -101,12 +101,13 @@ battery-optimisation exemption on Android. Camera only when you scan a QR code,
 and the photo library only when you pick a profile picture, through the system
 picker that hands back the one file you chose rather than the album.
 
-Motion and activity is the only other one. It is asked for when you turn on
-_Use the phone's motion sensor_, a per-device setting that lets the GPS sleep
-while you are still, and also when any circle you belong to turns on
-possible-incident alerts, because crash detection needs the same classifier to
-know that a drive has started. With neither of those on, the app works the same
-thing out from position and never asks.
+Motion and activity is the only other one. It is on the setup checklist for
+every phone that can classify motion, because it is what lets the GPS sleep
+while you are still and what tells crash detection that a drive has started.
+The app only ever asks from that checklist, with the reason on screen first.
+You can refuse it. The app then works the stop out from position, which costs
+more battery, and crash detection cannot run on that phone because nothing
+tells it a drive has started.
 
 Hearth never requests contacts, microphone, Bluetooth or an advertising
 identifier. Crash detection needs no permission of its own beyond that one: the

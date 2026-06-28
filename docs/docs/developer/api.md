@@ -24,6 +24,12 @@ POST /auth/logout
 Responses carry `{ accessToken, refreshToken, expiresIn, user }`. Send the
 access token as `Authorization: Bearer <token>`. It's good for 15 minutes.
 
+Every distinct `deviceId` sent to `/auth/login` or `/auth/register` is a row
+on that account's Signed-in devices screen until it is signed out or its
+refresh token expires (`REFRESH_TOKEN_TTL_DAYS`, 60 by default). A session you
+opened from curl or from Swagger's "Try it out" is one of those rows, so call
+`POST /auth/logout` with it when you are done.
+
 ## Endpoint map
 
 | Area      | Endpoints                                                                                                                                                                                                                              |
@@ -101,6 +107,13 @@ upload is safe. Implausible points (future, >7 days old, out of range) get
 counted in `rejected` without failing the whole batch. `policy` is the
 strictest setting across the caller's circles, and the device is expected to
 apply it.
+
+`source` is one of `LOCATION_SOURCES` in `packages/shared` and defaults to
+`background`. `heartbeat` marks a fix the app takes on a timer while it is open
+and the phone is parked: presence, places, the speed alert and the battery
+alert treat it as any other fix. Trip detection ignores it, and so does the
+possible-incident check, because a parked phone reporting on a timer says
+nothing about how it came to a stop.
 
 ## Presence
 

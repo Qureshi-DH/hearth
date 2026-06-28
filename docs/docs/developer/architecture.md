@@ -151,7 +151,9 @@ the cap from the app stored a number that then swept nothing.
 ### Trip detection (`services/trips.ts`)
 
 Breadcrumbs newer than the per-user watermark and older than the idle gap
-(5 min) are split wherever the gap between fixes exceeds 5 min. A segment with
+(5 min) are split wherever the gap between fixes exceeds 5 min. Heartbeat fixes
+are skipped, since a parked phone with the app open sends them on a timer and
+they would keep a finished drive from closing. A segment with
 ≥3 points, ≥2 min, ≥400 m and real displacement becomes a `trip`, and its points
 are tagged with the trip id. Start and end are matched to places for
 "Home → School".
@@ -168,7 +170,7 @@ Ignite conventions with a few deliberate substitutions:
 | Map                 | MapLibre RN + OpenFreeMap style                                         | no Google key, swappable to self-hosted tiles                                                                                |
 | Background location | expo-location + expo-task-manager                                       | `startLocationUpdatesAsync` with a foreground service on Android                                                             |
 | Periodic sync       | expo-background-task                                                    | flushes the offline queue when the OS allows                                                                                 |
-| Motion class        | a small native module over Core Motion / Play Services                  | a device-level opt-in, so the GPS can sleep without polling                                                                  |
+| Motion class        | a small native module over Core Motion / Play Services                  | on whenever tracking is, so the GPS can sleep without polling                                                                |
 | Crash sensing       | `modules/hearth-motion` (expo-sensors as fallback) + `shared/impact.ts` | native batched sampling that keeps going with the screen off, and a verdict testable against recorded traces, off the device |
 
 ### Location pipeline on the phone (`services/location/tracker.ts`)
@@ -186,8 +188,10 @@ The tracker is a two-state machine. Moving means continuous updates and, on
 Android, the foreground-service notification that comes with them. Once the
 phone has held still for a few minutes it goes stationary: updates stop, the
 notification disappears, and an exit geofence around the stopping point is what
-brings it back. That is where most of the battery saving is, and the OS motion
-classifier, if this phone opted into it, only makes the switch happen sooner.
+brings it back. That is where most of the battery saving is. The OS motion
+classifier, which runs whenever tracking does, makes the switch happen sooner
+in both directions, and a phone that refused the permission falls back to
+working stops out from position.
 
 ### Realtime on the phone (`services/realtime.ts`)
 

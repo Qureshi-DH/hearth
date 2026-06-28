@@ -31,10 +31,10 @@ value.
   the countryside.
 - Shared ETA, or "on my way". A check-in variant that publishes a destination
   and live ETA until arrival.
-- Battery work beyond the moving and stationary split, which is what pays for
-  itself today. The next win is a measured comparison of the OS motion
-  classifier against the GPS-only path, so the setting can pick a default
-  instead of asking each person to guess.
+- Battery work beyond the moving and stationary split and the OS motion
+  classifier, which are what pay for themselves today. A measured comparison
+  of the classifier against the GPS-only fallback would say how much a refused
+  permission actually costs.
 - An admin web UI. The admin API exists, and a small dashboard would help
   operators who never install the app.
 - Circle-level place sharing, meaning you copy a place into another circle.
