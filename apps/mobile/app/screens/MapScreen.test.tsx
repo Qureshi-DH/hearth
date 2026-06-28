@@ -82,6 +82,9 @@ function memberFor(userId: string): CircleMember {
   }
 }
 
+/** Whatever the screen last handed the mocked sheet. */
+let mockSheetProps: Record<string, any> = {}
+
 const mockMembers = ["ana", "ben", "cat", "dee"].map(memberFor)
 const mockCircle = {
   id: "circle-1",
@@ -127,7 +130,10 @@ jest.mock("@gorhom/bottom-sheet", () => {
   const rn = require("react-native")
   return {
     __esModule: true,
-    default: ({ children }: { children?: unknown }) => react.createElement(rn.View, null, children),
+    default: ({ children, ...props }: { children?: unknown }) => {
+      mockSheetProps = props
+      return react.createElement(rn.View, null, children)
+    },
     BottomSheetFlatList: rn.FlatList,
   }
 })
@@ -150,7 +156,28 @@ jest.mock("react-native-reanimated", () => {
     Easing: { linear: (value: number) => value, inOut: (fn: unknown) => fn },
     cancelAnimation: () => {},
     useSharedValue: (initial: number) => react.useRef({ value: initial }).current,
+    useDerivedValue: (worklet: () => unknown) => ({ value: worklet() }),
     useAnimatedStyle: (worklet: () => object) => worklet(),
+    // Runs after every render, so a test that moves the sheet and re-renders
+    // sees the reaction fire the way the UI thread mapper would.
+    useAnimatedReaction: (
+      prepare: () => unknown,
+      respond: (next: unknown, previous: unknown) => void,
+    ) => {
+      const previous = react.useRef(null)
+      react.useEffect(() => {
+        const next = prepare()
+        respond(next, previous.current)
+        previous.current = next
+      })
+    },
+    runOnJS: (fn: unknown) => fn,
+    // Two stops and always clamped, which is the only way the screen calls it.
+    interpolate: (value: number, [from, to]: number[], [low, high]: number[]) => {
+      const t = Math.min(Math.max((value - from) / (to - from), 0), 1)
+      return low + t * (high - low)
+    },
+    Extrapolation: { CLAMP: "clamp" },
     withRepeat: (value: unknown) => value,
     withTiming: (value: unknown) => value,
     FadeInUp: entering,
@@ -210,22 +237,34 @@ jest.mock("@react-navigation/native", () => {
 
 const navigation = { navigate: jest.fn(), goBack: jest.fn() }
 
-async function renderMap() {
-  const utils = render(
+function mapTree(statusBar = 0) {
+  return (
     <ThemeProvider>
       <SafeAreaProvider
         initialMetrics={{
           frame: { x: 0, y: 0, width: 390, height: 844 },
-          insets: { top: 0, left: 0, right: 0, bottom: 0 },
+          insets: { top: statusBar, left: 0, right: 0, bottom: 0 },
         }}
       >
         <MapScreen navigation={navigation as never} route={{ name: "Map" } as never} />
       </SafeAreaProvider>
-    </ThemeProvider>,
+    </ThemeProvider>
   )
+}
+
+async function renderMap(statusBar = 0) {
+  const utils = render(mapTree(statusBar))
   // Icon fonts resolve asynchronously; settling here keeps the update in act.
   await act(async () => {})
   return utils
+}
+
+/** Puts the sheet's top edge at `y`, as a drag would, and lets the screen catch up. */
+async function moveSheetTo(utils: ReturnType<typeof render>, statusBar: number, y: number) {
+  mockSheetProps.animatedPosition.value = y
+  await act(async () => {
+    utils.rerender(mapTree(statusBar))
+  })
 }
 
 /** Every node in the tree whose flattened style satisfies `match`. */
@@ -237,6 +276,24 @@ function styledNodes(node: unknown, match: (style: Record<string, unknown>) => b
     Record<string, unknown> | undefined
   const self = style && match(style) ? [{ node: element, style }] : []
   return [...self, ...styledNodes(element.children, match)]
+}
+
+function mapControls(tree: unknown) {
+  const controls = styledNodes(
+    tree,
+    (style) => style.position === "absolute" && style.gap != null && style.left == null,
+  )
+  expect(controls).toHaveLength(1)
+  return controls[0]
+}
+
+function topCluster(tree: unknown) {
+  const cluster = styledNodes(
+    tree,
+    (style) => style.position === "absolute" && style.left != null && style.paddingTop != null,
+  )
+  expect(cluster).toHaveLength(1)
+  return cluster[0]
 }
 
 describe("MapScreen member sheet", () => {
@@ -376,13 +433,50 @@ describe("MapScreen member sheet", () => {
   })
 
   it("moves the map controls with a transform rather than a layout offset", async () => {
-    const { toJSON } = await renderMap()
-    const controls = styledNodes(
-      toJSON(),
-      (style) => style.position === "absolute" && style.gap != null && style.left == null,
-    )
-    expect(controls).toHaveLength(1)
-    expect(controls[0].style.transform).toEqual([{ translateY: -108 }])
-    expect(controls[0].style.top).toBe(0)
+    const utils = await renderMap()
+    await moveSheetTo(utils, 0, 600)
+    const controls = mapControls(utils.toJSON())
+    // The sheet's top edge, less the column's height and the air kept above the edge.
+    expect(controls.style.transform).toEqual([{ translateY: 492 }])
+    expect(controls.style.top).toBe(0)
+    expect(controls.style.opacity).toBe(1)
+    expect(controls.node.props.pointerEvents).toBe("box-none")
+  })
+
+  it("insets the sheet by the status bar so the top snap meets it", async () => {
+    await renderMap(59)
+    expect(mockSheetProps.topInset).toBe(59)
+    expect(mockSheetProps.snapPoints.at(-1)).toBe("100%")
+  })
+
+  it("stops the controls where the top cluster starts instead of under the status bar", async () => {
+    const utils = await renderMap(59)
+    await moveSheetTo(utils, 59, 59)
+    const controls = mapControls(utils.toJSON())
+    const cluster = topCluster(utils.toJSON())
+    expect(controls.style.transform).toEqual([{ translateY: cluster.style.paddingTop }])
+    expect(cluster.style.paddingTop).toBe(67)
+  })
+
+  it("takes the controls out of the way while they are faded", async () => {
+    const utils = await renderMap(59)
+    await moveSheetTo(utils, 59, 59)
+    let controls = mapControls(utils.toJSON())
+    expect(controls.style.opacity).toBe(0)
+    expect(controls.node.props.pointerEvents).toBe("none")
+    expect(controls.node.props.accessibilityElementsHidden).toBe(true)
+
+    // Halfway through the fade: visible, but not something a tap can land on.
+    await moveSheetTo(utils, 59, 59 + 8 + 108 + 22)
+    controls = mapControls(utils.toJSON())
+    expect(controls.style.opacity).toBeCloseTo(0.5)
+    expect(controls.node.props.pointerEvents).toBe("none")
+
+    await moveSheetTo(utils, 59, 400)
+    controls = mapControls(utils.toJSON())
+    expect(controls.style.transform).toEqual([{ translateY: 292 }])
+    expect(controls.style.opacity).toBe(1)
+    expect(controls.node.props.pointerEvents).toBe("box-none")
+    expect(controls.node.props.accessibilityElementsHidden).toBe(false)
   })
 })

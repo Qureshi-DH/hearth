@@ -1,5 +1,5 @@
 import { useCallback, useState, type FC } from "react"
-import { Platform, Pressable, View, type ViewStyle } from "react-native"
+import { AppState, Platform, Pressable, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { useFocusEffect } from "@react-navigation/native"
 
@@ -9,7 +9,7 @@ import { Screen } from "@/components/Screen"
 import { Text } from "@/components/Text"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
-import { requestPermissions, startTracking } from "@/services/location/tracker"
+import { refreshMotionWatch, requestPermissions, startTracking } from "@/services/location/tracker"
 import { ensureMotionPermission, motionPermission } from "@/services/location/motion"
 import {
   getPermissionSnapshot,
@@ -51,26 +51,39 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
     [navigation],
   )
   const [snapshot, setSnapshot] = useState<PermissionSnapshot | null>(null)
-  // Either of these starts the OS classifier (tracker.ts `motionWanted`), so
-  // the checklist has to ask for the permission whenever either is on, and stay
-  // quiet when neither is.
-  const nativeMotion = useSettingsStore((state) => state.nativeMotion)
   const incidentDetection = useSettingsStore((state) => state.incidentDetection)
+  // The classifier runs whenever tracking does, so the motion row is asked of
+  // everyone. It only disappears where the phone cannot classify motion at
+  // all, and there is nothing to ask for.
   const [motion, setMotion] = useState<Awaited<ReturnType<typeof motionPermission>>>("unavailable")
   const [busy, setBusy] = useState<string | null>(null)
   const setOnboarded = useTrackingStore((state) => state.setOnboardedPermissions)
 
   const refresh = useCallback(async () => {
-    const next = await getPermissionSnapshot()
+    // Read together. Setting the snapshot first left one render with no motion
+    // row, in which every remaining item was done and the button read "Done"
+    // before flipping back.
+    const [next, motionState] = await Promise.all([getPermissionSnapshot(), motionPermission()])
     setSnapshot(next)
+    setMotion(motionState)
     useTrackingStore.getState().setPermission(next.location)
-    setMotion(await motionPermission())
+    // A grant made in system Settings comes back through here, on the return
+    // to the foreground, rather than through Allow, and a tracker already
+    // running would otherwise stay GPS-only until the next launch.
+    if (motionState === "granted") void refreshMotionWatch()
   }, [])
 
-  // Users flip toggles in Settings and come straight back, so re-read on focus.
+  // Users flip toggles in Settings and come straight back. That return is not
+  // a focus event, because the route never changed, only the app went away
+  // and came back. So it is re-read on focus and again on every return to the
+  // foreground, for as long as the screen is the one showing.
   useFocusEffect(
     useCallback(() => {
       void refresh()
+      const subscription = AppState.addEventListener("change", (state) => {
+        if (state === "active") void refresh()
+      })
+      return () => subscription.remove()
     }, [refresh]),
   )
 
@@ -145,7 +158,7 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
                 action: { label: translate("permissions:openSettings"), onPress: openAppSettings },
               },
             ]) as Item[]),
-        ...(((nativeMotion || incidentDetection) && motion !== "unavailable"
+        ...((motion !== "unavailable"
           ? [
               {
                 key: "motion",
@@ -169,6 +182,10 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
                           label: translate("permissions:allow"),
                           onPress: async () => {
                             await ensureMotionPermission()
+                            // The tracker only checks, never asks, so a phone
+                            // that is already sharing needs telling the answer
+                            // changed.
+                            await refreshMotionWatch()
                           },
                         },
               },

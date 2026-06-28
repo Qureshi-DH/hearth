@@ -32,7 +32,11 @@ export async function motionUsable(): Promise<boolean> {
   }
 }
 
-/** "unavailable" covers a simulator, an old device, or a build without the module. */
+/**
+ * The tracker's gate as well as the checklist's. "unavailable" covers a
+ * simulator, an old device, or a build without the module, and every one of
+ * those runs GPS-only with no row to show for it.
+ */
 export async function motionPermission(): Promise<MotionPermission | "unavailable"> {
   if (!native) return "unavailable"
   if (!(await motionUsable())) return "unavailable"
@@ -43,6 +47,13 @@ export async function motionPermission(): Promise<MotionPermission | "unavailabl
   }
 }
 
+/**
+ * The only thing that raises the OS dialog, and it belongs to the checklist's
+ * Allow button, where the reason is on screen first. Nothing the tracker runs
+ * may call it: a geofence exit can wake a process with no Activity, Android
+ * answers a request made from there as denied without showing anything, and
+ * the module then reports denied for good.
+ */
 export async function ensureMotionPermission(): Promise<boolean> {
   if (!native) return false
   try {
@@ -55,12 +66,15 @@ export async function ensureMotionPermission(): Promise<boolean> {
   }
 }
 
+/**
+ * Check only, never a prompt. A start that finds the permission still
+ * undetermined stays GPS-only and is tried again once the checklist has asked.
+ */
 export async function startMotion(
   onChange: (activity: MotionActivity, confidence: number) => void,
 ): Promise<EventSubscription | null> {
   if (!native) return null
-  if (!(await motionUsable())) return null
-  if (!(await ensureMotionPermission())) return null
+  if ((await motionPermission()) !== "granted") return null
   const subscription = native.addListener("onMotionChange", (event: MotionChangeEvent) =>
     onChange(event.activity, event.confidence),
   )

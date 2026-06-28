@@ -25,9 +25,13 @@ export interface PermissionSnapshot {
  * One snapshot, so the onboarding checklist and the settings screen show the
  * same truth.
  *
- * Hearth asks for location, notifications, and (only where this phone has the
- * motion toggle on, or a circle has asked for incident alerts) activity
- * recognition, which is what lets the GPS sleep while the phone is not moving.
+ * Hearth asks for location, notifications, and activity recognition. The last
+ * is what lets the GPS sleep while the phone is not moving and what tells
+ * crash detection a drive has started, so it is on the checklist for every
+ * phone that can classify motion. Its state is read by motionPermission rather
+ * than here, because it comes from the native module and the checklist hides
+ * the row where the module or the hardware is missing. A phone that refuses it
+ * works stops out from position instead.
  * The photo picker is reached through the OS picker for a profile picture,
  * which grants access to the one chosen file rather than the library. Nothing
  * here asks for contacts, Bluetooth, or the advertising identifier. Invites are

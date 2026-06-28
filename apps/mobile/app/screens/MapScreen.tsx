@@ -16,9 +16,14 @@ import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import Animated, {
+  Extrapolation,
   FadeInUp,
   FadeOutUp,
+  interpolate,
+  runOnJS,
+  useAnimatedReaction,
   useAnimatedStyle,
+  useDerivedValue,
   useSharedValue,
 } from "react-native-reanimated"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -45,7 +50,16 @@ import type { ThemedStyle } from "@/theme/types"
 import { fitBoundsFor } from "@/utils/map"
 
 const FALLBACK_CENTER: [number, number] = [-0.1276, 51.5072]
+// The circle switcher row hangs this far below the status bar, and the map
+// controls stop at the same offset when the sheet pushes them up. One constant
+// for both, so neither can drift under the bar on its own.
+const TOP_CLUSTER_PADDING = 8
 const CONTROLS_HEIGHT = 96
+const CONTROLS_SHEET_GAP = 12
+// The controls fade over the last stretch before they would land on the
+// settings button, which is what sits at their ceiling. It mirrors IconButton's
+// default size, so the controls are gone by the time they could cover it.
+const CONTROLS_FADE_DISTANCE = 44
 /** Any taller and the tops of the check in and SOS buttons peek out under it. */
 const COLLAPSED_BAR_HEIGHT = 52
 
@@ -275,8 +289,13 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   // here is the top of the bar. Do not add its height again.
   const restingSheetHeight = 210
   // The lowest point is a real snap, not a separate bar pretending to be one.
-  // A grabber that only answers taps reads as a broken sheet.
-  const snapPoints = useMemo(() => [COLLAPSED_BAR_HEIGHT, restingSheetHeight, "55%", "92%"], [])
+  // A grabber that only answers taps reads as a broken sheet. The percentages
+  // are of the area below the status bar, because `topInset` keeps the sheet
+  // out of it: 100% meets the bar exactly instead of stopping short of it, and
+  // 55% lands a little lower than it would against the whole screen. The top
+  // snap covers the circle switcher row and the banners, which is fine because
+  // the sheet renders after them and takes the touches.
+  const snapPoints = useMemo(() => [COLLAPSED_BAR_HEIGHT, restingSheetHeight, "55%", "100%"], [])
 
   // The controls ride the sheet rather than jumping between two fixed offsets.
   // `animatedPosition` is the sheet's top edge as a shared value, so this runs
@@ -285,14 +304,36 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   // run Yoga over this subtree on every frame of every drag and snap.
   const sheetTop = useSharedValue(0)
   const [containerHeight, setContainerHeight] = useState(0)
-  const controlsStyle = useAnimatedStyle(() => {
+  const ceiling = insets.top + TOP_CLUSTER_PADDING
+  const controlsTop = useDerivedValue(() => {
     // Once the sheet is dismissed it parks off-screen, so clamp the controls to
     // just above the collapsed bar rather than letting them follow it down.
     const floor = containerHeight > 0 ? containerHeight - COLLAPSED_BAR_HEIGHT : sheetTop.value
-    return {
-      transform: [{ translateY: Math.min(sheetTop.value, floor) - CONTROLS_HEIGHT - 12 }],
-    }
+    return Math.min(sheetTop.value, floor) - CONTROLS_HEIGHT - CONTROLS_SHEET_GAP
   })
+  const controlsStyle = useAnimatedStyle(() => ({
+    // Near the top the sheet would push them under the status bar. They stop
+    // level with the circle switcher row and fade out on the way there. At the
+    // top snap the sheet covers them anyway.
+    transform: [{ translateY: Math.max(controlsTop.value, ceiling) }],
+    opacity: interpolate(
+      controlsTop.value,
+      [ceiling, ceiling + CONTROLS_FADE_DISTANCE],
+      [0, 1],
+      Extrapolation.CLAMP,
+    ),
+  }))
+  // A faded button is still a Pressable, and while parked the column sits on
+  // top of the settings button. The flag only flips at one threshold, so it
+  // hops to React state the way the sheet's own backdrop does rather than
+  // being driven from the animated style.
+  const [controlsHidden, setControlsHidden] = useState(true)
+  useAnimatedReaction(
+    () => controlsTop.value < ceiling + CONTROLS_FADE_DISTANCE,
+    (hidden, previous) => {
+      if (hidden !== previous) runOnJS(setControlsHidden)(hidden)
+    },
+  )
 
   if (!isLoading && circles.length === 0) {
     return (
@@ -366,7 +407,10 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         })}
       </HearthMap>
 
-      <View pointerEvents="box-none" style={[themed($top), { paddingTop: insets.top + 8 }]}>
+      <View
+        pointerEvents="box-none"
+        style={[themed($top), { paddingTop: insets.top + TOP_CLUSTER_PADDING }]}
+      >
         <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.xs }}>
           <Pressable
             onPress={() => setSwitcherOpen((open) => !open)}
@@ -519,7 +563,12 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         ) : null}
       </View>
 
-      <Animated.View pointerEvents="box-none" style={[themed($controls), controlsStyle]}>
+      <Animated.View
+        pointerEvents={controlsHidden ? "none" : "box-none"}
+        accessibilityElementsHidden={controlsHidden}
+        importantForAccessibility={controlsHidden ? "no-hide-descendants" : "auto"}
+        style={[themed($controls), controlsStyle]}
+      >
         <IconButton
           icon="scan-outline"
           tone="glass"
@@ -538,6 +587,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         ref={sheetRef}
         index={0}
         snapPoints={snapPoints}
+        topInset={insets.top}
         enableDynamicSizing={false}
         animatedPosition={sheetTop}
         backgroundStyle={{ backgroundColor: theme.colors.surface, borderRadius: 28 }}

@@ -31,7 +31,12 @@ import { AppNavigator } from "./navigators/AppNavigator"
 import { useNavigationPersistence } from "./navigators/navigationUtilities"
 // Importing this module also registers the OS background tasks, which have to
 // be defined at module scope before the app finishes launching.
-import { refreshLocationStatus, resumeIfEnabled } from "./services/location/tracker"
+import {
+  refreshLocationStatus,
+  resumeIfEnabled,
+  startForegroundHeartbeat,
+  stopForegroundHeartbeat,
+} from "./services/location/tracker"
 import { setupChannels } from "./services/notifications"
 import { queryClient } from "./services/queryClient"
 import { useAuthStore } from "./stores/auth"
@@ -109,13 +114,23 @@ export function App() {
   }, [])
 
   // Permission and the OS location switch can both be turned off while the app
-  // is away, and nothing tells us. Re-read them every time we come back.
+  // is away, and nothing tells us. Re-read them every time we come back. The
+  // heartbeat only means anything while someone is looking at the map, so it
+  // comes and goes with the foreground.
   useEffect(() => {
     void refreshLocationStatus()
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void refreshLocationStatus()
+      if (state === "active") {
+        void refreshLocationStatus()
+        startForegroundHeartbeat()
+      } else {
+        stopForegroundHeartbeat()
+      }
     })
-    return () => subscription.remove()
+    return () => {
+      subscription.remove()
+      stopForegroundHeartbeat()
+    }
   }, [])
 
   useEffect(() => {
@@ -128,7 +143,13 @@ export function App() {
       store.markBooted()
       await setupChannels()
       if (!cancelled) setIsSessionHydrated(true)
-      if (useAuthStore.getState().status === "signed_in") void resumeIfEnabled()
+      if (useAuthStore.getState().status === "signed_in") {
+        // After, not alongside: a launch fix already on its way is one the
+        // heartbeat must see before it decides whether to ask for its own. And
+        // it starts whatever the permission, because "While Using" never gets
+        // startTracking here and the heartbeat is all such a phone has.
+        void resumeIfEnabled().finally(startForegroundHeartbeat)
+      }
     })()
     return () => {
       cancelled = true

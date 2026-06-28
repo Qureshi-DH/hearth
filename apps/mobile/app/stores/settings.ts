@@ -18,12 +18,6 @@ interface SettingsState {
    * the answer has to survive a process kill on its own.
    */
   incidentDetection: boolean
-  /**
-   * Use the OS motion classifier instead of inferring movement from GPS.
-   * A device choice, not a server one: the server receives the same fixes
-   * either way, and the only thing that changes is this phone's battery.
-   */
-  nativeMotion: boolean
 
   setThemeMode(mode: ThemeMode): void
   setUnits(units: "metric" | "imperial"): void
@@ -32,7 +26,6 @@ interface SettingsState {
   setShowTrails(show: boolean): void
   setReduceMotion(reduce: boolean): void
   setIncidentDetection(enabled: boolean): void
-  setNativeMotion(enabled: boolean): void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -45,7 +38,6 @@ export const useSettingsStore = create<SettingsState>()(
       showTrails: true,
       reduceMotion: false,
       incidentDetection: false,
-      nativeMotion: false,
 
       setThemeMode: (themeMode) => set({ themeMode }),
       setUnits: (units) => set({ units }),
@@ -54,8 +46,20 @@ export const useSettingsStore = create<SettingsState>()(
       setShowTrails: (showTrails) => set({ showTrails }),
       setReduceMotion: (reduceMotion) => set({ reduceMotion }),
       setIncidentDetection: (incidentDetection) => set({ incidentDetection }),
-      setNativeMotion: (nativeMotion) => set({ nativeMotion }),
     }),
-    { name: "hearth.settings.v1", storage: createJSONStorage(() => mmkvStorage) },
+    {
+      name: "hearth.settings.v1",
+      version: 1,
+      storage: createJSONStorage(() => mmkvStorage),
+      // v0 carried a per-device switch for the OS motion classifier. The
+      // classifier runs whenever tracking does now, and the merge is a shallow
+      // spread, so without this the dead key would sit in the blob for good.
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Partial<SettingsState> & { nativeMotion?: boolean }
+        if (version >= 1) return state as SettingsState
+        const { nativeMotion: _dropped, ...rest } = state
+        return rest as SettingsState
+      },
+    },
   ),
 )

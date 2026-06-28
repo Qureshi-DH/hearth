@@ -1,4 +1,4 @@
-import { Platform } from "react-native"
+import { AppState, Platform } from "react-native"
 import * as BackgroundTask from "expo-background-task"
 import * as Battery from "expo-battery"
 import * as Location from "expo-location"
@@ -219,12 +219,16 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
   await flush()
 }
 
+/** Fixes still being acquired, which the heartbeat counts as fresh. */
+let acquiring = 0
+
 export async function reportNow(
   source: LocationSource = "manual",
   accuracy: Location.Accuracy = source === "sos"
     ? Location.Accuracy.Highest
     : Location.Accuracy.High,
 ): Promise<LocationFixInput | null> {
+  acquiring += 1
   try {
     const location = await Location.getCurrentPositionAsync({ accuracy })
     const battery = await batterySnapshot()
@@ -235,6 +239,84 @@ export async function reportNow(
   } catch (error) {
     useTrackingStore.getState().setError((error as Error).message)
     return null
+  } finally {
+    acquiring -= 1
+  }
+}
+
+/**
+ * Nothing above refreshes the user's own row while they sit looking at the
+ * map. The OS holds back every fix closer than the distance filter, a parked
+ * phone has stopped asking for updates altogether, and the sync task never
+ * runs while the app is open. So while it is open, and only then, ask for a
+ * fix at the circle's interval whenever the last one is older than that.
+ *
+ * The mode is read and never written. A parked phone stays parked, fence and
+ * anchor untouched, because one Balanced fix is far cheaper than bringing the
+ * foreground service back for a phone that has not moved.
+ */
+let heartbeat: ReturnType<typeof setTimeout> | null = null
+
+export function startForegroundHeartbeat(): void {
+  // Coming back after a while away is the moment the row reads stalest.
+  void heartbeatTick()
+  // Signed out, or sharing off, leaves a timer nothing to find every interval.
+  // startTracking is the way back from "off" and it calls in again.
+  if (useTrackingStore.getState().mode === "off") return
+  if (!heartbeat) scheduleHeartbeat()
+}
+
+export function stopForegroundHeartbeat(): void {
+  if (heartbeat) clearTimeout(heartbeat)
+  heartbeat = null
+}
+
+/** A chain rather than setInterval, so a circle changing its interval applies at the next tick. */
+function scheduleHeartbeat(): void {
+  const { policy } = useTrackingStore.getState()
+  heartbeat = setTimeout(() => {
+    scheduleHeartbeat()
+    void heartbeatTick()
+  }, policy.minUpdateIntervalSeconds * 1000)
+}
+
+/**
+ * Android's getCurrentPositionAsync has no timeout of its own. Left hanging, the
+ * fix would hold the in-flight count up and every later tick would read it as
+ * fresh, for the rest of the process.
+ */
+const HEARTBEAT_FIX_TIMEOUT_MS = 30_000
+
+async function heartbeatTick(): Promise<void> {
+  const store = useTrackingStore.getState()
+  if (AppState.currentState !== "active") return
+  if (!store.enabled || store.mode === "off") return
+  if (store.permission === "denied" || !store.servicesEnabled) return
+  if (acquiring > 0) return
+  const age = store.lastFix ? Date.now() - Date.parse(store.lastFix.recordedAt) : Infinity
+  if (age < store.policy.minUpdateIntervalSeconds * 1000) return
+
+  acquiring += 1
+  let deadline: ReturnType<typeof setTimeout> | undefined
+  try {
+    const location = await Promise.race([
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+      new Promise<never>((_, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error("Heartbeat fix timed out")),
+          HEARTBEAT_FIX_TIMEOUT_MS,
+        )
+      }),
+    ])
+    const battery = await batterySnapshot()
+    useTrackingStore.getState().enqueue([toFix(location, "heartbeat", battery)])
+    await flush()
+  } catch {
+    // Not reportNow, because that pins the failure on the You screen, and a
+    // fix that times out indoors would repaint it red every interval.
+  } finally {
+    clearTimeout(deadline)
+    acquiring -= 1
   }
 }
 
@@ -265,8 +347,8 @@ TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
   await enterMoving()
   // The process may have been killed while parked, so this task can be the
   // first thing to run in a fresh one. Bringing location back without the
-  // classifier left crash detection off for the whole journey, while the
-  // settings screen still said it was on.
+  // classifier left the stop to the slow GPS heuristic and crash detection off
+  // for the whole journey.
   await startMotionWatch()
   await reportNow("significant")
 })
@@ -410,23 +492,17 @@ let motionStillSince: number | null = null
 /**
  * Play Services and Core Motion already classify movement for the system, so
  * asking them costs far less than waking the GPS to work it out from position.
- *
- * The OS classifier is the only thing that tells us a journey has started, so
- * crash detection depends on it as much as the battery work does. Gating it on
- * the battery toggle alone meant turning on incident alerts for a circle did
- * nothing at all until an unrelated switch was also found.
+ * The classifier is wanted for as long as tracking runs: it settles a stop in
+ * seconds where the position watch needs minutes, and it is the only thing
+ * that tells crash detection a drive has started. startMotion answers null
+ * where the module, the hardware or the permission is missing, and the tracker
+ * then works stops out from position instead.
  */
-function motionWanted(): boolean {
-  const settings = useSettingsStore.getState()
-  return settings.nativeMotion || settings.incidentDetection
-}
-
 async function startMotionWatch(): Promise<void> {
-  // The resume path and the device toggle can call this at once, and each await
-  // below is a chance for the second to walk past a null subscription and add a
-  // native listener whose handle we then lose.
+  // The resume path and a grant on the checklist can call this at once, and
+  // each await below is a chance for the second to walk past a null
+  // subscription and add a native listener whose handle we then lose.
   if (motionSubscription || motionStarting) return
-  if (!motionWanted()) return
   motionStarting = true
   try {
     motionSubscription = await startMotion((activity, confidence) => {
@@ -438,14 +514,17 @@ async function startMotionWatch(): Promise<void> {
 }
 
 /**
- * Called when the device toggle changes. Whether the phone works out that it
- * has stopped from the OS classifier or from GPS is invisible to the server,
- * the same fixes arrive either way, so this is purely a battery choice and it
- * takes effect without restarting tracking.
+ * Called after the checklist grants the permission and whenever a circle's
+ * incident-alert setting changes. The classifier stays on either way, because
+ * the location side needs it, so all that incident alerts going off releases
+ * is the drive sensors. A phone that is not tracking has nothing for the
+ * classifier to feed, and startTracking brings it up when that changes.
  */
 export async function refreshMotionWatch(): Promise<void> {
-  if (motionWanted()) await startMotionWatch()
-  else await stopMotionWatch()
+  const { enabled, mode } = useTrackingStore.getState()
+  if (!enabled || mode === "off") return
+  await startMotionWatch()
+  if (!useSettingsStore.getState().incidentDetection) stopDriveSensors()
 }
 
 async function stopMotionWatch(): Promise<void> {
@@ -657,10 +736,14 @@ export async function startTracking(): Promise<boolean> {
   await startMotionWatch()
   await registerBackgroundSync()
   if (!parkedAt) void reportNow("foreground")
+  // After the launch fix, so the heartbeat's first tick sees it in flight
+  // rather than asking for a second.
+  startForegroundHeartbeat()
   return true
 }
 
 export async function stopTracking(): Promise<void> {
+  stopForegroundHeartbeat()
   if (await locationUpdatesRunning()) {
     await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {})
   }

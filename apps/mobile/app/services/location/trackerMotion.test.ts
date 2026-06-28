@@ -3,6 +3,7 @@ import * as TaskManager from "expo-task-manager"
 
 import { useSettingsStore } from "@/stores/settings"
 import { useTrackingStore } from "@/stores/tracking"
+import { storage } from "@/utils/storage"
 
 import { stopDriveSensors } from "./driveSensors"
 import { startMotion, stopMotion } from "./motion"
@@ -76,10 +77,9 @@ const taskBodies = new Map(
 )
 
 beforeEach(async () => {
-  // Whichever way movement is worked out, the crash detector needs the OS
-  // classifier, so this is the switch that asks for the motion watch.
-  useSettingsStore.getState().setIncidentDetection(true)
-  useSettingsStore.getState().setNativeMotion(false)
+  // Nothing asks for the classifier. It runs because tracking does, and the
+  // suite below holds that with no setting on at all.
+  useSettingsStore.getState().setIncidentDetection(false)
   useTrackingStore.getState().setEnabled(true)
   await stopTracking()
   jest.clearAllMocks()
@@ -88,9 +88,9 @@ beforeEach(async () => {
 describe("background wakes", () => {
   it("watches motion after a geofence exit wakes a process that never mounted", async () => {
     // Parking stops the foreground service so Android can reclaim the process.
-    // Leaving relaunches it straight into this task, which brings the location
-    // pipeline back but not the classifier, so crash detection stays off for
-    // the whole journey that follows and the settings screen still reads on.
+    // Leaving relaunches it straight into this task, which used to bring the
+    // location pipeline back but not the classifier, so the journey that
+    // followed ran on the slow GPS heuristic with crash detection off.
     const wake = taskBodies.get(STATIONARY_GEOFENCE_TASK)
     expect(wake).toBeDefined()
 
@@ -175,22 +175,120 @@ describe("parking", () => {
 })
 
 describe("motion watch", () => {
-  it("watches motion when the app itself asks for it", async () => {
+  it("watches motion with no setting asking for it", async () => {
+    useTrackingStore.getState().setMode("moving")
+
     await refreshMotionWatch()
 
     expect(startMotion).toHaveBeenCalled()
   })
 
+  it("leaves the classifier alone while sharing is off", async () => {
+    // A circles refetch and the checklist's Allow both land here, and neither
+    // knows whether tracking is running. Starting the classifier on a phone
+    // that paused sharing would leave a native subscription nobody consumes
+    // and nothing stops until the next stopTracking.
+    expect(useTrackingStore.getState().mode).toBe("off")
+
+    await refreshMotionWatch()
+
+    expect(startMotion).not.toHaveBeenCalled()
+  })
+
   it("releases the drive sensors when incident detection is switched off", async () => {
     // Sampling at 50 Hz is only worth its battery while a crash could still be
-    // reported. Dropping the motion watch is what makes this the last chance to
-    // stop: with no classifier left to report a change, nothing calls the stop
-    // again until the phone has been parked for five minutes.
+    // reported, and once the setting is off the motion callback only stops them
+    // at the next classified change, which mid drive can be the end of the
+    // journey. The classifier itself stays: the location side needs it whether
+    // or not anyone is listening for a crash.
+    useTrackingStore.getState().setMode("moving")
     useSettingsStore.getState().setIncidentDetection(false)
 
     await refreshMotionWatch()
 
-    expect(stopMotion).toHaveBeenCalled()
     expect(stopDriveSensors).toHaveBeenCalled()
+    expect(stopMotion).not.toHaveBeenCalled()
+  })
+
+  it("tries again after a start that found the permission missing", async () => {
+    // The tracker only checks, so a launch before the checklist has asked
+    // leaves no subscription behind. That is what lets the grant on the
+    // checklist bring the classifier up without restarting tracking.
+    useTrackingStore.getState().setMode("moving")
+    ;(startMotion as jest.Mock).mockResolvedValueOnce(null)
+
+    await refreshMotionWatch()
+    expect(startMotion).toHaveBeenCalledTimes(1)
+
+    await refreshMotionWatch()
+    expect(startMotion).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe("a wake with the permission still undetermined", () => {
+  it("never raises the OS dialog", async () => {
+    // A geofence exit can be the first thing to run in a process the OS
+    // launched with no Activity. Android answers a request made from there as
+    // denied without showing anything, and the module then reports denied for
+    // good, so the tracker has to go through the real motion.ts here rather
+    // than the mock the rest of the file uses.
+    const wake = {
+      isAvailableAsync: jest.fn(async () => true),
+      getPermissionAsync: jest.fn(async () => "undetermined"),
+      requestPermissionAsync: jest.fn(async () => "granted"),
+      addListener: jest.fn(() => ({ remove: jest.fn() })),
+      startUpdatesAsync: jest.fn(async () => {}),
+      stopUpdatesAsync: jest.fn(async () => {}),
+    }
+    const launched: { task: TaskBody; store: typeof useTrackingStore }[] = []
+    jest.isolateModules(() => {
+      jest.dontMock("./motion")
+      jest.doMock("../../../modules/hearth-motion", () => ({ default: wake }))
+      require("./tracker")
+      const defineTask = require("expo-task-manager").defineTask as jest.Mock<
+        void,
+        [string, TaskBody]
+      >
+      const task = new Map(defineTask.mock.calls).get(STATIONARY_GEOFENCE_TASK)
+      if (task) launched.push({ task, store: require("@/stores/tracking").useTrackingStore })
+    })
+    const fresh = launched[0]
+    expect(fresh).toBeDefined()
+    fresh.store.getState().setEnabled(true)
+
+    await fresh.task({ data: { eventType: Location.GeofencingEventType.Exit }, error: null })
+
+    expect(wake.getPermissionAsync).toHaveBeenCalled()
+    expect(wake.requestPermissionAsync).not.toHaveBeenCalled()
+    expect(wake.startUpdatesAsync).not.toHaveBeenCalled()
+  })
+})
+
+describe("the update that put motion on the checklist", () => {
+  it("walks an install that had finished onboarding through it again", async () => {
+    // The checklist opens itself once per install and never again, so a phone
+    // that finished it before the motion row existed would run GPS-only until
+    // somebody found the screen by hand.
+    useTrackingStore.getState().reset()
+    storage.set(
+      "hearth.tracking.v1",
+      JSON.stringify({ state: { enabled: true, onboardedPermissions: true }, version: 1 }),
+    )
+
+    await useTrackingStore.persist.rehydrate()
+
+    expect(useTrackingStore.getState().onboardedPermissions).toBe(false)
+  })
+
+  it("does the same for a blob from before the queue moved out", async () => {
+    useTrackingStore.getState().reset()
+    storage.set(
+      "hearth.tracking.v1",
+      JSON.stringify({ state: { enabled: true, onboardedPermissions: true }, version: 0 }),
+    )
+
+    await useTrackingStore.persist.rehydrate()
+
+    expect(useTrackingStore.getState().onboardedPermissions).toBe(false)
   })
 })

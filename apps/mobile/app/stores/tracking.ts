@@ -293,7 +293,7 @@ export const useTrackingStore = create<TrackingState>()(
     }),
     {
       name: "hearth.tracking.v1",
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => mmkvStorage),
       partialize: (state) => ({
         enabled: state.enabled,
@@ -306,13 +306,20 @@ export const useTrackingStore = create<TrackingState>()(
         lastDriftCheckAt: state.lastDriftCheckAt,
         lastUploadAt: state.lastUploadAt,
       }),
+      // v2 put the motion permission on the setup checklist. The checklist only
+      // opens itself once per install, so a phone that finished it before the
+      // row existed would run GPS-only until somebody found the screen by hand.
+      // Both older shapes get walked through it again.
+      //
       // v0 carried the queue and lastFix in this blob. Dropping them here
       // instead would hand the merge a stale queue that overwrites the one just
       // read from the new keys, and lose whatever was waiting to upload.
       migrate: (persisted, version) => {
         const state = (persisted ?? {}) as Partial<TrackingState>
-        if (version >= 1) return state as TrackingState
-        const { queue, lastFix, ...rest } = state
+        if (version >= 2) return state as TrackingState
+        const reonboarded = { ...state, onboardedPermissions: false }
+        if (version >= 1) return reonboarded as TrackingState
+        const { queue, lastFix, ...rest } = reonboarded
         const carried = queue?.length ? pushFixes(queue, lastFix ?? null) : restored.queue
         return { ...rest, queue: carried, lastFix: lastFix ?? restored.lastFix } as TrackingState
       },
