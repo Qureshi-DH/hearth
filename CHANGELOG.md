@@ -6,6 +6,12 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-30
+
+The first round of fixes from using the app on a real phone, and a new app
+identifier. Servers must update to this version before phones do, because the
+new app reports heartbeat fixes that an older server rejects.
+
 ### Added
 
 - A heartbeat location source. While the app is open and the phone is parked
@@ -25,8 +31,26 @@ Notable changes to Hearth. The format is loosely
 - The tracker only ever checks the motion permission. The checklist's Allow
   button is the one place that asks, so a background wake can no longer make a
   request that Android answers as denied without showing a dialog
+- The app identifier is now `com.binary.rewind.hearth` on both platforms. A
+  build with the new id installs beside the old one rather than over it, so
+  remove the old app once you have signed in on the new one
 
 ### Fixed
+
+- Sheets that a screen mounts hidden and shows later, such as the display name,
+  server name, history retention and member nickname prompts, never opened.
+  Every one of them opens now, and opens again after being swiped away
+- Text fields inside a sheet now rise with the keyboard, and the first tap on
+  Save lands while the keyboard is up. Change password gained the subtitle and
+  spacing the other sheet forms have, and shows the server's error instead of
+  a red hint
+- Your own row on the map read as stale after fifteen minutes with the app open
+  and the phone parked. See the heartbeat entry above
+- The members sheet on the map stopped short of the status bar when expanded,
+  and the map controls slid under the bar. The sheet now meets the bar and the
+  controls stop level with the circle switcher and fade out
+- Signed-in devices printed the raw platform name for a session without a
+  device name, and the sign-out confirmation for such a row was blank
 
 - Signed-in devices no longer lists a session whose refresh token has lapsed.
   It could not sign in again, so it was never a device to sign out
