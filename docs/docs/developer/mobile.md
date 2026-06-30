@@ -47,12 +47,20 @@ server. Production builds do not, on either platform, which is the behaviour
 you want and the thing to remember when a release build cannot reach a server
 that a development build could.
 
-Android release signing runs through `scripts/eas-build.sh`, which loads the
-keystore from outside the repository before handing over to EAS. That key must
-never change: Android refuses an update signed with a different one, so a build
-signed by anything else strands everyone who already installed the app. If the
-keystore properties are missing the script says so and falls back to debug
-signing, which is fine for trying the app and must not be given to anyone.
+Android release builds are signed with the keystore EAS holds for the project.
+EAS injects it into `build.gradle` after the config plugins run, so nothing in
+the repository or in your shell can swap the key. That key must never change.
+Android refuses an update signed with a different one, so a build signed by
+anything else strands everyone who already installed the app. Keep a copy
+outside the repository, for example under `~/.hearth/keystores/`. Run
+`npx eas-cli@latest credentials -p android`, pick the production profile, then
+Keystore and Download to get it.
+
+`plugins/withAndroidReleaseSigning.ts` only matters for a build made outside
+EAS, with `expo prebuild` and Gradle directly. There it swaps the template's
+debug key for whatever the `HEARTH_UPLOAD_*` Gradle properties point at, and
+falls back to debug signing when they are missing, which is fine for trying
+the app and must not be given to anyone.
 
 Push notifications are configured for production only. `eas init` writes
 `extra.eas.projectId` into `app.json`, which is what `PUSH_PROVIDER=expo` needs,

@@ -9,6 +9,10 @@ import { withAppBuildGradle, type ConfigPlugin } from "@expo/config-plugins"
  * command line or in ~/.gradle/gradle.properties. Without them the build falls
  * back to the debug key so a fresh clone still compiles, and the APK it
  * produces is fine for trying the app but must not be handed to anyone.
+ *
+ * This only applies to a build made with Gradle directly. EAS injects the
+ * keystore it holds for the project after every plugin has run, and that
+ * injection wins over anything written here.
  */
 const STORE_PROPERTY = "HEARTH_UPLOAD_STORE_FILE"
 
