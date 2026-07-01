@@ -54,7 +54,9 @@ export async function setupChannels(): Promise<void> {
     bypassDnd: true,
     vibrationPattern: [0, 400, 200, 400, 200, 400],
     lightColor: "#FF5C7A",
-    sound: "default",
+    // No sound key on purpose. Leaving it out is what selects the system
+    // default. A string names a sound file bundled with the app, so "default"
+    // was looked up as a file, logged as missing, and left the channel silent.
   })
   // Android will not run the location foreground service without a
   // notification, so the one expo-location posts while a journey is under way

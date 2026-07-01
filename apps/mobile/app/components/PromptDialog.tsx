@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { View, type TextInputProps, type ViewStyle } from "react-native"
+import { BackHandler, View, type TextInputProps, type ViewStyle } from "react-native"
 import {
   BottomSheetBackdrop,
   BottomSheetModal,
@@ -79,6 +79,18 @@ export function PromptDialog({
     onCancel()
   }
 
+  // The sheet library leaves the Android back button alone, and the native
+  // stack underneath answers it by popping the screen, which left the sheet
+  // floating over whatever came next. While open, back closes the sheet.
+  useEffect(() => {
+    if (!visible) return
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      onCancel()
+      return true
+    })
+    return () => subscription.remove()
+  }, [visible]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const renderBackdrop = useCallback(
     (props: BottomSheetBackdropProps) => (
       <BottomSheetBackdrop
@@ -101,6 +113,7 @@ export function PromptDialog({
       ref={sheet}
       enableDynamicSizing
       enablePanDownToClose
+      topInset={insets.top}
       // The sheet offsets itself for the keyboard, which keeps its background
       // flush with the screen edge. It has to, because edge-to-edge stops the
       // OS from resizing the window, so asking for adjustResize here would only

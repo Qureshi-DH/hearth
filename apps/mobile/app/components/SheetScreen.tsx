@@ -68,6 +68,10 @@ export function SheetScreen({ children, snapPoints, scroll = false }: SheetScree
       // short form wants. A tall checklist passes its own instead.
       enableDynamicSizing={!snapPoints}
       enablePanDownToClose
+      // A sheet sized by its content grows with it, and a tall one would slide
+      // under the status bar. This caps the travel, so it stops below the bar
+      // and scrolls instead.
+      topInset={insets.top}
       // Settles the sheet back down once the keyboard goes. Rising to meet it
       // in the first place takes a SheetTextField, see below.
       keyboardBlurBehavior="restore"

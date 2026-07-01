@@ -35,6 +35,19 @@ describe("setupChannels", () => {
     )
   })
 
+  // Any string is read as a bundled sound file, so a "default" sound is a
+  // missing file and a silent channel. The system default comes from leaving
+  // the key out.
+  it("never names a sound file for the SOS channel", async () => {
+    await setupChannels()
+    const sos = mockSetChannel.mock.calls.find(([id]) => id === "sos")?.[1] as Record<
+      string,
+      unknown
+    >
+    expect(sos).toBeDefined()
+    expect("sound" in sos).toBe(false)
+  })
+
   it("does nothing on iOS", async () => {
     Platform.OS = "ios"
     await setupChannels()

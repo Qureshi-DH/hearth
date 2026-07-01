@@ -138,6 +138,18 @@ async function swipeAway() {
 }
 
 describe("PromptDialog", () => {
+  it("closes on the Android back button instead of leaving it to the screen below", async () => {
+    const { BackHandler } = require("react-native")
+    const spy = jest.spyOn(BackHandler, "addEventListener")
+    const { onCancel } = await mount(true)
+    const handler = spy.mock.calls.find(([event]) => event === "hardwareBackPress")?.[1] as
+      (() => boolean) | undefined
+    expect(handler).toBeDefined()
+    expect(handler?.()).toBe(true)
+    expect(onCancel).toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
   beforeEach(() => {
     mockInner.props = null
   })

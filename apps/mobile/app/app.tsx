@@ -17,12 +17,8 @@ import { AppState } from "react-native"
 import { useFonts } from "expo-font"
 import * as Linking from "expo-linking"
 import * as SplashScreen from "expo-splash-screen"
-import { QueryClientProvider } from "@tanstack/react-query"
-import { BottomSheetModalProvider } from "@gorhom/bottom-sheet"
-import { GestureHandlerRootView } from "react-native-gesture-handler"
-import { KeyboardProvider } from "react-native-keyboard-controller"
-import { initialWindowMetrics, SafeAreaProvider } from "react-native-safe-area-context"
 
+import { AppProviders } from "./AppProviders"
 import { IncidentPrompt } from "./components/IncidentPrompt"
 import { NudgeBanner } from "./components/NudgeBanner"
 import { ToastHost } from "./components/Toast"
@@ -38,10 +34,8 @@ import {
   stopForegroundHeartbeat,
 } from "./services/location/tracker"
 import { setupChannels } from "./services/notifications"
-import { queryClient } from "./services/queryClient"
 import { useAuthStore } from "./stores/auth"
 import { tokenVault } from "./stores/tokenVault"
-import { ThemeProvider } from "./theme/context"
 import { customFontsToLoad } from "./theme/typography"
 import { loadDateFnsLocale } from "./utils/formatDate"
 import * as storage from "./utils/storage"
@@ -171,25 +165,15 @@ export function App() {
   const linking = { prefixes: [prefix, "hearth://"], config: linkingConfig }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-        <BottomSheetModalProvider>
-          <KeyboardProvider>
-            <QueryClientProvider client={queryClient}>
-              <ThemeProvider>
-                <AppNavigator
-                  linking={linking}
-                  initialState={initialNavigationState}
-                  onStateChange={onNavigationStateChange}
-                />
-                <IncidentPrompt />
-                <ToastHost />
-                <NudgeBanner />
-              </ThemeProvider>
-            </QueryClientProvider>
-          </KeyboardProvider>
-        </BottomSheetModalProvider>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+    <AppProviders>
+      <AppNavigator
+        linking={linking}
+        initialState={initialNavigationState}
+        onStateChange={onNavigationStateChange}
+      />
+      <IncidentPrompt />
+      <ToastHost />
+      <NudgeBanner />
+    </AppProviders>
   )
 }
