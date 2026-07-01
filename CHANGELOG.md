@@ -6,6 +6,13 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Changed
+
+- The Android notification shown while a journey is being followed no longer
+  puts an icon in the status bar. Android will not run background location
+  without a notification, so it cannot go away entirely, but it now sits
+  collapsed in the silent part of the shade
+
 ## [0.3.0] - 2026-06-30
 
 The first round of fixes from using the app on a real phone, and a new app

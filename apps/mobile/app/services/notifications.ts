@@ -1,11 +1,12 @@
 import { Platform } from "react-native"
+import * as Application from "expo-application"
 import Constants from "expo-constants"
 import * as Device from "expo-device"
 import * as Notifications from "expo-notifications"
 import type { ServerInfo } from "@hearth/shared"
 
 import { endpoints } from "@/services/api"
-import { reportNow } from "@/services/location/tracker"
+import { BACKGROUND_LOCATION_TASK, reportNow } from "@/services/location/tracker"
 
 export type PushSetupResult =
   | { kind: "registered"; provider: "expo" }
@@ -55,6 +56,21 @@ export async function setupChannels(): Promise<void> {
     lightColor: "#FF5C7A",
     sound: "default",
   })
+  // Android will not run the location foreground service without a
+  // notification, so the one expo-location posts while a journey is under way
+  // cannot be removed. It can be kept out of the status bar. expo-location
+  // names the channel after the package and the task and only creates it when
+  // nothing by that name exists, so creating it first at the lowest importance
+  // leaves the notification collapsed in the shade's silent section instead.
+  await Notifications.setNotificationChannelAsync(
+    `${Application.applicationId}:${BACKGROUND_LOCATION_TASK}`,
+    {
+      name: "Location sharing",
+      description: "Shown while Hearth follows a journey.",
+      importance: Notifications.AndroidImportance.MIN,
+      showBadge: false,
+    },
+  )
 }
 
 /** Safe to call on every launch. Registration is idempotent on the server. */

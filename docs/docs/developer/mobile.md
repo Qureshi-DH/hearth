@@ -182,7 +182,12 @@ around the clock is what makes that notification permanent and what actually
 drains the battery, because the GPS never sleeps.
 
 So the tracker has two states. **Moving** is continuous updates, and it is the
-state that shows the notification. Once the phone has stayed for five minutes
+state that shows the notification. The app creates that notification's channel
+at minimum importance before the service ever starts, which keeps it out of the
+status bar. It sits collapsed in the silent part of the shade instead.
+expo-location names the channel after the package and the task and only
+creates one when nothing by that name exists, so the id in
+`services/notifications.ts` has to match. Once the phone has stayed for five minutes
 inside a circle of 60 m, or 1.5 times the policy's distance filter where that
 is wider, it switches to **stationary**: updates stop, the notification
 disappears, and an exit geofence is armed around where it stopped. Leaving that

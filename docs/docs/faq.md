@@ -118,7 +118,8 @@ GPS is what costs, and nobody has published a measured comparison yet.
 What the code does to keep it down is worth understanding, because it is most of
 the answer. The tracker has two states. **Moving** means continuous OS location
 updates, and on Android that is a foreground service with a notification you
-cannot dismiss. Once the phone has stayed inside a 90 metre circle for five
+cannot dismiss, though it stays out of the status bar and sits in the silent
+part of the shade. Once the phone has stayed inside a 90 metre circle for five
 minutes it switches to **stationary**: updates stop, the notification
 disappears, and a 150 metre exit geofence is armed around where it stopped.
 That 90 metres is one and a half times the distance filter and never less than
