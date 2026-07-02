@@ -1,9 +1,9 @@
-import { Alert } from "react-native"
 import { NavigationContainer } from "@react-navigation/native"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 import { act, fireEvent, render } from "@testing-library/react-native"
 
 import { SosScreen } from "./SosScreen"
+import { useAlertStore } from "@/stores/alert"
 import { toast } from "../stores/toast"
 import { ThemeProvider } from "../theme/context"
 
@@ -34,13 +34,11 @@ jest.mock("../stores/auth", () => ({
 
 const navigation = { goBack: jest.fn(), navigate: jest.fn() }
 
-/** The destructive button of the confirmation Alert the Resolve row opens. */
+/** The destructive button of the confirmation alert the Resolve row opens. */
 function confirmResolve(): Promise<void> {
-  const buttons = (Alert.alert as jest.Mock).mock.calls.at(-1)?.[2] as Array<{
-    onPress?: () => void | Promise<void>
-    style?: string
-  }>
+  const buttons = useAlertStore.getState().current?.buttons ?? []
   const confirm = buttons.find((button) => button.style !== "cancel")
+  useAlertStore.getState().dismiss()
   return Promise.resolve(confirm?.onPress?.())
 }
 
@@ -71,7 +69,7 @@ async function openResolveConfirm() {
 describe("SosScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    jest.spyOn(Alert, "alert").mockImplementation(() => {})
+    useAlertStore.setState({ current: null, queue: [] })
   })
 
   it("stays on the alert and says so when resolving fails", async () => {

@@ -1,6 +1,7 @@
 const en = {
   common: {
     cancel: "Cancel",
+    ok: "OK",
     save: "Save",
     done: "Done",
     delete: "Delete",
@@ -95,7 +96,6 @@ const en = {
     notRequested:
       "Your location only ever goes to the server your family runs. There is no Hearth account, no analytics and no ad network in this app. It never asks for your contacts, microphone, Bluetooth or advertising ID, and a profile picture goes through the system picker so it only ever sees the one image you choose.",
     allow: "Allow",
-    review: "Review",
     always: 'Allow "Always"',
     later: "Not now",
     servicesOffTitle: "Location is turned off on this phone",
@@ -429,9 +429,14 @@ const en = {
     dbSize: "Database",
     uptime: "Uptime",
     deactivate: "Deactivate",
+    deactivateConfirm:
+      "Deactivate {{name}}? They are signed out everywhere and cannot sign in again until you reactivate them.",
     activate: "Activate",
     makeAdmin: "Make admin",
+    makeAdminConfirm:
+      "Make {{name}} an admin? Admins can change server settings and manage every account, including yours.",
     removeAdmin: "Remove admin",
+    removeAdminConfirm: "Remove admin from {{name}}? They keep their account and circles.",
     drainPush: "Flush",
   },
   time: {

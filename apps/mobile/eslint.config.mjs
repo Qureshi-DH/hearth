@@ -53,6 +53,11 @@ export default tseslint.config(
               importNames: ["Text", "Button", "TextInput"],
               message: "Use the wrapper component from '@/components'.",
             },
+            {
+              name: "react-native",
+              importNames: ["Alert"],
+              message: "Use alert() from '@/stores/alert', which draws in the app's theme.",
+            },
           ],
         },
       ],

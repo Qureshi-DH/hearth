@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FC } from "react"
-import { Alert, Linking, Platform, View, type ViewStyle } from "react-native"
+import { Linking, Platform, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { QUICK_MESSAGES, type QuickMessageKey } from "@hearth/shared"
@@ -31,6 +31,7 @@ import {
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { TripCard } from "@/screens/TripsScreen"
+import { alert } from "@/stores/alert"
 import { useAuthStore } from "@/stores/auth"
 import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
@@ -132,19 +133,15 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
         { onError: (error) => toast.error((error as Error).message) },
       )
     if (role === "owner") {
-      Alert.alert(
-        translate("member:transferOwnership"),
-        translate("member:transferConfirm", { name }),
-        [
-          { text: translate("common:cancel"), style: "cancel" },
-          { text: translate("member:transferOwnership"), style: "destructive", onPress: confirm },
-        ],
-      )
+      alert(translate("member:transferOwnership"), translate("member:transferConfirm", { name }), [
+        { text: translate("common:cancel"), style: "cancel" },
+        { text: translate("member:transferOwnership"), style: "destructive", onPress: confirm },
+      ])
     } else confirm()
   }
 
   const remove = () => {
-    Alert.alert(
+    alert(
       translate(isSelf ? "member:leave" : "member:remove"),
       translate(isSelf ? "member:leaveConfirm" : "member:removeConfirm", {
         name: isSelf ? (circle?.name ?? "") : name,

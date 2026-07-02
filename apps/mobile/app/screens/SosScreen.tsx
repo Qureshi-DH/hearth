@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FC } from "react"
-import { Alert, Pressable, View, type ViewStyle } from "react-native"
+import { Pressable, View, type ViewStyle } from "react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import { Ionicons } from "@expo/vector-icons"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -13,6 +13,7 @@ import { useActiveSos, useRaiseSos, useResolveSos } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { reportNow } from "@/services/location/tracker"
+import { alert } from "@/stores/alert"
 import { useAuthStore } from "@/stores/auth"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
@@ -59,7 +60,7 @@ export const SosScreen: FC<AppStackScreenProps<"Sos">> = ({ navigation, route })
 
   const finish = () => {
     if (!mine) return
-    Alert.alert(translate("sos:resolve"), translate("sos:resolveConfirm"), [
+    alert(translate("sos:resolve"), translate("sos:resolveConfirm"), [
       { text: translate("common:cancel"), style: "cancel" },
       {
         text: translate("sos:resolve"),

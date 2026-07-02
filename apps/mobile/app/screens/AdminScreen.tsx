@@ -21,6 +21,7 @@ import {
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { endpoints } from "@/services/api"
+import { alert } from "@/stores/alert"
 import { useAuthStore } from "@/stores/auth"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
@@ -292,20 +293,56 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
                   key: "active",
                   label: translate(managing.isActive ? "admin:deactivate" : "admin:activate"),
                   destructive: managing.isActive,
-                  onPress: () =>
-                    updateUser.mutate(
-                      { userId: managing.id, isActive: !managing.isActive },
-                      { onError: (error) => toast.error((error as Error).message) },
-                    ),
+                  onPress: () => {
+                    const apply = () =>
+                      updateUser.mutate(
+                        { userId: managing.id, isActive: !managing.isActive },
+                        { onError: (error) => toast.error((error as Error).message) },
+                      )
+                    // Reactivating undoes a mistake, so it needs no second ask.
+                    if (!managing.isActive) return apply()
+                    alert(
+                      translate("admin:deactivate"),
+                      translate("admin:deactivateConfirm", { name: managing.displayName }),
+                      [
+                        { text: translate("common:cancel"), style: "cancel" },
+                        {
+                          text: translate("admin:deactivate"),
+                          style: "destructive",
+                          onPress: apply,
+                        },
+                      ],
+                    )
+                  },
                 },
                 {
                   key: "admin",
                   label: translate(managing.isAdmin ? "admin:removeAdmin" : "admin:makeAdmin"),
-                  onPress: () =>
-                    updateUser.mutate(
-                      { userId: managing.id, isAdmin: !managing.isAdmin },
-                      { onError: (error) => toast.error((error as Error).message) },
-                    ),
+                  onPress: () => {
+                    const apply = () =>
+                      updateUser.mutate(
+                        { userId: managing.id, isAdmin: !managing.isAdmin },
+                        { onError: (error) => toast.error((error as Error).message) },
+                      )
+                    const action = managing.isAdmin ? "admin:removeAdmin" : "admin:makeAdmin"
+                    alert(
+                      translate(action),
+                      translate(
+                        managing.isAdmin ? "admin:removeAdminConfirm" : "admin:makeAdminConfirm",
+                        {
+                          name: managing.displayName,
+                        },
+                      ),
+                      [
+                        { text: translate("common:cancel"), style: "cancel" },
+                        {
+                          text: translate(action),
+                          style: managing.isAdmin ? "destructive" : "default",
+                          onPress: apply,
+                        },
+                      ],
+                    )
+                  },
                 },
               ]
             : []

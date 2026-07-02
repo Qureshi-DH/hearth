@@ -1,5 +1,5 @@
 import { useState, type FC } from "react"
-import { Alert, View, type ViewStyle } from "react-native"
+import { View, type ViewStyle } from "react-native"
 import { File, Paths } from "expo-file-system"
 import * as Sharing from "expo-sharing"
 
@@ -15,6 +15,7 @@ import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { endpoints } from "@/services/api"
 import { stopTracking } from "@/services/location/tracker"
 import { queryClient } from "@/services/queryClient"
+import { alert } from "@/stores/alert"
 import { useAuthStore } from "@/stores/auth"
 import { toast } from "@/stores/toast"
 import { tokenVault } from "@/stores/tokenVault"
@@ -60,7 +61,7 @@ export const PrivacyDataScreen: FC<AppStackScreenProps<"PrivacyData">> = ({ navi
   }
 
   const eraseHistory = () => {
-    Alert.alert(translate("settings:eraseHistory"), translate("settings:eraseConfirm"), [
+    alert(translate("settings:eraseHistory"), translate("settings:eraseConfirm"), [
       { text: translate("common:cancel"), style: "cancel" },
       {
         text: translate("common:delete"),

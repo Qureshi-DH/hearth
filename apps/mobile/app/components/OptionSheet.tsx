@@ -1,14 +1,14 @@
-import { useEffect, useRef } from "react"
-import { Modal, Platform, Pressable, View, type ViewStyle } from "react-native"
-import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler"
-import Animated, {
-  runOnJS,
-  SlideInDown,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated"
+import { useCallback, useEffect, useRef } from "react"
+import { BackHandler, View, type ViewStyle } from "react-native"
+import {
+  BottomSheetBackdrop,
+  BottomSheetModal,
+  BottomSheetView,
+  type BottomSheetBackdropProps,
+} from "@gorhom/bottom-sheet"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 
+import { ListGroup, ListRow } from "@/components/ListRow"
 import { Text, type TextProps } from "@/components/Text"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
@@ -34,121 +34,103 @@ export interface OptionSheetProps {
  * a four or five way chooser loses its last options. A list has no such limit
  * and reads the same on both platforms.
  *
- * There is no Cancel row. The grabber and the backdrop both dismiss it, and a
- * row that only means "never mind" is noise next to the real choices.
+ * Built on the same modal sheet as PromptDialog so every sheet in the app
+ * drags, dismisses and looks the same. There is no Cancel row. The grabber,
+ * the backdrop and the back button all dismiss it, and a row that only means
+ * "never mind" is noise next to the real choices.
  */
 export function OptionSheet({ visible, titleTx, title, options, onClose }: OptionSheetProps) {
   const { themed, theme } = useAppTheme()
+  const insets = useSafeAreaInsets()
+  const sheet = useRef<BottomSheetModal>(null)
+  // dismiss() on a modal that was never presented leaves the library's status
+  // machine stuck in DISMISSING, after which its portal drops every present().
+  // Screens mount this with visible false, so dismiss() only runs once a
+  // present() has gone through. See PromptDialog for the same guard.
+  const presented = useRef(false)
 
-  /**
-   * iOS refuses to present anything while a modal is still dismissing, so an
-   * option that opens the photo picker did nothing at all. Hold the action and
-   * run it once the sheet has actually gone.
-   */
-  const pending = useRef<(() => void) | null>(null)
-  const runPending = () => {
-    const action = pending.current
-    pending.current = null
-    action?.()
+  useEffect(() => {
+    if (visible) {
+      presented.current = true
+      sheet.current?.present()
+    } else if (presented.current) {
+      sheet.current?.dismiss()
+    }
+  }, [visible])
+
+  const handleDismiss = () => {
+    presented.current = false
+    onClose()
   }
 
-  // The grabber promises the sheet can be dragged away, so it has to be true.
-  const drag = useSharedValue(0)
+  // The native stack under the sheet would answer the back button by popping
+  // the screen and leave the sheet floating over the next one.
   useEffect(() => {
-    if (visible) drag.value = 0
-  }, [visible, drag])
-
-  const swipeAway = Gesture.Pan()
-    .onUpdate((event) => {
-      drag.value = Math.max(0, event.translationY)
+    if (!visible) return
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      onClose()
+      return true
     })
-    .onEnd((event) => {
-      if (event.translationY > 90 || event.velocityY > 700) runOnJS(onClose)()
-      else drag.value = withTiming(0, { duration: 160 })
-    })
+    return () => subscription.remove()
+  }, [visible]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const dragStyle = useAnimatedStyle(() => ({ transform: [{ translateY: drag.value }] }))
+  const renderBackdrop = useCallback(
+    (props: BottomSheetBackdropProps) => (
+      <BottomSheetBackdrop
+        {...props}
+        appearsOnIndex={0}
+        disappearsOnIndex={-1}
+        pressBehavior="close"
+      />
+    ),
+    [],
+  )
 
   const choose = (action: () => void) => {
-    pending.current = action
     onClose()
-    if (Platform.OS !== "ios") runPending()
+    action()
   }
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      // Sliding the whole modal drags the backdrop up with it, which reads
-      // nothing like the bottom sheet used everywhere else. Fade the backdrop
-      // and let the panel do the sliding.
-      animationType="fade"
-      onRequestClose={onClose}
-      onDismiss={runPending}
+    <BottomSheetModal
+      ref={sheet}
+      enableDynamicSizing
+      enablePanDownToClose
+      topInset={insets.top}
+      onDismiss={handleDismiss}
+      backdropComponent={renderBackdrop}
+      handleIndicatorStyle={{ backgroundColor: theme.colors.tintInactive }}
+      backgroundStyle={{ backgroundColor: theme.colors.background }}
     >
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <Pressable style={themed($backdrop)} onPress={onClose}>
-          <GestureDetector gesture={swipeAway}>
-            <Animated.View entering={SlideInDown.duration(220)} style={dragStyle}>
-              {/* Keeps a tap on the sheet body from reaching the backdrop. */}
-              <Pressable style={themed($sheet)} onPress={() => {}}>
-                <View style={themed($grabber)} />
-                {titleTx || title ? (
-                  <Text preset="subheading" tx={titleTx} text={title} style={themed($title)} />
-                ) : null}
-
-                {options.map((option) => (
-                  <Pressable
-                    key={option.key}
-                    style={themed($row)}
-                    onPress={() => choose(option.onPress)}
-                  >
-                    <Text
-                      tx={option.tx}
-                      text={option.label}
-                      style={{ color: option.destructive ? theme.colors.error : theme.colors.text }}
-                    />
-                  </Pressable>
-                ))}
-              </Pressable>
-            </Animated.View>
-          </GestureDetector>
-        </Pressable>
-      </GestureHandlerRootView>
-    </Modal>
+      <BottomSheetView style={themed($sheet)}>
+        {titleTx || title ? (
+          <Text preset="subheading" tx={titleTx} text={title} style={themed($title)} />
+        ) : null}
+        {/* The sheet already pads its sides, and a chooser's rows are the
+            choice itself, not a way somewhere, so no chevron. */}
+        <ListGroup style={{ marginHorizontal: 0 }}>
+          {options.map((option) => (
+            <ListRow
+              key={option.key}
+              tx={option.tx}
+              text={option.label}
+              destructive={option.destructive}
+              onPress={() => choose(option.onPress)}
+              right={<View />}
+            />
+          ))}
+        </ListGroup>
+        <View style={{ height: insets.bottom + theme.spacing.md }} />
+      </BottomSheetView>
+    </BottomSheetModal>
   )
 }
 
-const $backdrop: ThemedStyle<ViewStyle> = () => ({
-  flex: 1,
-  backgroundColor: "rgba(0,0,0,0.45)",
-  justifyContent: "flex-end",
-})
-
-const $grabber: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
-  alignSelf: "center",
-  width: 44,
-  height: 4,
-  borderRadius: 2,
-  backgroundColor: colors.tintInactive,
-  marginBottom: spacing.sm,
-})
-
-const $sheet: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
-  backgroundColor: colors.background,
-  borderTopLeftRadius: 28,
-  borderTopRightRadius: 28,
-  paddingTop: spacing.md,
-  paddingBottom: spacing.xl,
+const $sheet: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   paddingHorizontal: spacing.lg,
+  paddingTop: spacing.xs,
 })
 
 const $title: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  marginBottom: spacing.xs,
-})
-
-const $row: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
-  paddingVertical: spacing.md,
-  borderTopWidth: 1,
-  borderTopColor: colors.border,
+  marginBottom: spacing.md,
 })

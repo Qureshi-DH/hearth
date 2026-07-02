@@ -19,6 +19,7 @@ import * as Linking from "expo-linking"
 import * as SplashScreen from "expo-splash-screen"
 
 import { AppProviders } from "./AppProviders"
+import { AlertHost } from "./components/AlertHost"
 import { IncidentPrompt } from "./components/IncidentPrompt"
 import { NudgeBanner } from "./components/NudgeBanner"
 import { ToastHost } from "./components/Toast"
@@ -172,6 +173,7 @@ export function App() {
         onStateChange={onNavigationStateChange}
       />
       <IncidentPrompt />
+      <AlertHost />
       <ToastHost />
       <NudgeBanner />
     </AppProviders>

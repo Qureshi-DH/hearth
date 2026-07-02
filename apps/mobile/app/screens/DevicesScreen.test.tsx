@@ -1,9 +1,9 @@
 import type { SessionSummary } from "@hearth/shared"
-import { Alert } from "react-native"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 import { act, fireEvent, render } from "@testing-library/react-native"
 
 import { DevicesScreen } from "./DevicesScreen"
+import { useAlertStore } from "@/stores/alert"
 import en from "../i18n/en"
 import { ThemeProvider } from "../theme/context"
 
@@ -83,15 +83,13 @@ describe("DevicesScreen", () => {
   it("puts the platform label, not the enum, in the sign-out confirmation", async () => {
     mockSessions = [session({ id: "foreign", deviceName: null, platform: "other" })]
 
-    const alert = jest.spyOn(Alert, "alert").mockImplementation(() => {})
     const { getByText } = await renderScreen()
     fireEvent.press(getByText("settings:platformOther"))
 
-    expect(alert).toHaveBeenCalledWith(
-      "settings:signOutDevice",
-      "settings:platformOther",
-      expect.any(Array),
-    )
+    expect(useAlertStore.getState().current).toMatchObject({
+      title: "settings:signOutDevice",
+      message: "settings:platformOther",
+    })
   })
 
   it("marks the current session and says when each one signed in", async () => {

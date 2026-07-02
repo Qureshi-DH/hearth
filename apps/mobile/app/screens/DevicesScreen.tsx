@@ -1,5 +1,5 @@
 import type { FC } from "react"
-import { Alert, type ViewStyle } from "react-native"
+import { type ViewStyle } from "react-native"
 import type { SessionSummary } from "@hearth/shared"
 
 import { ListGroup, ListRow } from "@/components/ListRow"
@@ -9,6 +9,7 @@ import { SectionHeader } from "@/components/SectionHeader"
 import { useRevokeSession, useSessions } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
+import { alert } from "@/stores/alert"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
@@ -83,7 +84,7 @@ export const DevicesScreen: FC<AppStackScreenProps<"Devices">> = ({ navigation }
                 session.current
                   ? undefined
                   : () =>
-                      Alert.alert(translate("settings:signOutDevice"), title, [
+                      alert(translate("settings:signOutDevice"), title, [
                         { text: translate("common:cancel"), style: "cancel" },
                         {
                           text: translate("settings:signOutDevice"),

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FC } from "react"
-import { Alert, Pressable, ScrollView, View, type ViewStyle } from "react-native"
+import { Pressable, ScrollView, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { DEFAULTS, PLACE_ICONS, type PlaceIcon } from "@hearth/shared"
 import { GeoJSONSource, Layer, type CameraRef, type MapRef } from "@maplibre/maplibre-react-native"
@@ -14,6 +14,7 @@ import { useDeletePlace, usePlaces, useSavePlace } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { reportNow } from "@/services/location/tracker"
+import { alert } from "@/stores/alert"
 import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
 import { useTrackingStore } from "@/stores/tracking"
@@ -117,25 +118,21 @@ export const PlaceEditorScreen: FC<AppStackScreenProps<"PlaceEditor">> = ({
 
   const destroy = () => {
     if (!existing) return
-    Alert.alert(
-      translate("common:delete"),
-      translate("places:deleteConfirm", { name: existing.name }),
-      [
-        { text: translate("common:cancel"), style: "cancel" },
-        {
-          text: translate("common:delete"),
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await remove.mutateAsync(existing.id)
-              navigation.navigate("Main", { screen: "Places" })
-            } catch (error) {
-              toast.error((error as Error).message)
-            }
-          },
+    alert(translate("common:delete"), translate("places:deleteConfirm", { name: existing.name }), [
+      { text: translate("common:cancel"), style: "cancel" },
+      {
+        text: translate("common:delete"),
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await remove.mutateAsync(existing.id)
+            navigation.navigate("Main", { screen: "Places" })
+          } catch (error) {
+            toast.error((error as Error).message)
+          }
         },
-      ],
-    )
+      },
+    ])
   }
 
   return (

@@ -1,5 +1,5 @@
 import { useCallback, useState, type FC } from "react"
-import { Alert, Pressable, View, type ViewStyle } from "react-native"
+import { Pressable, View, type ViewStyle } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import * as ImagePicker from "expo-image-picker"
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator"
@@ -21,6 +21,7 @@ import { endpoints } from "@/services/api"
 import { stopTracking } from "@/services/location/tracker"
 import { disablePush } from "@/services/notifications"
 import { queryClient } from "@/services/queryClient"
+import { alert } from "@/stores/alert"
 import { useAuthStore } from "@/stores/auth"
 import { toast } from "@/stores/toast"
 import { useSettingsStore, type ThemeMode } from "@/stores/settings"
@@ -116,7 +117,7 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
    * keeps uploading to the old address.
    */
   const changeServer = () => {
-    Alert.alert(translate("settings:changeServer"), translate("settings:changeServerConfirm"), [
+    alert(translate("settings:changeServer"), translate("settings:changeServerConfirm"), [
       { text: translate("common:cancel"), style: "cancel" },
       {
         text: translate("settings:changeServer"),
@@ -142,7 +143,7 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
   }
 
   const signOut = () => {
-    Alert.alert(translate("common:logOut"), translate("settings:signOutConfirm"), [
+    alert(translate("common:logOut"), translate("settings:signOutConfirm"), [
       { text: translate("common:cancel"), style: "cancel" },
       {
         text: translate("common:logOut"),

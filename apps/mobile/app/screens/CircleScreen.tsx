@@ -1,5 +1,5 @@
 import type { FC } from "react"
-import { Alert, View, type ViewStyle } from "react-native"
+import { View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 
 import { ListGroup, ListRow } from "@/components/ListRow"
@@ -16,6 +16,7 @@ import {
 } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
+import { alert } from "@/stores/alert"
 import { useAuthStore } from "@/stores/auth"
 import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
@@ -48,30 +49,26 @@ export const CircleScreen: FC<AppStackScreenProps<"Circle">> = ({ navigation, ro
 
   const leave = () => {
     if (!me || !circle) return
-    Alert.alert(
-      translate("member:leave"),
-      translate("member:leaveConfirm", { name: circle.name }),
-      [
-        { text: translate("common:cancel"), style: "cancel" },
-        {
-          text: translate("member:leave"),
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await removeMember.mutateAsync(me.id)
-              navigation.navigate("Main", { screen: "Map" })
-            } catch (error) {
-              toast.error((error as Error).message)
-            }
-          },
+    alert(translate("member:leave"), translate("member:leaveConfirm", { name: circle.name }), [
+      { text: translate("common:cancel"), style: "cancel" },
+      {
+        text: translate("member:leave"),
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await removeMember.mutateAsync(me.id)
+            navigation.navigate("Main", { screen: "Map" })
+          } catch (error) {
+            toast.error((error as Error).message)
+          }
         },
-      ],
-    )
+      },
+    ])
   }
 
   const destroy = () => {
     if (!circle) return
-    Alert.alert(
+    alert(
       translate("circle:deleteCircle"),
       translate("circle:deleteConfirm", { name: circle.name }),
       [
