@@ -245,17 +245,11 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
                 icon: "battery-charging",
                 title: translate("permissions:batteryTitle"),
                 body: translate("permissions:batteryBody"),
-                state: (snapshot.batteryOptimization === "exempt_requested"
-                  ? "done"
-                  : "todo") as ItemState,
-                action: {
-                  label: translate(
-                    snapshot.batteryOptimization === "exempt_requested"
-                      ? "permissions:review"
-                      : "permissions:allow",
-                  ),
-                  onPress: requestBatteryExemption,
-                },
+                state: (snapshot.batteryOptimization === "exempt" ? "done" : "todo") as ItemState,
+                action:
+                  snapshot.batteryOptimization === "exempt"
+                    ? undefined
+                    : { label: translate("permissions:allow"), onPress: requestBatteryExemption },
               },
             ]
           : [

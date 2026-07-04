@@ -29,7 +29,6 @@ interface TrackingState {
   servicesEnabled: boolean
   backgroundActive: boolean
   /** Android only. Records that the dialog was shown, not that it was granted. */
-  batteryExemptionRequested: boolean
   onboardedPermissions: boolean
   policy: TrackingPolicy
   mode: TrackingMode
@@ -52,7 +51,6 @@ interface TrackingState {
   setPermission(level: PermissionLevel): void
   setServicesEnabled(enabled: boolean): void
   setBackgroundActive(active: boolean): void
-  setBatteryExemptionRequested(value: boolean): void
   setOnboardedPermissions(value: boolean): void
   setPolicy(policy: TrackingPolicy): void
   setMode(mode: TrackingMode): void
@@ -235,7 +233,6 @@ export const useTrackingStore = create<TrackingState>()(
       permission: "unknown",
       servicesEnabled: true,
       backgroundActive: false,
-      batteryExemptionRequested: false,
       onboardedPermissions: false,
       policy: { minUpdateIntervalSeconds: 30, distanceFilterMeters: 60 },
       mode: "off",
@@ -251,8 +248,6 @@ export const useTrackingStore = create<TrackingState>()(
       setPermission: (permission) => set({ permission }),
       setServicesEnabled: (servicesEnabled) => set({ servicesEnabled }),
       setBackgroundActive: (backgroundActive) => set({ backgroundActive }),
-      setBatteryExemptionRequested: (batteryExemptionRequested) =>
-        set({ batteryExemptionRequested }),
       setOnboardedPermissions: (onboardedPermissions) => set({ onboardedPermissions }),
       setPolicy: (policy) => set({ policy }),
       setMode: (mode) => set({ mode }),
@@ -298,7 +293,6 @@ export const useTrackingStore = create<TrackingState>()(
       partialize: (state) => ({
         enabled: state.enabled,
         permission: state.permission,
-        batteryExemptionRequested: state.batteryExemptionRequested,
         onboardedPermissions: state.onboardedPermissions,
         policy: state.policy,
         mode: state.mode,

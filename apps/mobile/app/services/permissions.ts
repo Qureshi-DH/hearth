@@ -1,11 +1,12 @@
 import { Linking, Platform } from "react-native"
 import * as BackgroundTask from "expo-background-task"
+import * as Battery from "expo-battery"
 import Constants from "expo-constants"
 import * as IntentLauncher from "expo-intent-launcher"
 import * as Location from "expo-location"
 import * as Notifications from "expo-notifications"
 
-import { useTrackingStore, type PermissionLevel } from "@/stores/tracking"
+import type { PermissionLevel } from "@/stores/tracking"
 
 export type SimpleStatus = "granted" | "denied" | "undetermined" | "n/a"
 
@@ -16,8 +17,8 @@ export interface PermissionSnapshot {
   /** Android can grant coarse only. iOS is always fine at the permission level. */
   preciseLocation: boolean
   notifications: SimpleStatus
-  /** Android only. The OS exposes no way to read this, so it is our own record of asking. */
-  batteryOptimization: "exempt_requested" | "not_requested" | "n/a"
+  /** Android only. "exempt" is the real answer from the OS, not a record of having asked. */
+  batteryOptimization: "exempt" | "optimized" | "n/a"
   backgroundRefresh: "available" | "restricted" | "denied" | "n/a"
 }
 
@@ -82,13 +83,22 @@ export async function getPermissionSnapshot(): Promise<PermissionSnapshot> {
     servicesEnabled,
     preciseLocation,
     notifications: notificationStatus,
-    batteryOptimization:
-      Platform.OS === "android"
-        ? useTrackingStore.getState().batteryExemptionRequested
-          ? "exempt_requested"
-          : "not_requested"
-        : "n/a",
+    batteryOptimization: await readBatteryOptimization(),
     backgroundRefresh,
+  }
+}
+
+/**
+ * The checklist used to show "On" after the exemption dialog had merely been
+ * shown, with a Review link beside it because nothing could tell whether the
+ * user had said yes. The OS does answer, so the row shows what it says.
+ */
+async function readBatteryOptimization(): Promise<PermissionSnapshot["batteryOptimization"]> {
+  if (Platform.OS !== "android") return "n/a"
+  try {
+    return (await Battery.isBatteryOptimizationEnabledAsync()) ? "optimized" : "exempt"
+  } catch {
+    return "optimized"
   }
 }
 
@@ -119,7 +129,6 @@ export async function requestBatteryExemption(): Promise<void> {
       "android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS",
     ).catch(() => {})
   }
-  useTrackingStore.getState().setBatteryExemptionRequested(true)
 }
 
 export async function openAppSettings(): Promise<void> {

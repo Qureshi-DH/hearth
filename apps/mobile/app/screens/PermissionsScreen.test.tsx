@@ -12,13 +12,15 @@ let mockMotion: "granted" | "denied" | "undetermined" | "unavailable" = "undeter
 /** Set by a test that wants the motion answer to arrive after the rest. */
 let mockMotionGate: Promise<void> | null = null
 
+let mockBattery: "exempt" | "optimized" | "n/a" = "n/a"
+
 jest.mock("../services/permissions", () => ({
   getPermissionSnapshot: jest.fn(async () => ({
     location: "always",
     servicesEnabled: true,
     preciseLocation: true,
     notifications: "granted",
-    batteryOptimization: "n/a",
+    batteryOptimization: mockBattery,
     backgroundRefresh: "available",
   })),
   openAppSettings: jest.fn(async () => {}),
@@ -105,7 +107,33 @@ describe("PermissionsScreen", () => {
     mockCalls.length = 0
     mockMotion = "undetermined"
     mockMotionGate = null
+    mockBattery = "n/a"
     useSettingsStore.setState({ incidentDetection: false })
+  })
+
+  // The row used to read "On" with a Review link beside it once the exemption
+  // dialog had merely been shown. Now it says what the OS says.
+  it("shows the battery row as done, with nothing left to press, only once the OS agrees", async () => {
+    const { Platform } = require("react-native")
+    const os = Platform.OS
+    Platform.OS = "android"
+    try {
+      mockBattery = "optimized"
+      const first = await renderScreen()
+      expect(first.getByText("permissions:batteryTitle")).toBeTruthy()
+      expect(first.getAllByText(/permissions:allow/).length).toBeGreaterThan(0)
+      first.unmount()
+
+      mockBattery = "exempt"
+      const second = await renderScreen()
+      expect(second.getByText("permissions:batteryTitle")).toBeTruthy()
+      expect(second.queryByText(/permissions:review/)).toBeNull()
+      // Location and notifications are granted in the mock, so the only Allow
+      // left belongs to the motion row.
+      expect(second.getAllByText(/permissions:allow/)).toHaveLength(1)
+    } finally {
+      Platform.OS = os
+    }
   })
 
   it("asks for motion even with incident alerts off, and is not done until it has it", async () => {
