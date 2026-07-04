@@ -1,3 +1,4 @@
+import type postgres from "postgres"
 import { MUTABLE_EVENT_TYPES, type PushProvider } from "@hearth/shared"
 import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm"
 
@@ -231,7 +232,7 @@ export async function enqueuePush(db: Database, messages: PushMessage[]): Promis
       body: message.body,
       data: message.data ?? {},
       channel: message.channel ?? ("default" as const),
-      priority: message.priority ?? ("normal" as const),
+      priority: message.priority ?? ("high" as const),
       ...(message.notBefore ? { nextAttemptAt: message.notBefore } : {}),
     })),
   )
@@ -278,12 +279,52 @@ export interface DrainSummary {
  * problem than a missed "your kid left school" alert, so rows are marked sent
  * only after the driver acknowledges them.
  */
+const DEFAULT_SEND_CONCURRENCY = 8
+
+/** The channel the outbox trigger raises on commit. Migration 0003 owns the trigger. */
+export const OUTBOX_CHANNEL = "hearth_outbox"
+
+/**
+ * Wakes `onWake` the moment a transaction that queued a notification commits.
+ *
+ * The enqueue happens inside the caller's transaction, so nothing on the
+ * application side can poke the worker at the right moment: before the commit
+ * the row is invisible, and the enqueue site never learns when the commit
+ * lands. Postgres delivers a NOTIFY raised by a trigger only on commit, and to
+ * every replica that listens, which is exactly the timing needed. The listen
+ * holds its own connection outside the pool.
+ */
+export async function listenForOutbox(
+  sql: postgres.Sql,
+  onWake: () => void,
+): Promise<{ stop(): Promise<void> }> {
+  const meta = await sql.listen(OUTBOX_CHANNEL, () => onWake())
+  return { stop: () => meta.unlisten() }
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  task: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length) {
+      const item = items[next]!
+      next += 1
+      await task(item)
+    }
+  })
+  await Promise.all(workers)
+}
+
 export async function drainOutbox(
   db: Database,
   driver: PushDriver,
-  options: { batchSize?: number; now?: Date } = {},
+  options: { batchSize?: number; concurrency?: number; now?: Date } = {},
 ): Promise<DrainSummary> {
   const batchSize = options.batchSize ?? 50
+  const concurrency = options.concurrency ?? DEFAULT_SEND_CONCURRENCY
   const now = options.now ?? new Date()
   const summary: DrainSummary = { processed: 0, sent: 0, failed: 0, skipped: 0 }
 
@@ -298,14 +339,19 @@ export async function drainOutbox(
     where id in (
       select id from notification_outbox
       where status = 'pending' and next_attempt_at <= ${now.toISOString()}::timestamptz
-      order by next_attempt_at asc
+      order by (priority = 'high') desc, next_attempt_at asc
       limit ${batchSize}
       for update skip locked
     )
     returning *
   `)) as unknown as Array<Record<string, unknown>>
 
-  const allClaimed = raw.map(rowFromDriver)
+  // RETURNING hands rows back in heap order, whatever the subselect asked
+  // for, so the claim decides which rows make the batch and this decides who
+  // goes first within it. Ids climb with enqueue order.
+  const allClaimed = raw
+    .map(rowFromDriver)
+    .sort((a, b) => Number(b.priority === "high") - Number(a.priority === "high") || a.id - b.id)
   if (allClaimed.length === 0) return summary
 
   const claimed = await dropRowsForFormerMembers(db, allClaimed, now, summary)
@@ -358,7 +404,7 @@ export async function drainOutbox(
     byUser.set(row.userId, list)
   }
 
-  for (const row of claimed) {
+  const deliver = async (row: OutboxRow) => {
     summary.processed += 1
     const targets = byUser.get(row.userId) ?? []
 
@@ -368,7 +414,7 @@ export async function drainOutbox(
         .set({ status: "skipped", sentAt: now, lastError: "no registered device" })
         .where(eq(notificationOutbox.id, row.id))
       summary.skipped += 1
-      continue
+      return
     }
 
     const message: PushMessage = {
@@ -407,7 +453,7 @@ export async function drainOutbox(
         .set({ status: "sent", sentAt: new Date(), attempts: row.attempts + 1 })
         .where(eq(notificationOutbox.id, row.id))
       summary.sent += 1
-      continue
+      return
     }
 
     const attempts = row.attempts + 1
@@ -426,6 +472,11 @@ export async function drainOutbox(
       .where(eq(notificationOutbox.id, row.id))
     summary.failed += 1
   }
+
+  // The rows are independent, so a slow provider round trip for one family
+  // must not hold up the next. A bounded pool rather than Promise.all, so a
+  // backlog after an outage does not open hundreds of connections at once.
+  await runWithConcurrency(claimed, concurrency, deliver)
 
   return summary
 }

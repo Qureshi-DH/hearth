@@ -102,7 +102,7 @@ export async function recordEvent(db: Database, input: RecordEventInput): Promis
         title: input.notify!.title,
         body: input.notify!.body,
         channel: input.notify!.channel ?? "default",
-        priority: input.notify!.priority ?? "normal",
+        priority: input.notify!.priority ?? "high",
         notBefore: input.notify!.notBefore,
         data: {
           type: input.type,

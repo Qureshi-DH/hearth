@@ -450,7 +450,7 @@ export const notificationOutbox = pgTable(
     body: text("body").notNull(),
     data: jsonb("data").$type<Record<string, unknown>>().notNull().default({}),
     channel: text("channel").$type<"default" | "alerts" | "sos">().notNull().default("default"),
-    priority: text("priority").$type<"normal" | "high">().notNull().default("normal"),
+    priority: text("priority").$type<"normal" | "high">().notNull().default("high"),
     status: text("status")
       .$type<"pending" | "sending" | "sent" | "failed" | "skipped">()
       .notNull()

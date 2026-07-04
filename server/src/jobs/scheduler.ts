@@ -2,13 +2,13 @@ import { DEFAULTS, type FeedEvent } from "@hearth/shared"
 import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm"
 import type { FastifyBaseLogger } from "fastify"
 
-import type { Database } from "../db/client"
+import { getSql, type Database } from "../db/client"
 import { circleMembers, events, sessions, userPresence, users } from "../db/schema"
 import type { AppConfig } from "../env"
 import { getPushDriver } from "../runtime"
 import { broadcastEvent, recordEvent } from "../services/feed"
 import { effectiveSharingState } from "../services/presence"
-import { drainOutbox, pruneOutbox, requeueStuckSends } from "../services/push"
+import { drainOutbox, listenForOutbox, pruneOutbox, requeueStuckSends } from "../services/push"
 import { getServerSettings } from "../services/settings"
 import { detectTripsForUser, type PendingBroadcast } from "../services/trips"
 
@@ -546,6 +546,49 @@ export interface Scheduler {
 }
 
 /**
+ * Drains the outbox until it is empty, and once more if a wake-up arrived
+ * while a pass was running. Wake-ups coalesce: a burst of arrivals raises one
+ * extra pass, not one per row. Retries are not covered here. A failed send
+ * moves its row's next attempt into the future and nothing notifies for
+ * that, so the interval tick still owns the backoff.
+ */
+export function createOutboxDrainer(
+  db: Database,
+  log: FastifyBaseLogger,
+  batchSize = 100,
+): { wake(): void; idle(): Promise<void> } {
+  let draining: Promise<void> | null = null
+  let again = false
+
+  const run = async () => {
+    do {
+      again = false
+      const driver = getPushDriver()
+      if (!driver) return
+      let summary
+      do {
+        summary = await drainOutbox(db, driver, { batchSize })
+      } while (summary.processed === batchSize)
+    } while (again)
+  }
+
+  return {
+    wake() {
+      if (draining) {
+        again = true
+        return
+      }
+      draining = run()
+        .catch((error) => log.error({ err: error, job: "push.wake" }, "outbox drain failed"))
+        .finally(() => {
+          draining = null
+        })
+    },
+    idle: () => draining ?? Promise.resolve(),
+  }
+}
+
+/**
  * Overlapping runs are skipped rather than queued. When a pass outlasts the
  * interval, usually a big retention sweep, doubling up only makes it worse.
  */
@@ -576,10 +619,23 @@ export function startScheduler(db: Database, config: AppConfig, log: FastifyBase
   timer.unref?.()
   kickoff.unref?.()
 
+  // Alerts go out the moment they commit rather than on the next tick. The
+  // tick keeps running for retries and as the fallback if the listen drops.
+  const drainer = createOutboxDrainer(db, log)
+  let listener: { stop(): Promise<void> } | null = null
+  if (getPushDriver()) {
+    listenForOutbox(getSql(), drainer.wake)
+      .then((handle) => {
+        listener = handle
+      })
+      .catch((error) => log.error({ err: error }, "outbox listen failed; falling back to the tick"))
+  }
+
   return {
     stop() {
       clearInterval(timer)
       clearTimeout(kickoff)
+      void listener?.stop()
     },
   }
 }
