@@ -6,17 +6,38 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-08
+
+Faster alerts on the server, and the app fixes from a day of using it on a
+phone. The server carries a migration.
+
+### Added
+
+- Confirmations, prompts and option sheets are drawn by the app in its own
+  theme rather than by the system, so they look the same on both platforms
+
 ### Changed
 
 - Notifications go out the moment the event that caused them is committed.
   Postgres wakes the worker instead of the worker checking every minute, sends
   run several at a time, and the most urgent go first. Every notification is
   now sent at high priority, so a phone in Doze shows it at once
-
 - The Android notification shown while a journey is being followed no longer
   puts an icon in the status bar. Android will not run background location
   without a notification, so it cannot go away entirely, but it now sits
   collapsed in the silent part of the shade
+- Deactivating a user or changing who is an admin asks first
+
+### Fixed
+
+- Every prompt sheet crashed the moment it opened, because the sheet host sat
+  outside the theme. The Android back button now closes a sheet instead of
+  the screen under it
+- The battery optimisation row on the setup checklist read On with a Review
+  link beside it as soon as the dialog had been shown. It now reads what the
+  OS says
+- The SOS notification channel asked for a sound file called default, which
+  does not exist, and so had no sound
 
 ## [0.3.0] - 2026-06-30
 
