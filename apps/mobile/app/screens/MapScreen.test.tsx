@@ -1,7 +1,7 @@
 import { AppState, StyleSheet } from "react-native"
 import type { CircleMember, MemberPresence } from "@hearth/shared"
 import { SafeAreaProvider } from "react-native-safe-area-context"
-import { act, render } from "@testing-library/react-native"
+import { act, fireEvent, render } from "@testing-library/react-native"
 
 import { MapScreen } from "./MapScreen"
 import { ThemeProvider } from "../theme/context"
@@ -84,6 +84,8 @@ function memberFor(userId: string): CircleMember {
 
 /** Whatever the screen last handed the mocked sheet. */
 let mockSheetProps: Record<string, any> = {}
+const mockSnapToIndex = jest.fn()
+let mockMapPress: (() => void) | null = null
 
 const mockMembers = ["ana", "ben", "cat", "dee"].map(memberFor)
 const mockCircle = {
@@ -113,8 +115,10 @@ jest.mock("../components/HearthMap", () => {
   const react = require("react")
   const rn = require("react-native")
   return {
-    HearthMap: ({ children }: { children?: unknown }) =>
-      react.createElement(rn.View, null, children),
+    HearthMap: ({ children, onPress }: { children?: unknown; onPress?: () => void }) => {
+      mockMapPress = onPress ?? null
+      return react.createElement(rn.View, null, children)
+    },
     TrailLayer: () => null,
   }
 })
@@ -130,10 +134,11 @@ jest.mock("@gorhom/bottom-sheet", () => {
   const rn = require("react-native")
   return {
     __esModule: true,
-    default: ({ children, ...props }: { children?: unknown }) => {
+    default: react.forwardRef(({ children, ...props }: { children?: unknown }, ref: unknown) => {
       mockSheetProps = props
+      react.useImperativeHandle(ref, () => ({ snapToIndex: mockSnapToIndex }))
       return react.createElement(rn.View, null, children)
-    },
+    }),
     BottomSheetFlatList: rn.FlatList,
   }
 })
@@ -478,5 +483,63 @@ describe("MapScreen member sheet", () => {
     expect(controls.style.opacity).toBe(1)
     expect(controls.node.props.pointerEvents).toBe("box-none")
     expect(controls.node.props.accessibilityElementsHidden).toBe(false)
+  })
+})
+
+describe("tapping a member", () => {
+  beforeEach(() => {
+    mockPresence = mockMembers.map((member, index) => presenceFor(member.userId, 51 + index))
+    mockFocused = true
+    mockSnapToIndex.mockClear()
+    navigation.navigate.mockClear()
+  })
+
+  it("brings the sheet up to name them, and opens their page on the second tap", async () => {
+    const { getByTestId, getAllByText } = await renderMap()
+    const before = getAllByText("ana").length
+
+    fireEvent.press(getByTestId("member-marker-ana"))
+    // The resting height, not the collapsed bar, so the card is on screen.
+    expect(mockSnapToIndex).toHaveBeenCalledWith(1)
+    expect(getAllByText("ana").length).toBe(before + 1)
+    expect(navigation.navigate).not.toHaveBeenCalled()
+
+    fireEvent.press(getByTestId("member-marker-ana"))
+    expect(navigation.navigate).toHaveBeenCalledWith("MemberDetail", {
+      circleId: "circle-1",
+      userId: "ana",
+    })
+  })
+
+  // Android delivers a marker tap to the map as well, a moment later.
+  it("keeps the selection when the map reports the same tap", async () => {
+    const { getByTestId, getAllByText } = await renderMap()
+    fireEvent.press(getByTestId("member-marker-ana"))
+    const withCard = getAllByText("ana").length
+    act(() => mockMapPress?.())
+    expect(getAllByText("ana").length).toBe(withCard)
+
+    // A real tap on empty map, later, does clear it.
+    jest.spyOn(Date, "now").mockReturnValue(Date.now() + 2000)
+    act(() => mockMapPress?.())
+    expect(getAllByText("ana").length).toBe(withCard - 1)
+    ;(Date.now as jest.Mock).mockRestore()
+  })
+
+  it("opens the page from the card and from a list row, which both promise it", async () => {
+    const { getByTestId, getAllByText } = await renderMap()
+    fireEvent.press(getByTestId("member-marker-ben"))
+    // The card is the first "ben" in the tree, above the list.
+    fireEvent.press(getAllByText("ben")[0]!)
+    expect(navigation.navigate).toHaveBeenLastCalledWith("MemberDetail", {
+      circleId: "circle-1",
+      userId: "ben",
+    })
+
+    fireEvent.press(getAllByText("cat").at(-1)!)
+    expect(navigation.navigate).toHaveBeenLastCalledWith("MemberDetail", {
+      circleId: "circle-1",
+      userId: "cat",
+    })
   })
 })

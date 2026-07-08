@@ -74,6 +74,7 @@ export const MemberMarker = memo(function MemberMarker({
     <Pressable
       onPress={() => onPress?.(presence.userId)}
       hitSlop={8}
+      testID={`member-marker-${presence.userId}`}
       accessibilityRole="button"
       accessibilityLabel={label}
       style={{ alignItems: "center", opacity: faded ? 0.65 : 1 }}

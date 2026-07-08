@@ -6,6 +6,14 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Fixed
+
+- Tapping a member on the map did nothing but move the camera. On Android the
+  map received the same tap and cleared the selection at once, so the member
+  card never appeared. A tap now flies to them and names them at the top of
+  the sheet, a second tap on them or on the card opens their page, and a row
+  in the list opens the page as its chevron promised
+
 ## [0.3.1] - 2026-07-08
 
 Faster alerts on the server, and the app fixes from a day of using it on a

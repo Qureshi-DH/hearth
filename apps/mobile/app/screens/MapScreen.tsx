@@ -28,11 +28,11 @@ import Animated, {
 } from "react-native-reanimated"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
-import { Avatar } from "@/components/Avatar"
 import { GlassPanel } from "@/components/GlassPanel"
 import { HearthMap, TrailLayer } from "@/components/HearthMap"
 import { IconButton } from "@/components/IconButton"
 import { MemberMarker, MEMBER_MARKER_LABEL_HEIGHT } from "@/components/MemberMarker"
+import { ListGroup } from "@/components/ListRow"
 import { MemberRow, ringFor } from "@/components/MemberRow"
 import { Pill } from "@/components/Pill"
 import { PrimaryButton } from "@/components/PrimaryButton"
@@ -175,6 +175,19 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const cameraRef = useRef<CameraRef>(null)
   const sheetRef = useRef<BottomSheet>(null)
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
+  // Read inside the marker callback, which must stay stable or every marker
+  // re-renders on each selection.
+  const selectedRef = useRef<string | null>(null)
+  // On Android a tap on a marker reaches the map as well, a moment later, and
+  // the map's press handler clears the selection. That undid every marker tap
+  // before the sheet had drawn the card, which is why tapping a face seemed
+  // to do nothing but move the camera.
+  const markerTapAt = useRef(0)
+
+  const clearSelection = useCallback(() => {
+    selectedRef.current = null
+    setSelectedUserId(null)
+  }, [])
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [mapReady, setMapReady] = useState(false)
   const fittedCircleRef = useRef<string | null>(null)
@@ -200,6 +213,9 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   }, [])
 
   const selectedPresence = selectedUserId ? presenceByUser.get(selectedUserId) : undefined
+  const selectedMember = selectedUserId
+    ? members?.find((member) => member.userId === selectedUserId)
+    : undefined
   const { data: trail } = useHistory(
     circleId,
     selectedUserId,
@@ -263,26 +279,39 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const presenceRef = useRef(presenceByUser)
   presenceRef.current = presenceByUser
 
-  const focusMember = useCallback((userId: string) => {
-    setSelectedUserId(userId)
-    sheetRef.current?.snapToIndex(0)
-    const entry = presenceRef.current.get(userId)
-    if (entry?.lat != null && entry.lon != null) {
-      cameraRef.current?.flyTo({
-        center: [entry.lon, entry.lat],
-        zoom: 15.5,
-        duration: 700,
-        padding: { bottom: 200 },
-      })
-    }
-  }, [])
-
   const openMember = useCallback(
     (userId: string) => {
       if (!circleId) return
       navigation.navigate("MemberDetail", { circleId, userId })
     },
     [circleId, navigation],
+  )
+
+  // One tap on a face is "show me where they are", so the map stays and the
+  // sheet comes up just far enough to name them. A second tap on the same
+  // face is the answer to "and now tell me more". Collapsing the sheet all
+  // the way used to hide the only route to that page.
+  const focusMember = useCallback(
+    (userId: string) => {
+      if (selectedRef.current === userId) {
+        openMember(userId)
+        return
+      }
+      markerTapAt.current = Date.now()
+      selectedRef.current = userId
+      setSelectedUserId(userId)
+      sheetRef.current?.snapToIndex(1)
+      const entry = presenceRef.current.get(userId)
+      if (entry?.lat != null && entry.lon != null) {
+        cameraRef.current?.flyTo({
+          center: [entry.lon, entry.lat],
+          zoom: 15.5,
+          duration: 700,
+          padding: { bottom: 200 },
+        })
+      }
+    },
+    [openMember],
   )
 
   // The tab navigator already insets this screen above the tab bar, so bottom:0
@@ -377,8 +406,9 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         initialZoom={firstLocated ? 13 : 4}
         onDidFinishLoadingMap={() => setMapReady(true)}
         onPress={() => {
-          setSelectedUserId(null)
           setSwitcherOpen(false)
+          if (Date.now() - markerTapAt.current < 500) return
+          clearSelection()
         }}
       >
         {trail && trail.length > 1 ? <TrailLayer id="trail" points={trail} /> : null}
@@ -454,7 +484,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
                   onPress={() => {
                     setActiveCircle(candidate.id)
                     setSwitcherOpen(false)
-                    setSelectedUserId(null)
+                    clearSelection()
                   }}
                   style={{
                     flexDirection: "row",
@@ -601,6 +631,24 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
           </Text>
         </View>
 
+        {selectedMember ? (
+          <ListGroup
+            style={{
+              marginBottom: theme.spacing.sm,
+              borderColor: theme.colors.tint,
+              borderWidth: 1,
+            }}
+          >
+            <MemberRow
+              member={selectedMember}
+              presence={presenceByUser.get(selectedMember.userId)}
+              isSelf={selectedMember.userId === me?.id}
+              units={units}
+              onPress={() => openMember(selectedMember.userId)}
+            />
+          </ListGroup>
+        ) : null}
+
         <View
           style={{
             flexDirection: "row",
@@ -634,38 +682,10 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
               presence={presenceByUser.get(item.userId)}
               isSelf={item.userId === me?.id}
               units={units}
-              onPress={focusMember}
-              onLongPress={openMember}
+              onPress={openMember}
+              onLongPress={focusMember}
             />
           )}
-          ListFooterComponent={
-            selectedUserId && circle ? (
-              <View style={{ paddingHorizontal: theme.spacing.md, paddingTop: theme.spacing.sm }}>
-                <PrimaryButton
-                  text={translate("member:title")}
-                  variant="ghost"
-                  onPress={() =>
-                    navigation.navigate("MemberDetail", {
-                      circleId: circle.id,
-                      userId: selectedUserId,
-                    })
-                  }
-                  Left={
-                    <Avatar
-                      user={
-                        members?.find((member) => member.userId === selectedUserId)?.user ?? {
-                          displayName: "?",
-                          avatarColor: "#888",
-                          avatarUrl: null,
-                        }
-                      }
-                      size={22}
-                    />
-                  }
-                />
-              </View>
-            ) : null
-          }
         />
       </BottomSheet>
     </GestureHandlerRootView>
