@@ -25,9 +25,15 @@ notification text, which is short and not sensitive.
 
 All providers share the same server-side pipeline. Events are written to a
 durable `notification_outbox` table in the same transaction as the thing that
-caused them, and a background worker drains it with exponential back-off. A
-broken push provider never fails a user's request and never loses an alert. It
-just delays it.
+caused them. Postgres wakes the worker the moment that transaction commits, so
+an alert is on its way within milliseconds rather than on the next scheduler
+tick, and rows are sent several at a time with the most urgent first. A broken
+push provider never fails a user's request and never loses an alert. Failed
+sends retry on the tick with exponential back-off, so a broken provider only
+delays them.
+
+Every notification is sent at high priority. On Android that is what lets a
+phone in Doze show it at once, and on iOS it asks APNs for immediate delivery.
 
 ## What a notification actually contains
 

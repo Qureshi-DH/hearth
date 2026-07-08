@@ -125,10 +125,13 @@ entry behind it still reaches everyone in the circle.
 ### Push (`services/push.ts`)
 
 `enqueuePush()` writes rows to `notification_outbox` inside the caller's
-transaction. A scheduler tick claims pending rows with
-`UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)`, which is safe across
-several API replicas and against an admin "flush now". It drains them through
-the configured `PushDriver` (`none` / `expo` / `ntfy` / `webpush`), with
+transaction. A trigger on that table raises `NOTIFY hearth_outbox`, which
+Postgres delivers only when the transaction commits, and every replica
+listens for it and drains straight away. The drain claims pending rows with
+`UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)`, high priority first,
+which is safe across several API replicas and against an admin "flush now",
+and sends them through the configured `PushDriver` (`none` / `expo` / `ntfy` /
+`webpush`) a few at a time. The scheduler tick still drains, for retries with
 exponential back-off, dead-token cleanup, and re-queueing of rows a crashed
 replica left in `sending`. See [push notifications](../install/push-notifications.md).
 

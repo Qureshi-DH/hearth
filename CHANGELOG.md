@@ -8,6 +8,11 @@ Notable changes to Hearth. The format is loosely
 
 ### Changed
 
+- Notifications go out the moment the event that caused them is committed.
+  Postgres wakes the worker instead of the worker checking every minute, sends
+  run several at a time, and the most urgent go first. Every notification is
+  now sent at high priority, so a phone in Doze shows it at once
+
 - The Android notification shown while a journey is being followed no longer
   puts an icon in the status bar. Android will not run background location
   without a notification, so it cannot go away entirely, but it now sits
