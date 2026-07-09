@@ -495,13 +495,16 @@ describe("tapping a member", () => {
   })
 
   it("brings the sheet up to name them, and opens their page on the second tap", async () => {
-    const { getByTestId, getAllByText } = await renderMap()
+    const { getByTestId, getAllByText, queryAllByTestId } = await renderMap()
     const before = getAllByText("ana").length
+    expect(queryAllByTestId("member-marker-halo")).toHaveLength(0)
 
     fireEvent.press(getByTestId("member-marker-ana"))
     // The resting height, not the collapsed bar, so the card is on screen.
     expect(mockSnapToIndex).toHaveBeenCalledWith(1)
     expect(getAllByText("ana").length).toBe(before + 1)
+    // Exactly one face on the map is haloed.
+    expect(queryAllByTestId("member-marker-halo")).toHaveLength(1)
     expect(navigation.navigate).not.toHaveBeenCalled()
 
     fireEvent.press(getByTestId("member-marker-ana"))

@@ -69,6 +69,7 @@ export const MemberMarker = memo(function MemberMarker({
 
   const size = selected ? 56 : 46
   const faded = presence.stale && !isSos
+  const box = size + 10
 
   return (
     <Pressable
@@ -79,7 +80,7 @@ export const MemberMarker = memo(function MemberMarker({
       accessibilityLabel={label}
       style={{ alignItems: "center", opacity: faded ? 0.65 : 1 }}
     >
-      <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
+      <View style={{ width: box, height: box, alignItems: "center", justifyContent: "center" }}>
         {isSos ? (
           <Animated.View
             pointerEvents="none"
@@ -107,6 +108,22 @@ export const MemberMarker = memo(function MemberMarker({
         >
           <Avatar user={user} size={size} ring={ring === "none" ? "self" : ring} />
         </View>
+        {/* The avatar's own ring is the status signal, so the selection sits
+            outside it as a halo rather than taking its colour over. */}
+        {selected ? (
+          <View
+            pointerEvents="none"
+            testID="member-marker-halo"
+            style={{
+              position: "absolute",
+              width: size + 10,
+              height: size + 10,
+              borderRadius: (size + 10) / 2,
+              borderWidth: 3,
+              borderColor: theme.colors.tint,
+            }}
+          />
+        ) : null}
       </View>
       <View
         style={{
@@ -117,8 +134,8 @@ export const MemberMarker = memo(function MemberMarker({
           borderTopWidth: 8,
           borderLeftColor: "transparent",
           borderRightColor: "transparent",
-          borderTopColor: theme.colors.surface,
-          marginTop: -2,
+          borderTopColor: selected ? theme.colors.tint : theme.colors.surface,
+          marginTop: -7,
         }}
       />
       <View
@@ -127,14 +144,16 @@ export const MemberMarker = memo(function MemberMarker({
           paddingHorizontal: 8,
           paddingVertical: 2,
           borderRadius: 8,
-          backgroundColor: withAlpha(theme.isDark ? "#000000" : "#FFFFFF", 0.75),
+          backgroundColor: selected
+            ? theme.colors.tint
+            : withAlpha(theme.isDark ? "#000000" : "#FFFFFF", 0.75),
         }}
       >
         <Text
           size="xxs"
           weight="semiBold"
           numberOfLines={1}
-          style={{ color: theme.colors.text, maxWidth: 110 }}
+          style={{ color: selected ? theme.colors.onTint : theme.colors.text, maxWidth: 110 }}
         >
           {label}
         </Text>
