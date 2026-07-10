@@ -891,6 +891,14 @@ async function maybeRaiseBatteryAlert(
   const told = new Set(claimed.map((row) => row.circle_id))
   const notifyCircles = lowCircles.filter((circle) => told.has(circle.id))
 
+  // Each notification stands on its own in the tray. "Their phone" under a
+  // title that names nobody read as a riddle next to the others.
+  const [subject] = await db
+    .select({ displayName: users.displayName })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+  const name = subject?.displayName ?? "Someone"
   const percent = Math.round(level * 100)
   for (const circle of notifyCircles) {
     await recordEvent(db, {
@@ -900,8 +908,8 @@ async function maybeRaiseBatteryAlert(
       payload: { batteryLevel: level },
       summary: `Battery at ${percent}%`,
       notify: {
-        title: "Low battery",
-        body: `Their phone is at ${percent}%.`,
+        title: `${name}'s battery is low`,
+        body: `${name}'s phone is at ${percent}%.`,
         channel: "alerts",
       },
     })
