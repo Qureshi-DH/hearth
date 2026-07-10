@@ -211,7 +211,10 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
           tx={backgroundActive ? "settings:trackingActive" : "settings:trackingInactive"}
           subtitle={[
             translate("settings:permission", { level: permission }),
-            queuedCount ? translate("settings:queued", { count: queuedCount }) : null,
+            // The heartbeat parks one fix here for the moment before it uploads,
+            // and the extra words made the line wrap and the screen jump every
+            // thirty seconds. Only a real backlog is worth a mention.
+            queuedCount > 1 ? translate("settings:queued", { count: queuedCount }) : null,
             translate("settings:lastUpload", { time: relativeTime(lastUploadAt) }),
           ]
             .filter(Boolean)

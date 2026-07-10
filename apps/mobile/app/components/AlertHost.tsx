@@ -1,4 +1,5 @@
-import { Modal, Pressable, View, type ViewStyle } from "react-native"
+import { Modal, Platform, Pressable, StyleSheet, View, type ViewStyle } from "react-native"
+import { FullWindowOverlay } from "react-native-screens"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
 import { Text } from "@/components/Text"
@@ -37,45 +38,57 @@ export function AlertHost() {
   const actions = buttons.filter((button) => button.style !== "cancel")
   const cancel = buttons.find((button) => button.style === "cancel")
 
+  const card = (
+    <Pressable style={themed($backdrop)} onPress={escape} accessibilityRole="none">
+      <Pressable style={themed($card)} onPress={() => {}} accessibilityViewIsModal>
+        <Text preset="subheading" text={current.title} />
+        {current.message ? (
+          <Text size="sm" style={{ color: theme.colors.textDim, marginTop: theme.spacing.xs }}>
+            {current.message}
+          </Text>
+        ) : null}
+        <View style={{ marginTop: theme.spacing.lg, gap: theme.spacing.sm }}>
+          {actions.map((button, index) => (
+            <PrimaryButton
+              key={`${current.id}-${index}`}
+              text={button.text}
+              variant={
+                button.style === "destructive" ? "danger" : index === 0 ? "gradient" : "soft"
+              }
+              onPress={() => choose(button)}
+              style={{ alignSelf: "stretch" }}
+            />
+          ))}
+          {cancel ? (
+            <PrimaryButton
+              text={cancel.text}
+              variant="ghost"
+              onPress={() => choose(cancel)}
+              style={{ alignSelf: "stretch" }}
+            />
+          ) : null}
+        </View>
+      </Pressable>
+    </Pressable>
+  )
+
+  // An RN Modal is presented from the root view controller, and iOS refuses
+  // that while a native modal screen such as SOS is up, so the alert never
+  // appeared there and turned up later, once that screen had closed. The
+  // overlay is its own window above everything. Android's Modal is a dialog,
+  // which is always on top and is what answers the back button.
+  if (Platform.OS === "ios") {
+    return <FullWindowOverlay>{card}</FullWindowOverlay>
+  }
   return (
     <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={escape}>
-      <Pressable style={themed($backdrop)} onPress={escape} accessibilityRole="none">
-        <Pressable style={themed($card)} onPress={() => {}} accessibilityViewIsModal>
-          <Text preset="subheading" text={current.title} />
-          {current.message ? (
-            <Text size="sm" style={{ color: theme.colors.textDim, marginTop: theme.spacing.xs }}>
-              {current.message}
-            </Text>
-          ) : null}
-          <View style={{ marginTop: theme.spacing.lg, gap: theme.spacing.sm }}>
-            {actions.map((button, index) => (
-              <PrimaryButton
-                key={`${current.id}-${index}`}
-                text={button.text}
-                variant={
-                  button.style === "destructive" ? "danger" : index === 0 ? "gradient" : "soft"
-                }
-                onPress={() => choose(button)}
-                style={{ alignSelf: "stretch" }}
-              />
-            ))}
-            {cancel ? (
-              <PrimaryButton
-                text={cancel.text}
-                variant="ghost"
-                onPress={() => choose(cancel)}
-                style={{ alignSelf: "stretch" }}
-              />
-            ) : null}
-          </View>
-        </Pressable>
-      </Pressable>
+      {card}
     </Modal>
   )
 }
 
 const $backdrop: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
-  flex: 1,
+  ...StyleSheet.absoluteFillObject,
   backgroundColor: colors.overlay,
   alignItems: "center",
   justifyContent: "center",

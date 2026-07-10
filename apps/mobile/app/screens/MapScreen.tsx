@@ -529,12 +529,22 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         ) : null}
 
         {activeSos && activeSos.length > 0 ? (
-          <Pressable onPress={() => focusMember(activeSos[0]!.user.id)}>
+          // Your own SOS is in that list too, and "Sarah needs help" on
+          // Sarah's phone reads like someone else's alarm. It is the way
+          // back to the SOS screen to call it off.
+          <Pressable
+            onPress={() =>
+              activeSos[0]!.user.id === me?.id
+                ? circle && navigation.navigate("Sos", { circleId: circle.id })
+                : focusMember(activeSos[0]!.user.id)
+            }
+          >
             <View style={[themed($banner), { backgroundColor: theme.colors.error }]}>
               <Ionicons name="alert-circle" size={18} color="#FFFFFF" />
               <Text size="xs" weight="semiBold" style={{ color: "#FFFFFF", flex: 1 }}>
-                {translate("sos:active", { name: activeSos[0]!.user.displayName })} ·{" "}
-                {translate("sos:activeBody")}
+                {activeSos[0]!.user.id === me?.id
+                  ? `${translate("sos:mine")} · ${translate("sos:mineBody")}`
+                  : `${translate("sos:active", { name: activeSos[0]!.user.displayName })} · ${translate("sos:activeBody")}`}
               </Text>
             </View>
           </Pressable>

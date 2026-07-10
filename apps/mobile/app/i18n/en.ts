@@ -239,6 +239,8 @@ const en = {
     resolved: "SOS resolved",
     active: "{{name}} needs help",
     activeBody: "Tap to see their live location.",
+    mine: "Your SOS is active",
+    mineBody: "Tap to mark yourself safe.",
     cancelCountdown: "Release to cancel",
   },
   checkIn: {

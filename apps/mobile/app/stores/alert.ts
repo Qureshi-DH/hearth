@@ -28,9 +28,15 @@ export const useAlertStore = create<AlertState>()((set, get) => ({
   current: null,
   queue: [],
   show: (request) => {
+    // A button tapped again while its alert is still on its way only wants
+    // the one alert. On iOS that wait used to last until a modal screen closed.
+    const same = (other: AlertRequest | null) =>
+      !!other && other.title === request.title && other.message === request.message
+    const { current, queue } = get()
+    if (same(current) || queue.some(same)) return
     counter += 1
     const next = { ...request, id: counter }
-    if (get().current) set((state) => ({ queue: [...state.queue, next] }))
+    if (current) set({ queue: [...queue, next] })
     else set({ current: next })
   },
   dismiss: () => {

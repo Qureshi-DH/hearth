@@ -4,6 +4,17 @@ import { AlertHost } from "./AlertHost"
 import { alert, useAlertStore } from "../stores/alert"
 import { ThemeProvider } from "../theme/context"
 
+// The overlay needs a native window. A plain view stands in, and a marker
+// prop lets a test tell the two hosts apart.
+jest.mock("react-native-screens", () => {
+  const react = require("react")
+  const rn = require("react-native")
+  return {
+    FullWindowOverlay: ({ children }: { children: unknown }) =>
+      react.createElement(rn.View, { testID: "full-window-overlay" }, children),
+  }
+})
+
 function mount() {
   return render(
     <ThemeProvider>
@@ -51,22 +62,29 @@ describe("AlertHost", () => {
     expect(screen.queryByText("Delete place?")).toBeNull()
   })
 
-  it("treats the back button as the cancel button", () => {
-    const onCancel = jest.fn()
-    const onConfirm = jest.fn()
-    const screen = mount()
-    act(() => {
-      alert("Leave circle?", undefined, [
-        { text: "Stay", style: "cancel", onPress: onCancel },
-        { text: "Leave", style: "destructive", onPress: onConfirm },
-      ])
-    })
-    act(() => {
-      screen.UNSAFE_getByType(require("react-native").Modal).props.onRequestClose()
-    })
-    expect(onCancel).toHaveBeenCalledTimes(1)
-    expect(onConfirm).not.toHaveBeenCalled()
-    expect(screen.queryByText("Leave circle?")).toBeNull()
+  it("treats the Android back button as the cancel button", () => {
+    const { Platform, Modal } = require("react-native")
+    const os = Platform.OS
+    Platform.OS = "android"
+    try {
+      const onCancel = jest.fn()
+      const onConfirm = jest.fn()
+      const screen = mount()
+      act(() => {
+        alert("Leave circle?", undefined, [
+          { text: "Stay", style: "cancel", onPress: onCancel },
+          { text: "Leave", style: "destructive", onPress: onConfirm },
+        ])
+      })
+      act(() => {
+        screen.UNSAFE_getByType(Modal).props.onRequestClose()
+      })
+      expect(onCancel).toHaveBeenCalledTimes(1)
+      expect(onConfirm).not.toHaveBeenCalled()
+      expect(screen.queryByText("Leave circle?")).toBeNull()
+    } finally {
+      Platform.OS = os
+    }
   })
 
   it("offers OK when the caller gave no buttons", () => {
@@ -76,6 +94,34 @@ describe("AlertHost", () => {
     })
     fireEvent.press(screen.getByText("common:ok"))
     expect(screen.queryByText("Saved")).toBeNull()
+  })
+
+  it("uses a window overlay on iOS, where a Modal cannot show over a modal screen", () => {
+    const { Platform, Modal } = require("react-native")
+    const os = Platform.OS
+    Platform.OS = "ios"
+    try {
+      const screen = mount()
+      act(() => {
+        alert("Mark this SOS as resolved?")
+      })
+      expect(screen.getByTestId("full-window-overlay")).toBeTruthy()
+      expect(screen.UNSAFE_queryByType(Modal)).toBeNull()
+      expect(screen.getByText("Mark this SOS as resolved?")).toBeTruthy()
+    } finally {
+      Platform.OS = os
+    }
+  })
+
+  it("ignores a second tap that asks the same question", () => {
+    const screen = mount()
+    act(() => {
+      alert("Sign out", "Sure?")
+      alert("Sign out", "Sure?")
+      alert("Sign out", "Sure?")
+    })
+    fireEvent.press(screen.getByText("common:ok"))
+    expect(screen.queryByText("Sure?")).toBeNull()
   })
 
   it("shows alerts one after another rather than dropping the second", () => {

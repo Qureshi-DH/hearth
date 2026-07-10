@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { BackHandler, View, type TextInputProps, type ViewStyle } from "react-native"
+import { BackHandler, Keyboard, View, type TextInputProps, type ViewStyle } from "react-native"
 import {
   BottomSheetBackdrop,
   BottomSheetModal,
@@ -76,6 +76,7 @@ export function PromptDialog({
 
   const handleDismiss = () => {
     presented.current = false
+    Keyboard.dismiss()
     onCancel()
   }
 
@@ -104,6 +105,7 @@ export function PromptDialog({
   )
 
   const submit = () => {
+    Keyboard.dismiss()
     onSubmit(value.trim())
     onCancel()
   }

@@ -138,6 +138,15 @@ async function swipeAway() {
 }
 
 describe("PromptDialog", () => {
+  it("puts the keyboard away when Save closes it", async () => {
+    const { Keyboard } = require("react-native")
+    const dismiss = jest.spyOn(Keyboard, "dismiss").mockImplementation(() => {})
+    const { getByText } = await mount(true)
+    fireEvent.press(getByText("common:save"))
+    expect(dismiss).toHaveBeenCalled()
+    dismiss.mockRestore()
+  })
+
   it("closes on the Android back button instead of leaving it to the screen below", async () => {
     const { BackHandler } = require("react-native")
     const spy = jest.spyOn(BackHandler, "addEventListener")

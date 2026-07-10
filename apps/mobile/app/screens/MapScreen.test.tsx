@@ -86,6 +86,7 @@ function memberFor(userId: string): CircleMember {
 let mockSheetProps: Record<string, any> = {}
 const mockSnapToIndex = jest.fn()
 let mockMapPress: (() => void) | null = null
+let mockActiveSos: Array<{ id: string; user: { id: string; displayName: string } }> = []
 
 const mockMembers = ["ana", "ben", "cat", "dee"].map(memberFor)
 const mockCircle = {
@@ -197,7 +198,7 @@ jest.mock("../hooks/queries", () => {
     usePresence: () => ({
       data: react.useSyncExternalStore(mockSubscribePresence, mockReadPresence),
     }),
-    useActiveSos: () => ({ data: [] }),
+    useActiveSos: () => ({ data: mockActiveSos }),
     useHistory: () => ({ data: null }),
   }
 })
@@ -483,6 +484,19 @@ describe("MapScreen member sheet", () => {
     expect(controls.style.opacity).toBe(1)
     expect(controls.node.props.pointerEvents).toBe("box-none")
     expect(controls.node.props.accessibilityElementsHidden).toBe(false)
+  })
+})
+
+describe("the SOS banner", () => {
+  it("says the SOS is yours rather than that you need help", async () => {
+    mockPresence = mockMembers.map((member, index) => presenceFor(member.userId, 51 + index))
+    mockActiveSos = [{ id: "sos-1", user: { id: "ana", displayName: "ana" } }]
+    const { getByText, queryByText } = await renderMap()
+    expect(getByText(/sos:mine/)).toBeTruthy()
+    expect(queryByText(/sos:active/)).toBeNull()
+    fireEvent.press(getByText(/sos:mine/))
+    expect(navigation.navigate).toHaveBeenCalledWith("Sos", { circleId: "circle-1" })
+    mockActiveSos = []
   })
 })
 

@@ -1,5 +1,5 @@
-import { forwardRef, useCallback, useRef, type ComponentRef, type Ref } from "react"
-import { View, type ViewStyle } from "react-native"
+import { forwardRef, useCallback, useEffect, useRef, type ComponentRef, type Ref } from "react"
+import { Keyboard, View, type ViewStyle } from "react-native"
 import BottomSheet, {
   BottomSheetBackdrop,
   BottomSheetScrollView,
@@ -38,6 +38,11 @@ export function SheetScreen({ children, snapPoints, scroll = false }: SheetScree
   const { theme } = useAppTheme()
   const insets = useSafeAreaInsets()
   const sheet = useRef<BottomSheet>(null)
+
+  // Saving from a button leaves the keyboard up after the route has gone,
+  // since nothing blurred the field. The keyboard's own Done key does not
+  // have that problem, so the two ways out ended differently.
+  useEffect(() => () => Keyboard.dismiss(), [])
 
   const renderBackdrop = useCallback(
     (props: BottomSheetBackdropProps) => (

@@ -6,7 +6,23 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Changed
+
+- A low battery alert names the phone it is about, so it reads on its own in
+  the tray next to everything else
+- The map banner for your own SOS says it is yours and takes you to the
+  screen where you can call it off, instead of telling you that you need help
+
 ### Fixed
+
+- On iOS, "I'm safe now" on the SOS screen did nothing until the screen was
+  closed, and then showed one confirmation for every tap. Alerts now draw in
+  a window above native modal screens, and a repeated tap does not queue
+  another copy
+- Saving from a sheet's button left the keyboard up after the sheet had gone
+- The You screen shifted every thirty seconds while the app was open, because
+  the tracking row grew a "queued" note for the instant a heartbeat fix waited
+  to upload
 
 - Tapping a member on the map did nothing but move the camera. On Android the
   map received the same tap and cleared the selection at once, so the member
