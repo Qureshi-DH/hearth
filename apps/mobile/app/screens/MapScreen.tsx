@@ -183,6 +183,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   // before the sheet had drawn the card, which is why tapping a face seemed
   // to do nothing but move the camera.
   const markerTapAt = useRef(0)
+  const lastTap = useRef<{ userId: string; at: number } | null>(null)
 
   const clearSelection = useCallback(() => {
     selectedRef.current = null
@@ -293,11 +294,17 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   // the way used to hide the only route to that page.
   const focusMember = useCallback(
     (userId: string) => {
+      // One tap can arrive twice, from the marker's own Pressable and from the
+      // map's hit test, and the second must not read as the tap that opens
+      // the page. A deliberate second tap comes after the card has drawn.
+      const now = Date.now()
+      if (lastTap.current?.userId === userId && now - lastTap.current.at < 400) return
+      lastTap.current = { userId, at: now }
       if (selectedRef.current === userId) {
         openMember(userId)
         return
       }
-      markerTapAt.current = Date.now()
+      markerTapAt.current = now
       selectedRef.current = userId
       setSelectedUserId(userId)
       sheetRef.current?.snapToIndex(1)
@@ -423,6 +430,11 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
               anchor="bottom"
               // Puts the pointer tip on the coordinate instead of the name pill.
               offset={[0, MEMBER_MARKER_LABEL_HEIGHT]}
+              // Android's map does its own hit test on a tap and, when it finds
+              // a marker, reports it here and swallows the touch. Which phones
+              // take that path and which let the touch reach the Pressable
+              // inside varies, so both lead to the same place.
+              onPress={() => focusMember(member.userId)}
             >
               <MemberMarker
                 user={member.user}

@@ -123,11 +123,14 @@ jest.mock("../components/HearthMap", () => {
     TrailLayer: () => null,
   }
 })
+// The native marker reports a tap of its own on Android, so the fake exposes
+// that path as a pressable host around the children.
 jest.mock("@maplibre/maplibre-react-native", () => {
   const react = require("react")
   const rn = require("react-native")
   return {
-    Marker: ({ children }: { children?: unknown }) => react.createElement(rn.View, null, children),
+    Marker: ({ children, onPress }: { children?: unknown; onPress?: () => void }) =>
+      react.createElement(rn.Pressable, { testID: "native-marker", onPress }, children),
   }
 })
 jest.mock("@gorhom/bottom-sheet", () => {
@@ -521,11 +524,40 @@ describe("tapping a member", () => {
     expect(queryAllByTestId("member-marker-halo")).toHaveLength(1)
     expect(navigation.navigate).not.toHaveBeenCalled()
 
+    // A moment later, past the window that folds a double delivery into one.
+    jest.spyOn(Date, "now").mockReturnValue(Date.now() + 2000)
     fireEvent.press(getByTestId("member-marker-ana"))
     expect(navigation.navigate).toHaveBeenCalledWith("MemberDetail", {
       circleId: "circle-1",
       userId: "ana",
     })
+    ;(Date.now as jest.Mock).mockRestore()
+  })
+
+  // Some Android phones deliver the tap through the map's own hit test and
+  // never to the Pressable inside the marker.
+  it("selects from the native marker press alone", async () => {
+    const { getAllByTestId, queryAllByTestId } = await renderMap()
+    fireEvent.press(getAllByTestId("native-marker")[0]!)
+    expect(mockSnapToIndex).toHaveBeenCalledWith(1)
+    expect(queryAllByTestId("member-marker-halo")).toHaveLength(1)
+    expect(navigation.navigate).not.toHaveBeenCalled()
+  })
+
+  it("counts one tap once when both the marker and the map report it", async () => {
+    const { getByTestId, getAllByTestId } = await renderMap()
+    fireEvent.press(getByTestId("member-marker-ana"))
+    fireEvent.press(getAllByTestId("native-marker")[0]!)
+    // Two deliveries of the first tap must not read as the second tap.
+    expect(navigation.navigate).not.toHaveBeenCalled()
+
+    jest.spyOn(Date, "now").mockReturnValue(Date.now() + 2000)
+    fireEvent.press(getByTestId("member-marker-ana"))
+    expect(navigation.navigate).toHaveBeenCalledWith("MemberDetail", {
+      circleId: "circle-1",
+      userId: "ana",
+    })
+    ;(Date.now as jest.Mock).mockRestore()
   })
 
   // Android delivers a marker tap to the map as well, a moment later.
@@ -546,8 +578,9 @@ describe("tapping a member", () => {
   it("opens the page from the card and from a list row, which both promise it", async () => {
     const { getByTestId, getAllByText } = await renderMap()
     fireEvent.press(getByTestId("member-marker-ben"))
-    // The card is the first "ben" in the tree, above the list.
-    fireEvent.press(getAllByText("ben")[0]!)
+    jest.spyOn(Date, "now").mockReturnValue(Date.now() + 2000)
+    // The marker's own label comes first in the tree, then the card.
+    fireEvent.press(getAllByText("ben")[1]!)
     expect(navigation.navigate).toHaveBeenLastCalledWith("MemberDetail", {
       circleId: "circle-1",
       userId: "ben",
@@ -558,5 +591,6 @@ describe("tapping a member", () => {
       circleId: "circle-1",
       userId: "cat",
     })
+    ;(Date.now as jest.Mock).mockRestore()
   })
 })
