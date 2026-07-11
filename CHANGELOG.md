@@ -8,6 +8,10 @@ Notable changes to Hearth. The format is loosely
 
 ### Changed
 
+- Directions on a member's page offer Google Maps on iOS too, when it is
+  installed, next to Apple Maps
+- Alerts fade and settle in rather than appearing in one frame
+- The Change password sheet is titled like the Name prompt beside it
 - A low battery alert names the phone it is about, so it reads on its own in
   the tray next to everything else
 - The map banner for your own SOS says it is yours and takes you to the

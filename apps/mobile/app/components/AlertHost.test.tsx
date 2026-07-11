@@ -15,6 +15,35 @@ jest.mock("react-native-screens", () => {
   }
 })
 
+// Layout animations need the native side. The mock renders plain views and
+// drops the entering and exiting props on the floor.
+jest.mock("react-native-reanimated", () => {
+  const react = require("react")
+  const rn = require("react-native")
+  const chain = { duration: () => chain }
+  const View = ({ entering: _e, exiting: _x, ...props }: Record<string, unknown>) =>
+    react.createElement(rn.View, props)
+  return {
+    __esModule: true,
+    default: { View },
+    Easing: { out: (v: unknown) => v, quad: (v: unknown) => v },
+    FadeIn: chain,
+    FadeOut: chain,
+    Keyframe: class {
+      duration() {
+        return this
+      }
+    },
+  }
+})
+
+/** The host keeps a closed alert on screen for its fade, so a test settles that first. */
+function settle() {
+  act(() => {
+    jest.advanceTimersByTime(200)
+  })
+}
+
 function mount() {
   return render(
     <ThemeProvider>
@@ -25,7 +54,11 @@ function mount() {
 
 describe("AlertHost", () => {
   beforeEach(() => {
+    jest.useFakeTimers()
     useAlertStore.setState({ current: null, queue: [] })
+  })
+  afterEach(() => {
+    jest.useRealTimers()
   })
 
   it("draws nothing until something is asked", () => {
@@ -59,6 +92,7 @@ describe("AlertHost", () => {
     })
     fireEvent.press(screen.getByText("Delete"))
     expect(onPress).toHaveBeenCalledTimes(1)
+    settle()
     expect(screen.queryByText("Delete place?")).toBeNull()
   })
 
@@ -81,6 +115,7 @@ describe("AlertHost", () => {
       })
       expect(onCancel).toHaveBeenCalledTimes(1)
       expect(onConfirm).not.toHaveBeenCalled()
+      settle()
       expect(screen.queryByText("Leave circle?")).toBeNull()
     } finally {
       Platform.OS = os
@@ -93,6 +128,7 @@ describe("AlertHost", () => {
       alert("Saved")
     })
     fireEvent.press(screen.getByText("common:ok"))
+    settle()
     expect(screen.queryByText("Saved")).toBeNull()
   })
 
@@ -121,7 +157,23 @@ describe("AlertHost", () => {
       alert("Sign out", "Sure?")
     })
     fireEvent.press(screen.getByText("common:ok"))
+    settle()
     expect(screen.queryByText("Sure?")).toBeNull()
+  })
+
+  it("lingers for its fade, and ignores a tap during it", () => {
+    const onPress = jest.fn()
+    const screen = mount()
+    act(() => {
+      alert("Erase history?", undefined, [{ text: "Erase", onPress }])
+    })
+    fireEvent.press(screen.getByText("Erase"))
+    expect(onPress).toHaveBeenCalledTimes(1)
+    // Still mounted while the exit plays, but no longer answering.
+    expect(screen.getByTestId("full-window-overlay")).toBeTruthy()
+    expect(screen.queryByText("Erase")).toBeNull()
+    settle()
+    expect(screen.queryByTestId("full-window-overlay")).toBeNull()
   })
 
   it("shows alerts one after another rather than dropping the second", () => {

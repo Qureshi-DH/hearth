@@ -35,11 +35,13 @@ export const ChangePasswordScreen: FC<AppStackScreenProps<"ChangePassword">> = (
   return (
     <SheetScreen scroll>
       <View style={themed($container)}>
-        <Text preset="heading" tx="settings:changePassword" />
+        {/* Sized like the Name prompt next door on the You screen, which is
+            the sheet this one is used alongside. */}
+        <Text preset="subheading" tx="settings:changePassword" />
         <Text
           tx="settings:changePasswordSubtitle"
-          size="sm"
-          style={{ color: theme.colors.textDim }}
+          size="xs"
+          style={{ color: theme.colors.textDim, marginTop: theme.spacing.xxs }}
         />
         <SheetTextField
           value={current}
@@ -48,7 +50,7 @@ export const ChangePasswordScreen: FC<AppStackScreenProps<"ChangePassword">> = (
           secureTextEntry
           autoComplete="current-password"
           inputWrapperStyle={themed($input)}
-          containerStyle={{ marginTop: theme.spacing.lg }}
+          containerStyle={{ marginTop: theme.spacing.md }}
         />
         <SheetTextField
           value={next}

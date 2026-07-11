@@ -182,6 +182,9 @@ const en = {
     transferOwnership: "Transfer ownership",
     transferConfirm: "Make {{name}} the owner? You will become an admin.",
     directions: "Directions",
+    directionsIn: "Get directions in",
+    appleMaps: "Apple Maps",
+    googleMaps: "Google Maps",
   },
   places: {
     title: "Places",

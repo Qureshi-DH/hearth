@@ -46,6 +46,7 @@
     "bundleIdentifier": "com.binary.rewind.hearth",
     "infoPlist": {
       "UIBackgroundModes": ["location", "fetch", "processing", "remote-notification"],
+      "LSApplicationQueriesSchemes": ["comgooglemaps"],
       "NSLocationWhenInUseUsageDescription": "Hearth shows your position to the circles you choose to share it with.",
       "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow \"Always\" so your family can still see you when the app is closed. You can pause sharing at any time.",
       "NSCameraUsageDescription": "Scan a circle's invite QR code.",

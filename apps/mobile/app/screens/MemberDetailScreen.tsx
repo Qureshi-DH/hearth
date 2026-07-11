@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FC } from "react"
-import { Linking, Platform, View, type ViewStyle } from "react-native"
+import { View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { QUICK_MESSAGES, type QuickMessageKey } from "@hearth/shared"
@@ -38,6 +38,7 @@ import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { activityIconName } from "@/utils/activity"
+import { availableDirectionsApps, openDirections, type DirectionsApp } from "@/utils/directions"
 import { formatSpeed } from "@/utils/format"
 import { fitBoundsFor } from "@/utils/map"
 import { relativeTime } from "@/utils/time"
@@ -95,13 +96,16 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
     }
   }, [trail?.length, entry?.lat, entry?.lon]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const openDirections = () => {
+  const [choosingDirections, setChoosingDirections] = useState(false)
+  const directionsTo = (app: DirectionsApp) => {
     if (entry?.lat == null || entry.lon == null) return
-    const url = Platform.select({
-      ios: `maps://?daddr=${entry.lat},${entry.lon}`,
-      default: `geo:${entry.lat},${entry.lon}?q=${entry.lat},${entry.lon}(${encodeURIComponent(name)})`,
-    })
-    void Linking.openURL(url)
+    void openDirections(app, entry.lat, entry.lon, name)
+  }
+  const askDirections = async () => {
+    if (entry?.lat == null || entry.lon == null) return
+    const apps = await availableDirectionsApps()
+    if (apps.length === 1) directionsTo(apps[0]!)
+    else setChoosingDirections(true)
   }
 
   const askNudge = async () => {
@@ -273,7 +277,7 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
           <PrimaryButton
             tx="member:directions"
             variant="soft"
-            onPress={openDirections}
+            onPress={() => void askDirections()}
             disabled={entry?.lat == null}
             style={{ flex: 1 }}
             Left={<Ionicons name="navigate-outline" size={18} color={theme.colors.tint} />}
@@ -361,6 +365,15 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
           />
         ) : null}
       </ListGroup>
+      <OptionSheet
+        visible={choosingDirections}
+        titleTx="member:directionsIn"
+        onClose={() => setChoosingDirections(false)}
+        options={[
+          { key: "apple", tx: "member:appleMaps", onPress: () => directionsTo("apple") },
+          { key: "google", tx: "member:googleMaps", onPress: () => directionsTo("google") },
+        ]}
+      />
       <OptionSheet
         visible={choosingMessage}
         titleTx="messages:title"
