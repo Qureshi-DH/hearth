@@ -6,6 +6,15 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Fixed
+
+- A parked phone was reported offline to its family. The location service used
+  to stop altogether once the phone had settled, leaving its next report to
+  the OS task schedulers, and Doze and iOS both let it sit for over an hour.
+  The service now steps down to a cheap Wi-Fi grade watch instead and checks
+  in every quarter hour. On Android the notification therefore stays while
+  parked, collapsed and silent as before
+
 ## [0.3.2] - 2026-07-12
 
 The second day on two phones. The server change is the low battery text.

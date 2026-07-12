@@ -189,10 +189,20 @@ expo-location names the channel after the package and the task and only
 creates one when nothing by that name exists, so the id in
 `services/notifications.ts` has to match. Once the phone has stayed for five minutes
 inside a circle of 60 m, or 1.5 times the policy's distance filter where that
-is wider, it switches to **stationary**: updates stop, the notification
-disappears, and an exit geofence is armed around where it stopped. Leaving that
-circle wakes the app and puts it back into moving. The geofence is cheap because
-it rides on the location the system computes anyway.
+is wider, it switches to **stationary**: the same task is re-registered with
+resting options, Balanced accuracy, no GPS, one fix wanted every quarter hour,
+and an exit geofence is armed around where it stopped. Leaving that circle
+puts it back into moving, and so does a resting fix outside the circle, which
+covers a fence Android forgot after killing the process. The geofence is cheap
+because it rides on the location the system computes anyway.
+
+The service used to stop outright while parked. That left the phone's next
+word to the OS task schedulers, and Doze and iOS both let a phone sit for
+hours, at which point the server, which calls a phone offline after an hour of
+silence, told the family the phone had gone quiet. Android delivers on the
+resting interval. iOS ignores intervals and reports as its Wi-Fi estimate
+shifts, so `restingFixes` in the tracker thins that back down to one fix per
+heartbeat and lets the rest go.
 
 The OS classifier is the normal path for both ends of a stop: it calls one
 after ninety seconds of the phone reading still, and ends one the instant you

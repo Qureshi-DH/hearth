@@ -120,12 +120,16 @@ the answer. The tracker has two states. **Moving** means continuous OS location
 updates, and on Android that is a foreground service with a notification you
 cannot dismiss, though it stays out of the status bar and sits in the silent
 part of the shade. Once the phone has stayed inside a 90 metre circle for five
-minutes it switches to **stationary**: updates stop, the notification
-disappears, and a 150 metre exit geofence is armed around where it stopped.
-That 90 metres is one and a half times the distance filter and never less than
-60, so a circle that asks for coarser updates waits out a wider stop. Leaving
-the geofence puts it back into moving. So a phone sitting in a house overnight
-is costing you a geofence, not a GPS.
+minutes it switches to **stationary**: the GPS goes off, the service drops
+to a cheap Wi-Fi grade watch that reports once every quarter hour, and a 150
+metre exit geofence is armed around where it stopped. That 90 metres is one and
+a half times the distance filter and never less than 60, so a circle that asks
+for coarser updates waits out a wider stop. Leaving the geofence puts it back
+into moving. So a phone sitting in a house overnight is costing you four cheap
+fixes an hour, not a GPS. Those fixes are also what keeps the phone from being
+reported offline: the server calls a phone offline after an hour of silence,
+and a service that stopped altogether while parked used to fall foul of that
+whenever the OS felt like deferring its next wake.
 
 Three other things affect it:
 

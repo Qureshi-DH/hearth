@@ -24,6 +24,11 @@ export const STATIONARY_GEOFENCE_TASK = "hearth-stationary-geofence"
 
 const MAX_BATCH = 200
 const STALE_FIX_MS = 30 * 60 * 1000
+/**
+ * How often a parked phone says it is still there. The server calls a phone
+ * offline after an hour of silence, so this leaves it four chances.
+ */
+export const RESTING_HEARTBEAT_MS = 15 * 60 * 1000
 
 /**
  * The OS classifier is more certain than a distance heuristic, so it can call
@@ -34,14 +39,14 @@ const MOTION_MIN_CONFIDENCE = 50
 
 /**
  * Android will not hand out continuous location without a foreground service,
- * and a location foreground service must show a notification that cannot be
- * hidden. Running one around the clock is what makes the notification
- * permanent and what actually drains the battery, since the GPS never sleeps.
+ * and a location foreground service must show a notification. What drains the
+ * battery is not the service but the GPS behind it, which never sleeps while
+ * the phone is treated as moving.
  *
- * So only run it while the phone is moving. Once it has sat still, stop the
- * service and hand the waiting over to the OS geofence, which is cheap because
- * it rides on the location the system is already computing for everything else.
- * The notification then appears for a journey and disappears when you arrive.
+ * So the GPS runs only while the phone is moving. Once it has sat still, the
+ * service steps down to the resting watch, see restingOptions, and an OS
+ * geofence, which is cheap because it rides on the location the system is
+ * already computing for everything else, is what brings the GPS back.
  */
 const STILL_RADIUS_METERS = 60
 const STILL_AFTER_MS = 5 * 60 * 1000
@@ -207,16 +212,41 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
   if (locations.length === 0) return
   const battery = await batterySnapshot()
   const state = useTrackingStore.getState()
-  const fixes = thin(
+  let fixes = thin(
     locations.map((location) => toFix(location, source, battery)),
     state.lastFix,
     state.policy,
   )
+  if (source === "background" && state.mode === "stationary") {
+    fixes = await restingFixes(fixes)
+  }
   if (fixes.length === 0) return
   state.enqueue(fixes)
   const newest = fixes[fixes.length - 1]
   if (newest && source === "background") await evaluateStillness(newest)
   await flush()
+}
+
+/**
+ * The resting watch is cheap but not quiet: iOS in particular hands over a
+ * new estimate whenever the Wi-Fi picture shifts. One fix per heartbeat is
+ * all the server needs while the phone stays put. A fix outside the circle
+ * means the phone left and the fence never said so, which Android's fences
+ * do after the process is killed, so that one goes through and brings the
+ * full service back.
+ */
+async function restingFixes(fixes: LocationFixInput[]): Promise<LocationFixInput[]> {
+  const { stillAnchor, lastFix, policy } = useTrackingStore.getState()
+  const radius = stationaryRadiusMeters(policy)
+  const left = fixes.find((fix) => stillAnchor && haversineMeters(stillAnchor, fix) > radius)
+  if (left) {
+    await enterMoving()
+    return fixes.slice(fixes.indexOf(left))
+  }
+  const newest = fixes[fixes.length - 1]
+  if (!newest) return []
+  const age = lastFix ? Date.parse(newest.recordedAt) - Date.parse(lastFix.recordedAt) : Infinity
+  return age >= RESTING_HEARTBEAT_MS ? [newest] : []
 }
 
 /** Fixes still being acquired, which the heartbeat counts as fresh. */
@@ -485,6 +515,34 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
   }
 }
 
+/**
+ * Parked is not silent. Stopping the service outright, as this used to, left
+ * the phone's next word to the OS task schedulers, and Doze and iOS both let
+ * it sit for hours, at which point the family was told the phone had gone
+ * offline. So the service stays up at a fraction of its cost: Wi-Fi grade
+ * fixes, no GPS, one wanted every quarter hour. Android delivers on the
+ * interval. iOS ignores it and reports as its estimate shifts, which
+ * restingFixes thins back down to the heartbeat.
+ */
+function restingOptions(): Location.LocationTaskOptions {
+  return {
+    accuracy: Location.Accuracy.Balanced,
+    timeInterval: RESTING_HEARTBEAT_MS,
+    distanceInterval: 0,
+    // A paused manager suspends the app with it, and nothing would wake it
+    // short of the fence.
+    pausesUpdatesAutomatically: false,
+    activityType: Location.ActivityType.Other,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
+      notificationTitle: "Hearth is sharing your location",
+      notificationBody: "Resting here. Checks in every quarter hour.",
+      notificationColor: "#FF7A45",
+      killServiceOnDestroy: false,
+    },
+  }
+}
+
 let motionSubscription: { remove: () => void } | null = null
 let motionStarting = false
 let motionStillSince: number | null = null
@@ -590,15 +648,15 @@ export async function enterMoving(): Promise<void> {
   if (await geofenceRunning()) {
     await Location.stopGeofencingAsync(STATIONARY_GEOFENCE_TASK).catch(() => {})
   }
-  if (!(await locationUpdatesRunning())) {
-    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, updateOptions(store.policy))
-  }
+  // Registering again on a running task swaps its options, which is how the
+  // resting watch is stepped back up to the full one.
+  await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, updateOptions(store.policy))
   store.setStillAnchor(null)
   store.setMode("moving")
   store.setBackgroundActive(true)
 }
 
-/** Updates off, geofence armed. This is where the notification goes away. */
+/** Geofence armed, service stepped down to the resting watch. */
 export async function enterStationary(lat: number, lon: number): Promise<void> {
   const store = useTrackingStore.getState()
   try {
@@ -617,9 +675,7 @@ export async function enterStationary(lat: number, lon: number): Promise<void> {
     await enterMoving()
     return
   }
-  if (await locationUpdatesRunning()) {
-    await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {})
-  }
+  await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, restingOptions())
   // Sampling the accelerometer that hard is only worth its battery inside a
   // moving vehicle. A verdict already scheduled survives this, see
   // stopDriveSensors.

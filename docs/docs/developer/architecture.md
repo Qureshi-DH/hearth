@@ -189,9 +189,11 @@ carries the tracking policy (interval / distance), which is applied live.
 
 The tracker is a two-state machine. Moving means continuous updates and, on
 Android, the foreground-service notification that comes with them. Once the
-phone has held still for a few minutes it goes stationary: updates stop, the
-notification disappears, and an exit geofence around the stopping point is what
-brings it back. That is where most of the battery saving is. The OS motion
+phone has held still for a few minutes it goes stationary: the GPS goes off,
+the service drops to a Wi-Fi grade watch that reports every quarter hour, and
+an exit geofence around the stopping point is what brings it back. That is
+where most of the battery saving is, and the quarter hour heartbeat is what
+keeps a parked phone from reading as offline. The OS motion
 classifier, which runs whenever tracking does, makes the switch happen sooner
 in both directions, and a phone that refused the permission falls back to
 working stops out from position.

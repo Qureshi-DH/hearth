@@ -6,7 +6,13 @@ import * as Location from "expo-location"
 import { useTrackingStore } from "@/stores/tracking"
 import { storage } from "@/utils/storage"
 
-import { BACKGROUND_SYNC_TASK, stopTracking } from "./tracker"
+import {
+  BACKGROUND_SYNC_TASK,
+  enterStationary,
+  ingest,
+  RESTING_HEARTBEAT_MS,
+  stopTracking,
+} from "./tracker"
 
 /**
  * MMKV outlives the process, and half of what is under test here is what a
@@ -220,6 +226,72 @@ describe("the parked heartbeat", () => {
 
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(getPosition).toHaveBeenCalledWith({ accuracy: Location.Accuracy.Balanced })
+  })
+})
+
+describe("the resting watch", () => {
+  const HOME = { lat: 51.4545, lon: -2.5879 }
+  const sample = (lat: number, lon: number, at: number): Location.LocationObject => ({
+    timestamp: at,
+    coords: {
+      latitude: lat,
+      longitude: lon,
+      altitude: 0,
+      accuracy: 40,
+      altitudeAccuracy: 5,
+      heading: -1,
+      speed: 0,
+    },
+  })
+  const start = Location.startLocationUpdatesAsync as unknown as jest.Mock
+
+  beforeEach(() => {
+    start.mockClear()
+    ;(Location.stopLocationUpdatesAsync as unknown as jest.Mock).mockClear()
+    useTrackingStore.getState().reset()
+    useTrackingStore.setState({ enabled: true, mode: "moving" })
+  })
+
+  // Stopping the service left the next word to the OS task schedulers, and
+  // both of them let a parked phone sit for hours.
+  it("steps the service down rather than stopping it when the phone parks", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    expect(Location.stopLocationUpdatesAsync).not.toHaveBeenCalled()
+    expect(start).toHaveBeenCalledTimes(1)
+    const [, options] = start.mock.calls[0] as [string, Location.LocationTaskOptions]
+    expect(options.accuracy).toBe(Location.Accuracy.Balanced)
+    expect(options.timeInterval).toBe(RESTING_HEARTBEAT_MS)
+    expect(options.pausesUpdatesAutomatically).toBe(false)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+
+  it("passes one fix per heartbeat while the phone stays put, and drops the rest", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    const t0 = Date.now()
+    await ingest([sample(HOME.lat, HOME.lon, t0)], "background")
+    expect(useTrackingStore.getState().lastFix?.recordedAt).toBe(new Date(t0).toISOString())
+
+    // Two minutes later, still here: iOS chatter, not news.
+    await ingest([sample(HOME.lat + 0.0001, HOME.lon, t0 + 2 * 60_000)], "background")
+    expect(useTrackingStore.getState().lastFix?.recordedAt).toBe(new Date(t0).toISOString())
+
+    // A quarter hour later it is the heartbeat.
+    const t1 = t0 + RESTING_HEARTBEAT_MS
+    await ingest([sample(HOME.lat, HOME.lon, t1)], "background")
+    expect(useTrackingStore.getState().lastFix?.recordedAt).toBe(new Date(t1).toISOString())
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+
+  it("brings the full service back when a resting fix shows the phone has left", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    start.mockClear()
+    // Half a kilometre away, well outside any stationary radius.
+    await ingest([sample(HOME.lat + 0.005, HOME.lon, Date.now())], "background")
+    expect(useTrackingStore.getState().mode).toBe("moving")
+    expect(start).toHaveBeenCalled()
+    const [, options] = start.mock.calls[0] as [string, Location.LocationTaskOptions]
+    expect(options.timeInterval).not.toBe(RESTING_HEARTBEAT_MS)
+    expect(useTrackingStore.getState().queue).toHaveLength(1)
   })
 })
 
