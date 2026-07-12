@@ -6,6 +6,10 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-12
+
+The second day on two phones. The server change is the low battery text.
+
 ### Changed
 
 - Directions on a member's page offer Google Maps on iOS too, when it is
