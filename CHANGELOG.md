@@ -6,8 +6,17 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Added
+
+- A driving tier. While the phone is in a vehicle the tracker uses the GPS,
+  reports every ten seconds with a filter that follows the speed, and defers
+  nothing, so the map shows a driver on the road with a real speed. Nowhere
+  else is the GPS on
+
 ### Fixed
 
+- The exit fence around a parked phone is 200 metres on iOS, which is the
+  smallest region iOS reliably reports leaving
 - A parked phone was reported offline to its family. The location service used
   to stop altogether once the phone had settled, leaving its next report to
   the OS task schedulers, and Doze and iOS both let it sit for over an hour.

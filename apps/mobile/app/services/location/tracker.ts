@@ -31,6 +31,19 @@ const STALE_FIX_MS = 30 * 60 * 1000
 export const RESTING_HEARTBEAT_MS = 15 * 60 * 1000
 
 /**
+ * The GPS runs in exactly one state: a drive. Everywhere else a Wi-Fi grade
+ * fix is enough, and it is the only way a phone gets through a day. Speed and
+ * heading only come from GPS at all, so without this tier the map showed a
+ * driver a hundred metres off the road and their speed as noise.
+ */
+export const DRIVING_INTERVAL_MS = 10_000
+/** Speed that reads as a vehicle whatever the classifier says, for phones without motion. */
+export const DRIVING_SPEED_MPS = 6
+/** Under this for long enough the drive is over even if the classifier is quiet. */
+const DRIVING_STOP_SPEED_MPS = 1.5
+const DRIVING_STOP_AFTER_MS = 3 * 60 * 1000
+
+/**
  * The OS classifier is more certain than a distance heuristic, so it can call
  * a stop sooner than STILL_AFTER_MS of watching the phone not move.
  */
@@ -52,6 +65,12 @@ const STILL_RADIUS_METERS = 60
 const STILL_AFTER_MS = 5 * 60 * 1000
 /** Bigger than the still radius so GPS jitter at a standstill cannot trip it. */
 const STATIONARY_GEOFENCE_RADIUS_METERS = 150
+/**
+ * iOS does not reliably report an exit from a region much under this, so a
+ * tighter fence there can simply never fire and the phone rests into the
+ * first minutes of a drive. Android's fences are fine at the floor above.
+ */
+const IOS_GEOFENCE_MIN_METERS = 200
 
 /**
  * The OS withholds any fix closer to the last one it delivered than the
@@ -65,8 +84,9 @@ export function stillRadiusMeters(policy: TrackingPolicy): number {
 }
 
 /** Keeps the fence clear of the still radius when a wide filter widens that. */
-function stationaryRadiusMeters(policy: TrackingPolicy): number {
-  return Math.max(STATIONARY_GEOFENCE_RADIUS_METERS, stillRadiusMeters(policy) * 1.5)
+export function stationaryRadiusMeters(policy: TrackingPolicy): number {
+  const floor = Platform.OS === "ios" ? IOS_GEOFENCE_MIN_METERS : STATIONARY_GEOFENCE_RADIUS_METERS
+  return Math.max(floor, stillRadiusMeters(policy) * 1.5)
 }
 
 async function batterySnapshot(): Promise<{
@@ -223,7 +243,10 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
   if (fixes.length === 0) return
   state.enqueue(fixes)
   const newest = fixes[fixes.length - 1]
-  if (newest && source === "background") await evaluateStillness(newest)
+  if (newest && source === "background") {
+    await evaluateStillness(newest)
+    if (useTrackingStore.getState().mode === "moving") await trackDriveBySpeed(newest)
+  }
   await flush()
 }
 
@@ -490,6 +513,83 @@ export async function requestPermissions(): Promise<PermissionLevel> {
   return level
 }
 
+/**
+ * A fixed filter is wrong at both ends of a drive: at walking pace it would
+ * miss the first turn, on a motorway it would report every second. The filter
+ * follows the speed so fixes land about one interval apart, and it moves in
+ * steps so the request is not rebuilt for every wobble of the speedometer.
+ */
+export function drivingDistanceMeters(speedMps: number | null): number {
+  const perInterval = ((speedMps ?? 0) * DRIVING_INTERVAL_MS) / 1000
+  const stepped = Math.round(perInterval / 50) * 50
+  return Math.min(300, Math.max(30, stepped))
+}
+
+function drivingOptions(distanceMeters: number): Location.LocationTaskOptions {
+  return {
+    accuracy: Location.Accuracy.High,
+    timeInterval: DRIVING_INTERVAL_MS,
+    distanceInterval: distanceMeters,
+    // Live means live. Deferral is for the walking tier.
+    pausesUpdatesAutomatically: false,
+    activityType: Location.ActivityType.AutomotiveNavigation,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
+      notificationTitle: "Hearth is sharing your location",
+      notificationBody: "On the move. Sharing live.",
+      notificationColor: "#FF7A45",
+      killServiceOnDestroy: false,
+    },
+  }
+}
+
+/** The drive as the tracker sees it. Not persisted: a relaunch starts walking and lets the classifier say otherwise. */
+let driving: { distance: number; slowSince: number | null } | null = null
+
+export function isDriving(): boolean {
+  return driving !== null
+}
+
+export async function enterDriving(speedMps: number | null): Promise<void> {
+  const store = useTrackingStore.getState()
+  if (store.mode !== "moving") return
+  const distance = drivingDistanceMeters(speedMps)
+  if (driving?.distance === distance) return
+  driving = { distance, slowSince: driving?.slowSince ?? null }
+  await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, drivingOptions(distance))
+}
+
+export async function leaveDriving(): Promise<void> {
+  if (!driving) return
+  driving = null
+  const store = useTrackingStore.getState()
+  if (store.mode !== "moving") return
+  await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, updateOptions(store.policy))
+}
+
+/**
+ * Speed is the second opinion on driving: it starts the tier on a phone with
+ * no motion permission, keeps the filter elastic through a drive, and ends
+ * the tier after a few minutes of crawling, which the classifier can miss
+ * when a phone sits face down in a footwell after arriving.
+ */
+async function trackDriveBySpeed(fix: LocationFixInput): Promise<void> {
+  const speed = fix.speedMps
+  if (speed == null) return
+  if (!driving) {
+    if (speed >= DRIVING_SPEED_MPS) await enterDriving(speed)
+    return
+  }
+  const at = Date.parse(fix.recordedAt)
+  if (speed < DRIVING_STOP_SPEED_MPS) {
+    driving.slowSince ??= at
+    if (at - driving.slowSince >= DRIVING_STOP_AFTER_MS) await leaveDriving()
+    return
+  }
+  driving.slowSince = null
+  await enterDriving(speed)
+}
+
 function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
   return {
     accuracy: Location.Accuracy.Balanced,
@@ -614,6 +714,13 @@ async function onMotion(activity: MotionActivity, confidence: number): Promise<v
     stopDriveSensors()
   }
 
+  if (activity === "automotive") {
+    if (store.mode === "stationary") await enterMoving()
+    await enterDriving(store.lastFix?.speedMps ?? null)
+  } else if (activity !== "unknown" && driving) {
+    await leaveDriving()
+  }
+
   if (activity === "still") {
     if (store.mode !== "moving") return
     motionStillSince ??= Date.now()
@@ -649,7 +756,9 @@ export async function enterMoving(): Promise<void> {
     await Location.stopGeofencingAsync(STATIONARY_GEOFENCE_TASK).catch(() => {})
   }
   // Registering again on a running task swaps its options, which is how the
-  // resting watch is stepped back up to the full one.
+  // resting watch is stepped back up to the full one. A drive is decided
+  // afresh from the fixes that follow.
+  driving = null
   await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, updateOptions(store.policy))
   store.setStillAnchor(null)
   store.setMode("moving")
@@ -675,6 +784,7 @@ export async function enterStationary(lat: number, lon: number): Promise<void> {
     await enterMoving()
     return
   }
+  driving = null
   await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, restingOptions())
   // Sampling the accelerometer that hard is only worth its battery inside a
   // moving vehicle. A verdict already scheduled survives this, see
@@ -800,6 +910,7 @@ export async function startTracking(): Promise<boolean> {
 
 export async function stopTracking(): Promise<void> {
   stopForegroundHeartbeat()
+  driving = null
   if (await locationUpdatesRunning()) {
     await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {})
   }

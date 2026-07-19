@@ -174,6 +174,18 @@ All of this lives in `app/services/location/tracker.ts`.
 Turning off _Share my location_ in the app stops the OS updates entirely. No
 fixes are captured or queued.
 
+### Driving
+
+The GPS runs in exactly one state, a drive. Speed and heading only come from
+GPS, and the walking tier never turns it on, so without this tier a driver's
+dot sat off the road and their speed read as noise. The tier starts when the
+classifier says automotive, or from speed alone on a phone without the
+permission, and asks for High accuracy every ten seconds with a distance
+filter that follows the speed in fifty metre steps, so fixes land about one
+interval apart whether the car is in town or on a motorway. It ends when the
+classifier says otherwise, after three minutes of crawling, or when the
+phone parks. Nothing is deferred while driving.
+
 ### Moving and stationary
 
 Continuous location on Android requires a foreground service, and a location
