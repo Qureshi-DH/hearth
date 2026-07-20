@@ -442,6 +442,7 @@ const en = {
       "Make {{name}} an admin? Admins can change server settings and manage every account, including yours.",
     removeAdmin: "Remove admin",
     removeAdminConfirm: "Remove admin from {{name}}? They keep their account and circles.",
+    longestSilence: "quiet up to {{minutes}} min today",
     drainPush: "Flush",
   },
   time: {

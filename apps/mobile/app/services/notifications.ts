@@ -3,6 +3,7 @@ import * as Application from "expo-application"
 import Constants from "expo-constants"
 import * as Device from "expo-device"
 import * as Notifications from "expo-notifications"
+import * as TaskManager from "expo-task-manager"
 import type { ServerInfo } from "@hearth/shared"
 
 import { endpoints } from "@/services/api"
@@ -135,12 +136,62 @@ export interface NotificationTarget {
   alertId?: string
 }
 
+export const NOTIFICATION_WAKE_TASK = "hearth-notification-wake"
+
+/**
+ * The type a push carries, from whichever shape the platform hands the
+ * background task. Android delivers the data fields as strings, iOS as a
+ * JSON string under dataString, and Expo's own envelope puts the payload in
+ * body. Any of them may carry the type.
+ */
+export function pushType(payload: unknown): string | null {
+  const data = (payload as { data?: Record<string, unknown> } | undefined)?.data
+  if (!data) return null
+  if (typeof data.type === "string") return data.type
+  for (const key of ["dataString", "body"]) {
+    const raw = data[key]
+    if (typeof raw !== "string") continue
+    try {
+      const parsed = JSON.parse(raw) as { type?: unknown }
+      if (typeof parsed.type === "string") return parsed.type
+    } catch {
+      // Not JSON, not ours.
+    }
+  }
+  return null
+}
+
+const WAKE_TYPES = new Set(["wake", "nudge_requested"])
+
+// Runs for a data-only push with the app in the background or not running
+// at all. The server sends one when a phone has missed two heartbeats, and
+// the answer is a fix. Defined at module scope: the OS can hand this over
+// before any React code has mounted.
+TaskManager.defineTask(NOTIFICATION_WAKE_TASK, async ({ data, error }) => {
+  if (error) return
+  const type = pushType(data)
+  if (type && WAKE_TYPES.has(type)) await reportNow("nudge")
+})
+
+/**
+ * Safe to call on every launch. Without this the task above is defined but
+ * never receives anything.
+ */
+export async function registerWakeTask(): Promise<void> {
+  if (Platform.OS === "web") return
+  try {
+    await Notifications.registerTaskAsync(NOTIFICATION_WAKE_TASK)
+  } catch {
+    // No push in this build, or a simulator. The heartbeat still runs.
+  }
+}
+
 export function attachNotificationListeners(
   onOpen: (target: NotificationTarget) => void,
 ): () => void {
   const received = Notifications.addNotificationReceivedListener((notification) => {
     const data = notification.request.content.data as NotificationTarget | undefined
-    if (data?.type === "nudge_requested") void reportNow("nudge")
+    if (data?.type && WAKE_TYPES.has(data.type)) void reportNow("nudge")
   })
 
   const responded = Notifications.addNotificationResponseReceivedListener((response) => {

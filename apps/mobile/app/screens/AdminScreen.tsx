@@ -259,7 +259,18 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
           <ListRow
             key={user.id}
             text={user.displayName}
-            subtitle={`${user.email} · ${relativeTime(user.lastSeenAt)} · ${user.circleCount} circles`}
+            subtitle={[
+              user.email,
+              relativeTime(user.lastSeenAt),
+              `${user.circleCount} circles`,
+              user.longestSilenceSeconds != null && user.longestSilenceSeconds >= 60
+                ? translate("admin:longestSilence", {
+                    minutes: Math.round(user.longestSilenceSeconds / 60),
+                  })
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
             right={
               <View style={{ flexDirection: "row", gap: 4 }}>
                 {user.isAdmin ? <Pill text="admin" tone="tint" /> : null}

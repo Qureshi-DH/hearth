@@ -34,7 +34,7 @@ import {
   startForegroundHeartbeat,
   stopForegroundHeartbeat,
 } from "./services/location/tracker"
-import { setupChannels } from "./services/notifications"
+import { registerWakeTask, setupChannels } from "./services/notifications"
 import { useAuthStore } from "./stores/auth"
 import { tokenVault } from "./stores/tokenVault"
 import { customFontsToLoad } from "./theme/typography"
@@ -137,6 +137,7 @@ export function App() {
       if (!tokens && store.user) store.signedOut()
       store.markBooted()
       await setupChannels()
+      await registerWakeTask()
       if (!cancelled) setIsSessionHydrated(true)
       if (useAuthStore.getState().status === "signed_in") {
         // After, not alongside: a launch fix already on its way is one the
