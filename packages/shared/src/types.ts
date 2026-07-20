@@ -388,6 +388,11 @@ export interface AdminUserSummary extends PublicUser {
   lastSeenAt: string | null
   circleCount: number
   deviceCount: number
+  /**
+   * The longest stretch without a fix in the last day, counting the one
+   * still running. How the resting watch is judged on a real phone.
+   */
+  longestSilenceSeconds: number | null
 }
 
 export interface AdminStats {

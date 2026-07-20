@@ -20,6 +20,13 @@ export interface PushMessage {
    * happened rather than twice about what turned out not to have.
    */
   notBefore?: Date
+  /**
+   * Nothing shown, nothing heard: the phone is woken so the app can report.
+   * Only the expo provider can do this. Both platforms wake the app for a
+   * data-only push, Android even from Doze, which is more than any timer
+   * the app could set for itself is allowed to do.
+   */
+  silent?: boolean
 }
 
 export interface DeliveryTarget {
@@ -79,21 +86,30 @@ class ExpoDriver implements PushDriver {
       method: "POST",
       headers,
       body: JSON.stringify([
-        {
-          to: target.token,
-          title: message.title,
-          body: message.body,
-          data: message.data ?? {},
-          sound: message.channel === "sos" ? "default" : null,
-          // Without this iOS files an SOS as an ordinary alert, so Focus or Do
-          // Not Disturb silences the one notification that must not be
-          // silenced. Android's equivalent is the channel's bypassDnd.
-          interruptionLevel: message.channel === "sos" ? "time-sensitive" : undefined,
-          priority: message.priority === "high" ? "high" : "default",
-          channelId: message.channel ?? "default",
-          // So an SOS is still shown when the recipient already has the app open.
-          _displayInForeground: message.channel === "sos",
-        },
+        message.silent
+          ? {
+              to: target.token,
+              data: message.data ?? {},
+              priority: "high",
+              // iOS content-available. Android reads a message with no title
+              // or body as data only and hands it to the background task.
+              _contentAvailable: true,
+            }
+          : {
+              to: target.token,
+              title: message.title,
+              body: message.body,
+              data: message.data ?? {},
+              sound: message.channel === "sos" ? "default" : null,
+              // Without this iOS files an SOS as an ordinary alert, so Focus or Do
+              // Not Disturb silences the one notification that must not be
+              // silenced. Android's equivalent is the channel's bypassDnd.
+              interruptionLevel: message.channel === "sos" ? "time-sensitive" : undefined,
+              priority: message.priority === "high" ? "high" : "default",
+              channelId: message.channel ?? "default",
+              // So an SOS is still shown when the recipient already has the app open.
+              _displayInForeground: message.channel === "sos",
+            },
       ]),
     })
 
@@ -233,6 +249,7 @@ export async function enqueuePush(db: Database, messages: PushMessage[]): Promis
       data: message.data ?? {},
       channel: message.channel ?? ("default" as const),
       priority: message.priority ?? ("high" as const),
+      silent: message.silent ?? false,
       ...(message.notBefore ? { nextAttemptAt: message.notBefore } : {}),
     })),
   )
@@ -417,6 +434,15 @@ export async function drainOutbox(
       return
     }
 
+    if (row.silent && driver.provider !== "expo") {
+      await db
+        .update(notificationOutbox)
+        .set({ status: "skipped", sentAt: now, lastError: "silent wake needs the expo provider" })
+        .where(eq(notificationOutbox.id, row.id))
+      summary.skipped += 1
+      return
+    }
+
     const message: PushMessage = {
       userId: row.userId,
       circleId: row.circleId,
@@ -425,6 +451,7 @@ export async function drainOutbox(
       data: row.data,
       channel: row.channel,
       priority: row.priority,
+      silent: row.silent,
     }
 
     const results = await Promise.all(
@@ -540,6 +567,7 @@ function rowFromDriver(raw: Record<string, unknown>): OutboxRow {
     data: (raw.data as Record<string, unknown>) ?? {},
     channel: raw.channel as OutboxRow["channel"],
     priority: raw.priority as OutboxRow["priority"],
+    silent: Boolean(raw.silent),
     status: raw.status as OutboxRow["status"],
     attempts: Number(raw.attempts),
     lastError: (raw.last_error as string | null) ?? null,

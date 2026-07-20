@@ -8,7 +8,14 @@ import type { AppConfig } from "../env"
 import { getPushDriver } from "../runtime"
 import { broadcastEvent, recordEvent } from "../services/feed"
 import { effectiveSharingState } from "../services/presence"
-import { drainOutbox, listenForOutbox, pruneOutbox, requeueStuckSends } from "../services/push"
+import {
+  drainOutbox,
+  enqueuePush,
+  listenForOutbox,
+  pruneOutbox,
+  requeueStuckSends,
+  type PushDriver,
+} from "../services/push"
 import { getServerSettings } from "../services/settings"
 import { detectTripsForUser, type PendingBroadcast } from "../services/trips"
 
@@ -21,6 +28,7 @@ export interface JobReport {
   pushSkipped: number
   tripsDetected: number
   offlineFlagged: number
+  phonesWoken: number
   devicesReturned: number
   pausesResumed: number
 }
@@ -108,13 +116,78 @@ async function pruneSessions(db: Database): Promise<number> {
 const OUTAGE_MIN_REPORTING = 8
 
 /**
+ * Half the offline window. A phone that has been quiet this long is asked
+ * for a fix, silently, before anyone is told it went dark.
+ */
+const WAKE_AFTER_MS = (DEFAULTS.offlineAfterSeconds * 1000) / 2
+/** How long a woken phone gets to answer before the offline sweep may go ahead. */
+const WAKE_GRACE_MS = 10 * 60 * 1000
+
+/**
+ * The phone's own heartbeat is the first line: the resting watch reports
+ * every quarter hour. This is the second. Neither OS lets an app set a timer
+ * it can count on in the background, and both wake an app for a data-only
+ * push, Android even from Doze, so a phone that has missed two heartbeats is
+ * pinged once per silence. Only the expo provider can send one.
+ */
+async function wakeQuietPhones(db: Database, driver: PushDriver | null): Promise<number> {
+  if (driver?.provider !== "expo") return 0
+  const quietSince = new Date(Date.now() - WAKE_AFTER_MS)
+  const unanswered = or(
+    isNull(userPresence.wakeRequestedAt),
+    lt(userPresence.wakeRequestedAt, userPresence.recordedAt),
+  )
+  const quiet = await db
+    .select({ userId: userPresence.userId })
+    .from(userPresence)
+    .innerJoin(users, eq(users.id, userPresence.userId))
+    .where(
+      and(
+        eq(users.isActive, true),
+        isNotNull(userPresence.recordedAt),
+        lt(userPresence.recordedAt, quietSince),
+        // Once per silence: a wake newer than the last fix is still pending.
+        unanswered,
+      ),
+    )
+    .limit(200)
+  if (quiet.length === 0) return 0
+
+  const now = new Date()
+  let woken = 0
+  for (const row of quiet) {
+    await db.transaction(async (tx) => {
+      const claimed = await tx
+        .update(userPresence)
+        .set({ wakeRequestedAt: now })
+        .where(and(eq(userPresence.userId, row.userId), unanswered))
+        .returning({ userId: userPresence.userId })
+      if (claimed.length === 0) return
+      await enqueuePush(tx as unknown as Database, [
+        { userId: row.userId, title: "", body: "", silent: true, data: { type: "wake" } },
+      ])
+      woken += 1
+    })
+  }
+  return woken
+}
+
+/**
  * A phone that went quiet says more than one that is merely stationary, so
  * this is the alert families care about most. Each circle hears it once per
  * outage: not once per tick, and not never because a sibling circle happened
  * to be paused on the tick that first noticed.
  */
-async function flagOfflineDevices(db: Database, log: FastifyBaseLogger): Promise<number> {
+async function flagOfflineDevices(
+  db: Database,
+  log: FastifyBaseLogger,
+  driver: PushDriver | null,
+): Promise<number> {
   const cutoff = new Date(Date.now() - DEFAULTS.offlineAfterSeconds * 1000)
+  // A phone that was never asked cannot have failed to answer. Where no wake
+  // can be sent the silence alone has to do, as it always did.
+  const canWake = driver?.provider === "expo"
+  const graceCutoff = new Date(Date.now() - WAKE_GRACE_MS)
 
   const [totals] = await db
     .select({
@@ -164,6 +237,13 @@ async function flagOfflineDevices(db: Database, log: FastifyBaseLogger): Promise
         eq(users.isActive, true),
         isNotNull(userPresence.recordedAt),
         lt(userPresence.recordedAt, cutoff),
+        ...(canWake
+          ? [
+              isNotNull(userPresence.wakeRequestedAt),
+              gt(userPresence.wakeRequestedAt, userPresence.recordedAt),
+              lt(userPresence.wakeRequestedAt, graceCutoff),
+            ]
+          : []),
       ),
     )
     .orderBy(sql`${userPresence.offlineNotifiedAt} asc nulls first`, userPresence.userId)
@@ -488,6 +568,7 @@ export async function runJobs(
     pushSkipped: 0,
     tripsDetected: 0,
     offlineFlagged: 0,
+    phonesWoken: 0,
     devicesReturned: 0,
     pausesResumed: 0,
   }
@@ -514,8 +595,12 @@ export async function runJobs(
     report.pausesResumed = await resumeExpiredPauses(db)
   })
 
+  await step("devices.wake", async () => {
+    report.phonesWoken = await wakeQuietPhones(db, getPushDriver())
+  })
+
   await step("devices.offline", async () => {
-    report.offlineFlagged = await flagOfflineDevices(db, log)
+    report.offlineFlagged = await flagOfflineDevices(db, log, getPushDriver())
   })
 
   await step("devices.online", async () => {

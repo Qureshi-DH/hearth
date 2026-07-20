@@ -1374,6 +1374,41 @@ describe("admin account state", () => {
     )!
     expect(row.deviceCount).toBe(0)
   })
+
+  it("reports each account's longest silence over the last day", async () => {
+    const admin = await registerUser(ctx.app)
+    const member = await registerUser(ctx.app)
+    await createCircle(member.headers)
+    const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString()
+    // Fixes 5, 20 and 22 minutes apart, then quiet for the last 10 minutes:
+    // the twenty minute gap is the longest, not the silence since.
+    const upload = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/locations/batch",
+      headers: member.headers,
+      payload: {
+        points: [57, 52, 32, 10].map((minutes) => ({
+          lat: 51.45,
+          lon: -2.58,
+          recordedAt: at(minutes),
+          accuracyMeters: 10,
+        })),
+      },
+    })
+    expect(upload.statusCode).toBe(200)
+
+    const listed = await ctx.app.inject({
+      method: "GET",
+      url: "/api/v1/admin/users",
+      headers: admin.headers,
+    })
+    const rows = listed.json() as { id: string; longestSilenceSeconds: number | null }[]
+    const quiet = rows.find((entry) => entry.id === member.user.id)!
+    expect(quiet.longestSilenceSeconds).toBeGreaterThanOrEqual(22 * 60 - 5)
+    expect(quiet.longestSilenceSeconds).toBeLessThan(23 * 60)
+    // Never reported: nothing to measure.
+    expect(rows.find((entry) => entry.id === admin.user.id)?.longestSilenceSeconds).toBeNull()
+  })
 })
 
 describe("trip detection over long and interleaved streams", () => {

@@ -264,6 +264,8 @@ export const userPresence = pgTable("user_presence", {
   overSpeedCount: integer("over_speed_count").notNull().default(0),
   incidentFlaggedAt: timestamp("incident_flagged_at", { withTimezone: true }),
   offlineNotifiedAt: timestamp("offline_notified_at", { withTimezone: true }),
+  /** When a silent push last asked a quiet phone for a fix. Newer than recordedAt while unanswered. */
+  wakeRequestedAt: timestamp("wake_requested_at", { withTimezone: true }),
   /** Watermark for the trip detector, so it never re-scans old breadcrumbs. */
   tripsProcessedUntil: timestamp("trips_processed_until", { withTimezone: true }),
   updatedAt: updatedAt(),
@@ -451,6 +453,8 @@ export const notificationOutbox = pgTable(
     data: jsonb("data").$type<Record<string, unknown>>().notNull().default({}),
     channel: text("channel").$type<"default" | "alerts" | "sos">().notNull().default("default"),
     priority: text("priority").$type<"normal" | "high">().notNull().default("high"),
+    /** No banner, no sound. Exists only to wake the app. */
+    silent: boolean("silent").notNull().default(false),
     status: text("status")
       .$type<"pending" | "sending" | "sent" | "failed" | "skipped">()
       .notNull()

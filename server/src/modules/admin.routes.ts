@@ -137,6 +137,26 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         .groupBy(sessions.userId)
       const deviceCounts = new Map(devices.map((row) => [row.userId, row.deviceCount]))
 
+      // Gaps between consecutive fixes over the last day, and the gap still
+      // open since the last one, so a phone that went quiet reads as such
+      // before the sweep says so.
+      const silences = (await db.execute(sql`
+        with recent as (
+          select user_id, recorded_at,
+                 recorded_at - lag(recorded_at) over (partition by user_id order by recorded_at) as gap
+          from location_points
+          where recorded_at > now() - interval '24 hours'
+        )
+        select user_id,
+               greatest(
+                 coalesce(extract(epoch from max(gap)), 0),
+                 extract(epoch from now() - max(recorded_at))
+               )::int as longest
+        from recent
+        group by user_id
+      `)) as unknown as Array<{ user_id: string; longest: number }>
+      const longestSilence = new Map(silences.map((row) => [row.user_id, row.longest]))
+
       return rows.map((row) => ({
         id: row.id,
         email: row.email,
@@ -149,6 +169,7 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         lastSeenAt: row.lastSeenAt?.toISOString() ?? null,
         circleCount: circleCounts.get(row.id) ?? 0,
         deviceCount: deviceCounts.get(row.id) ?? 0,
+        longestSilenceSeconds: longestSilence.get(row.id) ?? null,
       }))
     },
   )
