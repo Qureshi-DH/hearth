@@ -13,6 +13,12 @@ Notable changes to Hearth. The format is loosely
   nothing, so the map shows a driver on the road with a real speed. Nowhere
   else is the GPS on
 
+- A silent wake. A phone quiet for half an hour is sent a push with nothing
+  to show, and answers it with a fix from the background, even with the app
+  closed. A phone is only reported offline once it has ignored both its own
+  heartbeat and the wake
+- The admin screen shows each account's longest silence over the last day
+
 ### Fixed
 
 - The exit fence around a parked phone is 200 metres on iOS, which is the

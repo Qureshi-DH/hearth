@@ -208,6 +208,16 @@ puts it back into moving, and so does a resting fix outside the circle, which
 covers a fence Android forgot after killing the process. The geofence is cheap
 because it rides on the location the system computes anyway.
 
+A server side second line stands behind the heartbeat. The scheduler sends a
+silent push to a phone that has been quiet for half an hour, once per
+silence, and the app answers it with a fix from a background task that runs
+even when the app is not open. The offline sweep waits for that answer, so
+a phone is only reported offline once it has ignored both its own heartbeat
+and the wake. Without the expo provider no wake can be sent and the hour of
+silence alone decides, as it always did. The admin screen shows each
+account's longest silence over the last day, which is how the whole
+arrangement is judged on real phones.
+
 The service used to stop outright while parked. That left the phone's next
 word to the OS task schedulers, and Doze and iOS both let a phone sit for
 hours, at which point the server, which calls a phone offline after an hour of
