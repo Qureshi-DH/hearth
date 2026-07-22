@@ -29,6 +29,8 @@ export interface MemberMarkerProps {
   ring: AvatarRing
   selected?: boolean
   onPress?: (userId: string) => void
+  /** How wide the marker laid out, name pill included, so the map can keep neighbours clear of it. */
+  onMeasure?: (userId: string, width: number) => void
 }
 
 /**
@@ -44,6 +46,7 @@ export const MemberMarker = memo(function MemberMarker({
   ring,
   selected,
   onPress,
+  onMeasure,
 }: MemberMarkerProps) {
   const { theme } = useAppTheme()
   const pulse = useSharedValue(0)
@@ -78,6 +81,7 @@ export const MemberMarker = memo(function MemberMarker({
       testID={`member-marker-${presence.userId}`}
       accessibilityRole="button"
       accessibilityLabel={label}
+      onLayout={(event) => onMeasure?.(presence.userId, event.nativeEvent.layout.width)}
       style={{ alignItems: "center", opacity: faded ? 0.65 : 1 }}
     >
       <View style={{ width: box, height: box, alignItems: "center", justifyContent: "center" }}>

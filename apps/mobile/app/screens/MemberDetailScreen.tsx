@@ -42,6 +42,7 @@ import { availableDirectionsApps, openDirections, type DirectionsApp } from "@/u
 import { formatSpeed } from "@/utils/format"
 import { fitBoundsFor } from "@/utils/map"
 import { relativeTime } from "@/utils/time"
+import { simplifyTrail } from "@/utils/trail"
 import { useHeader } from "@/utils/useHeader"
 
 export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
@@ -74,7 +75,10 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     return { from: start.toISOString(), to: now.toISOString() }
   }, [])
-  const { data: trail } = useHistory(circleId, userId, canSeeHistory ? todayRange : null)
+  const { data: history } = useHistory(circleId, userId, canSeeHistory ? todayRange : null)
+  // The day's fixes as a line worth looking at, not the wander of a phone
+  // sitting indoors.
+  const trail = useMemo(() => (history ? simplifyTrail(history) : history), [history])
 
   const name = member?.nickname ?? member?.user.displayName ?? ""
   useHeader({ title: name, leftIcon: "back", onLeftPress: () => navigation.goBack() }, [

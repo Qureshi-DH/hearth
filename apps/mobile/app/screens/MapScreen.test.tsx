@@ -4,6 +4,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context"
 import { act, fireEvent, render } from "@testing-library/react-native"
 
 import { MapScreen } from "./MapScreen"
+import { MEMBER_MARKER_LABEL_HEIGHT } from "../components/MemberMarker"
 import { ThemeProvider } from "../theme/context"
 
 /** userId of every MemberRow body that ran, in order, since the last reset. */
@@ -86,6 +87,7 @@ function memberFor(userId: string): CircleMember {
 let mockSheetProps: Record<string, any> = {}
 const mockSnapToIndex = jest.fn()
 let mockMapPress: (() => void) | null = null
+let mockMapZoom: ((event: { nativeEvent: { zoom: number } }) => void) | null = null
 let mockActiveSos: Array<{ id: string; user: { id: string; displayName: string } }> = []
 
 const mockMembers = ["ana", "ben", "cat", "dee"].map(memberFor)
@@ -116,8 +118,17 @@ jest.mock("../components/HearthMap", () => {
   const react = require("react")
   const rn = require("react-native")
   return {
-    HearthMap: ({ children, onPress }: { children?: unknown; onPress?: () => void }) => {
+    HearthMap: ({
+      children,
+      onPress,
+      onRegionIsChanging,
+    }: {
+      children?: unknown
+      onPress?: () => void
+      onRegionIsChanging?: (event: { nativeEvent: { zoom: number } }) => void
+    }) => {
       mockMapPress = onPress ?? null
+      mockMapZoom = onRegionIsChanging ?? null
       return react.createElement(rn.View, null, children)
     },
     TrailLayer: () => null,
@@ -129,8 +140,15 @@ jest.mock("@maplibre/maplibre-react-native", () => {
   const react = require("react")
   const rn = require("react-native")
   return {
-    Marker: ({ children, onPress }: { children?: unknown; onPress?: () => void }) =>
-      react.createElement(rn.Pressable, { testID: "native-marker", onPress }, children),
+    Marker: ({
+      children,
+      onPress,
+      offset,
+    }: {
+      children?: unknown
+      onPress?: () => void
+      offset?: [number, number]
+    }) => react.createElement(rn.Pressable, { testID: "native-marker", onPress, offset }, children),
   }
 })
 jest.mock("@gorhom/bottom-sheet", () => {
@@ -218,8 +236,7 @@ jest.mock("../stores/auth", () => ({
     selector({ user: { id: "ana" }, serverInfo: null }),
 }))
 jest.mock("../stores/settings", () => ({
-  useSettingsStore: (selector: (state: unknown) => unknown) =>
-    selector({ units: "metric", showTrails: false }),
+  useSettingsStore: (selector: (state: unknown) => unknown) => selector({ units: "metric" }),
 }))
 jest.mock("../stores/tracking", () => {
   const useTrackingStore = (selector: (state: unknown) => unknown) =>
@@ -592,5 +609,65 @@ describe("tapping a member", () => {
       userId: "cat",
     })
     ;(Date.now as jest.Mock).mockRestore()
+  })
+})
+
+describe("people at the same place", () => {
+  const offsetsOf = (utils: { getAllByTestId: (id: string) => any[] }) =>
+    utils.getAllByTestId("native-marker").map((node) => node.props.offset as [number, number])
+
+  beforeEach(() => {
+    mockPresence = mockMembers.map((member, index) => presenceFor(member.userId, 51 + index))
+    mockFocused = true
+  })
+
+  it("sits two people at home beside each other and leaves the rest on their own spot", async () => {
+    mockPresence = [
+      presenceFor("ana", 51),
+      presenceFor("ben", 51),
+      presenceFor("cat", 53),
+      presenceFor("dee", 54),
+    ]
+    const utils = await renderMap()
+    const [ana, ben, cat, dee] = offsetsOf(utils)
+    expect(ana![0]).toBeLessThan(0)
+    expect(ben![0]).toBeGreaterThan(0)
+    expect(ana![0]).toBe(-ben![0])
+    expect(ana![1]).toBe(ben![1])
+    expect(cat).toEqual([0, MEMBER_MARKER_LABEL_HEIGHT])
+    expect(dee).toEqual([0, MEMBER_MARKER_LABEL_HEIGHT])
+  })
+
+  it("spreads people out as the map zooms out and lets them go again on the way in", async () => {
+    // Everyone on a different street of one town.
+    mockPresence = mockMembers.map((member, index) =>
+      presenceFor(member.userId, 51 + index * 0.006),
+    )
+    const utils = await renderMap()
+    expect(offsetsOf(utils).every(([x]) => x === 0)).toBe(true)
+
+    act(() => mockMapZoom?.({ nativeEvent: { zoom: 10 } }))
+    expect(offsetsOf(utils).some(([x]) => x !== 0)).toBe(true)
+
+    act(() => mockMapZoom?.({ nativeEvent: { zoom: 16 } }))
+    expect(offsetsOf(utils).every(([x]) => x === 0)).toBe(true)
+  })
+
+  it("gives a long name pill the width it laid out at", async () => {
+    mockPresence = [
+      presenceFor("ana", 51),
+      presenceFor("ben", 51),
+      presenceFor("cat", 53),
+      presenceFor("dee", 54),
+    ]
+    const utils = await renderMap()
+    const before = offsetsOf(utils)
+    act(() => {
+      fireEvent(utils.getByTestId("member-marker-ana"), "layout", {
+        nativeEvent: { layout: { width: 120, height: 80, x: 0, y: 0 } },
+      })
+    })
+    const after = offsetsOf(utils)
+    expect(after[1]![0] - after[0]![0]).toBeGreaterThan(before[1]![0] - before[0]![0])
   })
 })

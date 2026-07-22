@@ -29,7 +29,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { GlassPanel } from "@/components/GlassPanel"
-import { HearthMap, TrailLayer } from "@/components/HearthMap"
+import { HearthMap } from "@/components/HearthMap"
 import { IconButton } from "@/components/IconButton"
 import { MemberMarker, MEMBER_MARKER_LABEL_HEIGHT } from "@/components/MemberMarker"
 import { ListGroup } from "@/components/ListRow"
@@ -37,7 +37,7 @@ import { MemberRow, ringFor } from "@/components/MemberRow"
 import { Pill } from "@/components/Pill"
 import { PrimaryButton } from "@/components/PrimaryButton"
 import { Text } from "@/components/Text"
-import { useActiveSos, useHistory, useMembers, usePresence } from "@/hooks/queries"
+import { useActiveSos, useMembers, usePresence } from "@/hooks/queries"
 import { useActiveCircle } from "@/hooks/useActiveCircle"
 import { translate } from "@/i18n/translate"
 import type { MainTabScreenProps } from "@/navigators/navigationTypes"
@@ -48,6 +48,7 @@ import { useTrackingStore } from "@/stores/tracking"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { fitBoundsFor } from "@/utils/map"
+import { spreadOverlapping } from "@/utils/markerLayout"
 
 const FALLBACK_CENTER: [number, number] = [-0.1276, 51.5072]
 // The circle switcher row hangs this far below the status bar, and the map
@@ -161,7 +162,6 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const insets = useSafeAreaInsets()
   const me = useAuthStore((state) => state.user)
   const units = useSettingsStore((state) => state.units)
-  const showTrails = useSettingsStore((state) => state.showTrails)
   const permission = useTrackingStore((state) => state.permission)
   const servicesEnabled = useTrackingStore((state) => state.servicesEnabled)
   const trackingEnabled = useTrackingStore((state) => state.enabled)
@@ -193,6 +193,22 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const [mapReady, setMapReady] = useState(false)
   const fittedCircleRef = useRef<string | null>(null)
 
+  // Whether two markers overlap depends on the zoom, so the map reports it
+  // while a pinch is still going. Half a zoom level is close enough to decide
+  // who touches whom, and rounding keeps a gesture from re-rendering the
+  // screen on every frame.
+  const [zoom, setZoom] = useState(13)
+  const trackZoom = useCallback((event: { nativeEvent: { zoom: number } }) => {
+    const next = Math.round(event.nativeEvent.zoom * 2) / 2
+    setZoom((previous) => (previous === next ? previous : next))
+  }, [])
+  const [markerWidths, setMarkerWidths] = useState<ReadonlyMap<string, number>>(new Map())
+  const measureMarker = useCallback((userId: string, width: number) => {
+    setMarkerWidths((previous) =>
+      previous.get(userId) === width ? previous : new Map(previous).set(userId, width),
+    )
+  }, [])
+
   const presenceByUser = useMemo(
     () => new Map((presence ?? []).map((entry) => [entry.userId, entry])),
     [presence],
@@ -201,32 +217,26 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
     () => (presence ?? []).filter((entry) => entry.lat != null && entry.lon != null),
     [presence],
   )
+  const spread = useMemo(
+    () =>
+      spreadOverlapping(
+        (members ?? []).flatMap((member) => {
+          const entry = presenceByUser.get(member.userId)
+          return entry && entry.lat != null && entry.lon != null
+            ? [{ id: member.userId, lat: entry.lat, lon: entry.lon }]
+            : []
+        }),
+        zoom,
+        markerWidths,
+      ),
+    [members, presenceByUser, zoom, markerWidths],
+  )
   const myMembership = members?.find((member) => member.userId === me?.id)
   const mySharingPaused = myMembership?.sharingState === "paused"
 
-  // Keyed on the calendar day, not the instant. Otherwise the query refetches
-  // on every marker tap instead of on its own interval.
-  const todayRange = useMemo(() => {
-    const now = new Date()
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1)
-    return { from: start.toISOString(), to: end.toISOString() }
-  }, [])
-
-  const selectedPresence = selectedUserId ? presenceByUser.get(selectedUserId) : undefined
   const selectedMember = selectedUserId
     ? members?.find((member) => member.userId === selectedUserId)
     : undefined
-  const { data: trail } = useHistory(
-    circleId,
-    selectedUserId,
-    showTrails &&
-      selectedPresence &&
-      !selectedPresence.approximate &&
-      selectedPresence.sharingState === "precise"
-      ? todayRange
-      : null,
-  )
 
   useFocusEffect(
     useCallback(() => {
@@ -412,24 +422,27 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         initialCenter={initialCenter}
         initialZoom={firstLocated ? 13 : 4}
         onDidFinishLoadingMap={() => setMapReady(true)}
+        onRegionIsChanging={trackZoom}
+        onRegionDidChange={trackZoom}
         onPress={() => {
           setSwitcherOpen(false)
           if (Date.now() - markerTapAt.current < 500) return
           clearSelection()
         }}
       >
-        {trail && trail.length > 1 ? <TrailLayer id="trail" points={trail} /> : null}
         {(members ?? []).map((member) => {
           const entry = presenceByUser.get(member.userId)
           if (!entry || entry.lat == null || entry.lon == null) return null
           const isSelf = member.userId === me?.id
+          const [dx, dy] = spread.get(member.userId) ?? [0, 0]
           return (
             <Marker
               key={member.userId}
               lngLat={[entry.lon, entry.lat]}
               anchor="bottom"
-              // Puts the pointer tip on the coordinate instead of the name pill.
-              offset={[0, MEMBER_MARKER_LABEL_HEIGHT]}
+              // Puts the pointer tip on the coordinate instead of the name
+              // pill, then nudges anyone sharing the spot into their slot.
+              offset={[dx, MEMBER_MARKER_LABEL_HEIGHT + dy]}
               // Android's map does its own hit test on a tap and, when it finds
               // a marker, reports it here and swallows the touch. Which phones
               // take that path and which let the touch reach the Pressable
@@ -443,6 +456,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
                 ring={ringFor(entry, isSelf)}
                 selected={selectedUserId === member.userId}
                 onPress={focusMember}
+                onMeasure={measureMarker}
               />
             </Marker>
           )

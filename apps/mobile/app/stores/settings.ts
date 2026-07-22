@@ -10,7 +10,6 @@ interface SettingsState {
   units: "metric" | "imperial"
   hapticsEnabled: boolean
   activeCircleId: string | null
-  showTrails: boolean
   reduceMotion: boolean
   /**
    * Mirrors whether any circle the user belongs to has incident alerts on. The
@@ -23,7 +22,6 @@ interface SettingsState {
   setUnits(units: "metric" | "imperial"): void
   setHaptics(enabled: boolean): void
   setActiveCircle(circleId: string | null): void
-  setShowTrails(show: boolean): void
   setReduceMotion(reduce: boolean): void
   setIncidentDetection(enabled: boolean): void
 }
@@ -35,7 +33,6 @@ export const useSettingsStore = create<SettingsState>()(
       units: "metric",
       hapticsEnabled: true,
       activeCircleId: null,
-      showTrails: true,
       reduceMotion: false,
       incidentDetection: false,
 
@@ -43,21 +40,24 @@ export const useSettingsStore = create<SettingsState>()(
       setUnits: (units) => set({ units }),
       setHaptics: (hapticsEnabled) => set({ hapticsEnabled }),
       setActiveCircle: (activeCircleId) => set({ activeCircleId }),
-      setShowTrails: (showTrails) => set({ showTrails }),
       setReduceMotion: (reduceMotion) => set({ reduceMotion }),
       setIncidentDetection: (incidentDetection) => set({ incidentDetection }),
     }),
     {
       name: "hearth.settings.v1",
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => mmkvStorage),
-      // v0 carried a per-device switch for the OS motion classifier. The
-      // classifier runs whenever tracking does now, and the merge is a shallow
-      // spread, so without this the dead key would sit in the blob for good.
+      // v0 carried a per-device switch for the OS motion classifier, and v1 a
+      // trails toggle for the map. Neither exists now, and the merge is a
+      // shallow spread, so without this the dead keys would sit in the blob
+      // for good.
       migrate: (persisted, version) => {
-        const state = (persisted ?? {}) as Partial<SettingsState> & { nativeMotion?: boolean }
-        if (version >= 1) return state as SettingsState
-        const { nativeMotion: _dropped, ...rest } = state
+        const state = (persisted ?? {}) as Partial<SettingsState> & {
+          nativeMotion?: boolean
+          showTrails?: boolean
+        }
+        if (version >= 2) return state as SettingsState
+        const { nativeMotion: _motion, showTrails: _trails, ...rest } = state
         return rest as SettingsState
       },
     },
