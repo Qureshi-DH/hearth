@@ -262,7 +262,22 @@ describe("the resting watch", () => {
     expect(options.accuracy).toBe(Location.Accuracy.Balanced)
     expect(options.timeInterval).toBe(RESTING_HEARTBEAT_MS)
     expect(options.pausesUpdatesAutomatically).toBe(false)
+    // No foreground service while parked, which is what takes the Android
+    // notification away. Registering without it stops a running service.
+    expect(options.foregroundService).toBeUndefined()
     expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+
+  it("shows one plain notification while moving, and never colours it", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    start.mockClear()
+    await ingest([sample(HOME.lat + 0.005, HOME.lon, Date.now())], "background")
+    const [, options] = start.mock.calls[0] as [string, Location.LocationTaskOptions]
+    expect(options.foregroundService).toMatchObject({
+      notificationTitle: "Hearth",
+      notificationBody: "Updating your location",
+    })
+    expect(options.foregroundService?.notificationColor).toBeUndefined()
   })
 
   it("passes one fix per heartbeat while the phone stays put, and drops the rest", async () => {

@@ -1,0 +1,37 @@
+diff --git a/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt b/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
+index b4f6c06ab28e48d377e7ae7e63f334792b2c9633..d8ad5bbae83f973a318edc42915faecc6eea0d3b 100644
+--- a/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
++++ b/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
+@@ -178,10 +178,11 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
+     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+       return
+     }
+-    if (!AppForegroundedSingleton.isForegrounded) {
+-      Log.w(TAG, "Foreground location task cannot be started while the app is in the background!")
+-      return
+-    }
++    // Hearth: the service is also started from the background, on a geofence
++    // exit or an activity transition, which Android 12+ exempts from the
++    // background start restriction. The attempt below is guarded instead of
++    // refused up front, so a start that Android does not allow degrades to
++    // throttled background updates rather than a crash.
+     val task = mTask ?: run {
+       Log.w(TAG, "Location task is null")
+       return
+@@ -211,7 +212,15 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
+       extras.putString("taskName", task.name)
+       extras.putBoolean("killService", serviceOptions.getBoolean("killServiceOnDestroy", false))
+       serviceIntent.putExtras(extras)
+-      context.startForegroundService(serviceIntent)
++      try {
++        context.startForegroundService(serviceIntent)
++      } catch (e: Exception) {
++        // ForegroundServiceStartNotAllowedException on Android 12+ when no
++        // exemption applies. The location request still stands, only without
++        // the service behind it.
++        Log.w(TAG, "Foreground location service could not be started from the background: ${e.message}")
++        return
++      }
+       context.bindService(
+         serviceIntent,
+         object : ServiceConnection {

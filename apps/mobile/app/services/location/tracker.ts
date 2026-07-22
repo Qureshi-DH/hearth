@@ -525,6 +525,19 @@ export function drivingDistanceMeters(speedMps: number | null): number {
   return Math.min(300, Math.max(30, stepped))
 }
 
+/**
+ * The only notification the service ever shows, and only while the phone is
+ * on the move, since that is the only time Android needs a foreground
+ * service for live updates. Plain, no colour, on a channel the app created
+ * at minimum importance, and on Android 13 and later the user can swipe it
+ * away. A parked phone runs no service and shows nothing.
+ */
+const SERVICE_NOTIFICATION = {
+  notificationTitle: "Hearth",
+  notificationBody: "Updating your location",
+  killServiceOnDestroy: false,
+}
+
 function drivingOptions(distanceMeters: number): Location.LocationTaskOptions {
   return {
     accuracy: Location.Accuracy.High,
@@ -534,12 +547,7 @@ function drivingOptions(distanceMeters: number): Location.LocationTaskOptions {
     pausesUpdatesAutomatically: false,
     activityType: Location.ActivityType.AutomotiveNavigation,
     showsBackgroundLocationIndicator: true,
-    foregroundService: {
-      notificationTitle: "Hearth is sharing your location",
-      notificationBody: "On the move. Sharing live.",
-      notificationColor: "#FF7A45",
-      killServiceOnDestroy: false,
-    },
+    foregroundService: SERVICE_NOTIFICATION,
   }
 }
 
@@ -606,23 +614,20 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
     pausesUpdatesAutomatically: true,
     activityType: Location.ActivityType.Other,
     showsBackgroundLocationIndicator: true,
-    foregroundService: {
-      notificationTitle: "Hearth is sharing your location",
-      notificationBody: "Tap to open. Pause sharing any time from the app.",
-      notificationColor: "#FF7A45",
-      killServiceOnDestroy: false,
-    },
+    foregroundService: SERVICE_NOTIFICATION,
   }
 }
 
 /**
- * Parked is not silent. Stopping the service outright, as this used to, left
- * the phone's next word to the OS task schedulers, and Doze and iOS both let
- * it sit for hours, at which point the family was told the phone had gone
- * offline. So the service stays up at a fraction of its cost: Wi-Fi grade
- * fixes, no GPS, one wanted every quarter hour. Android delivers on the
- * interval. iOS ignores it and reports as its estimate shifts, which
- * restingFixes thins back down to the heartbeat.
+ * Parked is not silent, but it is quiet. The request stays registered at
+ * Wi-Fi grade with no GPS, so iOS keeps the app alive and reports as its
+ * estimate shifts, which restingFixes thins to one fix a quarter hour. On
+ * Android the request stays too but without the foreground service, which
+ * is what takes the notification away: registering without that option
+ * stops a running service. A background app then gets a few fixes an hour
+ * from the OS, the periodic sync re-arms the fence, and the server's silent
+ * wake asks for a fix after half an hour of nothing. The service comes back
+ * the moment the phone moves.
  */
 function restingOptions(): Location.LocationTaskOptions {
   return {
@@ -634,12 +639,6 @@ function restingOptions(): Location.LocationTaskOptions {
     pausesUpdatesAutomatically: false,
     activityType: Location.ActivityType.Other,
     showsBackgroundLocationIndicator: true,
-    foregroundService: {
-      notificationTitle: "Hearth is sharing your location",
-      notificationBody: "Resting here. Checks in every quarter hour.",
-      notificationColor: "#FF7A45",
-      killServiceOnDestroy: false,
-    },
   }
 }
 

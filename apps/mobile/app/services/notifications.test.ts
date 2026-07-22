@@ -20,7 +20,7 @@ jest.mock("expo-task-manager", () => ({
   },
 }))
 const mockTasks = () => (globalThis as { __wakeTasks?: Map<string, TaskBody> }).__wakeTasks!
-const mockReportNow = jest.fn(async () => null)
+const mockReportNow = jest.fn(async (..._args: unknown[]): Promise<null> => null)
 jest.mock("expo-device", () => ({ isDevice: true }))
 jest.mock("@/services/api", () => ({ endpoints: {} }))
 jest.mock("@/services/location/tracker", () => ({
