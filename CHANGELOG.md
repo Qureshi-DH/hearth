@@ -6,6 +6,11 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-22
+
+The tracker after a proper look at how the platforms behave. Servers must
+update before phones: the server carries a migration, and the wake needs it.
+
 ### Added
 
 - A driving tier. While the phone is in a vehicle the tracker uses the GPS,
