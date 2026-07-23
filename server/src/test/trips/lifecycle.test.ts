@@ -683,3 +683,70 @@ describe("a phone parked with the app open", () => {
     expect(me).toMatchObject({ recordedAt: lastOf(parkedHome).recordedAt, stale: false })
   })
 })
+
+describe("what counts as a journey", () => {
+  /** Slow wandering that never leaves a circle of the given radius around `at`. */
+  function potter(options: { at: LatLon; startMs: number; count: number; radius: number }): Fix[] {
+    const { at, startMs, count, radius } = options
+    return Array.from({ length: count }, (_, i) => {
+      // Round and round the garden, a fresh bearing each step.
+      const angle = (i * 137.5 * Math.PI) / 180
+      const reach = radius * (0.4 + (0.6 * ((i * 7) % 10)) / 10)
+      return {
+        lat: at.lat + (Math.cos(angle) * reach) / M_PER_DEG_LAT,
+        lon: at.lon + (Math.sin(angle) * reach) / metresPerDegreeLon(at.lat),
+        recordedAt: new Date(startMs + i * 30 * 1000).toISOString(),
+        accuracyMeters: 12,
+        speedMps: 1.2,
+      }
+    })
+  }
+
+  it("does not file an afternoon in a large garden as a trip", async () => {
+    const user = await registerUser(ctx.app, { deviceId: "phone-garden" })
+    const circle = await createCircle(user.headers)
+    const place = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: user.headers,
+      payload: { name: "Home", lat: HOME.lat, lon: HOME.lon, radiusMeters: 200, icon: "home" },
+    })
+    expect(place.statusCode).toBe(201)
+
+    // Forty fixes wandering up to 180 m from the house: over 400 m of path,
+    // over 150 m of excursion, twenty minutes long, and never out of Home.
+    const fixes = potter({ at: HOME, startMs: minutesAgo(40), count: 40, radius: 180 })
+    expect(await uploadFixes(user.headers, fixes)).toBe(40)
+    await sweep()
+
+    expect(await myTrips(user.headers)).toHaveLength(0)
+  })
+
+  it("files a walk to a friend's house, which does leave Home", async () => {
+    const user = await registerUser(ctx.app, { deviceId: "phone-walk" })
+    const circle = await createCircle(user.headers)
+    const place = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: user.headers,
+      payload: { name: "Home", lat: HOME.lat, lon: HOME.lon, radiusMeters: 150, icon: "home" },
+    })
+    expect(place.statusCode).toBe(201)
+
+    // A walk: 1.4 m/s for ten minutes, 840 m from the door.
+    const fixes = drive({
+      from: HOME,
+      startMs: minutesAgo(30),
+      intervalSeconds: 30,
+      count: 21,
+      speedMps: 1.4,
+      bearingDeg: 90,
+    })
+    expect(await uploadFixes(user.headers, fixes)).toBe(21)
+    await sweep()
+
+    const trips = await myTrips(user.headers)
+    expect(trips).toHaveLength(1)
+    expect(trips[0]!.pointCount).toBe(21)
+  })
+})

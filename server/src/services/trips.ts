@@ -395,6 +395,13 @@ async function persistSegment(
   // the phone ever got from where it started does not grow with sampling.
   if (excursionMeters(segment) < MIN_EXCURSION_METERS) return false
 
+  // An afternoon pottering about a large garden clears everything above too:
+  // the path grows with every wander and the excursion can pass 150 m inside
+  // a place drawn 200 m wide. A journey that starts inside a place has to
+  // leave it. A walk to a friend's house is a journey; a walk to the shed is
+  // not.
+  if (!leavesStartPlace(segment, pass.places)) return false
+
   // A phone in the cradle and a tablet in the footwell both report the drive
   // they shared, and one journey is one line in the history. The second copy
   // is left as breadcrumbs rather than filed as a journey of its own.
@@ -758,6 +765,21 @@ function excursionMeters(points: Fix[]): number {
     if (distance > farthest) farthest = distance
   }
   return farthest
+}
+
+/**
+ * Whether a run that began inside a place ever got clear of it. The buffer
+ * is the one the arrival detector uses on the way out, so a run the feed
+ * never called "left" cannot be filed as a trip either.
+ */
+function leavesStartPlace(points: Fix[], placeRows: PlaceRow[]): boolean {
+  const first = points[0]!
+  const startPlaceId = placeContaining(placeRows, first)
+  if (!startPlaceId) return true
+  const place = placeRows.find((row) => row.id === startPlaceId)
+  if (!place) return true
+  const clear = place.radiusMeters + DEFAULTS.geofenceExitBufferMeters
+  return points.some((point) => haversineMeters(point, { lat: place.lat, lon: place.lon }) > clear)
 }
 
 function placeContaining(placeRows: PlaceRow[], point: { lat: number; lon: number }) {

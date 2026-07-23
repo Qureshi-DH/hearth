@@ -169,3 +169,121 @@ describe("waking a quiet phone", () => {
     expect(rows[0]?.status).toBe("skipped")
   })
 })
+
+describe("asking phones for a fix on demand", () => {
+  async function familyOf(members: number) {
+    const owner = await registerUser(ctx.app)
+    const circle = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/circles",
+      headers: owner.headers,
+      payload: { name: "Family", emoji: "🏠" },
+    })
+    expect(circle.statusCode).toBe(201)
+    const { id, invite } = circle.json() as { id: string; invite: { code: string } }
+    const others = []
+    for (let i = 0; i < members; i += 1) {
+      const member = await registerUser(ctx.app)
+      const joined = await ctx.app.inject({
+        method: "POST",
+        url: `/api/v1/invites/${invite.code}/accept`,
+        headers: member.headers,
+      })
+      expect(joined.statusCode).toBe(200)
+      await getDb().execute(
+        sql`update sessions set push_provider = 'expo', push_token = 'ExponentPushToken[x]'
+            where user_id = ${member.user.id}::uuid`,
+      )
+      others.push(member)
+    }
+    return { owner, circleId: id, others }
+  }
+
+  async function reportedAgo(user: { headers: Record<string, string> }, secondsAgo: number) {
+    const upload = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/locations/batch",
+      headers: user.headers,
+      payload: { points: [{ ...HOME, recordedAt: iso(-secondsAgo), accuracyMeters: 12 }] },
+    })
+    expect(upload.statusCode).toBe(200)
+  }
+
+  it("wakes the quiet members once, leaves the fresh one alone, and not again for ten minutes", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const { owner, circleId, others } = await familyOf(3)
+    await reportedAgo(others[0]!, 15 * 60)
+    await reportedAgo(others[1]!, 30)
+    await reportedAgo(others[2]!, 15 * 60)
+
+    const first = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circleId}/locations/refresh`,
+      headers: owner.headers,
+    })
+    expect(first.statusCode).toBe(200)
+    expect(first.json()).toEqual({ asked: 2 })
+
+    const again = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circleId}/locations/refresh`,
+      headers: owner.headers,
+    })
+    expect(again.json()).toEqual({ asked: 0 })
+    expect((await outboxRows()).filter((row) => row.type === "wake")).toHaveLength(2)
+  })
+
+  it("asks nobody on a provider that cannot carry a silent push", async () => {
+    const { owner, circleId, others } = await familyOf(1)
+    await reportedAgo(others[0]!, 15 * 60)
+    const response = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circleId}/locations/refresh`,
+      headers: owner.headers,
+    })
+    expect(response.json()).toEqual({ asked: 0 })
+  })
+
+  it("puts one person on live updates for the window, once per window, and never someone sharing approximately", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const { owner, circleId, others } = await familyOf(2)
+    const [watched, approximate] = others
+
+    const first = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circleId}/members/${watched!.user.id}/watch`,
+      headers: owner.headers,
+    })
+    expect(first.statusCode).toBe(200)
+    expect(first.json()).toEqual({ watching: true, seconds: 600 })
+
+    // The page calls again a minute later to hold it. No second push.
+    const held = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circleId}/members/${watched!.user.id}/watch`,
+      headers: owner.headers,
+    })
+    expect(held.json()).toEqual({ watching: true, seconds: 600 })
+    const rows = (await outboxRows()).filter((row) => row.type === "watch")
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ silent: true })
+
+    await getDb().execute(
+      sql`update circle_members set sharing_state = 'approximate'
+          where user_id = ${approximate!.user.id}::uuid`,
+    )
+    const refused = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circleId}/members/${approximate!.user.id}/watch`,
+      headers: owner.headers,
+    })
+    expect(refused.json()).toEqual({ watching: false, seconds: 0 })
+
+    const self = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circleId}/members/${owner.user.id}/watch`,
+      headers: owner.headers,
+    })
+    expect(self.statusCode).toBe(400)
+  })
+})

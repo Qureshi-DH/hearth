@@ -167,6 +167,12 @@ export const DEFAULTS = {
   tripIdleGapSeconds: 5 * 60,
   tripMinDistanceMeters: 400,
   tripMinDurationSeconds: 120,
+  /**
+   * How long a phone stays on live updates after someone opens its owner's
+   * page. Long enough that a push per minute is not needed to hold it, short
+   * enough that a page left open does not run the GPS all evening.
+   */
+  watchWindowSeconds: 10 * 60,
   sosPingIntervalSeconds: 20,
   maxLocationBatchSize: 200,
   maxMessageLength: 500,

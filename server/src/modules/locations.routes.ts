@@ -1,14 +1,24 @@
 import { ACTIVITY_TYPES, DEFAULTS, LOCATION_SOURCES } from "@hearth/shared"
-import { and, asc, eq, gte, lte, sql } from "drizzle-orm"
+import { and, asc, eq, gt, gte, lte, ne, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
 import { getDb } from "../db/client"
-import { circleMembers, circles, locationPoints, sessions, trips, userPresence } from "../db/schema"
-import { badRequest, forbidden } from "../lib/errors"
+import {
+  circleMembers,
+  circles,
+  locationPoints,
+  notificationOutbox,
+  sessions,
+  trips,
+  userPresence,
+} from "../db/schema"
+import { badRequest, forbidden, notFound } from "../lib/errors"
 import { requireAuth, requireMembership } from "../plugins/auth"
+import { getPushDriver } from "../runtime"
 import { ingestPoints } from "../services/locations"
-import { getCirclePresence } from "../services/presence"
+import { effectiveSharingState, getCirclePresence } from "../services/presence"
+import { enqueuePush } from "../services/push"
 
 // Accuracy fields are deliberately not constrained here. A platform sentinel
 // in one optional field would otherwise fail the whole array, and the client
@@ -45,8 +55,36 @@ const isoTimestamp = z
     return ms >= MIN_TIMESTAMP_MS && ms <= MAX_TIMESTAMP_MS
   }, "Timestamp is out of the supported range.")
 
+/**
+ * A silent push is the only way to ask a phone in the background for a fix,
+ * and iOS delivers only a few an hour, so nobody looking at the map may spend
+ * them faster than this on any one phone. Watching is spent more freely:
+ * a page open on one person is worth more than a glance at everyone.
+ */
+const REFRESH_INTERVAL_MS = 10 * 60 * 1000
+const WATCH_INTERVAL_MS = 8 * 60 * 1000
+/** A phone heard from this recently has nothing new to say. */
+const FRESH_ENOUGH_MS = 2 * 60 * 1000
+
 export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
+
+  /** Whether a silent push of this kind went to the account inside the window. */
+  async function pushedRecently(userId: string, type: "wake" | "watch", windowMs: number) {
+    const [row] = await db
+      .select({ id: notificationOutbox.id })
+      .from(notificationOutbox)
+      .where(
+        and(
+          eq(notificationOutbox.userId, userId),
+          eq(notificationOutbox.silent, true),
+          sql`${notificationOutbox.data}->>'type' = ${type}`,
+          gt(notificationOutbox.createdAt, new Date(Date.now() - windowMs)),
+        ),
+      )
+      .limit(1)
+    return row != null
+  }
 
   app.post(
     "/locations/batch",
@@ -109,6 +147,135 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           distanceFilterMeters: distanceFilter,
         },
       }
+    },
+  )
+
+  app.post(
+    "/circles/:circleId/locations/refresh",
+    {
+      preHandler: app.authenticate,
+      config: { rateLimit: { max: 30, timeWindow: "10 minutes" } },
+      schema: {
+        tags: ["locations"],
+        summary: "Ask the circle's quiet phones for a fresh fix",
+        description:
+          "Called when someone opens the map. Every member who has not reported for a couple " +
+          "of minutes gets a silent push asking for one fix, at most once every ten minutes " +
+          "per phone whoever is looking. Members who paused sharing are left alone. Nothing " +
+          "is sent on a push provider that cannot carry a silent push.",
+        params: z.object({ circleId: z.string().uuid() }),
+        response: { 200: z.object({ asked: z.number().int() }) },
+      },
+    },
+    async (request) => {
+      const auth = requireAuth(request)
+      const membership = await requireMembership(request, request.params.circleId)
+      if (getPushDriver()?.provider !== "expo") return { asked: 0 }
+
+      const now = new Date()
+      const rows = await db
+        .select({
+          userId: circleMembers.userId,
+          sharingState: circleMembers.sharingState,
+          pausedUntil: circleMembers.pausedUntil,
+          resumeToState: circleMembers.resumeToState,
+          recordedAt: userPresence.recordedAt,
+        })
+        .from(circleMembers)
+        .leftJoin(userPresence, eq(userPresence.userId, circleMembers.userId))
+        .where(
+          and(
+            eq(circleMembers.circleId, membership.circleId),
+            ne(circleMembers.userId, auth.userId),
+          ),
+        )
+
+      let asked = 0
+      for (const row of rows) {
+        const state = effectiveSharingState(
+          row.sharingState,
+          row.pausedUntil,
+          now,
+          row.resumeToState,
+        )
+        if (state === "paused") continue
+        if (row.recordedAt && now.getTime() - row.recordedAt.getTime() < FRESH_ENOUGH_MS) continue
+        if (await pushedRecently(row.userId, "wake", REFRESH_INTERVAL_MS)) continue
+        await enqueuePush(db, [
+          { userId: row.userId, title: "", body: "", silent: true, data: { type: "wake" } },
+        ])
+        asked += 1
+      }
+      return { asked }
+    },
+  )
+
+  app.post(
+    "/circles/:circleId/members/:userId/watch",
+    {
+      preHandler: app.authenticate,
+      config: { rateLimit: { max: 60, timeWindow: "10 minutes" } },
+      schema: {
+        tags: ["locations"],
+        summary: "Follow one person live for a while",
+        description:
+          "Called while someone has a member's page open. The member's phone is asked, by " +
+          "silent push, to report at full accuracy every few seconds for the watch window, " +
+          "and the page keeps calling to hold it. A phone that has stopped reports once " +
+          "instead. Only members sharing precisely can be watched, and a phone is asked at " +
+          "most once per window whoever is looking.",
+        params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
+        response: {
+          200: z.object({ watching: z.boolean(), seconds: z.number().int() }),
+        },
+      },
+    },
+    async (request) => {
+      const auth = requireAuth(request)
+      const membership = await requireMembership(request, request.params.circleId)
+      if (request.params.userId === auth.userId) {
+        throw badRequest("You do not need to watch yourself.")
+      }
+      const [target] = await db
+        .select({
+          sharingState: circleMembers.sharingState,
+          pausedUntil: circleMembers.pausedUntil,
+          resumeToState: circleMembers.resumeToState,
+        })
+        .from(circleMembers)
+        .where(
+          and(
+            eq(circleMembers.circleId, membership.circleId),
+            eq(circleMembers.userId, request.params.userId),
+          ),
+        )
+        .limit(1)
+      if (!target) throw notFound("That person is not in this circle.")
+      const state = effectiveSharingState(
+        target.sharingState,
+        target.pausedUntil,
+        new Date(),
+        target.resumeToState,
+      )
+      // Approximate is a choice about how closely they want to be seen, and
+      // live updates from their phone would be thrown away by the projection
+      // anyway.
+      if (state !== "precise") return { watching: false, seconds: 0 }
+      if (getPushDriver()?.provider !== "expo") return { watching: false, seconds: 0 }
+
+      const seconds = DEFAULTS.watchWindowSeconds
+      if (!(await pushedRecently(request.params.userId, "watch", WATCH_INTERVAL_MS))) {
+        await enqueuePush(db, [
+          {
+            userId: request.params.userId,
+            title: "",
+            body: "",
+            silent: true,
+            data: { type: "watch", seconds },
+          },
+        ])
+      }
+      return { watching: true, seconds }
     },
   )
 
