@@ -12,7 +12,7 @@ import { AppState, Pressable, View, type AppStateStatus, type ViewStyle } from "
 import { Ionicons } from "@expo/vector-icons"
 import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet"
 import type { CircleMember, MemberPresence } from "@hearth/shared"
-import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
+import { Marker, type CameraRef, type MapRef } from "@maplibre/maplibre-react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import Animated, {
@@ -31,7 +31,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { GlassPanel } from "@/components/GlassPanel"
 import { HearthMap } from "@/components/HearthMap"
 import { IconButton } from "@/components/IconButton"
-import { MemberMarker, MEMBER_MARKER_LABEL_HEIGHT } from "@/components/MemberMarker"
+import {
+  faceAtOffset,
+  MemberMarker,
+  MEMBER_MARKER_LABEL_HEIGHT,
+  type MarkerFace,
+} from "@/components/MemberMarker"
 import { ListGroup } from "@/components/ListRow"
 import { MemberRow, ringFor } from "@/components/MemberRow"
 import { Pill } from "@/components/Pill"
@@ -48,7 +53,7 @@ import { useTrackingStore } from "@/stores/tracking"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { fitBoundsFor } from "@/utils/map"
-import { spreadOverlapping } from "@/utils/markerLayout"
+import { groupOverlapping, type MarkerGroup } from "@/utils/markerLayout"
 
 const FALLBACK_CENTER: [number, number] = [-0.1276, 51.5072]
 // The circle switcher row hangs this far below the status bar, and the map
@@ -173,6 +178,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const { data: activeSos } = useActiveSos(circleId)
 
   const cameraRef = useRef<CameraRef>(null)
+  const mapRef = useRef<MapRef>(null)
   const sheetRef = useRef<BottomSheet>(null)
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
   // Read inside the marker callback, which must stay stable or every marker
@@ -217,9 +223,9 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
     () => (presence ?? []).filter((entry) => entry.lat != null && entry.lon != null),
     [presence],
   )
-  const spread = useMemo(
+  const groups = useMemo(
     () =>
-      spreadOverlapping(
+      groupOverlapping(
         (members ?? []).flatMap((member) => {
           const entry = presenceByUser.get(member.userId)
           return entry && entry.lat != null && entry.lon != null
@@ -331,6 +337,28 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
     [openMember],
   )
 
+  // Android's map does its own hit test on a tap and, when it finds a
+  // marker, reports it here and swallows the touch. Which phones take that
+  // path and which let the touch reach the Pressable inside varies, so both
+  // lead to the same place. This path only knows the marker, so for a stack
+  // of faces it works out which one from where the touch landed.
+  const pressMarker = useCallback(
+    async (group: MarkerGroup, point?: [number, number]) => {
+      let userId = group.ids[0]!
+      if (group.ids.length > 1 && point) {
+        try {
+          const anchorPoint = await mapRef.current?.project([group.lon, group.lat])
+          if (anchorPoint)
+            userId = group.ids[faceAtOffset(group.ids.length, point[0] - anchorPoint[0])]!
+        } catch {
+          // The first face is a fair answer when the map cannot say.
+        }
+      }
+      focusMember(userId)
+    },
+    [focusMember],
+  )
+
   // The tab navigator already insets this screen above the tab bar, so bottom:0
   // here is the top of the bar. Do not add its height again.
   const restingSheetHeight = 210
@@ -417,6 +445,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
       onLayout={(event) => setContainerHeight(event.nativeEvent.layout.height)}
     >
       <HearthMap
+        ref={mapRef}
         cameraRef={cameraRef}
         attributionPosition={{ bottom: COLLAPSED_BAR_HEIGHT + 12, left: 8 }}
         initialCenter={initialCenter}
@@ -430,31 +459,35 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
           clearSelection()
         }}
       >
-        {(members ?? []).map((member) => {
-          const entry = presenceByUser.get(member.userId)
-          if (!entry || entry.lat == null || entry.lon == null) return null
-          const isSelf = member.userId === me?.id
-          const [dx, dy] = spread.get(member.userId) ?? [0, 0]
+        {groups.map((group) => {
+          const faces = group.ids.flatMap((userId): MarkerFace[] => {
+            const member = members?.find((candidate) => candidate.userId === userId)
+            const entry = presenceByUser.get(userId)
+            if (!member || !entry) return []
+            const isSelf = userId === me?.id
+            return [
+              {
+                userId,
+                user: member.user,
+                label: isSelf ? translate("map:you") : (member.nickname ?? member.user.displayName),
+                presence: entry,
+                ring: ringFor(entry, isSelf),
+                selected: selectedUserId === userId,
+              },
+            ]
+          })
           return (
             <Marker
-              key={member.userId}
-              lngLat={[entry.lon, entry.lat]}
+              key={group.key}
+              lngLat={[group.lon, group.lat]}
               anchor="bottom"
-              // Puts the pointer tip on the coordinate instead of the name
-              // pill, then nudges anyone sharing the spot into their slot.
-              offset={[dx, MEMBER_MARKER_LABEL_HEIGHT + dy]}
-              // Android's map does its own hit test on a tap and, when it finds
-              // a marker, reports it here and swallows the touch. Which phones
-              // take that path and which let the touch reach the Pressable
-              // inside varies, so both lead to the same place.
-              onPress={() => focusMember(member.userId)}
+              // Puts the pointer tip on the coordinate instead of the name pill.
+              offset={[0, MEMBER_MARKER_LABEL_HEIGHT]}
+              onPress={(event) => void pressMarker(group, event?.nativeEvent?.point)}
             >
               <MemberMarker
-                user={member.user}
-                label={isSelf ? translate("map:you") : (member.nickname ?? member.user.displayName)}
-                presence={entry}
-                ring={ringFor(entry, isSelf)}
-                selected={selectedUserId === member.userId}
+                markerKey={group.key}
+                faces={faces}
                 onPress={focusMember}
                 onMeasure={measureMarker}
               />

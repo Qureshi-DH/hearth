@@ -1,4 +1,4 @@
-import { metresPerPoint, spreadOverlapping } from "./markerLayout"
+import { groupOverlapping, metresPerPoint } from "./markerLayout"
 
 const HOME = { lat: 51.4545, lon: -2.5879 }
 // About 25 metres east, which is one house away.
@@ -6,20 +6,21 @@ const NEXT_DOOR = { lat: HOME.lat, lon: HOME.lon + 0.00036 }
 // About two kilometres east.
 const ACROSS_TOWN = { lat: HOME.lat, lon: HOME.lon + 0.029 }
 
-describe("spreadOverlapping", () => {
+describe("groupOverlapping", () => {
   it("leaves people alone who have room at this zoom", () => {
-    const offsets = spreadOverlapping(
+    const groups = groupOverlapping(
       [
         { id: "a", ...HOME },
         { id: "b", ...ACROSS_TOWN },
       ],
       15,
     )
-    expect(offsets.size).toBe(0)
+    expect(groups.map((group) => group.ids)).toEqual([["a"], ["b"]])
+    expect(groups[0]).toMatchObject({ key: "a", ...HOME })
   })
 
-  it("lays a household out in a row, centred on the house, in the order given", () => {
-    const offsets = spreadOverlapping(
+  it("puts a household on one marker, in the order given, in the middle of them", () => {
+    const groups = groupOverlapping(
       [
         { id: "c", ...HOME },
         { id: "a", ...NEXT_DOOR },
@@ -27,35 +28,31 @@ describe("spreadOverlapping", () => {
       ],
       15,
     )
-    expect(offsets.get("c")).toEqual([-62, 0])
-    expect(offsets.get("a")).toEqual([0, 0])
-    expect(offsets.get("b")).toEqual([62, 0])
+    expect(groups).toHaveLength(1)
+    expect(groups[0]!.ids).toEqual(["c", "a", "b"])
+    expect(groups[0]!.key).toBe("c|a|b")
+    expect(groups[0]!.lon).toBeCloseTo(HOME.lon + 0.00012, 6)
   })
 
-  it("gives a wide name pill the room it measured", () => {
-    const offsets = spreadOverlapping(
-      [
-        { id: "a", ...HOME },
-        { id: "b", ...HOME },
-      ],
-      15,
-      new Map([["a", 100]]),
-    )
-    // Row is 100 + 6 + 56 wide, centred.
-    expect(offsets.get("a")).toEqual([-31, 0])
-    expect(offsets.get("b")).toEqual([53, 0])
+  it("lets a marker that measured wide reach further", () => {
+    // About 120 metres apart: clear at zoom 15 for two plain faces, but not
+    // for a marker whose name pill measured 200 points wide.
+    const points = [
+      { id: "a", ...HOME },
+      { id: "b", lat: HOME.lat, lon: HOME.lon + 0.00173 },
+    ]
+    expect(groupOverlapping(points, 15)).toHaveLength(2)
+    expect(groupOverlapping(points, 15, new Map([["a", 200]]))).toHaveLength(1)
   })
 
-  it("moves to rows past three, each row centred", () => {
-    const offsets = spreadOverlapping(
-      ["a", "b", "c", "d", "e"].map((id) => ({ id, ...HOME })),
-      15,
-    )
-    expect(offsets.get("a")).toEqual([-62, -42])
-    expect(offsets.get("b")).toEqual([0, -42])
-    expect(offsets.get("c")).toEqual([62, -42])
-    expect(offsets.get("d")).toEqual([-31, 42])
-    expect(offsets.get("e")).toEqual([31, 42])
+  it("chains neighbours into one group even when the ends are apart", () => {
+    // Three in a line, each within reach of the next and the ends not.
+    const points = [
+      { id: "a", ...HOME },
+      { id: "b", lat: HOME.lat, lon: HOME.lon + 0.0011 },
+      { id: "c", lat: HOME.lat, lon: HOME.lon + 0.0022 },
+    ]
+    expect(groupOverlapping(points, 15).map((group) => group.ids)).toEqual([["a", "b", "c"]])
   })
 
   it("groups a whole town on a wide view and lets it go when zoomed in", () => {
@@ -63,8 +60,8 @@ describe("spreadOverlapping", () => {
       { id: "a", ...HOME },
       { id: "b", ...ACROSS_TOWN },
     ]
-    expect(spreadOverlapping(points, 8).size).toBe(2)
-    expect(spreadOverlapping(points, 14).size).toBe(0)
+    expect(groupOverlapping(points, 8)).toHaveLength(1)
+    expect(groupOverlapping(points, 14)).toHaveLength(2)
   })
 
   it("knows the ground resolution of the map", () => {

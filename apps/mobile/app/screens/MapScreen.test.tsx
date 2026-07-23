@@ -88,6 +88,7 @@ let mockSheetProps: Record<string, any> = {}
 const mockSnapToIndex = jest.fn()
 let mockMapPress: (() => void) | null = null
 let mockMapZoom: ((event: { nativeEvent: { zoom: number } }) => void) | null = null
+const mockProject = jest.fn(async (_lngLat: [number, number]): Promise<[number, number]> => [0, 0])
 let mockActiveSos: Array<{ id: string; user: { id: string; displayName: string } }> = []
 
 const mockMembers = ["ana", "ben", "cat", "dee"].map(memberFor)
@@ -118,19 +119,23 @@ jest.mock("../components/HearthMap", () => {
   const react = require("react")
   const rn = require("react-native")
   return {
-    HearthMap: ({
-      children,
-      onPress,
-      onRegionIsChanging,
-    }: {
-      children?: unknown
-      onPress?: () => void
-      onRegionIsChanging?: (event: { nativeEvent: { zoom: number } }) => void
-    }) => {
+    HearthMap: react.forwardRef(function HearthMap(
+      {
+        children,
+        onPress,
+        onRegionIsChanging,
+      }: {
+        children?: unknown
+        onPress?: () => void
+        onRegionIsChanging?: (event: { nativeEvent: { zoom: number } }) => void
+      },
+      ref: unknown,
+    ) {
       mockMapPress = onPress ?? null
       mockMapZoom = onRegionIsChanging ?? null
+      react.useImperativeHandle(ref, () => ({ project: mockProject }))
       return react.createElement(rn.View, null, children)
-    },
+    }),
     TrailLayer: () => null,
   }
 })
@@ -613,15 +618,25 @@ describe("tapping a member", () => {
 })
 
 describe("people at the same place", () => {
-  const offsetsOf = (utils: { getAllByTestId: (id: string) => any[] }) =>
-    utils.getAllByTestId("native-marker").map((node) => node.props.offset as [number, number])
+  const nativeMarkers = (utils: { getAllByTestId: (id: string) => any[] }) =>
+    utils.getAllByTestId("native-marker")
+  // Composite and host nodes both carry the testID, so each face shows twice.
+  const facesIn = (marker: any): string[] => [
+    ...new Set<string>(
+      marker
+        .findAll((node: any) => /^member-marker-[a-z]+$/.test(node.props.testID ?? ""))
+        .map((node: any) => node.props.testID.replace("member-marker-", "")),
+    ),
+  ]
 
   beforeEach(() => {
     mockPresence = mockMembers.map((member, index) => presenceFor(member.userId, 51 + index))
     mockFocused = true
+    mockSnapToIndex.mockClear()
+    navigation.navigate.mockClear()
   })
 
-  it("sits two people at home beside each other and leaves the rest on their own spot", async () => {
+  it("stacks two people at home on one marker with one pill, and leaves the rest alone", async () => {
     mockPresence = [
       presenceFor("ana", 51),
       presenceFor("ben", 51),
@@ -629,31 +644,56 @@ describe("people at the same place", () => {
       presenceFor("dee", 54),
     ]
     const utils = await renderMap()
-    const [ana, ben, cat, dee] = offsetsOf(utils)
-    expect(ana![0]).toBeLessThan(0)
-    expect(ben![0]).toBeGreaterThan(0)
-    expect(ana![0]).toBe(-ben![0])
-    expect(ana![1]).toBe(ben![1])
-    expect(cat).toEqual([0, MEMBER_MARKER_LABEL_HEIGHT])
-    expect(dee).toEqual([0, MEMBER_MARKER_LABEL_HEIGHT])
+    const markers = nativeMarkers(utils)
+    expect(markers).toHaveLength(3)
+    expect(facesIn(markers[0])).toEqual(["ana", "ben"])
+    expect(facesIn(markers[1])).toEqual(["cat"])
+    expect(utils.getByText("map:pair")).toBeTruthy()
+    // The stack sits on the spot they share and the pointer still lands there.
+    expect(markers[0].props.offset).toEqual([0, MEMBER_MARKER_LABEL_HEIGHT])
   })
 
-  it("spreads people out as the map zooms out and lets them go again on the way in", async () => {
+  it("stacks people as the map zooms out and lets them go again on the way in", async () => {
     // Everyone on a different street of one town.
     mockPresence = mockMembers.map((member, index) =>
       presenceFor(member.userId, 51 + index * 0.006),
     )
     const utils = await renderMap()
-    expect(offsetsOf(utils).every(([x]) => x === 0)).toBe(true)
+    expect(nativeMarkers(utils)).toHaveLength(4)
 
     act(() => mockMapZoom?.({ nativeEvent: { zoom: 10 } }))
-    expect(offsetsOf(utils).some(([x]) => x !== 0)).toBe(true)
+    expect(nativeMarkers(utils)).toHaveLength(1)
+    expect(facesIn(nativeMarkers(utils)[0])).toEqual(["ana", "ben", "cat", "dee"])
 
     act(() => mockMapZoom?.({ nativeEvent: { zoom: 16 } }))
-    expect(offsetsOf(utils).every(([x]) => x === 0)).toBe(true)
+    expect(nativeMarkers(utils)).toHaveLength(4)
   })
 
-  it("gives a long name pill the width it laid out at", async () => {
+  it("lets a marker that laid out wide claim a neighbour", async () => {
+    // About 150 m apart at zoom 15: clear as two plain faces, not once one
+    // of them has measured a name pill 220 points wide.
+    mockPresence = [
+      presenceFor("ana", 51),
+      presenceFor("ben", 51.00135),
+      presenceFor("cat", 53),
+      presenceFor("dee", 54),
+    ]
+    const utils = await renderMap()
+    act(() => mockMapZoom?.({ nativeEvent: { zoom: 15 } }))
+    expect(nativeMarkers(utils)).toHaveLength(4)
+    act(() => {
+      fireEvent(
+        nativeMarkers(utils)[0].findByProps({ testID: "member-marker-ana" }).parent,
+        "layout",
+        {
+          nativeEvent: { layout: { width: 220, height: 80, x: 0, y: 0 } },
+        },
+      )
+    })
+    expect(nativeMarkers(utils)).toHaveLength(3)
+  })
+
+  it("selects each face of a stack from its own tap, and the pill answers for the selected one", async () => {
     mockPresence = [
       presenceFor("ana", 51),
       presenceFor("ben", 51),
@@ -661,13 +701,38 @@ describe("people at the same place", () => {
       presenceFor("dee", 54),
     ]
     const utils = await renderMap()
-    const before = offsetsOf(utils)
-    act(() => {
-      fireEvent(utils.getByTestId("member-marker-ana"), "layout", {
-        nativeEvent: { layout: { width: 120, height: 80, x: 0, y: 0 } },
-      })
+    fireEvent.press(utils.getByTestId("member-marker-ben"))
+    expect(utils.getAllByTestId("member-marker-halo")).toHaveLength(1)
+    expect(mockSnapToIndex).toHaveBeenCalledWith(1)
+
+    // The pill is the second tap on ben, which opens their page.
+    jest.spyOn(Date, "now").mockReturnValue(Date.now() + 2000)
+    fireEvent.press(utils.getByText(/map:pair/))
+    expect(navigation.navigate).toHaveBeenCalledWith("MemberDetail", {
+      circleId: "circle-1",
+      userId: "ben",
     })
-    const after = offsetsOf(utils)
-    expect(after[1]![0] - after[0]![0]).toBeGreaterThan(before[1]![0] - before[0]![0])
+    ;(Date.now as jest.Mock).mockRestore()
+  })
+
+  it("works out which face a native tap landed on from where it landed", async () => {
+    mockPresence = [
+      presenceFor("ana", 51),
+      presenceFor("ben", 51),
+      presenceFor("cat", 53),
+      presenceFor("dee", 54),
+    ]
+    mockProject.mockResolvedValue([200, 300])
+    const utils = await renderMap()
+    // Two faces are 90 points wide, so the right hand face is centred 17
+    // points right of the marker.
+    await act(async () => {
+      fireEvent.press(nativeMarkers(utils)[0], { nativeEvent: { point: [222, 290] } })
+    })
+    expect(utils.getAllByTestId("member-marker-halo")).toHaveLength(1)
+    expect(
+      utils.getByTestId("member-marker-ben").findAllByProps({ testID: "member-marker-halo" })
+        .length,
+    ).toBeGreaterThan(0)
   })
 })

@@ -242,10 +242,16 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
               offset={[0, MEMBER_MARKER_LABEL_HEIGHT]}
             >
               <MemberMarker
-                user={member.user}
-                label={name}
-                presence={entry}
-                ring={ringFor(entry, isSelf)}
+                markerKey={member.userId}
+                faces={[
+                  {
+                    userId: member.userId,
+                    user: member.user,
+                    label: name,
+                    presence: entry,
+                    ring: ringFor(entry, isSelf),
+                  },
+                ]}
               />
             </Marker>
           ) : null}

@@ -163,6 +163,9 @@ const en = {
     nudged: "Asked {{name}} to update their location",
     sharingOff: "Your sharing is off for this circle",
     turnOn: "Turn on",
+    pair: "{{a}} & {{b}}",
+    trio: "{{a}}, {{b}} & {{c}}",
+    more: "{{a}}, {{b}} +{{n}}",
   },
   member: {
     title: "Member",

@@ -14,9 +14,10 @@ Notable changes to Hearth. The format is loosely
   the next journey start the service again from a geofence exit or an activity
   transition, which stock expo-location refused to do from the background.
 - Members at the same place no longer pile up on one spot. Anyone whose marker
-  would touch another's is laid out beside them, a row of up to three and rows
-  past that, centred on where they are, and the layout follows the zoom so
-  they part again as the map comes in.
+  would touch another's at the current zoom joins it: the faces stack into one
+  marker with one name pill, "Yusuf & Sami", on the middle of where they are,
+  and they part again as the map zooms in. Each face still answers its own
+  tap.
 - The Android status bar glyph for a Hearth notification is a full size
   flame. It used to be cut from the launcher icon, whose safe zone padding
   left it a fraction of the height Android gives a status bar icon.
