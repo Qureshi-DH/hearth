@@ -194,19 +194,31 @@ around the clock is what makes that notification permanent and what actually
 drains the battery, because the GPS never sleeps.
 
 So the tracker has two states. **Moving** is continuous updates, and it is the
-state that shows the notification. The app creates that notification's channel
-at minimum importance before the service ever starts, which keeps it out of the
-status bar. It sits collapsed in the silent part of the shade instead.
-expo-location names the channel after the package and the task and only
-creates one when nothing by that name exists, so the id in
-`services/notifications.ts` has to match. Once the phone has stayed for five minutes
-inside a circle of 60 m, or 1.5 times the policy's distance filter where that
-is wider, it switches to **stationary**: the same task is re-registered with
-resting options, Balanced accuracy, no GPS, one fix wanted every quarter hour,
-and an exit geofence is armed around where it stopped. Leaving that circle
-puts it back into moving, and so does a resting fix outside the circle, which
-covers a fence Android forgot after killing the process. The geofence is cheap
-because it rides on the location the system computes anyway.
+only state that runs the service. Its notification is one plain line, "Hearth,
+updating your location", with no colour and no other copy. The app creates the
+notification's channel at minimum importance before the service ever starts,
+which keeps it out of the status bar. It sits collapsed in the silent part of
+the shade instead. expo-location names the channel after the package and the
+task and only creates one when nothing by that name exists, so the id in
+`services/notifications.ts` has to match. Once the phone has stayed for five
+minutes inside a circle of 60 m, or 1.5 times the policy's distance filter
+where that is wider, it switches to **stationary**: the same task is
+re-registered with resting options, Balanced accuracy, no GPS, one fix wanted
+every quarter hour, and an exit geofence is armed around where it stopped. The
+resting options carry no foreground service, and expo-location stops a running
+service when the task is registered without one, so the notification goes with
+it. Leaving the circle puts the phone back into moving, and so does a resting
+fix outside the circle, which covers a fence Android forgot after killing the
+process. The geofence is cheap because it rides on the location the system
+computes anyway.
+
+Starting the service again from the background is where stock expo-location
+gives up. Its consumer refuses to start a foreground service unless the app is
+in the foreground, which is the rule Android 12 had for ordinary apps and not
+the one for a geofence exit or an activity transition, both of which are exempt.
+`patches/expo-location@55.1.14.patch` lifts that refusal and lets the OS have
+the last word, so a phone that parks without the service running gets it back
+when the next journey starts.
 
 A server side second line stands behind the heartbeat. The scheduler sends a
 silent push to a phone that has been quiet for half an hour, once per
@@ -218,13 +230,15 @@ silence alone decides, as it always did. The admin screen shows each
 account's longest silence over the last day, which is how the whole
 arrangement is judged on real phones.
 
-The service used to stop outright while parked. That left the phone's next
-word to the OS task schedulers, and Doze and iOS both let a phone sit for
-hours, at which point the server, which calls a phone offline after an hour of
-silence, told the family the phone had gone quiet. Android delivers on the
-resting interval. iOS ignores intervals and reports as its Wi-Fi estimate
-shifts, so `restingFixes` in the tracker thins that back down to one fix per
-heartbeat and lets the rest go.
+The service used to stop outright while parked and take the watch with it.
+That left the phone's next word to the OS task schedulers, and Doze and iOS
+both let a phone sit for hours, at which point the server, which calls a
+phone offline after an hour of silence, told the family the phone had gone
+quiet. Now the watch stays. Android gives a background app a handful of fixes
+an hour, which is enough for a quarter hour heartbeat most of the time and
+the wake covers the rest. iOS ignores intervals and reports as its Wi-Fi
+estimate shifts, so `restingFixes` in the tracker thins that back down to
+one fix per heartbeat and lets the rest go.
 
 The OS classifier is the normal path for both ends of a stop: it calls one
 after ninety seconds of the phone reading still, and ends one the instant you

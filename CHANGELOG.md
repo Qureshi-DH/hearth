@@ -6,6 +6,23 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Changed
+
+- The Android location notification is one plain line, "Hearth, updating your
+  location", and it only exists while the phone is moving. Parking stops the
+  service and takes the notification with it, and a patched expo-location lets
+  the next journey start the service again from a geofence exit or an activity
+  transition, which stock expo-location refused to do from the background.
+- Members at the same place no longer pile up on one spot. Anyone whose marker
+  would touch another's is laid out beside them, a row of up to three and rows
+  past that, centred on where they are, and the layout follows the zoom so
+  they part again as the map comes in.
+- The Android status bar glyph for a Hearth notification is a full size
+  flame. It used to be cut from the launcher icon, whose safe zone padding
+  left it a fraction of the height Android gives a status bar icon.
+- The map no longer draws today's trail under everyone. A member's page still
+  shows it, thinned so a phone wobbling indoors no longer draws a scribble.
+
 ## [0.4.0] - 2026-07-22
 
 The tracker after a proper look at how the platforms behave. Servers must
