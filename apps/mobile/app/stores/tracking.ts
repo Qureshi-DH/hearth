@@ -40,6 +40,12 @@ interface TrackingState {
    * anything held in module scope is back to zero on every one of them.
    */
   lastDriftCheckAt: string | null
+  /**
+   * Until when somebody has this phone's owner's page open and the phone is
+   * on live updates for them. Outlives the process for the reason the anchor
+   * does.
+   */
+  watchedUntil: string | null
   lastFix: LocationFixInput | null
   lastUploadAt: string | null
   lastError: string | null
@@ -56,6 +62,7 @@ interface TrackingState {
   setMode(mode: TrackingMode): void
   setStillAnchor(anchor: { lat: number; lon: number; since: string } | null): void
   markDriftChecked(): void
+  setWatchedUntil(until: string | null): void
   enqueue(fixes: LocationFixInput[]): void
   dequeue(fixes: LocationFixInput[]): void
   recordUpload(accepted: number): void
@@ -238,6 +245,7 @@ export const useTrackingStore = create<TrackingState>()(
       mode: "off",
       stillAnchor: null,
       lastDriftCheckAt: null,
+      watchedUntil: null,
       lastFix: restored.lastFix,
       lastUploadAt: null,
       lastError: null,
@@ -253,6 +261,7 @@ export const useTrackingStore = create<TrackingState>()(
       setMode: (mode) => set({ mode }),
       setStillAnchor: (stillAnchor) => set({ stillAnchor }),
       markDriftChecked: () => set({ lastDriftCheckAt: new Date().toISOString() }),
+      setWatchedUntil: (watchedUntil) => set({ watchedUntil }),
       enqueue: (fixes) => {
         const lastFix = fixes[fixes.length - 1] ?? get().lastFix
         set({ queue: pushFixes(fixes, lastFix), lastFix })
@@ -278,6 +287,7 @@ export const useTrackingStore = create<TrackingState>()(
           mode: "off",
           stillAnchor: null,
           lastDriftCheckAt: null,
+          watchedUntil: null,
           lastFix: null,
           lastUploadAt: null,
           lastError: null,
@@ -298,6 +308,7 @@ export const useTrackingStore = create<TrackingState>()(
         mode: state.mode,
         stillAnchor: state.stillAnchor,
         lastDriftCheckAt: state.lastDriftCheckAt,
+        watchedUntil: state.watchedUntil,
         lastUploadAt: state.lastUploadAt,
       }),
       // v2 put the motion permission on the setup checklist. The checklist only

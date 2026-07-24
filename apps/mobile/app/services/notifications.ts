@@ -4,10 +4,15 @@ import Constants from "expo-constants"
 import * as Device from "expo-device"
 import * as Notifications from "expo-notifications"
 import * as TaskManager from "expo-task-manager"
-import type { ServerInfo } from "@hearth/shared"
+import { DEFAULTS, type ServerInfo } from "@hearth/shared"
 
 import { endpoints } from "@/services/api"
-import { BACKGROUND_LOCATION_TASK, reportNow } from "@/services/location/tracker"
+import {
+  BACKGROUND_LOCATION_TASK,
+  enterWatched,
+  reassertService,
+  wakeFix,
+} from "@/services/location/tracker"
 
 export type PushSetupResult =
   | { kind: "registered"; provider: "expo" }
@@ -148,12 +153,19 @@ export function pushType(payload: unknown): string | null {
   const data = (payload as { data?: Record<string, unknown> } | undefined)?.data
   if (!data) return null
   if (typeof data.type === "string") return data.type
+  const nested = parseNested(data)
+  return typeof nested?.type === "string" ? nested.type : null
+}
+
+/** The payload as Android hands it to a background task: JSON in a string. */
+function parseNested(data: Record<string, unknown> | undefined): Record<string, unknown> | null {
+  if (!data) return null
   for (const key of ["dataString", "body"]) {
     const raw = data[key]
     if (typeof raw !== "string") continue
     try {
-      const parsed = JSON.parse(raw) as { type?: unknown }
-      if (typeof parsed.type === "string") return parsed.type
+      const parsed = JSON.parse(raw) as unknown
+      if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>
     } catch {
       // Not JSON, not ours.
     }
@@ -162,6 +174,7 @@ export function pushType(payload: unknown): string | null {
 }
 
 const WAKE_TYPES = new Set(["wake", "nudge_requested"])
+const WATCH_TYPE = "watch"
 
 // Runs for a data-only push with the app in the background or not running
 // at all. The server sends one when a phone has missed two heartbeats, and
@@ -170,8 +183,27 @@ const WAKE_TYPES = new Set(["wake", "nudge_requested"])
 TaskManager.defineTask(NOTIFICATION_WAKE_TASK, async ({ data, error }) => {
   if (error) return
   const type = pushType(data)
-  if (type && WAKE_TYPES.has(type)) await reportNow("nudge")
+  if (type === WATCH_TYPE) {
+    await enterWatched(watchSeconds(data))
+    return
+  }
+  if (!type || !WAKE_TYPES.has(type)) return
+  // A high priority push is one of the moments Android lets the location
+  // service start from the background. A phone whose journey began at a
+  // moment Android refused has been on throttled fixes since, and this is
+  // where the service comes back. The service first, while the moment lasts.
+  await reassertService()
+  await wakeFix()
 })
+
+function watchSeconds(payload: unknown): number {
+  const data = (payload as { data?: Record<string, unknown> } | undefined)?.data
+  const raw = data?.seconds ?? parseNested(data)?.seconds
+  const seconds = typeof raw === "number" ? raw : Number(raw)
+  return Number.isFinite(seconds) && seconds > 0
+    ? Math.min(seconds, DEFAULTS.watchWindowSeconds)
+    : DEFAULTS.watchWindowSeconds
+}
 
 /**
  * Safe to call on every launch. Without this the task above is defined but
@@ -190,8 +222,14 @@ export function attachNotificationListeners(
   onOpen: (target: NotificationTarget) => void,
 ): () => void {
   const received = Notifications.addNotificationReceivedListener((notification) => {
-    const data = notification.request.content.data as NotificationTarget | undefined
-    if (data?.type && WAKE_TYPES.has(data.type)) void reportNow("nudge")
+    // The app is open, so the fix is the heartbeat's kind: no service needed
+    // and nothing to bring back. A watch still goes live, since the family
+    // member watching is not the one holding this phone.
+    const data = notification.request.content.data as
+      (NotificationTarget & { seconds?: number }) | undefined
+    if (!data?.type) return
+    if (data.type === WATCH_TYPE) void enterWatched(watchSeconds({ data }))
+    else if (WAKE_TYPES.has(data.type)) void wakeFix()
   })
 
   const responded = Notifications.addNotificationResponseReceivedListener((response) => {

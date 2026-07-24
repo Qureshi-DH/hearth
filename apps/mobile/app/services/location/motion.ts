@@ -1,6 +1,7 @@
 import type { EventSubscription } from "expo-modules-core"
 
 import type {
+  BackgroundRefreshStatus,
   MotionActivity,
   MotionChangeEvent,
   MotionPermission,
@@ -22,6 +23,21 @@ try {
 }
 
 export const motionModuleAvailable = native !== null
+
+/**
+ * The checklist's Background App Refresh row. It lives in the motion module
+ * because that is the app's one native module, and "unknown" is the honest
+ * answer from a build without it or from Android, where the switch does not
+ * exist.
+ */
+export async function backgroundRefreshStatus(): Promise<BackgroundRefreshStatus> {
+  if (!native) return "unknown"
+  try {
+    return await native.getBackgroundRefreshStatusAsync()
+  } catch {
+    return "unknown"
+  }
+}
 
 export async function motionUsable(): Promise<boolean> {
   if (!native) return false

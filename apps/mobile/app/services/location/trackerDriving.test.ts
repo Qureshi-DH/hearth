@@ -138,10 +138,18 @@ function lastOptions(): Location.LocationTaskOptions {
   return call[1]
 }
 
-/** The classifier callback the tracker handed to startMotion. */
+/**
+ * The classifier callback the tracker handed to startMotion. The tracker does
+ * not hand its work back to the classifier, and a registration lands a tick
+ * after the state it reflects, so let that tick pass.
+ */
 function classifier(): (activity: string, confidence: number) => Promise<void> {
   const calls = (startMotion as jest.Mock).mock.calls
-  return calls[calls.length - 1]![0]
+  const callback = calls[calls.length - 1]![0] as (activity: string, confidence: number) => void
+  return async (activity, confidence) => {
+    callback(activity, confidence)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
 }
 
 describe("the driving tier", () => {

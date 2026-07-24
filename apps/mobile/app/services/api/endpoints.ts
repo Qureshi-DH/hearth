@@ -160,6 +160,13 @@ export function createEndpoints(api: ApiClient) {
       upload: (points: LocationFixInput[]) =>
         api.post<LocationBatchResponse>("/locations/batch", { points }, { timeoutMs: 30_000 }),
       presence: (circleId: string) => api.get<MemberPresence[]>(`/circles/${circleId}/locations`),
+      refresh: (circleId: string) =>
+        api.post<{ asked: number }>(`/circles/${circleId}/locations/refresh`, {}),
+      watch: (circleId: string, userId: string) =>
+        api.post<{ watching: boolean; seconds: number }>(
+          `/circles/${circleId}/members/${userId}/watch`,
+          {},
+        ),
       history: (
         circleId: string,
         userId: string,

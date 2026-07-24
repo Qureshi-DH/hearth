@@ -12,6 +12,12 @@ interface SettingsState {
   activeCircleId: string | null
   reduceMotion: boolean
   /**
+   * Street names under members and trips come from the phone's own geocoder,
+   * which means handing it the family's coordinates. On by default, since the
+   * map tiles already come from outside, and a switch for those who mind.
+   */
+  streetNames: boolean
+  /**
    * Mirrors whether any circle the user belongs to has incident alerts on. The
    * detector runs from a background task where the query cache may be cold, so
    * the answer has to survive a process kill on its own.
@@ -23,6 +29,7 @@ interface SettingsState {
   setHaptics(enabled: boolean): void
   setActiveCircle(circleId: string | null): void
   setReduceMotion(reduce: boolean): void
+  setStreetNames(on: boolean): void
   setIncidentDetection(enabled: boolean): void
 }
 
@@ -34,6 +41,7 @@ export const useSettingsStore = create<SettingsState>()(
       hapticsEnabled: true,
       activeCircleId: null,
       reduceMotion: false,
+      streetNames: true,
       incidentDetection: false,
 
       setThemeMode: (themeMode) => set({ themeMode }),
@@ -41,6 +49,7 @@ export const useSettingsStore = create<SettingsState>()(
       setHaptics: (hapticsEnabled) => set({ hapticsEnabled }),
       setActiveCircle: (activeCircleId) => set({ activeCircleId }),
       setReduceMotion: (reduceMotion) => set({ reduceMotion }),
+      setStreetNames: (streetNames) => set({ streetNames }),
       setIncidentDetection: (incidentDetection) => set({ incidentDetection }),
     }),
     {

@@ -1,4 +1,9 @@
-import { ensureMotionPermission, motionPermission, startMotion } from "./motion"
+import {
+  backgroundRefreshStatus,
+  ensureMotionPermission,
+  motionPermission,
+  startMotion,
+} from "./motion"
 
 /**
  * modules/hearth-motion/index.ts calls requireNativeModule at import time, so
@@ -12,6 +17,7 @@ jest.mock("../../../modules/hearth-motion", () => ({
     addListener: jest.fn(() => ({ remove: jest.fn() })),
     startUpdatesAsync: jest.fn(async () => {}),
     stopUpdatesAsync: jest.fn(async () => {}),
+    getBackgroundRefreshStatusAsync: jest.fn(async () => "available"),
   },
 }))
 
@@ -21,7 +27,8 @@ type NativeMock = Record<
   | "requestPermissionAsync"
   | "addListener"
   | "startUpdatesAsync"
-  | "stopUpdatesAsync",
+  | "stopUpdatesAsync"
+  | "getBackgroundRefreshStatusAsync",
   jest.Mock
 >
 
@@ -92,6 +99,18 @@ describe("motionPermission", () => {
     native.isAvailableAsync.mockResolvedValue(false)
 
     await expect(motionPermission()).resolves.toBe("unavailable")
+  })
+})
+
+describe("backgroundRefreshStatus", () => {
+  it("passes the switch through as UIApplication reports it", async () => {
+    native.getBackgroundRefreshStatusAsync.mockResolvedValue("denied")
+    await expect(backgroundRefreshStatus()).resolves.toBe("denied")
+  })
+
+  it("is unknown where the module cannot say, which Android cannot", async () => {
+    native.getBackgroundRefreshStatusAsync.mockRejectedValue(new Error("not on this platform"))
+    await expect(backgroundRefreshStatus()).resolves.toBe("unknown")
   })
 })
 

@@ -230,6 +230,15 @@ describe("the parked heartbeat", () => {
 })
 
 describe("the resting watch", () => {
+  // Android's. A parked iPhone runs no request at all, see trackerWake.
+  const { Platform } = require("react-native") as { Platform: { OS: string } }
+  const os = Platform.OS
+  beforeAll(() => {
+    Platform.OS = "android"
+  })
+  afterAll(() => {
+    Platform.OS = os
+  })
   const HOME = { lat: 51.4545, lon: -2.5879 }
   const sample = (lat: number, lon: number, at: number): Location.LocationObject => ({
     timestamp: at,
@@ -306,7 +315,8 @@ describe("the resting watch", () => {
     expect(start).toHaveBeenCalled()
     const [, options] = start.mock.calls[0] as [string, Location.LocationTaskOptions]
     expect(options.timeInterval).not.toBe(RESTING_HEARTBEAT_MS)
-    expect(useTrackingStore.getState().queue).toHaveLength(1)
+    const sources = useTrackingStore.getState().queue.map((fix) => fix.source)
+    expect(sources).toContain("background")
   })
 })
 

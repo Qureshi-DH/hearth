@@ -1,11 +1,11 @@
 import { Linking, Platform } from "react-native"
-import * as BackgroundTask from "expo-background-task"
 import * as Battery from "expo-battery"
 import Constants from "expo-constants"
 import * as IntentLauncher from "expo-intent-launcher"
 import * as Location from "expo-location"
 import * as Notifications from "expo-notifications"
 
+import { backgroundRefreshStatus } from "@/services/location/motion"
 import type { PermissionLevel } from "@/stores/tracking"
 
 export type SimpleStatus = "granted" | "denied" | "undetermined" | "n/a"
@@ -19,6 +19,11 @@ export interface PermissionSnapshot {
   notifications: SimpleStatus
   /** Android only. "exempt" is the real answer from the OS, not a record of having asked. */
   batteryOptimization: "exempt" | "optimized" | "n/a"
+  /**
+   * iOS only, and read from UIApplication through the native module, which is
+   * the only place that knows. "n/a" is Android, or a build without the module,
+   * and the checklist shows those as something to check by hand.
+   */
   backgroundRefresh: "available" | "restricted" | "denied" | "n/a"
 }
 
@@ -39,14 +44,14 @@ export interface PermissionSnapshot {
  * codes and QR, and there are no hardware tags.
  */
 export async function getPermissionSnapshot(): Promise<PermissionSnapshot> {
-  const [foreground, background, notifications, servicesEnabled, taskStatus] = await Promise.all([
+  const [foreground, background, notifications, servicesEnabled, refresh] = await Promise.all([
     Location.getForegroundPermissionsAsync(),
     Location.getBackgroundPermissionsAsync().catch(() => null),
     Notifications.getPermissionsAsync().catch(() => null),
     // Unknown reads as on: a false alarm about the GPS being off is worse than
     // staying quiet, because the banner it raises cannot be acted on.
     Location.hasServicesEnabledAsync().catch(() => true),
-    BackgroundTask.getStatusAsync().catch(() => null),
+    Platform.OS === "ios" ? backgroundRefreshStatus() : Promise.resolve("unknown" as const),
   ])
 
   let location: PermissionLevel = "unknown"
@@ -67,16 +72,11 @@ export async function getPermissionSnapshot(): Promise<PermissionSnapshot> {
         ? "undetermined"
         : "denied"
 
-  // Background App Refresh, not Location Services. Reading the second and
-  // labelling it the first told people to go and fix the wrong switch.
+  // Background App Refresh, not Location Services, and not the task
+  // scheduler's status either: expo-background-task answers "available" on
+  // every physical iPhone whatever the switch says.
   const backgroundRefresh: PermissionSnapshot["backgroundRefresh"] =
-    Platform.OS !== "ios"
-      ? "n/a"
-      : taskStatus === BackgroundTask.BackgroundTaskStatus.Restricted
-        ? "restricted"
-        : taskStatus === BackgroundTask.BackgroundTaskStatus.Available
-          ? "available"
-          : "n/a"
+    refresh === "unknown" ? "n/a" : refresh
 
   return {
     location,

@@ -23,9 +23,13 @@ const mockTasks = () => (globalThis as { __wakeTasks?: Map<string, TaskBody> }).
 const mockReportNow = jest.fn(async (..._args: unknown[]): Promise<null> => null)
 jest.mock("expo-device", () => ({ isDevice: true }))
 jest.mock("@/services/api", () => ({ endpoints: {} }))
+const mockReassert = jest.fn(async () => {})
+const mockWatched = jest.fn(async (_seconds: number) => {})
 jest.mock("@/services/location/tracker", () => ({
   BACKGROUND_LOCATION_TASK: "hearth-background-location",
-  reportNow: (...args: unknown[]) => mockReportNow(...args),
+  reassertService: () => mockReassert(),
+  wakeFix: (...args: unknown[]) => mockReportNow(...args),
+  enterWatched: (seconds: number) => mockWatched(seconds),
 }))
 
 describe("setupChannels", () => {
@@ -71,6 +75,8 @@ describe("the wake task", () => {
 
   beforeEach(() => {
     mockReportNow.mockClear()
+    mockReassert.mockClear()
+    mockWatched.mockClear()
   })
 
   it("is defined when the module loads, before anything mounts", () => {
@@ -93,12 +99,30 @@ describe("the wake task", () => {
     await task()({ data: { data: { type: "wake" } }, error: null })
     await task()({ data: { data: { dataString: '{"type":"nudge_requested"}' } }, error: null })
     expect(mockReportNow).toHaveBeenCalledTimes(2)
-    expect(mockReportNow).toHaveBeenCalledWith("nudge")
+    // The service first, while the push still makes the start allowed, and
+    // the fix after it.
+    expect(mockReassert).toHaveBeenCalledTimes(2)
+    expect(mockReassert.mock.invocationCallOrder[0]).toBeLessThan(
+      mockReportNow.mock.invocationCallOrder[0]!,
+    )
+  })
+
+  it("puts the phone on live updates for a watch, for the window the server names", async () => {
+    await task()({ data: { data: { type: "watch", seconds: 300 } }, error: null })
+    expect(mockWatched).toHaveBeenCalledWith(300)
+    // Android hands the payload over as JSON in a string.
+    await task()({ data: { data: { dataString: '{"type":"watch","seconds":120}' } }, error: null })
+    expect(mockWatched).toHaveBeenCalledWith(120)
+    // Never longer than the window the app knows, whatever a push says.
+    await task()({ data: { data: { type: "watch", seconds: 99999 } }, error: null })
+    expect(mockWatched).toHaveBeenLastCalledWith(600)
+    expect(mockReportNow).not.toHaveBeenCalled()
   })
 
   it("ignores every other push, and an error", async () => {
     await task()({ data: { data: { type: "arrive" } }, error: null })
     await task()({ data: { data: { type: "wake" } }, error: { message: "no" } })
     expect(mockReportNow).not.toHaveBeenCalled()
+    expect(mockReassert).not.toHaveBeenCalled()
   })
 })
