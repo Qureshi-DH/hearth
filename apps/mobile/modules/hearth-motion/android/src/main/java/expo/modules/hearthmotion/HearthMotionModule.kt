@@ -22,6 +22,9 @@ import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.location.ActivityRecognition
 import com.google.android.gms.location.ActivityRecognitionResult
+import com.google.android.gms.location.ActivityTransition
+import com.google.android.gms.location.ActivityTransitionRequest
+import com.google.android.gms.location.ActivityTransitionResult
 import com.google.android.gms.location.DetectedActivity
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.Exceptions
@@ -30,7 +33,9 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import kotlin.math.sqrt
 
 private const val ACTION = "expo.modules.hearthmotion.ACTIVITY"
+private const val TRANSITION_ACTION = "expo.modules.hearthmotion.TRANSITION"
 private const val REQUEST_CODE = 8021
+private const val TRANSITION_REQUEST_CODE = 8022
 private const val DETECTION_INTERVAL_MS = 30_000L
 private const val PREFS = "expo.modules.hearthmotion"
 private const val KEY_ASKED = "activityRecognitionAsked"
@@ -117,6 +122,7 @@ private const val MAX_PENDING_SAMPLES = 2_000
 class HearthMotionModule : Module() {
   private var receiver: BroadcastReceiver? = null
   private var pendingIntent: PendingIntent? = null
+  private var transitionIntent: PendingIntent? = null
 
   private var sensors: SensorManager? = null
   /** Read by the flush on the main looper, cleared by whichever thread stops us. */
@@ -224,7 +230,21 @@ class HearthMotionModule : Module() {
     val listener =
       object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) {
-          val result = intent?.let(ActivityRecognitionResult::extractResult) ?: return
+          intent ?: return
+          // A transition is Play Services saying the activity changed, and
+          // delivering it is one of the moments Android lets the app start a
+          // foreground service from the background. The sampled result is
+          // the same verdict on a schedule, which is what the ninety second
+          // stillness check counts.
+          if (ActivityTransitionResult.hasResult(intent)) {
+            val last = ActivityTransitionResult.extractResult(intent)?.transitionEvents?.lastOrNull() ?: return
+            sendEvent(
+              "onMotionChange",
+              mapOf("activity" to activityName(last.activityType), "confidence" to 100),
+            )
+            return
+          }
+          val result = ActivityRecognitionResult.extractResult(intent) ?: return
           val best = result.mostProbableActivity
           sendEvent(
             "onMotionChange",
@@ -235,7 +255,10 @@ class HearthMotionModule : Module() {
     ContextCompat.registerReceiver(
       context,
       listener,
-      IntentFilter(ACTION),
+      IntentFilter().apply {
+        addAction(ACTION)
+        addAction(TRANSITION_ACTION)
+      },
       ContextCompat.RECEIVER_NOT_EXPORTED,
     )
     receiver = listener
@@ -252,17 +275,46 @@ class HearthMotionModule : Module() {
         flags,
       )
     pendingIntent = pending
+    val client = ActivityRecognition.getClient(context)
+    client.requestActivityUpdates(DETECTION_INTERVAL_MS, pending)
 
-    ActivityRecognition.getClient(context).requestActivityUpdates(DETECTION_INTERVAL_MS, pending)
+    val transitions =
+      PendingIntent.getBroadcast(
+        context,
+        TRANSITION_REQUEST_CODE,
+        Intent(TRANSITION_ACTION).setPackage(context.packageName),
+        flags,
+      )
+    transitionIntent = transitions
+    val entering =
+      listOf(
+        DetectedActivity.IN_VEHICLE,
+        DetectedActivity.ON_BICYCLE,
+        DetectedActivity.RUNNING,
+        DetectedActivity.WALKING,
+        DetectedActivity.STILL,
+      ).map { type ->
+        ActivityTransition.Builder()
+          .setActivityType(type)
+          .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
+          .build()
+      }
+    client.requestActivityTransitionUpdates(ActivityTransitionRequest(entering), transitions)
   }
 
   /** Safe to call when nothing is running, which is the state it wants anyway. */
   private fun stopUpdates() {
+    val client = ActivityRecognition.getClient(context)
     pendingIntent?.let { intent ->
-      runCatching { ActivityRecognition.getClient(context).removeActivityUpdates(intent) }
+      runCatching { client.removeActivityUpdates(intent) }
       intent.cancel()
     }
     pendingIntent = null
+    transitionIntent?.let { intent ->
+      runCatching { client.removeActivityTransitionUpdates(intent) }
+      intent.cancel()
+    }
+    transitionIntent = null
     receiver?.let { registered -> runCatching { context.unregisterReceiver(registered) } }
     receiver = null
   }

@@ -11,6 +11,9 @@ export interface MotionChangeEvent {
 
 export type MotionPermission = "granted" | "denied" | "undetermined"
 
+/** iOS Background App Refresh, as UIApplication reports it. */
+export type BackgroundRefreshStatus = "available" | "denied" | "restricted" | "unknown"
+
 /** One accelerometer reading, carrying whatever the slower sensors last said. */
 export interface SensorSample {
   /** Milliseconds since epoch, taken from the sensor's own clock rather than delivery. */
@@ -45,6 +48,8 @@ declare class HearthMotionModule extends NativeModule<{
    */
   startSensorsAsync(): Promise<boolean>
   stopSensorsAsync(): Promise<void>
+  /** iOS only. Android rejects. */
+  getBackgroundRefreshStatusAsync(): Promise<BackgroundRefreshStatus>
 }
 
 export default requireNativeModule<HearthMotionModule>("HearthMotion")

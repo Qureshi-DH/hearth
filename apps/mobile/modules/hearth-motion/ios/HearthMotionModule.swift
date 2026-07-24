@@ -1,5 +1,6 @@
 import CoreMotion
 import ExpoModulesCore
+import UIKit
 
 /**
  Slow enough that a drive costs a handful of bridge crossings a second rather
@@ -26,6 +27,14 @@ private let kilopascalsToHectopascals = 10.0
 private let maxPendingSamples = 2_000
 
 /**
+ Core Motion reports an activity when it changes and then says nothing while
+ it holds, so "still for ninety seconds" never got the second reading the JS
+ side waits for. Android's classifier samples on a schedule, and this timer
+ gives iOS the same shape: the last verdict again, at the same cadence.
+ */
+private let activityRepeatInterval: TimeInterval = 30
+
+/**
  Core Motion already classifies movement for the system, so reading its answer
  costs far less than waking the GPS to infer the same thing from position.
 
@@ -37,6 +46,8 @@ private let maxPendingSamples = 2_000
 public class HearthMotionModule: Module {
   private let manager = CMMotionActivityManager()
   private var running = false
+  private var lastActivity: [String: Any]?
+  private var activityTimer: DispatchSourceTimer?
 
   private let motion = CMMotionManager()
   private let altimeter = CMAltimeter()
@@ -100,20 +111,44 @@ public class HearthMotionModule: Module {
       self.running = true
       self.manager.startActivityUpdates(to: OperationQueue.main) { [weak self] activity in
         guard let self, let activity else { return }
-        self.sendEvent(
-          "onMotionChange",
-          [
-            "activity": Self.name(for: activity),
-            "confidence": Self.confidence(for: activity.confidence),
-          ]
-        )
+        let verdict: [String: Any] = [
+          "activity": Self.name(for: activity),
+          "confidence": Self.confidence(for: activity.confidence),
+        ]
+        self.lastActivity = verdict
+        self.sendEvent("onMotionChange", verdict)
       }
+      let timer = DispatchSource.makeTimerSource(queue: .main)
+      timer.schedule(deadline: .now() + activityRepeatInterval, repeating: activityRepeatInterval)
+      timer.setEventHandler { [weak self] in
+        guard let self, let verdict = self.lastActivity else { return }
+        self.sendEvent("onMotionChange", verdict)
+      }
+      timer.resume()
+      self.activityTimer = timer
     }
 
     AsyncFunction("stopUpdatesAsync") {
       guard self.running else { return }
       self.manager.stopActivityUpdates()
+      self.activityTimer?.cancel()
+      self.activityTimer = nil
+      self.lastActivity = nil
       self.running = false
+    }
+
+    // Background App Refresh, read from the only place that knows: nothing
+    // in expo reads this switch, and the task scheduler's status merely says
+    // whether the build can schedule at all.
+    AsyncFunction("getBackgroundRefreshStatusAsync") { (promise: Promise) in
+      DispatchQueue.main.async {
+        switch UIApplication.shared.backgroundRefreshStatus {
+        case .available: promise.resolve("available")
+        case .denied: promise.resolve("denied")
+        case .restricted: promise.resolve("restricted")
+        @unknown default: promise.resolve("unknown")
+        }
+      }
     }
 
     AsyncFunction("startSensorsAsync") { () -> Bool in
@@ -126,6 +161,8 @@ public class HearthMotionModule: Module {
 
     OnDestroy {
       if self.running { self.manager.stopActivityUpdates() }
+      self.activityTimer?.cancel()
+      self.activityTimer = nil
       self.stopSensors()
     }
   }

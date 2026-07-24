@@ -1,7 +1,72 @@
+diff --git a/android/src/main/java/expo/modules/location/LocationHelpers.kt b/android/src/main/java/expo/modules/location/LocationHelpers.kt
+index 62caaba6db718db7c72b5817fb43116023081c32..551d7fb37c7c9c6916672e366ca1b120c2c8d7e9 100644
+--- a/android/src/main/java/expo/modules/location/LocationHelpers.kt
++++ b/android/src/main/java/expo/modules/location/LocationHelpers.kt
+@@ -199,3 +199,20 @@ class LocationHelpers {
+ object AppForegroundedSingleton {
+   var isForegrounded = false
+ }
++
++/**
++ * Hearth: what became of the foreground service the location task asked for.
++ * Android 12 refuses a start from the background except at a few moments
++ * (a geofence exit, an activity transition, a high priority push, an app
++ * exempt from battery optimisation among them), and the refusal used to be
++ * either thrown before the request was registered or invisible to JS. The
++ * consumer records the outcome here and the module hands it to JS, so the app
++ * can keep its fence armed and try again at the next allowed moment.
++ *
++ * "none": no service wanted or it has been stopped. "starting": the start was
++ * accepted and the bind is in flight. "running": in the foreground with its
++ * notification. "refused": Android did not allow the start.
++ */
++object ForegroundServiceState {
++  @Volatile var status = "none"
++}
+diff --git a/android/src/main/java/expo/modules/location/LocationModule.kt b/android/src/main/java/expo/modules/location/LocationModule.kt
+index 523d08f2c9421b642274cfdeb2c8b18ced00d8dc..b5fe5bd5d78d39437173e348370efdfc5a9028e9 100644
+--- a/android/src/main/java/expo/modules/location/LocationModule.kt
++++ b/android/src/main/java/expo/modules/location/LocationModule.kt
+@@ -254,9 +254,10 @@ class LocationModule : Module(), LifecycleEventListener, SensorEventListener, Ac
+       if (!shouldUseForegroundService && isMissingBackgroundPermissions()) {
+         throw LocationBackgroundUnauthorizedException()
+       }
+-      if (!AppForegroundedSingleton.isForegrounded && options.foregroundService != null) {
+-        throw ForegroundServiceStartNotAllowedException()
+-      }
++      // Hearth: no refusal here on the app being in the background. Android
++      // allows the start at several background moments, the consumer makes
++      // the attempt and records the outcome, and the location request is
++      // registered either way. See ForegroundServiceState.
+ 
+       if (!hasForegroundServicePermissions()) {
+         throw ForegroundServicePermissionsException()
+@@ -271,6 +272,12 @@ class LocationModule : Module(), LifecycleEventListener, SensorEventListener, Ac
+       return@AsyncFunction
+     }
+ 
++    // Hearth: whether the foreground service behind the location task is up,
++    // was refused by Android, or is not wanted. See ForegroundServiceState.
++    AsyncFunction("getForegroundServiceStatusAsync") {
++      return@AsyncFunction ForegroundServiceState.status
++    }
++
+     AsyncFunction("hasStartedLocationUpdatesAsync") { taskName: String ->
+       return@AsyncFunction mTaskManager.taskHasConsumerOfClass(taskName, LocationTaskConsumer::class.java)
+     }
 diff --git a/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt b/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
-index b4f6c06ab28e48d377e7ae7e63f334792b2c9633..d8ad5bbae83f973a318edc42915faecc6eea0d3b 100644
+index b4f6c06ab28e48d377e7ae7e63f334792b2c9633..d41931fbcfb9ac4b62511ce1f2c9202b2127d806 100644
 --- a/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
 +++ b/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
+@@ -25,7 +25,7 @@ import expo.modules.interfaces.taskManager.TaskConsumerInterface
+ import expo.modules.interfaces.taskManager.TaskExecutionCallback
+ import expo.modules.interfaces.taskManager.TaskInterface
+ import expo.modules.interfaces.taskManager.TaskManagerUtilsInterface
+-import expo.modules.location.AppForegroundedSingleton
++import expo.modules.location.ForegroundServiceState
+ import expo.modules.location.LocationHelpers
+ import expo.modules.location.records.LocationOptions
+ import expo.modules.location.records.LocationResponse
 @@ -178,10 +178,11 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
        return
@@ -10,15 +75,23 @@ index b4f6c06ab28e48d377e7ae7e63f334792b2c9633..d8ad5bbae83f973a318edc42915faecc
 -      Log.w(TAG, "Foreground location task cannot be started while the app is in the background!")
 -      return
 -    }
-+    // Hearth: the service is also started from the background, on a geofence
-+    // exit or an activity transition, which Android 12+ exempts from the
-+    // background start restriction. The attempt below is guarded instead of
-+    // refused up front, so a start that Android does not allow degrades to
-+    // throttled background updates rather than a crash.
++    // Hearth: the service is also started from the background, which Android
++    // 12 allows at a few moments (a geofence exit, an activity transition, a
++    // high priority push, an app exempt from battery optimisation) and refuses
++    // otherwise. The attempt is made rather than refused up front, and its
++    // outcome goes to ForegroundServiceState so the app can act on it.
      val task = mTask ?: run {
        Log.w(TAG, "Location task is null")
        return
-@@ -211,7 +212,15 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
+@@ -197,6 +198,7 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
+ 
+     // Service is not running and the user don't want to start foreground service.
+     if (!useForegroundService) {
++      ForegroundServiceState.status = "none"
+       return
+     }
+ 
+@@ -211,7 +213,16 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
        extras.putString("taskName", task.name)
        extras.putBoolean("killService", serviceOptions.getBoolean("killServiceOnDestroy", false))
        serviceIntent.putExtras(extras)
@@ -26,12 +99,73 @@ index b4f6c06ab28e48d377e7ae7e63f334792b2c9633..d8ad5bbae83f973a318edc42915faecc
 +      try {
 +        context.startForegroundService(serviceIntent)
 +      } catch (e: Exception) {
-+        // ForegroundServiceStartNotAllowedException on Android 12+ when no
-+        // exemption applies. The location request still stands, only without
-+        // the service behind it.
-+        Log.w(TAG, "Foreground location service could not be started from the background: ${e.message}")
++        if (!isStartNotAllowed(e)) throw e
++        // The location request behind it stands, only without the service.
++        Log.w(TAG, "Foreground location service start refused from the background: ${e.message}")
++        ForegroundServiceState.status = "refused"
 +        return
 +      }
++      ForegroundServiceState.status = "starting"
        context.bindService(
          serviceIntent,
          object : ServiceConnection {
+@@ -219,25 +230,57 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
+             mService = (service as? ServiceBinder)?.service
+             mService?.let {
+               it.setParentContext(context)
+-              it.startForeground(serviceOptions)
++              // startForeground has to follow a startForegroundService or the
++              // service is killed, so it runs even when the task has since
++              // been registered without the option, and the stop follows.
++              try {
++                it.startForeground(serviceOptions)
++                ForegroundServiceState.status = "running"
++              } catch (e: Exception) {
++                if (!isStartNotAllowed(e)) throw e
++                Log.w(TAG, "Foreground location service refused the foreground: ${e.message}")
++                ForegroundServiceState.status = "refused"
++              }
++              val stillWanted = mTask?.let { current -> shouldUseForegroundService(current.options) } ?: false
++              if (!stillWanted) stopForegroundService()
+             }
+           }
+ 
+           override fun onServiceDisconnected(name: ComponentName) {
+             mService?.stop()
+             mService = null
++            ForegroundServiceState.status = "none"
+           }
+         },
+         Context.BIND_AUTO_CREATE
+       )
+     } else {
+       // Restart the service with new service options.
+-      mService?.startForeground(options.getArguments(FOREGROUND_SERVICE_KEY).toBundle())
++      // Hearth: the service stays bound after a stop, so this is also how it
++      // comes back, and from the background Android may refuse that just as
++      // it may refuse a fresh start.
++      try {
++        mService?.startForeground(options.getArguments(FOREGROUND_SERVICE_KEY).toBundle())
++        ForegroundServiceState.status = "running"
++      } catch (e: Exception) {
++        if (!isStartNotAllowed(e)) throw e
++        Log.w(TAG, "Foreground location service could not be brought back from the background: ${e.message}")
++        ForegroundServiceState.status = "refused"
++      }
+     }
+   }
+ 
++  /**
++   * Hearth: only Android's refusal of a background start is expected and
++   * survivable. A missing permission or service type is a build problem and
++   * still surfaces as the exception it always was.
++   */
++  private fun isStartNotAllowed(e: Exception): Boolean =
++    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && e is android.app.ForegroundServiceStartNotAllowedException
++
+   private fun stopForegroundService() {
+     mService?.stop()
++    ForegroundServiceState.status = "none"
+   }
+ 
+   /**
