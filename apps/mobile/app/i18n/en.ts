@@ -92,7 +92,7 @@ const en = {
       "Android pauses background apps to save power. Exempt Hearth so location keeps flowing when the screen is off.",
     refreshTitle: "Background App Refresh",
     refreshBody:
-      "Keep it on for Hearth (Settings → General → Background App Refresh) so the offline queue can upload.",
+      "Keep it on for Hearth (Settings → General → Background App Refresh). It is what lets the server wake the app for a fix when the phone has been quiet, and lets the offline queue upload.",
     notRequested:
       "Your location only ever goes to the server your family runs. There is no Hearth account, no analytics and no ad network in this app. It never asks for your contacts, microphone, Bluetooth or advertising ID, and a profile picture goes through the system picker so it only ever sees the one image you choose.",
     allow: "Allow",
@@ -154,6 +154,7 @@ const en = {
     approximate: "Approximate location",
     noLocation: "No location yet",
     atPlace: "At {{place}}",
+    near: "Near {{where}}",
     recenter: "Recenter",
     checkIn: "Check in",
     sos: "SOS",
@@ -372,6 +373,8 @@ const en = {
     light: "Light",
     dark: "Dark",
     haptics: "Haptic feedback",
+    streetNames: "Street names",
+    streetNamesBody: "Under members and trips. Uses your phone's geocoder.",
     sharing: "Location sharing",
     devices: "Signed-in devices",
     thisDevice: "This device",

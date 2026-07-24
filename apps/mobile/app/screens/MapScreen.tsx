@@ -46,6 +46,7 @@ import { useActiveSos, useMembers, usePresence } from "@/hooks/queries"
 import { useActiveCircle } from "@/hooks/useActiveCircle"
 import { translate } from "@/i18n/translate"
 import type { MainTabScreenProps } from "@/navigators/navigationTypes"
+import { endpoints } from "@/services/api"
 import { currentPermission, flush } from "@/services/location/tracker"
 import { useAuthStore } from "@/stores/auth"
 import { useSettingsStore } from "@/stores/settings"
@@ -215,10 +216,29 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
     )
   }, [])
 
-  const presenceByUser = useMemo(
-    () => new Map((presence ?? []).map((entry) => [entry.userId, entry])),
-    [presence],
-  )
+  // The phone's own latest fix beats the server's copy of it: the dot moves
+  // the moment the fix lands rather than after the upload and the frame back.
+  const myFix = useTrackingStore((state) => state.lastFix)
+  const presenceByUser = useMemo(() => {
+    const byUser = new Map((presence ?? []).map((entry) => [entry.userId, entry]))
+    const mine = me ? byUser.get(me.id) : undefined
+    if (
+      mine &&
+      myFix &&
+      mine.sharingState !== "paused" &&
+      (!mine.recordedAt || Date.parse(myFix.recordedAt) > Date.parse(mine.recordedAt))
+    ) {
+      byUser.set(me!.id, {
+        ...mine,
+        lat: myFix.lat,
+        lon: myFix.lon,
+        recordedAt: myFix.recordedAt,
+        speedMps: myFix.speedMps ?? mine.speedMps,
+        stale: false,
+      })
+    }
+    return byUser
+  }, [presence, me, myFix])
   const located = useMemo(
     () => (presence ?? []).filter((entry) => entry.lat != null && entry.lon != null),
     [presence],
@@ -249,6 +269,24 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
       void currentPermission().then((level) => useTrackingStore.getState().setPermission(level))
       void flush()
     }, []),
+  )
+
+  // Opening the map is the moment to ask the quiet phones for a fix. The
+  // server decides who is quiet and how often any one phone may be asked;
+  // this only says somebody is looking, once per look and again when the
+  // app comes back to the front with the map still up.
+  useFocusEffect(
+    useCallback(() => {
+      if (!circleId) return
+      const ask = () => {
+        endpoints.locations.refresh(circleId).catch(() => undefined)
+      }
+      ask()
+      const subscription = AppState.addEventListener("change", (state) => {
+        if (state === "active") ask()
+      })
+      return () => subscription.remove()
+    }, [circleId]),
   )
 
   useFocusEffect(

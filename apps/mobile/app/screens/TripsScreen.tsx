@@ -7,12 +7,13 @@ import { EmptyState } from "@/components/EmptyState"
 import { Screen } from "@/components/Screen"
 import { Text } from "@/components/Text"
 import { useTrips } from "@/hooks/queries"
+import { useNearby } from "@/hooks/useNearby"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { useSettingsStore } from "@/stores/settings"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { formatDistance, formatSpeed } from "@/utils/format"
+import { formatDistance, formatSpeed, TRIP_SPEED_MIN_MPS } from "@/utils/format"
 import { formatDuration, formatWhen } from "@/utils/time"
 import { useHeader } from "@/utils/useHeader"
 
@@ -57,6 +58,33 @@ export const TripsScreen: FC<AppStackScreenProps<"Trips">> = ({ navigation, rout
   )
 }
 
+/**
+ * "Home → Near Queen Street". A place the family named, else the street
+ * the phone's geocoder knows, else the honest blank.
+ */
+export function tripEnds(
+  trip: Pick<Trip, "startPlaceName" | "endPlaceName">,
+  startNearby: string | null,
+  endNearby: string | null,
+): string {
+  const end = (place: string | null, nearby: string | null) =>
+    place ?? (nearby ? translate("map:near", { where: nearby }) : translate("trips:unknownPlace"))
+  return `${end(trip.startPlaceName, startNearby)} → ${end(trip.endPlaceName, endNearby)}`
+}
+
+/** The streets at a trip's two ends, asked for only where no place names them. */
+export function useTripEnds(trip: Trip) {
+  const startNearby = useNearby(
+    trip.startPlaceName ? null : trip.startLat,
+    trip.startPlaceName ? null : trip.startLon,
+  )
+  const endNearby = useNearby(
+    trip.endPlaceName ? null : trip.endLat,
+    trip.endPlaceName ? null : trip.endLon,
+  )
+  return { startNearby, endNearby }
+}
+
 export function TripCard({
   trip,
   units,
@@ -67,6 +95,7 @@ export function TripCard({
   onPress: () => void
 }) {
   const { theme } = useAppTheme()
+  const { startNearby, endNearby } = useTripEnds(trip)
   return (
     <Pressable
       onPress={onPress}
@@ -81,8 +110,7 @@ export function TripCard({
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
         <Ionicons name="car-outline" size={18} color={theme.colors.tint} />
         <Text weight="semiBold" size="sm" style={{ flex: 1 }} numberOfLines={1}>
-          {trip.startPlaceName ?? translate("trips:unknownPlace")} →{" "}
-          {trip.endPlaceName ?? translate("trips:unknownPlace")}
+          {tripEnds(trip, startNearby, endNearby)}
         </Text>
         <Text size="xxs" style={{ color: theme.colors.textFaint }}>
           {formatWhen(trip.startedAt)}
@@ -96,7 +124,7 @@ export function TripCard({
         <Stat label={translate("trips:duration")} value={formatDuration(trip.durationSeconds)} />
         <Stat
           label={translate("trips:topSpeed")}
-          value={formatSpeed(trip.maxSpeedMps, units) ?? "-"}
+          value={formatSpeed(trip.maxSpeedMps, units, TRIP_SPEED_MIN_MPS) ?? "-"}
         />
       </View>
     </Pressable>

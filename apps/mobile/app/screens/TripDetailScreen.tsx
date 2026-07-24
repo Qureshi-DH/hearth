@@ -7,12 +7,14 @@ import { Screen } from "@/components/Screen"
 import { StatTile } from "@/components/StatTile"
 import { Text } from "@/components/Text"
 import { useTrip } from "@/hooks/queries"
+import { useNearby } from "@/hooks/useNearby"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
+import { tripEnds } from "@/screens/TripsScreen"
 import { useSettingsStore } from "@/stores/settings"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { formatDistance, formatSpeed } from "@/utils/format"
+import { formatDistance, formatSpeed, TRIP_SPEED_MIN_MPS } from "@/utils/format"
 import { fitBoundsFor } from "@/utils/map"
 import { formatDuration, formatWhen } from "@/utils/time"
 import { useHeader } from "@/utils/useHeader"
@@ -23,6 +25,14 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
   const units = useSettingsStore((state) => state.units)
   const { data: trip } = useTrip(tripId)
   const cameraRef = useRef<CameraRef>(null)
+  const startNearby = useNearby(
+    trip && !trip.startPlaceName ? trip.startLat : null,
+    trip && !trip.startPlaceName ? trip.startLon : null,
+  )
+  const endNearby = useNearby(
+    trip && !trip.endPlaceName ? trip.endLat : null,
+    trip && !trip.endPlaceName ? trip.endLon : null,
+  )
 
   useHeader({ titleTx: "trips:title", leftIcon: "back", onLeftPress: () => navigation.goBack() }, [
     navigation,
@@ -76,10 +86,7 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
       </View>
 
       <View style={{ paddingHorizontal: theme.spacing.md, paddingTop: theme.spacing.md, gap: 4 }}>
-        <Text preset="subheading">
-          {trip.startPlaceName ?? translate("trips:unknownPlace")} →{" "}
-          {trip.endPlaceName ?? translate("trips:unknownPlace")}
-        </Text>
+        <Text preset="subheading">{tripEnds(trip, startNearby, endNearby)}</Text>
         <Text size="xs" style={{ color: theme.colors.textDim }}>
           {formatWhen(trip.startedAt)} to {formatWhen(trip.endedAt)}
         </Text>
@@ -103,12 +110,12 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
         <StatTile
           icon="speedometer-outline"
           label={translate("trips:topSpeed")}
-          value={formatSpeed(trip.maxSpeedMps, units) ?? "-"}
+          value={formatSpeed(trip.maxSpeedMps, units, TRIP_SPEED_MIN_MPS) ?? "-"}
         />
         <StatTile
           icon="pulse-outline"
           label={translate("trips:avgSpeed")}
-          value={formatSpeed(trip.avgSpeedMps, units) ?? "-"}
+          value={formatSpeed(trip.avgSpeedMps, units, TRIP_SPEED_MIN_MPS) ?? "-"}
         />
       </View>
     </Screen>

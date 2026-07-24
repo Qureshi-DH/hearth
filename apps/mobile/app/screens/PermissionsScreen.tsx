@@ -258,8 +258,17 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
                 icon: "refresh-circle",
                 title: translate("permissions:refreshTitle"),
                 body: translate("permissions:refreshBody"),
-                state: "info" as ItemState,
-                action: { label: translate("permissions:openSettings"), onPress: openAppSettings },
+                // Read from UIApplication through the native module. "n/a" is
+                // a build without it, which is left as something to check.
+                state: (snapshot.backgroundRefresh === "available"
+                  ? "done"
+                  : snapshot.backgroundRefresh === "n/a"
+                    ? "info"
+                    : "blocked") as ItemState,
+                action:
+                  snapshot.backgroundRefresh === "available"
+                    ? undefined
+                    : { label: translate("permissions:openSettings"), onPress: openAppSettings },
               },
             ]) as Item[]),
       ]

@@ -13,6 +13,7 @@ let mockMotion: "granted" | "denied" | "undetermined" | "unavailable" = "undeter
 let mockMotionGate: Promise<void> | null = null
 
 let mockBattery: "exempt" | "optimized" | "n/a" = "n/a"
+let mockRefresh: "available" | "restricted" | "denied" | "n/a" = "available"
 
 jest.mock("../services/permissions", () => ({
   getPermissionSnapshot: jest.fn(async () => ({
@@ -21,7 +22,7 @@ jest.mock("../services/permissions", () => ({
     preciseLocation: true,
     notifications: "granted",
     batteryOptimization: mockBattery,
-    backgroundRefresh: "available",
+    backgroundRefresh: mockRefresh,
   })),
   openAppSettings: jest.fn(async () => {}),
   openLocationSettings: jest.fn(async () => {}),
@@ -108,6 +109,7 @@ describe("PermissionsScreen", () => {
     mockMotion = "undetermined"
     mockMotionGate = null
     mockBattery = "n/a"
+    mockRefresh = "available"
     useSettingsStore.setState({ incidentDetection: false })
   })
 
@@ -131,6 +133,27 @@ describe("PermissionsScreen", () => {
       // Location and notifications are granted in the mock, so the only Allow
       // left belongs to the motion row.
       expect(second.getAllByText(/permissions:allow/)).toHaveLength(1)
+    } finally {
+      Platform.OS = os
+    }
+  })
+
+  it("shows Background App Refresh as what the OS says, not always Check", async () => {
+    const { Platform } = require("react-native")
+    const os = Platform.OS
+    Platform.OS = "ios"
+    try {
+      const on = await renderScreen()
+      expect(on.getByText("permissions:refreshTitle")).toBeTruthy()
+      // The one Check left is the Wi-Fi row, which nothing can read.
+      expect(on.getAllByText("permissions:stateInfo")).toHaveLength(1)
+      expect(on.queryByText("permissions:stateBlocked")).toBeNull()
+      on.unmount()
+
+      mockRefresh = "restricted"
+      const off = await renderScreen()
+      expect(off.getByText("permissions:stateBlocked")).toBeTruthy()
+      expect(off.getAllByText(/permissions:openSettings/).length).toBeGreaterThan(0)
     } finally {
       Platform.OS = os
     }

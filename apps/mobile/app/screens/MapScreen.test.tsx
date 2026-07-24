@@ -149,11 +149,18 @@ jest.mock("@maplibre/maplibre-react-native", () => {
       children,
       onPress,
       offset,
+      lngLat,
     }: {
       children?: unknown
       onPress?: () => void
       offset?: [number, number]
-    }) => react.createElement(rn.Pressable, { testID: "native-marker", onPress, offset }, children),
+      lngLat?: [number, number]
+    }) =>
+      react.createElement(
+        rn.Pressable,
+        { testID: "native-marker", onPress, offset, lngLat },
+        children,
+      ),
   }
 })
 jest.mock("@gorhom/bottom-sheet", () => {
@@ -243,13 +250,19 @@ jest.mock("../stores/auth", () => ({
 jest.mock("../stores/settings", () => ({
   useSettingsStore: (selector: (state: unknown) => unknown) => selector({ units: "metric" }),
 }))
+let mockLastFix: { lat: number; lon: number; recordedAt: string; speedMps: number | null } | null =
+  null
 jest.mock("../stores/tracking", () => {
   const useTrackingStore = (selector: (state: unknown) => unknown) =>
-    selector({ permission: "always", servicesEnabled: true, enabled: true })
+    selector({ permission: "always", servicesEnabled: true, enabled: true, lastFix: mockLastFix })
   // The focus effect reads the store outside React to record the permission.
   useTrackingStore.getState = () => ({ setPermission: () => {} })
   return { useTrackingStore }
 })
+const mockRefresh = jest.fn(async (_circleId: string) => ({ asked: 0 }))
+jest.mock("../services/api", () => ({
+  endpoints: { locations: { refresh: (circleId: string) => mockRefresh(circleId) } },
+}))
 jest.mock("../services/location/tracker", () => ({
   currentPermission: jest.fn(async () => "always"),
   flush: jest.fn(async () => {}),
@@ -734,5 +747,53 @@ describe("people at the same place", () => {
       utils.getByTestId("member-marker-ben").findAllByProps({ testID: "member-marker-halo" })
         .length,
     ).toBeGreaterThan(0)
+  })
+})
+
+describe("freshness", () => {
+  beforeEach(() => {
+    mockPresence = mockMembers.map((member, index) => presenceFor(member.userId, 51 + index))
+    mockFocused = true
+    mockLastFix = null
+    mockRefresh.mockClear()
+    ;(AppState.addEventListener as jest.Mock).mockClear()
+  })
+
+  it("asks the server for the quiet phones' fixes when the map opens, and again on return", async () => {
+    await renderMap()
+    expect(mockRefresh).toHaveBeenCalledTimes(1)
+    expect(mockRefresh).toHaveBeenCalledWith("circle-1")
+
+    const listeners = (AppState.addEventListener as jest.Mock).mock.calls.map(
+      ([, listener]) => listener as (state: string) => void,
+    )
+    act(() => listeners.forEach((listener) => listener("background")))
+    act(() => listeners.forEach((listener) => listener("active")))
+    expect(mockRefresh).toHaveBeenCalledTimes(2)
+  })
+
+  it("draws the phone's own newest fix before the server has it", async () => {
+    // The server's copy of ana is a minute old; the phone has one from now,
+    // a street away.
+    mockPresence = mockMembers.map((member, index) => ({
+      ...presenceFor(member.userId, 51 + index),
+      recordedAt: new Date(Date.now() - 60_000).toISOString(),
+    }))
+    mockLastFix = { lat: 51.01, lon: -0.1, recordedAt: new Date().toISOString(), speedMps: 3 }
+    const { getAllByTestId } = await renderMap()
+    const [ana] = getAllByTestId("native-marker")
+    expect(ana!.props.lngLat).toEqual([-0.1, 51.01])
+  })
+
+  it("keeps the server's word when the phone's fix is older", async () => {
+    mockLastFix = {
+      lat: 51.01,
+      lon: -0.1,
+      recordedAt: new Date(Date.now() - 120_000).toISOString(),
+      speedMps: null,
+    }
+    const { getAllByTestId } = await renderMap()
+    const [ana] = getAllByTestId("native-marker")
+    expect(ana!.props.lngLat).toEqual([-0.1, 51])
   })
 })

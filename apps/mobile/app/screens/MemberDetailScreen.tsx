@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type FC } from "react"
-import { View, type ViewStyle } from "react-native"
+import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react"
+import { AppState, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { QUICK_MESSAGES, type QuickMessageKey } from "@hearth/shared"
+import { useFocusEffect } from "@react-navigation/native"
 
 import { Avatar } from "@/components/Avatar"
 import { BatteryPill } from "@/components/BatteryPill"
 import { HearthMap, PlaceLayers, TrailLayer } from "@/components/HearthMap"
 import { ListGroup, ListRow } from "@/components/ListRow"
 import { MemberMarker, MEMBER_MARKER_LABEL_HEIGHT } from "@/components/MemberMarker"
-import { ringFor, statusLine } from "@/components/MemberRow"
+import { ringFor, statusLine, useMemberNearby } from "@/components/MemberRow"
 import { OptionSheet } from "@/components/OptionSheet"
 import { Pill } from "@/components/Pill"
 import { PromptDialog } from "@/components/PromptDialog"
@@ -31,6 +32,7 @@ import {
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { TripCard } from "@/screens/TripsScreen"
+import { endpoints } from "@/services/api"
 import { alert } from "@/stores/alert"
 import { useAuthStore } from "@/stores/auth"
 import { useSettingsStore } from "@/stores/settings"
@@ -44,6 +46,13 @@ import { fitBoundsFor } from "@/utils/map"
 import { relativeTime } from "@/utils/time"
 import { simplifyTrail } from "@/utils/trail"
 import { useHeader } from "@/utils/useHeader"
+
+/**
+ * How often an open page reminds the server somebody is looking. The server
+ * only sends a fresh push once the phone's window is nearly out, so this is
+ * cheap; it is the window that decides the battery.
+ */
+const WATCH_HOLD_MS = 60_000
 
 export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   navigation,
@@ -65,6 +74,24 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
 
   const isSelf = userId === me?.id
   const entry = presence?.find((item) => item.userId === userId)
+  const nearby = useMemberNearby(entry)
+
+  // Having this page open is the one time the family wants live movement,
+  // so the phone is asked to go live for a while and asked again each minute
+  // to stay so. The server spends the pushes; this only says who is looking.
+  const watchable = !isSelf && entry?.sharingState === "precise" && !entry.approximate
+  useFocusEffect(
+    useCallback(() => {
+      if (!watchable) return
+      const ask = () => {
+        if (AppState.currentState !== "active") return
+        endpoints.locations.watch(circleId, userId).catch(() => undefined)
+      }
+      ask()
+      const timer = setInterval(ask, WATCH_HOLD_MS)
+      return () => clearInterval(timer)
+    }, [circleId, userId, watchable]),
+  )
   const canSeeHistory =
     entry?.sharingState === "precise" &&
     !entry.approximate &&
@@ -207,7 +234,7 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
               style={{ color: theme.colors.textDim, flexShrink: 1 }}
               numberOfLines={2}
             >
-              {statusLine(entry)}
+              {statusLine(entry, nearby)}
               {speed ? ` · ${speed}` : ""}
             </Text>
           </View>

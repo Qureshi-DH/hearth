@@ -50,6 +50,13 @@ jest.mock("../app/i18n/index.ts", () => ({
   },
 }))
 
+// React Native's own mock leaves currentState a bare jest.fn, which reads as
+// "not active" to anything that checks it. An app under test is open unless a
+// test says otherwise, and the tracker's background clock arms real timers
+// for a phone it believes is away.
+;(require("react-native") as { AppState: { currentState: string } }).AppState.currentState =
+  "active"
+
 declare const tron // eslint-disable-line @typescript-eslint/no-unused-vars
 
 declare global {

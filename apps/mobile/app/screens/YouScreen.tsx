@@ -60,6 +60,8 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
   const units = useSettingsStore((state) => state.units)
   const setUnits = useSettingsStore((state) => state.setUnits)
   const hapticsEnabled = useSettingsStore((state) => state.hapticsEnabled)
+  const streetNames = useSettingsStore((state) => state.streetNames)
+  const setStreetNames = useSettingsStore((state) => state.setStreetNames)
   const setHaptics = useSettingsStore((state) => state.setHaptics)
   const backgroundActive = useTrackingStore((state) => state.backgroundActive)
   const permission = useTrackingStore((state) => state.permission)
@@ -291,6 +293,13 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
           icon="phone-portrait-outline"
           value={hapticsEnabled}
           onValueChange={setHaptics}
+        />
+        <ListRow
+          tx="settings:streetNames"
+          subtitleTx="settings:streetNamesBody"
+          icon="map-outline"
+          value={streetNames}
+          onValueChange={setStreetNames}
         />
         <ListRow
           tx="settings:imperialUnits"

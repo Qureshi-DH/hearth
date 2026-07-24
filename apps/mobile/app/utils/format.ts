@@ -6,8 +6,21 @@ import {
 
 export type Units = "metric" | "imperial"
 
-export function formatSpeed(mps: number | null | undefined, units: Units): string | null {
-  if (mps == null || !Number.isFinite(mps) || mps < 0.5) return null
+/**
+ * A live speed only means something on wheels. "5 km/h" under somebody at
+ * home is a phone being carried to the kitchen, and nobody wants to read it;
+ * 10 km/h is a bicycle or a car pulling away. A trip's figures are a
+ * different matter: a walk's pace is its pace.
+ */
+export const LIVE_SPEED_MIN_MPS = 10 / 3.6
+export const TRIP_SPEED_MIN_MPS = 0.5
+
+export function formatSpeed(
+  mps: number | null | undefined,
+  units: Units,
+  minMps: number = LIVE_SPEED_MIN_MPS,
+): string | null {
+  if (mps == null || !Number.isFinite(mps) || mps < minMps) return null
   const value = units === "imperial" ? metersPerSecondToMph(mps) : metersPerSecondToKmh(mps)
   return `${Math.round(value)} ${units === "imperial" ? "mph" : "km/h"}`
 }

@@ -7,6 +7,7 @@ import { BatteryPill } from "@/components/BatteryPill"
 import { Pill } from "@/components/Pill"
 import { Text } from "@/components/Text"
 import { translate } from "@/i18n/translate"
+import { useNearby } from "@/hooks/useNearby"
 import { useAppTheme } from "@/theme/context"
 import { activityIconName } from "@/utils/activity"
 import { formatSpeed } from "@/utils/format"
@@ -31,13 +32,28 @@ export function ringFor(presence: MemberPresence | undefined, isSelf: boolean): 
   return "none"
 }
 
-export function statusLine(presence: MemberPresence | undefined): string {
+/**
+ * One line under a name. A place the family named comes first, then the
+ * street the phone's geocoder knows, then only when it was heard from.
+ */
+export function statusLine(presence: MemberPresence | undefined, nearby?: string | null): string {
   if (!presence) return translate("map:noLocation")
   if (presence.sharingState === "paused") return translate("map:paused")
   if (presence.atPlace) return translate("map:atPlace", { place: presence.atPlace.name })
   if (!presence.recordedAt) return translate("map:noLocation")
-  if (presence.stale) return `${translate("map:stale")} · ${relativeTime(presence.recordedAt)}`
-  return translate("map:lastSeen", { time: relativeTime(presence.recordedAt) })
+  const when = presence.stale
+    ? `${translate("map:stale")} · ${relativeTime(presence.recordedAt)}`
+    : translate("map:lastSeen", { time: relativeTime(presence.recordedAt) })
+  if (nearby && !presence.approximate) {
+    return `${translate("map:near", { where: nearby })} · ${relativeTime(presence.recordedAt)}`
+  }
+  return when
+}
+
+/** The street under a member, where there is no named place and they share precisely. */
+export function useMemberNearby(presence: MemberPresence | undefined): string | null {
+  const wanted = presence != null && !presence.atPlace && !presence.approximate
+  return useNearby(wanted ? presence.lat : null, wanted ? presence.lon : null)
 }
 
 export function MemberRow({
@@ -53,6 +69,7 @@ export function MemberRow({
   const name = member.nickname ?? member.user.displayName
   const speed = presence?.approximate ? null : formatSpeed(presence?.speedMps, units)
   const activityIcon = presence?.approximate ? null : activityIconName(presence?.activity)
+  const nearby = useMemberNearby(presence)
 
   return (
     <Pressable
@@ -85,7 +102,7 @@ export function MemberRow({
             <Ionicons name={activityIcon} size={13} color={theme.colors.textDim} />
           ) : null}
           <Text size="xs" numberOfLines={1} style={{ color: theme.colors.textDim, flexShrink: 1 }}>
-            {statusLine(presence)}
+            {statusLine(presence, nearby)}
             {speed ? ` · ${speed}` : ""}
           </Text>
         </View>

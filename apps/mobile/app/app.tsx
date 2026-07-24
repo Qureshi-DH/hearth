@@ -30,8 +30,11 @@ import { useNavigationPersistence } from "./navigators/navigationUtilities"
 // be defined at module scope before the app finishes launching.
 import {
   refreshLocationStatus,
+  reassertService,
   resumeIfEnabled,
+  startBackgroundClock,
   startForegroundHeartbeat,
+  stopBackgroundClock,
   stopForegroundHeartbeat,
 } from "./services/location/tracker"
 import { registerWakeTask, setupChannels } from "./services/notifications"
@@ -117,14 +120,20 @@ export function App() {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         void refreshLocationStatus()
+        // The app open is a moment Android allows the location service to
+        // start, and a journey that began while it was refused is waiting.
+        void reassertService()
+        stopBackgroundClock()
         startForegroundHeartbeat()
       } else {
         stopForegroundHeartbeat()
+        startBackgroundClock()
       }
     })
     return () => {
       subscription.remove()
       stopForegroundHeartbeat()
+      stopBackgroundClock()
     }
   }, [])
 
