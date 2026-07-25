@@ -6,23 +6,93 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-25
+
+The tracker measured against what it is meant to be: a self-hosted family safety app.
+Location is not read all the time. It is read while the phone is moving,
+read closely while somebody is watching, and left alone while the phone sits
+still. Servers must update before phones: the app calls two new routes.
+
+### Added
+
+- Watching. Opening a member's page asks their phone, by silent push, to
+  report at full accuracy every few seconds for ten minutes, and the page
+  keeps asking while it is open. A parked phone answers with one fix. This is
+  the only time the GPS runs on a phone nobody is driving, and the only time
+  a car is drawn moving along a road, which is when somebody is looking.
+  Server: `POST /circles/:id/members/:userId/watch`.
+- Opening the map asks every member's phone that has been quiet for a couple
+  of minutes for one fix, at most once every ten minutes per phone whoever is
+  looking. Server: `POST /circles/:id/locations/refresh`.
+- Street names. Under a member with no named place, and at both ends of a
+  trip, the phone's own geocoder names the street: "Near Queen Street,
+  Bristol" instead of "Unnamed spot". Answers are kept on the phone. Off in
+  Settings for anyone who would rather their phone did not ask a geocoder
+  about the family's whereabouts.
+
 ### Changed
 
-- The Android location notification is one plain line, "Hearth, updating your
-  location", and it only exists while the phone is moving. Parking stops the
-  service and takes the notification with it, and a patched expo-location lets
-  the next journey start the service again from a geofence exit or an activity
-  transition, which stock expo-location refused to do from the background.
-- Members at the same place no longer pile up on one spot. Anyone whose marker
-  would touch another's at the current zoom joins it: the faces stack into one
-  marker with one name pill, "Yusuf & Sami", on the middle of where they are,
-  and they part again as the map zooms in. Each face still answers its own
-  tap.
-- The Android status bar glyph for a Hearth notification is a full size
-  flame. It used to be cut from the launcher icon, whose safe zone padding
-  left it a fraction of the height Android gives a status bar icon.
-- The map no longer draws today's trail under everyone. A member's page still
-  shows it, thinned so a phone wobbling indoors no longer draws a scribble.
+- A parked iPhone runs no location session at all. The fence around where
+  it stopped relaunches the app when it leaves, and the server's silent push
+  is the heartbeat while it sits. That is the only way it shows no location
+  indicator in the Dynamic Island and costs nothing, and it is what a commercial app
+  does. The blue background indicator is off in every tier; the small arrow
+  still shows while location is actually read, as it does for every app.
+- A parked Android phone answers a wake or a nudge with the service up for
+  the length of one fix and down again after, so the fix is not subject to
+  background location limits or Doze and the notification shows for a second
+  or two. Posting a notification for a high priority push is also what keeps
+  the app's pushes at high priority.
+- Opening the app asks for a fix of your own straight away when the last one
+  is older than ten seconds, and your dot moves the moment the fix lands
+  rather than after the upload and the frame back.
+- Arriving somewhere is reported from where the phone actually settled, with
+  one Wi-Fi grade fix the moment the stop is called, rather than whenever the
+  next fix happened along.
+- Trips are journeys. A run that starts inside a place has to leave it, so
+  an afternoon in the garden is no longer filed as a trip, while a walk to a
+  friend's house still is.
+
+### Fixed
+
+- Android never got its location service back after parking. expo-location
+  refuses to register a location task with a foreground service unless the
+  app is in the foreground, which is not where a geofence exit or a
+  classifier verdict finds it, and the refusal failed the whole registration
+  and left the fence torn down. The patched expo-location now makes the
+  attempt, catches only Android's own refusal of a background start, and
+  tells the app what happened. A journey that starts at a moment Android
+  allows (a geofence exit, an activity transition, a high priority push, or
+  any time once the app is exempt from battery optimisation) gets the
+  service; one that starts at any other moment keeps its fence armed and
+  runs on the plain request until the fence exit or the next push brings the
+  service up. expo-location is now built from source on Android so the patch
+  is in the build at all: Expo ships it as a prebuilt library, and the patch
+  in the two previous builds never reached a phone.
+- The motion classifier on Android now also asks for activity transitions,
+  which are the exempt trigger Android names, so a journey the classifier
+  notices can start the service itself.
+- An iPhone put down went silent until it moved far enough for iOS to relaunch
+  the app. iOS was allowed to pause the updates when it judged the phone
+  still, which suspends the app, and a suspended app never called the stop
+  or armed the fence. The updates no longer pause while moving. Core Motion
+  also only reports an activity when it changes, so the ninety second
+  stillness check never got its second reading; the native module now
+  repeats the current verdict every thirty seconds, as Android's classifier
+  does. A clock in the tracker stands behind both, calling the stop after
+  five minutes without a fix, and never while the phone is driving.
+- The end of every journey was held back. Deferred delivery looked like the
+  OS batching for battery and was not: expo holds the fixes in the process,
+  and the ones held were the last of every journey, the fixes that say where
+  the phone stopped. They surfaced on the next delivery, which a parked phone
+  never made, so arrivals were announced and trips filed a quarter of an hour
+  late or not at all. Deferred delivery is gone from every tier.
+- A re-registration of the location request mid drive, from a wake or a
+  policy change, dropped the GPS tier for the rest of the drive. One place
+  now derives the request from the tier the tracker is in.
+- The Background App Refresh row on the iOS checklist read "Check" whatever
+  the switch said. It now reads the switch itself, through the native
+  module, and shows On or Off.
 
 ## [0.4.0] - 2026-07-22
 

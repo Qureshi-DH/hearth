@@ -120,16 +120,22 @@ the answer. The tracker has two states. **Moving** means continuous OS location
 updates, and on Android that is a foreground service with a notification you
 cannot dismiss, though it stays out of the status bar and sits in the silent
 part of the shade. Once the phone has stayed inside a 90 metre circle for five
-minutes it switches to **stationary**: the GPS goes off, the service drops
-to a cheap Wi-Fi grade watch that reports once every quarter hour, and a 150
-metre exit geofence is armed around where it stopped. That 90 metres is one and
-a half times the distance filter and never less than 60, so a circle that asks
-for coarser updates waits out a wider stop. Leaving the geofence puts it back
-into moving. So a phone sitting in a house overnight is costing you four cheap
-fixes an hour, not a GPS. Those fixes are also what keeps the phone from being
-reported offline: the server calls a phone offline after an hour of silence,
-and a service that stopped altogether while parked used to fall foul of that
-whenever the OS felt like deferring its next wake.
+minutes it switches to **stationary**: the GPS goes off, the service and its
+notification go with it, and an exit geofence is armed around where it
+stopped, 150 metres on Android and 200 on iOS. On Android a cheap request
+stays, which the OS answers a few times an hour. An iPhone runs nothing at
+all while parked and is asleep until the fence or a push wakes it, which is
+why it shows no location indicator, and what commercial apps do too. That 90
+metres is one and a half times the distance filter and never less than 60, so
+a circle that asks for coarser updates waits out a wider stop. Leaving the
+geofence puts it back into moving. So a phone sitting in a house overnight is
+costing you a few cheap fixes an hour on Android and nothing on iOS, not a
+GPS. What keeps a parked phone from being reported offline is the server: it
+calls a phone offline after an hour of silence, and after half an hour it
+sends a silent push asking for a fix first. Opening the map sends the same
+push to anyone quiet for a couple of minutes, and opening somebody's page
+asks their phone to report closely for ten minutes, which is the only time
+the GPS runs on a phone that is not driving.
 
 Three other things affect it:
 

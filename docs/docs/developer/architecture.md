@@ -188,16 +188,21 @@ carries the tracking policy (interval / distance), which is applied live.
 `reportNow(source)` takes an immediate high-accuracy fix for check-ins, SOS
 (every 20 s while active), and _nudges_ arriving via websocket or push.
 
-The tracker is a two-state machine. Moving means continuous updates and, on
-Android, the foreground-service notification that comes with them. Once the
-phone has held still for a few minutes it goes stationary: the GPS goes off,
-the service drops to a Wi-Fi grade watch that reports every quarter hour, and
-an exit geofence around the stopping point is what brings it back. That is
-where most of the battery saving is, and the quarter hour heartbeat is what
-keeps a parked phone from reading as offline. The OS motion
-classifier, which runs whenever tracking does, makes the switch happen sooner
-in both directions, and a phone that refused the permission falls back to
-working stops out from position.
+The tracker is a two-state machine with a live tier on top. Moving means
+continuous updates and, on Android, the foreground-service notification that
+comes with them. Once the phone has held still for a few minutes it goes
+stationary: the GPS goes off, the service and its notification go with it,
+and an exit geofence around the stopping point is what brings it back.
+Android keeps a cheap request the OS answers a few times an hour; an iPhone
+runs nothing at all and sleeps until the fence or a push wakes it, which is
+why it shows no location indicator. The server's silent push is a parked
+phone's heartbeat: the wake after half an hour of quiet, the map being
+opened, and somebody watching. Watching, somebody having the member's page
+open, is the live tier: full accuracy every few seconds for ten minutes,
+the only time the GPS runs on a phone nobody is driving. The OS motion
+classifier, which runs whenever tracking does, makes the moving and
+stationary switch happen sooner in both directions, and a phone that refused
+the permission falls back to working stops out from position.
 
 ### Realtime on the phone (`services/realtime.ts`)
 
