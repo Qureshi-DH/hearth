@@ -18,8 +18,11 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY packages/shared/package.json packages/shared/
 COPY server/package.json server/
 # The mobile app is a workspace member, and its manifest has to exist for pnpm
-# to resolve the lockfile, but nothing from it is installed here.
+# to resolve the lockfile, but nothing from it is installed here. The same
+# goes for the app's patches: the lockfile names them, and pnpm refuses to
+# start without the files, even for a package this install never fetches.
 COPY apps/mobile/package.json apps/mobile/
+COPY patches patches
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile --filter @hearth/server... --filter @hearth/shared...
 
@@ -35,6 +38,7 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/shared/package.json packages/shared/
 COPY server/package.json server/
 COPY apps/mobile/package.json apps/mobile/
+COPY patches patches
 # The repo's .npmrc hoists for Metro's benefit, but a hoisted install ignores
 # --filter and drags the entire mobile toolchain into the image (~700 MB).
 # The isolated linker respects the filter. The lockfile is linker-agnostic.
