@@ -2,6 +2,3 @@ packages:
   - server
   - packages/*
   - apps/*
-
-patchedDependencies:
-  expo-location@55.1.14: patches/expo-location@55.1.14.patch

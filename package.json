@@ -34,7 +34,8 @@
     "format:check": "prettier --check .",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "docs": "pnpm --dir docs start",
-    "docs:build": "pnpm --dir docs build"
+    "docs:build": "pnpm --dir docs build",
+    "postinstall": "node scripts/apply-patches.mjs"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.2",

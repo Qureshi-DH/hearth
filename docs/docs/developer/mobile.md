@@ -225,7 +225,12 @@ the app can read it (`getForegroundServiceStatusAsync`). Expo ships its
 modules to Android as prebuilt AARs, and a patch to Kotlin source does
 nothing to one of those, so `apps/mobile/package.json` lists expo-location
 under `expo.autolinking.android.buildFromSource`. Check the build log: the
-module must appear without the package icon that marks a prebuilt. The tracker
+module must appear without the package icon that marks a prebuilt. The patch
+is applied by `scripts/apply-patches.mjs` from the root `postinstall`, not by
+pnpm's `patchedDependencies`: with `node-linker=hoisted`, which Metro needs,
+pnpm applies a patch again on every install, and `expo prebuild` runs one,
+which left the Kotlin declared twice. The script applies each patch once and
+leaves one already in place alone. The tracker
 registers the request first and only then decides about the fence: with the
 service up the fence has done its job, and refused, the fence stays, because
 its exit is a moment Android does allow the start and the plain request

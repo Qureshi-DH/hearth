@@ -6,6 +6,12 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Fixed
+
+- The expo-location patch was applied twice on the second `pnpm install` a
+  build runs, and the Android build failed on the duplicate. Patches are now
+  applied once by the root `postinstall`, and left alone when already there.
+
 ## [0.5.0] - 2026-07-25
 
 The tracker measured against what it is meant to be: a self-hosted family safety app.
