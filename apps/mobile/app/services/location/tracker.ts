@@ -4,7 +4,12 @@ import { requireOptionalNativeModule } from "expo-modules-core"
 import * as Battery from "expo-battery"
 import * as Location from "expo-location"
 import * as TaskManager from "expo-task-manager"
-import { haversineMeters, type LocationFixInput, type LocationSource } from "@hearth/shared"
+import {
+  DEFAULTS,
+  haversineMeters,
+  type LocationFixInput,
+  type LocationSource,
+} from "@hearth/shared"
 
 import { translate } from "@/i18n/translate"
 import { ApiError, endpoints } from "@/services/api"
@@ -63,6 +68,12 @@ const MOTION_MIN_CONFIDENCE = 50
  * already computing for everything else, is what brings the GPS back.
  */
 const STILL_RADIUS_METERS = 60
+/**
+ * A fix looser than this says nothing about whether the phone moved: a cell
+ * tower's idea of where you are can be a kilometre off. The server's
+ * geofences draw the same line.
+ */
+const STILL_MAX_ACCURACY_METERS = DEFAULTS.geofenceMaxAccuracyMeters
 const STILL_AFTER_MS = 5 * 60 * 1000
 
 /** The live tier, for as long as somebody is watching. */
@@ -155,6 +166,7 @@ export function thin(
   fixes: LocationFixInput[],
   previous: LocationFixInput | null,
   policy: TrackingPolicy,
+  gateMeters = 0,
 ) {
   const kept: LocationFixInput[] = []
   let last = previous
@@ -171,6 +183,19 @@ export function thin(
         moved < policy.distanceFilterMeters / 2 &&
         fix.source !== "manual" &&
         fix.source !== "sos"
+      ) {
+        continue
+      }
+      // The circle's distance filter, applied here rather than by the OS on
+      // Android, so the fixes a still phone keeps delivering can be judged
+      // for the stop without being uploaded. One still gets through every
+      // STILL_AFTER_MS, which is a phone that has stopped and not yet been
+      // called stopped.
+      if (
+        gateMeters > 0 &&
+        fix.source === "background" &&
+        moved < gateMeters &&
+        dt < STILL_AFTER_MS
       ) {
         continue
       }
@@ -241,18 +266,21 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
   if (locations.length === 0) return
   const battery = await batterySnapshot()
   const state = useTrackingStore.getState()
-  let fixes = thin(
-    locations.map((location) => toFix(location, source, battery)),
-    state.lastFix,
-    state.policy,
-  )
+  const all = locations.map((location) => toFix(location, source, battery))
+  const newest = all[all.length - 1]!
+  // Walking, the circle's distance filter decides what is worth uploading.
+  // Driving and being watched have filters of their own, set by the tier.
+  const gate =
+    state.mode === "moving" && !driving && !watchedNow() ? state.policy.distanceFilterMeters : 0
+  let fixes = thin(all, state.lastFix, state.policy, gate)
   if (source === "background" && state.mode === "stationary") {
-    fixes = await restingFixes(fixes)
+    fixes = await restingFixes(fixes.length > 0 ? fixes : [newest])
   }
-  if (fixes.length === 0) return
-  state.enqueue(fixes)
-  const newest = fixes[fixes.length - 1]
-  if (newest && source === "background") {
+  if (fixes.length > 0) state.enqueue(fixes)
+  if (source === "background") {
+    // From the fix itself, not from what was kept: a still phone's fixes are
+    // exactly the ones the gate drops and exactly the ones that say it is
+    // still.
     await evaluateStillness(newest)
     if (useTrackingStore.getState().mode === "moving") await trackDriveBySpeed(newest)
     // A fix arriving is the clock's "not still yet"; the stop is judged from
@@ -267,7 +295,7 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
       if (useTrackingStore.getState().mode === "moving") await applyRegistration()
     }
   }
-  await flush()
+  if (fixes.length > 0) await flush()
 }
 
 /**
@@ -281,7 +309,7 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
 async function restingFixes(fixes: LocationFixInput[]): Promise<LocationFixInput[]> {
   const { stillAnchor, lastFix, policy } = useTrackingStore.getState()
   const radius = stationaryRadiusMeters(policy)
-  const left = fixes.find((fix) => stillAnchor && haversineMeters(stillAnchor, fix) > radius)
+  const left = fixes.find((fix) => stillAnchor && clearOf(stillAnchor, fix, radius))
   if (left) {
     await enterMoving()
     return fixes.slice(fixes.indexOf(left))
@@ -677,7 +705,13 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
   return {
     accuracy: Location.Accuracy.Balanced,
     timeInterval: policy.minUpdateIntervalSeconds * 1000,
-    distanceInterval: policy.distanceFilterMeters,
+    // Android delivers on the interval whether or not the phone moved, and
+    // ingest applies the circle's distance filter to what it uploads. With
+    // the filter at the OS a still phone delivered nothing, nothing judged
+    // the stop while the classifier read "tilting" in a hand, and the
+    // service and its notification stayed up. iOS keeps the OS filter; the
+    // background clock asks for the fix the stop is judged from.
+    distanceInterval: Platform.OS === "android" ? 0 : policy.distanceFilterMeters,
     // No deferred delivery. It looked like the OS batching for battery and is
     // not: both of expo's consumers hold the fixes in the process, which is
     // alive either way, and the ones held are the last of every journey, the
@@ -1073,16 +1107,27 @@ export type StillnessDecision = "settle" | "reanchor" | "wait"
 
 export function stillnessDecision(
   anchor: { lat: number; lon: number; since: string } | null,
-  fix: Pick<LocationFixInput, "lat" | "lon" | "recordedAt">,
+  fix: Pick<LocationFixInput, "lat" | "lon" | "recordedAt"> & { accuracyMeters?: number | null },
   radiusMeters: number = STILL_RADIUS_METERS,
 ): StillnessDecision {
+  // A loose fix is not evidence either way. Indoors, a phone sat on a table
+  // used to have the clock reset by every Wi-Fi estimate that wandered.
+  if ((fix.accuracyMeters ?? 0) > STILL_MAX_ACCURACY_METERS) return "wait"
   if (!anchor) return "reanchor"
-  const moved = haversineMeters(
-    { lat: anchor.lat, lon: anchor.lon },
-    { lat: fix.lat, lon: fix.lon },
-  )
-  if (moved > radiusMeters) return "reanchor"
+  if (clearOf(anchor, fix, radiusMeters)) return "reanchor"
   return Date.parse(fix.recordedAt) - Date.parse(anchor.since) >= STILL_AFTER_MS ? "settle" : "wait"
+}
+
+/**
+ * Whether a fix puts the phone outside a circle by more than the fix's own
+ * error. A fix a street away with a two street error circle proves nothing.
+ */
+function clearOf(
+  centre: { lat: number; lon: number },
+  fix: { lat: number; lon: number; accuracyMeters?: number | null },
+  radiusMeters: number,
+): boolean {
+  return haversineMeters(centre, fix) - (fix.accuracyMeters ?? 0) > radiusMeters
 }
 
 async function evaluateStillness(
@@ -1147,11 +1192,15 @@ export async function refreshLocationStatus(): Promise<{
 async function hasLeft(anchor: { lat: number; lon: number }): Promise<boolean> {
   const last = await Location.getLastKnownPositionAsync().catch(() => null)
   if (!last) return false
-  const away = haversineMeters(
-    { lat: anchor.lat, lon: anchor.lon },
-    { lat: last.coords.latitude, lon: last.coords.longitude },
+  return clearOf(
+    anchor,
+    {
+      lat: last.coords.latitude,
+      lon: last.coords.longitude,
+      accuracyMeters: last.coords.accuracy,
+    },
+    stationaryRadiusMeters(useTrackingStore.getState().policy),
   )
-  return away > stationaryRadiusMeters(useTrackingStore.getState().policy)
 }
 
 /** Foreground permission is enough to start, but only "always" keeps it running. */

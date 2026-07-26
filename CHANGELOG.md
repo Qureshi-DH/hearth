@@ -8,6 +8,17 @@ Notable changes to Hearth. The format is loosely
 
 ### Fixed
 
+- On Android the "Updating your location" notification could stay up
+  indefinitely at home. A phone that had not moved delivered no fix, since
+  the distance filter sat at the OS, so nothing could judge the stop while
+  the classifier read a phone in a hand as "tilting" rather than still. The
+  request now delivers on the interval whether or not the phone moved, the
+  app applies the circle's distance filter to what it uploads, and the stop
+  is called from the fixes after five minutes without the classifier's help.
+  A fix whose error circle covers the house no longer resets that clock, or
+  calls a parked phone gone.
+- With the members sheet pulled up over the map, the back button left the
+  app. It brings the sheet down now.
 - The expo-location patch was applied twice on the second `pnpm install` a
   build runs, and the Android build failed on the duplicate. Patches are now
   applied once by the root `postinstall`, and left alone when already there.

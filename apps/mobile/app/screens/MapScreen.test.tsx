@@ -1,4 +1,4 @@
-import { AppState, StyleSheet } from "react-native"
+import { AppState, BackHandler, StyleSheet } from "react-native"
 import type { CircleMember, MemberPresence } from "@hearth/shared"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 import { act, fireEvent, render } from "@testing-library/react-native"
@@ -795,5 +795,44 @@ describe("freshness", () => {
     const { getAllByTestId } = await renderMap()
     const [ana] = getAllByTestId("native-marker")
     expect(ana!.props.lngLat).toEqual([-0.1, 51])
+  })
+})
+
+describe("the back button with the sheet up", () => {
+  let spy: jest.SpyInstance
+
+  beforeEach(() => {
+    mockPresence = mockMembers.map((member, index) => presenceFor(member.userId, 51 + index))
+    mockFocused = true
+    mockSnapToIndex.mockClear()
+    spy = jest.spyOn(BackHandler, "addEventListener")
+  })
+
+  afterEach(() => {
+    spy.mockRestore()
+  })
+
+  /** What the OS does on a press: the newest listener that answers true wins. */
+  function pressBack(): boolean {
+    const listeners = spy.mock.calls
+      .filter(([event]) => event === "hardwareBackPress")
+      .map(([, handler]) => handler as () => boolean)
+    return listeners.reverse().some((handler) => handler())
+  }
+
+  it("brings a raised sheet down to its resting height rather than leaving the app", async () => {
+    await renderMap()
+    act(() => mockSheetProps.onChange(3))
+    expect(pressBack()).toBe(true)
+    expect(mockSnapToIndex).toHaveBeenCalledWith(1)
+  })
+
+  it("lets the press through when the sheet is already down", async () => {
+    await renderMap()
+    act(() => mockSheetProps.onChange(1))
+    expect(pressBack()).toBe(false)
+    act(() => mockSheetProps.onChange(0))
+    expect(pressBack()).toBe(false)
+    expect(mockSnapToIndex).not.toHaveBeenCalled()
   })
 })

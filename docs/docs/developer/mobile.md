@@ -313,6 +313,15 @@ journey, the fixes that say where the phone stopped. They only surfaced on
 the next delivery, which a parked phone never makes, so the stop was judged
 against a stale anchor.
 
+On Android the moving request carries no distance filter: the OS delivers
+on the interval whether or not the phone moved, and `thin` in the tracker
+applies the circle's distance filter to what is uploaded. With the filter at
+the OS a still phone delivered nothing, and nothing could judge the stop
+while the classifier read a phone in a hand as tilting, so the service and
+its notification stayed up. Now the stop is judged from every fix, and one
+whose error circle still covers the anchor neither resets the clock nor, on
+a parked phone, counts as leaving.
+
 The OS classifier is the normal path for both ends of a stop: it calls one
 after ninety seconds of the phone reading still, and ends one the instant you
 start moving, before a geofence or the periodic wake would have. The position

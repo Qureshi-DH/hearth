@@ -8,7 +8,14 @@ import {
   useSyncExternalStore,
   type FC,
 } from "react"
-import { AppState, Pressable, View, type AppStateStatus, type ViewStyle } from "react-native"
+import {
+  AppState,
+  BackHandler,
+  Pressable,
+  View,
+  type AppStateStatus,
+  type ViewStyle,
+} from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet"
 import type { CircleMember, MemberPresence } from "@hearth/shared"
@@ -181,6 +188,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const cameraRef = useRef<CameraRef>(null)
   const mapRef = useRef<MapRef>(null)
   const sheetRef = useRef<BottomSheet>(null)
+  const sheetIndex = useRef(0)
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
   // Read inside the marker callback, which must stay stable or every marker
   // re-renders on each selection.
@@ -268,6 +276,20 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
     useCallback(() => {
       void currentPermission().then((level) => useTrackingStore.getState().setPermission(level))
       void flush()
+    }, []),
+  )
+
+  // The sheet pulled up over the map is a page of its own to whoever pulled
+  // it, so the back button brings it down. Left to the navigator, the tab is
+  // the root and the button leaves the app.
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+        if (sheetIndex.current <= 1) return false
+        sheetRef.current?.snapToIndex(1)
+        return true
+      })
+      return () => subscription.remove()
     }, []),
   )
 
@@ -724,6 +746,9 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         ref={sheetRef}
         index={0}
         snapPoints={snapPoints}
+        onChange={(index) => {
+          sheetIndex.current = index
+        }}
         topInset={insets.top}
         enableDynamicSizing={false}
         animatedPosition={sheetTop}

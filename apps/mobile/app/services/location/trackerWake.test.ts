@@ -438,3 +438,74 @@ describe("the background clock on iOS", () => {
     expect(getPosition).not.toHaveBeenCalled()
   })
 })
+
+describe("calling the stop on Android without the classifier", () => {
+  const still = (at: number, accuracy = 30, dLat = 0): Location.LocationObject => ({
+    timestamp: at,
+    coords: {
+      latitude: HOME.lat + dLat,
+      longitude: HOME.lon,
+      altitude: 0,
+      accuracy,
+      altitudeAccuracy: 5,
+      heading: -1,
+      speed: 0,
+    },
+  })
+
+  beforeEach(() => {
+    Platform.OS = "android"
+    mockServiceStatus = "running"
+  })
+
+  it("asks Android for a fix on the interval whether or not the phone moved", async () => {
+    await enterMoving()
+    expect(optionsOf(0).distanceInterval).toBe(0)
+    expect(optionsOf(0).timeInterval).toBe(30_000)
+    Platform.OS = "ios"
+    await enterMoving()
+    expect(optionsOf(1).distanceInterval).toBe(60)
+  })
+
+  it("judges the stop from the fixes a still phone delivers, without uploading them", async () => {
+    await enterMoving()
+    const t0 = Date.now()
+    await ingest([still(t0)], "background")
+    for (let minute = 1; minute <= 4; minute += 1) {
+      await ingest([still(t0 + minute * 60_000, 40, 0.0002)], "background")
+      await ingest([still(t0 + minute * 60_000 + 30_000, 40, -0.0001)], "background")
+    }
+    // Eight fixes within a few metres of the first, none worth an upload.
+    expect(useTrackingStore.getState().queue).toHaveLength(1)
+    expect(useTrackingStore.getState().mode).toBe("moving")
+
+    start.mockClear()
+    await ingest([still(t0 + 5 * 60_000 + 1000)], "background")
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    // The service and its notification go with the request.
+    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeUndefined()
+  })
+
+  it("does not let a loose Wi-Fi fix reset the clock, and does not let one call the phone gone", async () => {
+    await enterMoving()
+    const t0 = Date.now()
+    await ingest([still(t0)], "background")
+    // Two streets away on paper, with an error circle that covers the house.
+    await ingest([still(t0 + 2 * 60_000, 200, 0.0011)], "background")
+    expect(useTrackingStore.getState().stillAnchor?.since).toBe(new Date(t0).toISOString())
+    // A sharp fix two streets away is another matter.
+    await ingest([still(t0 + 3 * 60_000, 15, 0.0011)], "background")
+    expect(useTrackingStore.getState().stillAnchor?.since).toBe(
+      new Date(t0 + 3 * 60_000).toISOString(),
+    )
+
+    await enterStationary(HOME.lat, HOME.lon)
+    start.mockClear()
+    // Parked, a loose fix 400 m off with a 500 m error stays parked.
+    await ingest([still(t0 + 20 * 60_000, 500, 0.0036)], "background")
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    // A sharp one 400 m off is the phone leaving.
+    await ingest([still(t0 + 21 * 60_000, 20, 0.0036)], "background")
+    expect(useTrackingStore.getState().mode).toBe("moving")
+  })
+})
