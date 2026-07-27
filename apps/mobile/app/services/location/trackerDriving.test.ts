@@ -7,6 +7,7 @@ import { startMotion } from "./motion"
 import {
   DRIVING_INTERVAL_MS,
   drivingDistanceMeters,
+  enterMoving,
   enterStationary,
   ingest,
   isDriving,
@@ -159,6 +160,8 @@ describe("the driving tier", () => {
     useTrackingStore.getState().reset()
     useTrackingStore.getState().setEnabled(true)
     await startTracking()
+    // A fresh start parks at the first fix; the drive begins from moving.
+    await enterMoving()
     // startTracking asks for a launch fix in the background. Let it land, then
     // forget it, or thin() reads the first test fix as its near duplicate.
     await new Promise((resolve) => setTimeout(resolve, 0))

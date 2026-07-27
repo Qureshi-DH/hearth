@@ -8,6 +8,42 @@ Notable changes to Hearth. The format is loosely
 
 ### Fixed
 
+- Every remaining way a parked phone was brought back to the moving tier
+  without leaving, or kept there after stopping, found in a review of
+  the tracker and closed:
+  - A fence exit is confirmed against a real fix. Android fires fences on
+    the fixes it has, indoors a cell tower's. The service comes up first,
+    inside the moment Android allows it, and goes straight back down when a
+    sharp fix shows the phone clearly still at home. An exit that lands on a
+    phone already moving only re-asserts the service.
+  - A vehicle verdict on a parked phone used to enter the moving tier twice
+    from a stale snapshot and lose the driving tier it had just entered. A
+    doubtful vehicle sample, under 75%, is now confirmed by a fix like a
+    walk; a transition, the OS's debounced word, is taken at face value.
+  - A still streak counted before a departure no longer parks the phone on
+    its first "still" after leaving. One "still" at the lights no longer
+    ends a drive; three minutes do, and then park in one step.
+  - iOS repeats only the "still" verdict on its schedule. Replaying
+    "automotive" un-parked an idling car the tracker had just parked.
+  - The on-foot confirmation judged "left" by the still radius, not the
+    fence's; a Wi-Fi estimate wandering about a house cleared it. Every
+    departure now asks the same question, and the sync task's own stop
+    check carries the fix's accuracy like every other.
+  - The parking spot survives a suspected departure, so one that turns out
+    false settles again on the first fix back inside, rather than five
+    minutes later.
+  - A drive that ends on the crawl dates the stop from when the crawl began,
+    so a parked car is parked five minutes after it stopped, not eight. The
+    iOS clock does the same for a walk. A drive can also start from
+    displacement, since Android's network fixes carry no speed at all.
+  - Switching sharing off goes through the same chain as every other
+    registration, so a wake mid fix cannot bring the service back after it.
+  - A journey that begins in a fresh process from a wake or a resting fix
+    now runs the classifier from the start.
+  - A phone with only "While Using" on Android could never park and ran the
+    service for good; it now reports from the foreground only until Always
+    is granted, as the checklist says.
+
 - On Android the "Updating your location" notification could stay up
   indefinitely at home. A phone that had not moved delivered no fix, since
   the distance filter sat at the OS, so nothing could judge the stop while

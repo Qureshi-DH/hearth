@@ -240,7 +240,11 @@ class HearthMotionModule : Module() {
             val last = ActivityTransitionResult.extractResult(intent)?.transitionEvents?.lastOrNull() ?: return
             sendEvent(
               "onMotionChange",
-              mapOf("activity" to activityName(last.activityType), "confidence" to 100),
+              mapOf(
+                "activity" to activityName(last.activityType),
+                "confidence" to 100,
+                "source" to "transition",
+              ),
             )
             return
           }
@@ -248,7 +252,11 @@ class HearthMotionModule : Module() {
           val best = result.mostProbableActivity
           sendEvent(
             "onMotionChange",
-            mapOf("activity" to activityName(best.type), "confidence" to best.confidence),
+            mapOf(
+              "activity" to activityName(best.type),
+              "confidence" to best.confidence,
+              "source" to "sample",
+            ),
           )
         }
       }

@@ -93,6 +93,11 @@ describe("background wakes", () => {
     // followed ran on the slow GPS heuristic with crash detection off.
     const wake = taskBodies.get(STATIONARY_GEOFENCE_TASK)
     expect(wake).toBeDefined()
+    // What the relaunched process reads back from disk: a parked phone.
+    useTrackingStore.setState({
+      mode: "stationary",
+      stillAnchor: { lat: 51.4545, lon: -2.5879, since: new Date().toISOString() },
+    })
 
     await wake?.({ data: { eventType: Location.GeofencingEventType.Exit }, error: null })
 
@@ -255,6 +260,10 @@ describe("a wake with the permission still undetermined", () => {
     const fresh = launched[0]
     expect(fresh).toBeDefined()
     fresh.store.getState().setEnabled(true)
+    fresh.store.setState({
+      mode: "stationary",
+      stillAnchor: { lat: 51.4545, lon: -2.5879, since: new Date().toISOString() },
+    })
 
     await fresh.task({ data: { eventType: Location.GeofencingEventType.Exit }, error: null })
 

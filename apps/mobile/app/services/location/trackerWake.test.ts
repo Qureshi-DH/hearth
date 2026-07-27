@@ -14,6 +14,7 @@ import {
   RESTING_HEARTBEAT_MS,
   startBackgroundClock,
   startTracking,
+  STATIONARY_GEOFENCE_TASK,
   stopBackgroundClock,
   stopTracking,
   wakeFix,
@@ -23,6 +24,14 @@ jest.mock("expo-task-manager", () => ({
   defineTask: jest.fn(),
   isTaskRegisteredAsync: jest.fn(async () => true),
 }))
+// eslint-disable-next-line import/first
+import * as TaskManager from "expo-task-manager"
+
+type TaskBody = (body: { data: unknown; error: { message: string } | null }) => Promise<unknown>
+/** Captured at import, since the tracker registers its tasks the moment it loads. */
+const taskBodies = new Map(
+  (TaskManager.defineTask as unknown as jest.Mock<void, [string, TaskBody]>).mock.calls,
+)
 
 jest.mock("expo-background-task", () => ({
   BackgroundTaskResult: { Success: 1, Failed: 2 },
@@ -134,7 +143,8 @@ describe("a journey starting in the background on Android", () => {
     mockServiceStatus = "refused"
     await enterMoving()
     expect(useTrackingStore.getState().mode).toBe("moving")
-    expect(useTrackingStore.getState().stillAnchor).toBeNull()
+    // The anchor is kept: a departure that turns out false settles on it.
+    expect(useTrackingStore.getState().stillAnchor).toMatchObject(HOME)
     expect(Location.stopGeofencingAsync).not.toHaveBeenCalled()
     // The request itself stands, so the phone is on throttled fixes, not none.
     expect(optionsOf(start.mock.calls.length - 1).accuracy).toBe(Location.Accuracy.Balanced)
@@ -237,7 +247,8 @@ describe("being watched", () => {
     await enterWatched(600)
     expect(optionsOf(0).accuracy).toBe(Location.Accuracy.High)
     expect(optionsOf(0).timeInterval).toBe(5_000)
-    expect(optionsOf(0).distanceInterval).toBe(5)
+    // On the interval, so the window's end is always seen.
+    expect(optionsOf(0).distanceInterval).toBe(0)
 
     // Still inside the window: a fix changes nothing.
     start.mockClear()
@@ -388,26 +399,35 @@ describe("the background clock on iOS", () => {
     expect(Location.startGeofencingAsync).toHaveBeenCalled()
   })
 
-  it("never calls a stop while the tracker believes the phone is driving", async () => {
-    // A queue of traffic: the same spot for five minutes, still rolling.
+  it("never calls a stop from a fix while the tracker believes the phone is driving", async () => {
+    // A crawl: fixes keep coming, none of them ends the drive on their own.
     await enterMoving()
     await enterDriving(30)
-    mockSpeed = 3
     const t0 = Date.now()
-    await ingest(
-      [
-        {
-          ...sample(HOME.lat, HOME.lon, t0),
-          coords: { ...sample(HOME.lat, HOME.lon, t0).coords, speed: 3 },
-        },
-      ],
-      "background",
-    )
-    await jest.advanceTimersByTimeAsync(5 * 60_000 + 10)
-    expect(getPosition).toHaveBeenCalledTimes(1)
+    const crawl = (at: number, dLat: number) => ({
+      ...sample(HOME.lat + dLat, HOME.lon, at),
+      coords: { ...sample(HOME.lat + dLat, HOME.lon, at).coords, speed: 3 },
+    })
+    await ingest([crawl(t0, 0)], "background")
+    await ingest([crawl(t0 + 4 * 60_000, 0.0003)], "background")
+    await ingest([crawl(t0 + 8 * 60_000, 0.0006)], "background")
     expect(isDriving()).toBe(true)
     expect(useTrackingStore.getState().mode).toBe("moving")
     expect(Location.startGeofencingAsync).not.toHaveBeenCalled()
+  })
+
+  it("ends a drive whose car has not moved in five minutes, and parks it", async () => {
+    // The driving tier delivers on distance on iOS, so five minutes without a
+    // fix is a car that has not moved. The clock's fix is from the same spot.
+    await enterMoving()
+    await enterDriving(30)
+    const t0 = Date.now()
+    await ingest([sample(HOME.lat, HOME.lon, t0)], "background")
+    getPosition.mockClear()
+    await jest.advanceTimersByTimeAsync(5 * 60_000 + 10)
+    expect(isDriving()).toBe(false)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(Location.startGeofencingAsync).toHaveBeenCalled()
   })
 
   it("stands down while the app is open, when parked, and when tracking stops", async () => {
@@ -517,7 +537,8 @@ describe("the classifier on a parked phone", () => {
   let run = 0
 
   /** The verdict callback the tracker handed to the classifier. */
-  function classifier(): ((activity: string, confidence: number) => void) | undefined {
+  function classifier():
+    ((activity: string, confidence: number, source?: "sample" | "transition") => void) | undefined {
     const calls = (startMotion as jest.Mock).mock.calls
     return calls[calls.length - 1]?.[0]
   }
@@ -577,10 +598,258 @@ describe("the classifier on a parked phone", () => {
     expect(getPosition).toHaveBeenCalledTimes(2)
   })
 
-  it("takes a vehicle at its word", async () => {
+  it("takes a sure vehicle verdict at its word, and lands in the driving tier once", async () => {
+    mockHere = { ...HOME }
+    classifier()!("automotive", 90)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(useTrackingStore.getState().mode).toBe("moving")
+    expect(isDriving()).toBe(true)
+    // One walking registration on the way up, one driving. Not a third.
+    const accuracies = start.mock.calls.map(
+      ([, options]) => (options as Location.LocationTaskOptions).accuracy,
+    )
+    expect(accuracies).toEqual([Location.Accuracy.Balanced, Location.Accuracy.High])
+  })
+
+  it("confirms a doubtful vehicle sample the way it confirms a walk", async () => {
     mockHere = { ...HOME }
     classifier()!("automotive", 60)
     await jest.advanceTimersByTimeAsync(0)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(getPosition).toHaveBeenCalledTimes(1)
+
+    // A transition is the OS's debounced word, and is taken at it.
+    classifier()!("automotive", 100, "transition")
+    await jest.advanceTimersByTimeAsync(0)
     expect(useTrackingStore.getState().mode).toBe("moving")
+    expect(isDriving()).toBe(true)
+  })
+})
+
+describe("the other ways a parked phone was made to leave", () => {
+  const exit = () =>
+    taskBodies.get(STATIONARY_GEOFENCE_TASK)!({
+      data: { eventType: Location.GeofencingEventType.Exit },
+      error: null,
+    })
+
+  beforeEach(async () => {
+    Platform.OS = "android"
+    mockServiceStatus = "running"
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    await jest.advanceTimersByTimeAsync(0)
+    start.mockClear()
+  })
+
+  it("re-arms the fence on a false exit, when a sharp fix is still at home", async () => {
+    mockHere = { ...HOME }
+    ;(Location.startGeofencingAsync as unknown as jest.Mock).mockClear()
+    await exit()
+    // The service came up inside the allowed moment, and went straight back
+    // down once the fix showed the phone had not left.
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(Location.startGeofencingAsync).toHaveBeenCalledTimes(1)
+    expect(optionsOf(0).foregroundService).toBeDefined()
+    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeUndefined()
+  })
+
+  it("does nothing to a phone already moving but re-assert the service", async () => {
+    mockServiceStatus = "refused"
+    await enterMoving()
+    getPosition.mockClear()
+    start.mockClear()
+    mockServiceStatus = "running"
+    await exit()
+    expect(useTrackingStore.getState().mode).toBe("moving")
+    expect(getPosition).not.toHaveBeenCalled()
+    expect(Location.stopGeofencingAsync).toHaveBeenCalled()
+  })
+
+  it("takes a real exit, and a loose fix's word for one", async () => {
+    mockHere = { lat: HOME.lat + 0.003, lon: HOME.lon }
+    await exit()
+    expect(useTrackingStore.getState().mode).toBe("moving")
+
+    await enterStationary(HOME.lat, HOME.lon)
+    await jest.advanceTimersByTimeAsync(0)
+    // A cell fix cannot say either way; a departure missed is the worse error.
+    mockHere = { ...HOME }
+    getPosition.mockImplementationOnce(async () => ({
+      timestamp: Date.now(),
+      coords: {
+        latitude: HOME.lat,
+        longitude: HOME.lon,
+        altitude: 0,
+        accuracy: 1200,
+        altitudeAccuracy: 5,
+        heading: -1,
+        speed: 0,
+      },
+    }))
+    await exit()
+    expect(useTrackingStore.getState().mode).toBe("moving")
+  })
+
+  it("lets a wake's fix end the stop when it shows the phone has gone", async () => {
+    mockHere = { lat: HOME.lat + 0.003, lon: HOME.lon }
+    await wakeFix()
+    expect(useTrackingStore.getState().mode).toBe("moving")
+    // And the service is kept, not taken down with the wake's.
+    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toMatchObject({
+      notificationTitle: "Hearth",
+    })
+  })
+
+  it("parks at the first fix when sharing is switched on, rather than running the service to learn it is still", async () => {
+    await stopTracking()
+    useTrackingStore.getState().setEnabled(true)
+    start.mockClear()
+    mockHere = { ...HOME }
+    await startTracking()
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(useTrackingStore.getState().stillAnchor).toMatchObject(HOME)
+    expect(
+      start.mock.calls.every(
+        ([, options]) => (options as Location.LocationTaskOptions).foregroundService === undefined,
+      ),
+    ).toBe(true)
+  })
+})
+
+describe("what the review found", () => {
+  const at = (lat: number, lon: number, when: number, speed: number | null = 0, accuracy = 20) =>
+    ({
+      timestamp: when,
+      coords: {
+        latitude: lat,
+        longitude: lon,
+        altitude: 0,
+        accuracy,
+        altitudeAccuracy: 5,
+        heading: -1,
+        speed,
+      },
+    }) as Location.LocationObject
+
+  beforeEach(() => {
+    Platform.OS = "android"
+    mockServiceStatus = "running"
+  })
+
+  it("does not let a still streak from before a departure park the phone on its first sample after", async () => {
+    await stopTracking()
+    useTrackingStore.getState().setEnabled(true)
+    ;(startMotion as jest.Mock).mockClear()
+    await startTracking()
+    const verdict = (startMotion as jest.Mock).mock.calls.at(-1)![0] as (
+      a: string,
+      c: number,
+    ) => void
+    await enterMoving()
+    verdict("still", 100)
+    await jest.advanceTimersByTimeAsync(100_000)
+    verdict("still", 100)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+
+    // Hours later a sharp fix a kilometre off: the phone has left.
+    await jest.advanceTimersByTimeAsync(3 * 60 * 60_000)
+    await ingest([at(HOME.lat + 0.01, HOME.lon, Date.now())], "background")
+    expect(useTrackingStore.getState().mode).toBe("moving")
+    // One "still" now is a red light, not ninety seconds of stillness.
+    verdict("still", 100)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(useTrackingStore.getState().mode).toBe("moving")
+  })
+
+  it("keeps a drive through a still verdict at the lights, and parks it after the crawl's three minutes", async () => {
+    await stopTracking()
+    useTrackingStore.getState().setEnabled(true)
+    ;(startMotion as jest.Mock).mockClear()
+    await startTracking()
+    const verdict = (startMotion as jest.Mock).mock.calls.at(-1)![0] as (
+      a: string,
+      c: number,
+    ) => void
+    await enterMoving()
+    await enterDriving(30)
+    verdict("still", 60)
+    await jest.advanceTimersByTimeAsync(100_000)
+    verdict("still", 60)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(isDriving()).toBe(true)
+    expect(useTrackingStore.getState().mode).toBe("moving")
+
+    await jest.advanceTimersByTimeAsync(2 * 60_000)
+    verdict("still", 60)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(isDriving()).toBe(false)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+
+  it("registers nothing after a stop, even for a wake that was mid fix", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    let release: ((value: Location.LocationObject) => void) | null = null
+    getPosition.mockImplementationOnce(
+      () => new Promise<Location.LocationObject>((resolve) => (release = resolve)),
+    )
+    const wake = wakeFix()
+    await jest.advanceTimersByTimeAsync(0)
+    await stopTracking()
+    start.mockClear()
+    ;(release as unknown as (value: Location.LocationObject) => void)(
+      at(HOME.lat, HOME.lon, Date.now()),
+    )
+    await wake
+    expect(useTrackingStore.getState().mode).toBe("off")
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it("promotes a drive from displacement when Android's fixes carry no speed", async () => {
+    await enterMoving()
+    const t0 = Date.now()
+    await ingest([at(HOME.lat, HOME.lon, t0, null)], "background")
+    // 300 m in 30 s is 10 m/s, whatever the fix says.
+    await ingest([at(HOME.lat + 0.0027, HOME.lon, t0 + 30_000, null)], "background")
+    expect(isDriving()).toBe(true)
+  })
+
+  it("dates the stop from the crawl, so a parked car is parked five minutes after it stopped", async () => {
+    await enterMoving()
+    await enterDriving(30)
+    const t0 = Date.now()
+    for (let i = 0; i <= 18; i += 1) {
+      await ingest([at(HOME.lat, HOME.lon, t0 + i * 10_000, 0)], "background")
+    }
+    // Three minutes of crawling ends the drive, dated from its start.
+    expect(isDriving()).toBe(false)
+    expect(useTrackingStore.getState().stillAnchor?.since).toBe(new Date(t0).toISOString())
+    await ingest([at(HOME.lat, HOME.lon, t0 + 5 * 60_000 + 1000, 0)], "background")
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+
+  it("comes back to a moving phone without throwing its still clock away", async () => {
+    await enterMoving()
+    const since = new Date(Date.now() - 4 * 60_000).toISOString()
+    useTrackingStore.setState({ stillAnchor: { ...HOME, since } })
+    await stopTracking()
+    useTrackingStore.getState().setEnabled(true)
+    useTrackingStore.setState({ mode: "moving", stillAnchor: { ...HOME, since } })
+    await startTracking()
+    expect(useTrackingStore.getState().mode).toBe("moving")
+    expect(useTrackingStore.getState().stillAnchor?.since).toBe(since)
+  })
+
+  it("runs nothing in the background on a phone with only While Using", async () => {
+    await stopTracking()
+    useTrackingStore.getState().setEnabled(true)
+    ;(Location.getBackgroundPermissionsAsync as unknown as jest.Mock).mockResolvedValueOnce({
+      status: "denied",
+    })
+    start.mockClear()
+    expect(await startTracking()).toBe(false)
+    expect(start).not.toHaveBeenCalled()
+    expect(useTrackingStore.getState().mode).toBe("off")
   })
 })

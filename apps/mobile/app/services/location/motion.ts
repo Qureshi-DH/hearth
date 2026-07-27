@@ -5,6 +5,7 @@ import type {
   MotionActivity,
   MotionChangeEvent,
   MotionPermission,
+  MotionSource,
   SensorBatchEvent,
   SensorSample,
 } from "../../../modules/hearth-motion"
@@ -87,12 +88,12 @@ export async function ensureMotionPermission(): Promise<boolean> {
  * undetermined stays GPS-only and is tried again once the checklist has asked.
  */
 export async function startMotion(
-  onChange: (activity: MotionActivity, confidence: number) => void,
+  onChange: (activity: MotionActivity, confidence: number, source: MotionSource) => void,
 ): Promise<EventSubscription | null> {
   if (!native) return null
   if ((await motionPermission()) !== "granted") return null
   const subscription = native.addListener("onMotionChange", (event: MotionChangeEvent) =>
-    onChange(event.activity, event.confidence),
+    onChange(event.activity, event.confidence, event.source ?? "sample"),
   )
   try {
     await native.startUpdatesAsync()
@@ -147,4 +148,4 @@ export async function stopSensorBatches(subscription: EventSubscription | null):
   }
 }
 
-export type { MotionActivity, SensorSample }
+export type { MotionActivity, MotionSource, SensorSample }

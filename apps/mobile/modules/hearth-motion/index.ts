@@ -3,10 +3,18 @@ import { NativeModule, requireNativeModule } from "expo"
 /** What the OS thinks the phone is doing. */
 export type MotionActivity = "still" | "walking" | "running" | "cycling" | "automotive" | "unknown"
 
+/**
+ * "transition" is the OS saying the activity changed, debounced and worth
+ * acting on; "sample" is its periodic best guess, with the confidence to
+ * match. iOS only samples, and repeats its last verdict on a schedule.
+ */
+export type MotionSource = "sample" | "transition"
+
 export interface MotionChangeEvent {
   activity: MotionActivity
   /** 0 to 100. Android reports a real number, iOS reports low/medium/high mapped onto it. */
   confidence: number
+  source?: MotionSource
 }
 
 export type MotionPermission = "granted" | "denied" | "undetermined"

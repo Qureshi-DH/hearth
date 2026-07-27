@@ -238,7 +238,12 @@ carries the phone on throttled fixes until then. The next high priority push,
 the server's wake or a nudge, re-asserts the request in whatever tier the
 tracker is in, and so does the app opening. `hearth-motion` asks for activity
 transitions as well as the sampled verdicts, since a transition is the
-exempt trigger Android names.
+exempt trigger Android names, and tags each verdict with its source. Both
+reach the app through a receiver registered by the running process, so
+neither can relaunch a process Android has reclaimed; the fence does that.
+A fence exit brings the service up first, inside the allowed moment, and
+then checks the exit against one bounded fix: a sharp fix clearly inside
+the circle is a false exit and the phone parks again at once.
 
 A server side second line stands behind the heartbeat. The scheduler sends a
 silent push to a phone that has been quiet for half an hour, once per
@@ -323,7 +328,7 @@ whose error circle still covers the anchor neither resets the clock nor, on
 a parked phone, counts as leaving.
 
 A parked phone does not leave on the classifier's word alone unless the word
-is "automotive". Handled in bed, a phone reads as walking at fifty or sixty
+is a sure "automotive" (a transition, or a sample at 75% or better). Handled in bed, a phone reads as walking at fifty or sixty
 percent, and taking that alone brought the service back to a phone going
 nowhere. On foot the verdict is confirmed by one Balanced fix, at most every
 two minutes, and only a fix clear of the anchor by more than its own error

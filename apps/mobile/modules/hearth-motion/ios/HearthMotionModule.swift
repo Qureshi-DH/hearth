@@ -30,7 +30,8 @@ private let maxPendingSamples = 2_000
  Core Motion reports an activity when it changes and then says nothing while
  it holds, so "still for ninety seconds" never got the second reading the JS
  side waits for. Android's classifier samples on a schedule, and this timer
- gives iOS the same shape: the last verdict again, at the same cadence.
+ gives iOS the same shape for the one verdict that is counted: "still",
+ again, at the same cadence.
  */
 private let activityRepeatInterval: TimeInterval = 30
 
@@ -114,6 +115,7 @@ public class HearthMotionModule: Module {
         let verdict: [String: Any] = [
           "activity": Self.name(for: activity),
           "confidence": Self.confidence(for: activity.confidence),
+          "source": "sample",
         ]
         self.lastActivity = verdict
         self.sendEvent("onMotionChange", verdict)
@@ -121,7 +123,11 @@ public class HearthMotionModule: Module {
       let timer = DispatchSource.makeTimerSource(queue: .main)
       timer.schedule(deadline: .now() + activityRepeatInterval, repeating: activityRepeatInterval)
       timer.setEventHandler { [weak self] in
+        // Only "still" is repeated: it is the one verdict a clock is counted
+        // on, and an idling car keeps its automotive flag, which replayed
+        // would un-park the car the tracker has just parked.
         guard let self, let verdict = self.lastActivity else { return }
+        guard (verdict["activity"] as? String) == "still" else { return }
         self.sendEvent("onMotionChange", verdict)
       }
       timer.resume()
