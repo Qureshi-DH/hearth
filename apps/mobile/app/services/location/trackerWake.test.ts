@@ -13,6 +13,7 @@ import {
   reassertService,
   RESTING_HEARTBEAT_MS,
   startBackgroundClock,
+  startTracking,
   stopBackgroundClock,
   stopTracking,
   wakeFix,
@@ -68,6 +69,8 @@ jest.mock("./motion", () => ({
   startMotion: jest.fn(async () => ({ remove: jest.fn() })),
   stopMotion: jest.fn(async () => {}),
 }))
+// eslint-disable-next-line import/first
+import { startMotion } from "./motion"
 
 jest.mock("./driveSensors", () => ({
   startDriveSensors: jest.fn(async () => true),
@@ -506,6 +509,78 @@ describe("calling the stop on Android without the classifier", () => {
     expect(useTrackingStore.getState().mode).toBe("stationary")
     // A sharp one 400 m off is the phone leaving.
     await ingest([still(t0 + 21 * 60_000, 20, 0.0036)], "background")
+    expect(useTrackingStore.getState().mode).toBe("moving")
+  })
+})
+
+describe("the classifier on a parked phone", () => {
+  let run = 0
+
+  /** The verdict callback the tracker handed to the classifier. */
+  function classifier(): ((activity: string, confidence: number) => void) | undefined {
+    const calls = (startMotion as jest.Mock).mock.calls
+    return calls[calls.length - 1]?.[0]
+  }
+
+  beforeEach(async () => {
+    Platform.OS = "android"
+    mockServiceStatus = "running"
+    // The classifier's subscription lives in module scope; only a stop
+    // releases it, and startTracking is what hands it its callback. So does
+    // the time of the last confirming fix, which the clock walks past.
+    await stopTracking()
+    run += 1
+    jest.setSystemTime(Date.now() + run * 5 * 60_000)
+    useTrackingStore.getState().setEnabled(true)
+    ;(startMotion as jest.Mock).mockClear()
+    await startTracking()
+    await enterStationary(HOME.lat, HOME.lon)
+    await jest.advanceTimersByTimeAsync(0)
+    start.mockClear()
+    getPosition.mockClear()
+  })
+
+  it("does not bring the service back for 'walking' from a phone fidgeting in bed", async () => {
+    // The fix that confirms the verdict is where the phone parked.
+    mockHere = { ...HOME }
+    classifier()!("walking", 60)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(getPosition).toHaveBeenCalledTimes(1)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(
+      start.mock.calls.every(
+        ([, options]) => (options as Location.LocationTaskOptions).foregroundService === undefined,
+      ),
+    ).toBe(true)
+  })
+
+  it("brings it back once a fix shows the phone has actually walked off", async () => {
+    mockHere = { lat: HOME.lat + 0.002, lon: HOME.lon }
+    classifier()!("walking", 60)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(useTrackingStore.getState().mode).toBe("moving")
+    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toMatchObject({
+      notificationTitle: "Hearth",
+    })
+  })
+
+  it("asks for the confirming fix at most every two minutes", async () => {
+    mockHere = { ...HOME }
+    classifier()!("walking", 60)
+    await jest.advanceTimersByTimeAsync(0)
+    classifier()!("walking", 70)
+    await jest.advanceTimersByTimeAsync(30_000)
+    expect(getPosition).toHaveBeenCalledTimes(1)
+    await jest.advanceTimersByTimeAsync(2 * 60_000)
+    classifier()!("walking", 70)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(getPosition).toHaveBeenCalledTimes(2)
+  })
+
+  it("takes a vehicle at its word", async () => {
+    mockHere = { ...HOME }
+    classifier()!("automotive", 60)
+    await jest.advanceTimersByTimeAsync(0)
     expect(useTrackingStore.getState().mode).toBe("moving")
   })
 })

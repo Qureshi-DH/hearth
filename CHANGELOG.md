@@ -16,7 +16,10 @@ Notable changes to Hearth. The format is loosely
   app applies the circle's distance filter to what it uploads, and the stop
   is called from the fixes after five minutes without the classifier's help.
   A fix whose error circle covers the house no longer resets that clock, or
-  calls a parked phone gone.
+  calls a parked phone gone. And a phone handled in bed, which Android's
+  classifier reads as walking at fifty or sixty percent, no longer brings the
+  service back on that word alone: on foot, the verdict has to be confirmed
+  by a fix clear of where the phone parked, and until then the fence decides.
 - With the members sheet pulled up over the map, the back button left the
   app. It brings the sheet down now.
 - The expo-location patch was applied twice on the second `pnpm install` a

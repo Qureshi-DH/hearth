@@ -322,6 +322,14 @@ its notification stayed up. Now the stop is judged from every fix, and one
 whose error circle still covers the anchor neither resets the clock nor, on
 a parked phone, counts as leaving.
 
+A parked phone does not leave on the classifier's word alone unless the word
+is "automotive". Handled in bed, a phone reads as walking at fifty or sixty
+percent, and taking that alone brought the service back to a phone going
+nowhere. On foot the verdict is confirmed by one Balanced fix, at most every
+two minutes, and only a fix clear of the anchor by more than its own error
+ends the stop; otherwise the fence is the judge, as it would have been a
+minute later anyway.
+
 The OS classifier is the normal path for both ends of a stop: it calls one
 after ninety seconds of the phone reading still, and ends one the instant you
 start moving, before a geofence or the periodic wake would have. The position

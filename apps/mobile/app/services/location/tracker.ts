@@ -532,17 +532,20 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
           const here = await Location.getCurrentPositionAsync({
             accuracy: Location.Accuracy.Balanced,
           })
-          const drift = haversineMeters(
-            { lat: stillAnchor.lat, lon: stillAnchor.lon },
-            { lat: here.coords.latitude, lon: here.coords.longitude },
-          )
           // Waking the location stack already spent the battery this mode
           // exists to save, so the fix is worth reporting whether or not it
           // turns out to be far enough to call the stop over.
           await ingest([here], "significant")
-          if (drift > stationaryRadiusMeters(policy)) {
-            await enterMoving()
-          }
+          const left = clearOf(
+            stillAnchor,
+            {
+              lat: here.coords.latitude,
+              lon: here.coords.longitude,
+              accuracyMeters: here.coords.accuracy,
+            },
+            stationaryRadiusMeters(policy),
+          )
+          if (left) await enterMoving()
         } catch {
           // No fix available this wake. The fence is still armed.
         }
@@ -1006,14 +1009,34 @@ async function onMotion(activity: MotionActivity, confidence: number): Promise<v
 
   if (activity === "unknown") return
 
-  // Movement of any kind ends a stop, and the OS knew before a geofence or the
-  // periodic wake would have.
   motionStillSince = null
-  if (store.mode === "stationary") {
+  if (store.mode !== "stationary") return
+
+  // A vehicle ends a stop on the classifier's word: nobody is in a car by
+  // accident, and the fence would cost the first minute of the drive.
+  if (activity === "automotive") {
     await enterMoving()
     await reportNow("significant")
+    return
+  }
+
+  // On foot is a different matter. A phone handled in bed reads as walking
+  // at fifty or sixty percent, and taking that alone brought the service and
+  // its notification back to a phone going nowhere. So the verdict has to be
+  // confirmed by a fix clear of where the phone parked, and until then the
+  // fence is the judge, as it would have been anyway a minute later.
+  if (Date.now() - lastMotionCheck < MOTION_CHECK_INTERVAL_MS) return
+  lastMotionCheck = Date.now()
+  const fix = await reportNow("significant", Location.Accuracy.Balanced)
+  const anchor = useTrackingStore.getState().stillAnchor
+  if (fix && anchor && clearOf(anchor, fix, stillRadiusMeters(store.policy))) {
+    await enterMoving()
   }
 }
+
+/** A fix costs something, and a fidgeting phone says "walking" every sample. */
+const MOTION_CHECK_INTERVAL_MS = 2 * 60 * 1000
+let lastMotionCheck = 0
 
 async function locationUpdatesRunning(): Promise<boolean> {
   return Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => false)
