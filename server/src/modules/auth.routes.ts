@@ -1,4 +1,4 @@
-import { PLATFORMS } from "@hearth/shared"
+import { PLATFORMS, type DeviceHealth } from "@hearth/shared"
 import { and, desc, eq, gt, isNull, lte, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { Readable } from "node:stream"
@@ -16,6 +16,7 @@ import {
   trips,
   users,
   type LocationPoint,
+  userPresence,
 } from "../db/schema"
 import {
   badRequest,
@@ -624,6 +625,39 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       reply.header("content-disposition", `attachment; filename="hearth-export-${user.id}.json"`)
       reply.header("content-type", "application/json; charset=utf-8")
       return Readable.from(document())
+    },
+  )
+
+  app.patch(
+    "/me/health",
+    {
+      preHandler: app.authenticate,
+      schema: {
+        tags: ["account"],
+        summary: "What stands between this phone and reporting",
+        description:
+          "The phone's own account of its permissions and switches: the location permission " +
+          "level, Location Services, Background App Refresh on iOS, battery optimisation on " +
+          "Android. The circle sees it under the member's name instead of a mystery, and a " +
+          "quiet phone that has said why is reported as such rather than as offline.",
+        body: z.object({
+          locationPermission: z.enum(["always", "foreground", "denied", "unknown"]),
+          locationServices: z.boolean(),
+          backgroundRefresh: z.enum(["available", "denied", "restricted"]).optional(),
+          batteryOptimised: z.boolean().optional(),
+          lowPowerMode: z.boolean().optional(),
+        }),
+        response: { 200: z.object({ ok: z.literal(true) }) },
+      },
+    },
+    async (request) => {
+      const auth = requireAuth(request)
+      const health: DeviceHealth = { ...request.body, reportedAt: new Date().toISOString() }
+      await db
+        .insert(userPresence)
+        .values({ userId: auth.userId, health })
+        .onConflictDoUpdate({ target: userPresence.userId, set: { health } })
+      return { ok: true as const }
     },
   )
 

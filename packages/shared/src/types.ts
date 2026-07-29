@@ -226,8 +226,37 @@ export interface MemberPresence {
   sharingState: SharingState
   /** No fix within DEFAULTS.staleAfterSeconds. */
   stale: boolean
-  atPlace: { id: string; name: string; icon: PlaceIcon | null } | null
+  atPlace: { id: string; name: string; icon: PlaceIcon | null; since: string | null } | null
   sosAlertId: string | null
+  /**
+   * What the phone itself last said stands between it and reporting. Empty
+   * when it said nothing is wrong, or has not said. Family safety apps show these under
+   * a member as "Location permissions off"; a quiet phone with one of these
+   * is not a mystery.
+   */
+  issues: PresenceIssue[]
+}
+
+export const PRESENCE_ISSUES = [
+  "location_permission",
+  "location_services",
+  "background_refresh",
+  "battery_optimisation",
+  "low_power_mode",
+] as const
+export type PresenceIssue = (typeof PRESENCE_ISSUES)[number]
+
+/** What a phone reports about its own ability to share, see PATCH /me/health. */
+export interface DeviceHealth {
+  /** "always" is the only level that reports from the background. */
+  locationPermission: "always" | "foreground" | "denied" | "unknown"
+  locationServices: boolean
+  /** iOS Background App Refresh. Absent where it does not exist. */
+  backgroundRefresh?: "available" | "denied" | "restricted"
+  /** Android: the app is still subject to battery optimisation. */
+  batteryOptimised?: boolean
+  lowPowerMode?: boolean
+  reportedAt?: string
 }
 
 export interface HistoryPoint {

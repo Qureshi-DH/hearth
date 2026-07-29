@@ -1,6 +1,7 @@
 import type {
   ActivityType,
   CircleRole,
+  DeviceHealth,
   EventType,
   LocationSource,
   Platform,
@@ -266,6 +267,8 @@ export const userPresence = pgTable("user_presence", {
   offlineNotifiedAt: timestamp("offline_notified_at", { withTimezone: true }),
   /** When a silent push last asked a quiet phone for a fix. Newer than recordedAt while unanswered. */
   wakeRequestedAt: timestamp("wake_requested_at", { withTimezone: true }),
+  /** The phone's own account of what stands between it and reporting, see PATCH /me/health. */
+  health: jsonb("health").$type<DeviceHealth>(),
   /** Watermark for the trip detector, so it never re-scans old breadcrumbs. */
   tripsProcessedUntil: timestamp("trips_processed_until", { withTimezone: true }),
   updatedAt: updatedAt(),

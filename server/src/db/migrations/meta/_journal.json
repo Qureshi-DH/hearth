@@ -36,6 +36,13 @@
       "when": 1789300376343,
       "tag": "0004_wake_quiet_phones",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789408907720,
+      "tag": "0005_device_health",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,8 @@ import {
   type EventType,
   type MemberPresence,
   type SharingState,
+  type DeviceHealth,
+  type PresenceIssue,
 } from "@hearth/shared"
 import { and, asc, eq, inArray, isNull, sql, type AnyColumn, type SQL } from "drizzle-orm"
 
@@ -78,6 +80,26 @@ export interface PresenceRow {
   activity: MemberPresence["activity"]
   speedMps: number | null
   headingDegrees: number | null
+  health?: DeviceHealth | null
+}
+
+/**
+ * What the phone said stands between it and reporting, as a list the app
+ * can put under the member's name. Nothing wrong, or nothing said, is empty.
+ */
+export function presenceIssues(health: DeviceHealth | null | undefined): PresenceIssue[] {
+  if (!health) return []
+  const issues: PresenceIssue[] = []
+  if (health.locationPermission !== "always" && health.locationPermission !== "unknown") {
+    issues.push("location_permission")
+  }
+  if (!health.locationServices) issues.push("location_services")
+  if (health.backgroundRefresh && health.backgroundRefresh !== "available") {
+    issues.push("background_refresh")
+  }
+  if (health.batteryOptimised) issues.push("battery_optimisation")
+  if (health.lowPowerMode) issues.push("low_power_mode")
+  return issues
 }
 
 export function projectPresence(
@@ -116,6 +138,7 @@ export function projectPresence(
       stale: state === "paused" ? false : stale,
       atPlace: state === "paused" ? null : extras.atPlace,
       sosAlertId: extras.sosAlertId,
+      issues: state === "paused" ? [] : presenceIssues(row.health),
     }
   }
 
@@ -143,6 +166,7 @@ export function projectPresence(
     // viewers on the coarse grid do not get it.
     atPlace: approximate ? null : extras.atPlace,
     sosAlertId: extras.sosAlertId,
+    issues: presenceIssues(row.health),
   }
 }
 
@@ -177,6 +201,7 @@ export async function loadRawCirclePresence(
       activity: userPresence.activity,
       speedMps: userPresence.speedMps,
       headingDegrees: userPresence.headingDegrees,
+      health: userPresence.health,
     })
     .from(circleMembers)
     .leftJoin(userPresence, eq(userPresence.userId, circleMembers.userId))
@@ -188,6 +213,7 @@ export async function loadRawCirclePresence(
       placeId: places.id,
       placeName: places.name,
       placeIcon: places.icon,
+      since: placeMemberships.since,
     })
     .from(placeMemberships)
     .innerJoin(places, eq(places.id, placeMemberships.placeId))
@@ -201,7 +227,12 @@ export async function loadRawCirclePresence(
   const atPlaceByUser: Record<string, MemberPresence["atPlace"]> = {}
   for (const row of insideRows) {
     if (!atPlaceByUser[row.userId]) {
-      atPlaceByUser[row.userId] = { id: row.placeId, name: row.placeName, icon: row.placeIcon }
+      atPlaceByUser[row.userId] = {
+        id: row.placeId,
+        name: row.placeName,
+        icon: row.placeIcon,
+        since: row.since.toISOString(),
+      }
     }
   }
 
@@ -244,6 +275,7 @@ export async function loadRawPresenceByCircle(
       activity: userPresence.activity,
       speedMps: userPresence.speedMps,
       headingDegrees: userPresence.headingDegrees,
+      health: userPresence.health,
     })
     .from(circleMembers)
     .leftJoin(userPresence, eq(userPresence.userId, circleMembers.userId))
@@ -255,6 +287,7 @@ export async function loadRawPresenceByCircle(
       placeId: places.id,
       placeName: places.name,
       placeIcon: places.icon,
+      since: placeMemberships.since,
     })
     .from(placeMemberships)
     .innerJoin(places, eq(places.id, placeMemberships.placeId))
@@ -299,13 +332,19 @@ export async function loadRawPresenceByCircle(
       activity: row.activity,
       speedMps: row.speedMps,
       headingDegrees: row.headingDegrees,
+      health: row.health,
     })
   }
 
   for (const row of insideRows) {
     const entry = byCircle.get(row.circleId)
     if (!entry || entry.atPlaceByUser[userId]) continue
-    entry.atPlaceByUser[userId] = { id: row.placeId, name: row.placeName, icon: row.placeIcon }
+    entry.atPlaceByUser[userId] = {
+      id: row.placeId,
+      name: row.placeName,
+      icon: row.placeIcon,
+      since: row.since.toISOString(),
+    }
   }
 
   for (const row of activeSos) {

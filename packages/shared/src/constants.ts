@@ -153,6 +153,17 @@ export const DEFAULTS = {
   distanceFilterMeters: 60,
   staleAfterSeconds: 15 * 60,
   offlineAfterSeconds: 60 * 60,
+  /**
+   * A phone that said it had parked is expected to go quiet: iOS suspends
+   * it and answers a silent push only a few times an hour, when it answers
+   * at all. Silence from a parked phone is news after a night, not an hour.
+   */
+  parkedOfflineAfterSeconds: 12 * 60 * 60,
+  /**
+   * A run of fixes that stays inside this circle for longer than the idle
+   * gap is a stop, whether or not the phone kept reporting from it.
+   */
+  tripStopRadiusMeters: 100,
   /** A fraction, not a percentage. */
   lowBatteryThreshold: 0.15,
   minPlaceRadiusMeters: 50,
