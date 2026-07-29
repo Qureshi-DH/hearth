@@ -1,4 +1,4 @@
-import { DEFAULTS, type FeedEvent } from "@hearth/shared"
+import { DEFAULTS, type DeviceHealth, type FeedEvent } from "@hearth/shared"
 import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm"
 import type { FastifyBaseLogger } from "fastify"
 
@@ -116,9 +116,14 @@ async function pruneSessions(db: Database): Promise<number> {
 const OUTAGE_MIN_REPORTING = 8
 
 /**
- * Half the offline window. A phone that has been quiet this long is asked
- * for a fix, silently, before anyone is told it went dark.
+ * How long a phone is left quiet before it is asked for a fix, silently. A
+ * high priority push reaches an Android phone even in Doze, and posting a
+ * notification for it, which the app does, is what keeps FCM treating the
+ * app's pushes as high priority, so Android can be asked often. iOS delivers
+ * a silent push a few times an hour at most and drops the rest, so an
+ * iPhone is asked at half the offline window and no more.
  */
+const WAKE_AFTER_ANDROID_MS = 15 * 60 * 1000
 const WAKE_AFTER_MS = (DEFAULTS.offlineAfterSeconds * 1000) / 2
 /** How long a woken phone gets to answer before the offline sweep may go ahead. */
 const WAKE_GRACE_MS = 10 * 60 * 1000
@@ -133,10 +138,18 @@ const WAKE_GRACE_MS = 10 * 60 * 1000
 async function wakeQuietPhones(db: Database, driver: PushDriver | null): Promise<number> {
   if (driver?.provider !== "expo") return 0
   const quietSince = new Date(Date.now() - WAKE_AFTER_MS)
+  const androidQuietSince = new Date(Date.now() - WAKE_AFTER_ANDROID_MS)
   const unanswered = or(
     isNull(userPresence.wakeRequestedAt),
     lt(userPresence.wakeRequestedAt, userPresence.recordedAt),
   )
+  const hasAndroid = sql`exists (
+    select 1 from ${sessions}
+    where ${sessions.userId} = ${userPresence.userId}
+      and ${sessions.revokedAt} is null
+      and ${sessions.pushToken} is not null
+      and ${sessions.platform} = 'android'
+  )`
   const quiet = await db
     .select({ userId: userPresence.userId })
     .from(userPresence)
@@ -145,7 +158,9 @@ async function wakeQuietPhones(db: Database, driver: PushDriver | null): Promise
       and(
         eq(users.isActive, true),
         isNotNull(userPresence.recordedAt),
-        lt(userPresence.recordedAt, quietSince),
+        sql`${userPresence.recordedAt} < (case when ${hasAndroid}
+          then ${androidQuietSince.toISOString()}::timestamptz
+          else ${quietSince.toISOString()}::timestamptz end)`,
         // Once per silence: a wake newer than the last fix is still pending.
         unanswered,
       ),
@@ -172,6 +187,21 @@ async function wakeQuietPhones(db: Database, driver: PushDriver | null): Promise
   return woken
 }
 
+/** The first thing the phone said stands between it and reporting, in words. */
+export function healthReason(health: DeviceHealth | null | undefined): string | null {
+  if (!health) return null
+  if (health.locationPermission !== "always" && health.locationPermission !== "unknown") {
+    return "location permission is not set to Always"
+  }
+  if (!health.locationServices) return "location services are off"
+  if (health.backgroundRefresh && health.backgroundRefresh !== "available") {
+    return "Background App Refresh is off"
+  }
+  if (health.batteryOptimised) return "battery optimisation is still on"
+  if (health.lowPowerMode) return "Low Power Mode is on"
+  return null
+}
+
 /**
  * A phone that went quiet says more than one that is merely stationary, so
  * this is the alert families care about most. Each circle hears it once per
@@ -184,6 +214,14 @@ async function flagOfflineDevices(
   driver: PushDriver | null,
 ): Promise<number> {
   const cutoff = new Date(Date.now() - DEFAULTS.offlineAfterSeconds * 1000)
+  // A phone whose last word was that it had parked is expected to go quiet:
+  // iOS suspends it, and answers a silent push only when it feels like it.
+  // Silence from a parked phone is news after a night, not after an hour.
+  // A phone last seen moving that goes quiet is the one worth a word.
+  const parkedCutoff = new Date(Date.now() - DEFAULTS.parkedOfflineAfterSeconds * 1000)
+  const quietFor = sql`${userPresence.recordedAt} < (case when ${userPresence.activity} = 'still'
+    then ${parkedCutoff.toISOString()}::timestamptz
+    else ${cutoff.toISOString()}::timestamptz end)`
   // A phone that was never asked cannot have failed to answer. Where no wake
   // can be sent the silence alone has to do, as it always did.
   const canWake = driver?.provider === "expo"
@@ -192,8 +230,8 @@ async function flagOfflineDevices(
   const [totals] = await db
     .select({
       reporting: sql<number>`count(*) filter (where ${userPresence.recordedAt} is not null)::int`,
-      stale: sql<number>`count(*) filter (where ${userPresence.recordedAt} < ${cutoff.toISOString()}::timestamptz)::int`,
-      fresh: sql<number>`count(*) filter (where ${userPresence.recordedAt} >= ${cutoff.toISOString()}::timestamptz)::int`,
+      stale: sql<number>`count(*) filter (where ${quietFor})::int`,
+      fresh: sql<number>`count(*) filter (where ${userPresence.recordedAt} is not null and not (${quietFor}))::int`,
     })
     .from(userPresence)
   if (!totals || totals.stale === 0) return 0
@@ -226,6 +264,7 @@ async function flagOfflineDevices(
       userId: userPresence.userId,
       displayName: users.displayName,
       notifiedAt: userPresence.offlineNotifiedAt,
+      health: userPresence.health,
     })
     .from(userPresence)
     .innerJoin(users, eq(users.id, userPresence.userId))
@@ -236,7 +275,7 @@ async function flagOfflineDevices(
         // describes an admin's decision as a malfunction.
         eq(users.isActive, true),
         isNotNull(userPresence.recordedAt),
-        lt(userPresence.recordedAt, cutoff),
+        quietFor,
         ...(canWake
           ? [
               isNotNull(userPresence.wakeRequestedAt),
@@ -307,15 +346,23 @@ async function flagOfflineDevices(
       const confirmed = await alreadyToldThisOutage(tx as unknown as Database, [row.userId])
       for (const membership of pending) {
         if (confirmed.has(outageKey(row.userId, membership.circleId))) continue
+        // The phone may have said why it cannot report, and that is the
+        // useful sentence: "Sami's location permission is off" is something
+        // a parent can act on, "phone offline" is a worry.
+        const reason = healthReason(row.health)
         const event = await recordEvent(tx as unknown as Database, {
           deferBroadcast: true,
           circleId: membership.circleId,
           type: "device_offline",
           actorUserId: row.userId,
-          summary: `${row.displayName}'s phone stopped reporting`,
+          summary: reason
+            ? `${row.displayName}'s phone cannot report: ${reason}`
+            : `${row.displayName}'s phone stopped reporting`,
           notify: {
-            title: "Phone offline",
-            body: `${row.displayName}'s phone has not reported in for a while.`,
+            title: reason ? "Phone cannot report" : "Phone offline",
+            body: reason
+              ? `${row.displayName}'s phone says its ${reason}.`
+              : `${row.displayName}'s phone has not reported in for a while.`,
             channel: "alerts",
           },
         })
