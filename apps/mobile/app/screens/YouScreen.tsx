@@ -258,6 +258,12 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
           icon="phone-portrait-outline"
           onPress={() => navigation.navigate("Devices")}
         />
+        <ListRow
+          tx="settings:trackerLog"
+          subtitleTx="settings:trackerLogBody"
+          icon="pulse-outline"
+          onPress={() => navigation.navigate("TrackerLog")}
+        />
       </ListGroup>
 
       <SectionHeader tx="settings:profile" />

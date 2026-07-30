@@ -7,6 +7,7 @@ import * as TaskManager from "expo-task-manager"
 import { DEFAULTS, type ServerInfo } from "@hearth/shared"
 
 import { endpoints } from "@/services/api"
+import { logTracker } from "@/services/location/log"
 import {
   BACKGROUND_LOCATION_TASK,
   enterWatched,
@@ -183,6 +184,7 @@ const WATCH_TYPE = "watch"
 TaskManager.defineTask(NOTIFICATION_WAKE_TASK, async ({ data, error }) => {
   if (error) return
   const type = pushType(data)
+  logTracker("push", { type })
   if (type === WATCH_TYPE) {
     await enterWatched(watchSeconds(data))
     return

@@ -33,6 +33,7 @@ export type AppStackParamList = {
   Sharing: { circleId?: string } | undefined
   NotificationPrefs: { circleId: string }
   Devices: undefined
+  TrackerLog: undefined
   PrivacyData: undefined
   ChangePassword: undefined
   Sos: { circleId: string }

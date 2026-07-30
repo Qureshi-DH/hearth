@@ -11,7 +11,7 @@ import { useNearby } from "@/hooks/useNearby"
 import { useAppTheme } from "@/theme/context"
 import { activityIconName } from "@/utils/activity"
 import { formatSpeed } from "@/utils/format"
-import { relativeTime } from "@/utils/time"
+import { relativeTime, sinceTime } from "@/utils/time"
 
 export interface MemberRowProps {
   member: CircleMember
@@ -39,7 +39,18 @@ export function ringFor(presence: MemberPresence | undefined, isSelf: boolean): 
 export function statusLine(presence: MemberPresence | undefined, nearby?: string | null): string {
   if (!presence) return translate("map:noLocation")
   if (presence.sharingState === "paused") return translate("map:paused")
-  if (presence.atPlace) return translate("map:atPlace", { place: presence.atPlace.name })
+  // What the phone said is wrong with it comes before where it last was:
+  // "location permission off" is the sentence a parent can act on.
+  const issue = presence.issues?.[0]
+  if (issue && (presence.stale || !presence.recordedAt)) {
+    return translate(`map:issue_${issue}` as const)
+  }
+  if (presence.atPlace) {
+    const since = presence.atPlace.since ? sinceTime(presence.atPlace.since) : null
+    return since
+      ? translate("map:atPlaceSince", { place: presence.atPlace.name, since })
+      : translate("map:atPlace", { place: presence.atPlace.name })
+  }
   if (!presence.recordedAt) return translate("map:noLocation")
   const when = presence.stale
     ? `${translate("map:stale")} · ${relativeTime(presence.recordedAt)}`

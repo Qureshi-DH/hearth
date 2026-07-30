@@ -226,6 +226,10 @@ const AppStack = () => {
             getComponent={() => require("@/screens/PrivacyDataScreen").PrivacyDataScreen}
           />
           <Stack.Screen
+            name="TrackerLog"
+            getComponent={() => require("@/screens/TrackerLogScreen").TrackerLogScreen}
+          />
+          <Stack.Screen
             name="ChangePassword"
             getComponent={() => require("@/screens/ChangePasswordScreen").ChangePasswordScreen}
             options={sheet}

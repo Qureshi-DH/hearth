@@ -66,6 +66,7 @@ function presenceFor(userId: string, lat: number): MemberPresence {
     stale: false,
     atPlace: null,
     sosAlertId: null,
+    issues: [],
   }
 }
 

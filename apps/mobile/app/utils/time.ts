@@ -37,6 +37,16 @@ export function formatDuration(totalSeconds: number): string {
   return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`
 }
 
+/** "3:15 PM" today, "Yesterday 3:15 PM" before that: when somebody arrived. */
+export function sinceTime(iso: string, now: Date = new Date()): string {
+  const date = new Date(iso)
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  return sameDay ? formatClock(iso) : `${dayLabel(iso, now)} ${formatClock(iso)}`
+}
+
 export function formatWhen(iso: string): string {
   const date = new Date(iso)
   return `${date.toLocaleDateString(undefined, { weekday: "short" })} ${formatClock(iso)}`

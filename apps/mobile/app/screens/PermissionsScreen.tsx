@@ -8,6 +8,7 @@ import { PrimaryButton } from "@/components/PrimaryButton"
 import { Screen } from "@/components/Screen"
 import { Text } from "@/components/Text"
 import { translate } from "@/i18n/translate"
+import { reportHealth } from "@/services/health"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { refreshMotionWatch, requestPermissions, startTracking } from "@/services/location/tracker"
 import { ensureMotionPermission, motionPermission } from "@/services/location/motion"
@@ -65,6 +66,8 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
     // before flipping back.
     const [next, motionState] = await Promise.all([getPermissionSnapshot(), motionPermission()])
     setSnapshot(next)
+    // The circle sees what the checklist sees.
+    void reportHealth()
     setMotion(motionState)
     useTrackingStore.getState().setPermission(next.location)
     // A grant made in system Settings comes back through here, on the return
