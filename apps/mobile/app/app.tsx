@@ -37,6 +37,7 @@ import {
   stopBackgroundClock,
   stopForegroundHeartbeat,
 } from "./services/location/tracker"
+import { reportHealth } from "./services/health"
 import { registerWakeTask, setupChannels } from "./services/notifications"
 import { useAuthStore } from "./stores/auth"
 import { tokenVault } from "./stores/tokenVault"
@@ -119,7 +120,7 @@ export function App() {
     void refreshLocationStatus()
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
-        void refreshLocationStatus()
+        void refreshLocationStatus().then(() => reportHealth())
         // The app open is a moment Android allows the location service to
         // start, and a journey that began while it was refused is waiting.
         void reassertService()
@@ -153,7 +154,10 @@ export function App() {
         // heartbeat must see before it decides whether to ask for its own. And
         // it starts whatever the permission, because "While Using" never gets
         // startTracking here and the heartbeat is all such a phone has.
-        void resumeIfEnabled().finally(startForegroundHeartbeat)
+        void resumeIfEnabled().finally(() => {
+          startForegroundHeartbeat()
+          void reportHealth()
+        })
       }
     })()
     return () => {

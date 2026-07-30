@@ -7,6 +7,7 @@ import * as TaskManager from "expo-task-manager"
 import {
   DEFAULTS,
   haversineMeters,
+  type ActivityType,
   type LocationFixInput,
   type LocationSource,
 } from "@hearth/shared"
@@ -25,6 +26,7 @@ import { startDriveSensors, stopDriveSensors } from "@/services/location/driveSe
 import { useIncidentStore } from "@/stores/incident"
 import { useSettingsStore } from "@/stores/settings"
 import { tokenVault } from "@/stores/tokenVault"
+import { logTracker } from "@/services/location/log"
 import { useTrackingStore, type PermissionLevel, type TrackingPolicy } from "@/stores/tracking"
 
 export const BACKGROUND_LOCATION_TASK = "hearth-background-location"
@@ -34,7 +36,7 @@ export const BACKGROUND_SYNC_TASK = "com.binary.rewind.hearth.sync"
 export const STATIONARY_GEOFENCE_TASK = "hearth-stationary-geofence"
 
 const MAX_BATCH = 200
-const STALE_FIX_MS = 30 * 60 * 1000
+const STALE_FIX_MS = 15 * 60 * 1000
 /**
  * How often a parked phone says it is still there. The server calls a phone
  * offline after an hour of silence, so this leaves it four chances.
@@ -160,9 +162,27 @@ export function toFix(
     headingDegrees: c.heading != null && c.heading >= 0 ? c.heading : null,
     batteryLevel: battery.batteryLevel,
     isCharging: battery.isCharging,
+    // What the phone is doing, as the tracker knows it, so the family sees a
+    // car for a drive and the server knows a still phone is meant to be
+    // quiet. Speed alone read a parked phone as "still" and a Wi-Fi jump as
+    // walking.
+    activity: currentActivity(),
     source,
   }
 }
+
+/** The tracker's own verdict on what the phone is doing right now. */
+export function currentActivity(): ActivityType {
+  const { mode } = useTrackingStore.getState()
+  if (mode === "stationary") return "still"
+  if (driving) return "driving"
+  if (lastVerdict === "walking" || lastVerdict === "running" || lastVerdict === "cycling") {
+    return lastVerdict
+  }
+  return "unknown"
+}
+
+let lastVerdict: MotionActivity | null = null
 
 /**
  * The OS already applies a distance filter, but iOS emits bursts of
@@ -289,6 +309,15 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
     fixes = await restingFixes(fixes.length > 0 ? fixes : [newest])
   }
   if (fixes.length > 0) state.enqueue(fixes)
+  if (source === "background") {
+    logTracker("fixes", {
+      got: all.length,
+      kept: fixes.length,
+      mode: state.mode,
+      acc: Math.round(newest.accuracyMeters ?? -1),
+      speed: newest.speedMps == null ? null : Number(newest.speedMps.toFixed(1)),
+    })
+  }
   if (source === "background") {
     // From the fix itself, not from what was kept: a still phone's fixes are
     // exactly the ones the gate drops and exactly the ones that say it is
@@ -549,6 +578,7 @@ TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
   if (event?.eventType !== Location.GeofencingEventType.Exit) return
   const { enabled, mode, stillAnchor, policy } = useTrackingStore.getState()
   if (!enabled) return
+  logTracker("fence exit", { mode })
   // A fence left armed on a phone already moving, because Android refused
   // the service at the moment it left, fires on the way out. That exit is
   // the moment Android allows the start, and nothing more: the anchor by
@@ -575,7 +605,10 @@ TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
     stillAnchor != null &&
     (fix.accuracyMeters ?? Infinity) <= STILL_MAX_ACCURACY_METERS &&
     haversineMeters(stillAnchor, fix) + (fix.accuracyMeters ?? 0) <= stationaryRadiusMeters(policy)
-  if (clearlyInside && stillAnchor) await enterStationary(stillAnchor.lat, stillAnchor.lon)
+  if (clearlyInside && stillAnchor) {
+    logTracker("fence exit was false", { accuracy: fix?.accuracyMeters })
+    await enterStationary(stillAnchor.lat, stillAnchor.lon)
+  }
 })
 
 /** Waking the location stack is the one thing "stationary" exists to avoid. */
@@ -740,6 +773,7 @@ export async function enterDriving(speedMps: number | null): Promise<void> {
   const distance = drivingDistanceMeters(speedMps)
   if (driving?.distance === distance) return
   driving = { distance, slowSince: driving?.slowSince ?? null }
+  logTracker("driving", { distance })
   await applyRegistration()
 }
 
@@ -747,6 +781,7 @@ export async function leaveDriving(): Promise<void> {
   if (!driving) return
   const stoppedAt = driving.slowSince
   driving = null
+  logTracker("drive over")
   const store = useTrackingStore.getState()
   if (store.mode !== "moving") return
   // The car stopped when it began to crawl, and the stop is dated from
@@ -982,6 +1017,7 @@ export async function reassertService(): Promise<void> {
 export async function enterWatched(seconds: number): Promise<void> {
   const store = useTrackingStore.getState()
   if (!store.enabled || store.mode === "off") return
+  logTracker("watched", { seconds, mode: store.mode })
   store.setWatchedUntil(new Date(Date.now() + seconds * 1000).toISOString())
   if (store.mode === "stationary") {
     await wakeFix()
@@ -1011,6 +1047,7 @@ export async function wakeFix(): Promise<LocationFixInput | null> {
   const { enabled, mode } = useTrackingStore.getState()
   if (!enabled || mode === "off") return null
   const brief = Platform.OS === "android" && mode === "stationary"
+  logTracker("wake", { mode, brief })
   if (brief) {
     briefService = true
     await applyRegistration().catch(() => undefined)
@@ -1091,6 +1128,10 @@ async function onMotion(
 ): Promise<void> {
   const store = useTrackingStore.getState()
   if (!store.enabled || store.mode === "off" || confidence < MOTION_MIN_CONFIDENCE) return
+  if (activity !== "unknown" && activity !== lastVerdict) {
+    logTracker("motion", { activity, confidence, source, mode: store.mode })
+    lastVerdict = activity
+  }
 
   // Impact sensing is only worth its battery inside a vehicle, and only there
   // can its signals be read honestly: a spike while walking is a dropped
@@ -1212,6 +1253,7 @@ export async function enterMoving(): Promise<void> {
   // A stop can land while the registration was in flight, and its fence
   // and anchor are then the newer truth.
   if (useTrackingStore.getState().mode !== "moving") return
+  logTracker("moving", { from: previous, service })
   // The request is registered either way. What the fence does next depends
   // on whether Android let the service start: with it up, the fence has done
   // its job; refused, the fence stays, because its exit is a moment Android
@@ -1260,6 +1302,11 @@ export async function enterStationary(lat: number, lon: number): Promise<void> {
   // A departure can land while the registration was in flight, and the
   // anchor written below would then describe a stop that is over.
   if (useTrackingStore.getState().mode !== "stationary") return
+  logTracker("stationary", {
+    from: previous,
+    lat: Number(lat.toFixed(5)),
+    lon: Number(lon.toFixed(5)),
+  })
   // Sampling the accelerometer that hard is only worth its battery inside a
   // moving vehicle. A verdict already scheduled survives this, see
   // stopDriveSensors.
@@ -1437,6 +1484,7 @@ export async function startTracking(): Promise<boolean> {
 }
 
 export async function stopTracking(): Promise<void> {
+  logTracker("off")
   stopForegroundHeartbeat()
   stopBackgroundClock()
   driving = null

@@ -1,4 +1,5 @@
 import type {
+  DeviceHealth,
   AdminStats,
   AdminUserSummary,
   AuthResponse,
@@ -101,6 +102,7 @@ export function createEndpoints(api: ApiClient) {
       revokeAll: () => api.post<{ ok: true; revokedSessions: number }>("/auth/sessions/revoke-all"),
       exportData: () => api.get<unknown>("/me/export", { timeoutMs: 60_000 }),
       deleteAccount: (password: string) => api.delete<{ ok: true }>("/me", { password }),
+      health: (health: DeviceHealth) => api.patch<{ ok: true }>("/me/health", health),
     },
 
     circles: {

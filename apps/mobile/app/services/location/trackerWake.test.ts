@@ -853,3 +853,38 @@ describe("what the review found", () => {
     expect(useTrackingStore.getState().mode).toBe("off")
   })
 })
+
+const at = (lat: number, lon: number, when: number, speed: number | null = 0, accuracy = 20) =>
+  ({
+    timestamp: when,
+    coords: {
+      latitude: lat,
+      longitude: lon,
+      altitude: 0,
+      accuracy,
+      altitudeAccuracy: 5,
+      heading: -1,
+      speed,
+    },
+  }) as Location.LocationObject
+
+describe("what a fix says the phone is doing", () => {
+  beforeEach(() => {
+    Platform.OS = "android"
+    mockServiceStatus = "running"
+  })
+
+  it("says still when parked, driving on the GPS tier, and nothing it does not know", async () => {
+    await enterMoving()
+    await ingest([at(HOME.lat, HOME.lon, Date.now(), 0)], "background")
+    expect(useTrackingStore.getState().queue.at(-1)?.activity).toBe("unknown")
+
+    await enterDriving(30)
+    await ingest([at(HOME.lat + 0.01, HOME.lon, Date.now(), 20)], "background")
+    expect(useTrackingStore.getState().queue.at(-1)?.activity).toBe("driving")
+
+    await enterStationary(HOME.lat, HOME.lon)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(useTrackingStore.getState().queue.at(-1)?.activity).toBe("still")
+  })
+})

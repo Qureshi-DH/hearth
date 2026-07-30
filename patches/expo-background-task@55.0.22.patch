@@ -1,0 +1,40 @@
+diff --git a/ios/BackgroundTaskScheduler.swift b/ios/BackgroundTaskScheduler.swift
+index 906678b..cbe9caa 100644
+--- a/ios/BackgroundTaskScheduler.swift
++++ b/ios/BackgroundTaskScheduler.swift
+@@ -4,7 +4,7 @@ import Foundation
+ 
+ protocol BackgroundTaskScheduling: Sendable {
+   func cancel(taskRequestWithIdentifier identifier: String)
+-  func submit(_ request: BGProcessingTaskRequest) throws
++  func submit(_ request: BGTaskRequest) throws
+   func pendingTaskRequests() async -> [BGTaskRequest]
+ }
+ 
+@@ -13,7 +13,7 @@ private struct SystemBackgroundTaskScheduler: BackgroundTaskScheduling {
+     BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
+   }
+ 
+-  func submit(_ request: BGProcessingTaskRequest) throws {
++  func submit(_ request: BGTaskRequest) throws {
+     try BGTaskScheduler.shared.submit(request)
+   }
+ 
+@@ -89,9 +89,14 @@ public class BackgroundTaskScheduler {
+ 
+       stopWorkerOnce()
+ 
+-      let request = BGProcessingTaskRequest(identifier: BackgroundTaskConstants.BackgroundWorkerIdentifier)
+-      request.requiresNetworkConnectivity = true
+-      request.requiresExternalPower = false
++      // Hearth: an app refresh task, not a processing task. iOS runs a
++      // processing task when the phone is idle and charging, which for a
++      // family tracker means never while it matters, and it is the reason a
++      // parked iPhone had no heartbeat of its own. A refresh task is what
++      // Background App Refresh means: run for up to thirty seconds, at about
++      // the interval asked for, whenever iOS judges the app worth it. A fix
++      // and an upload fit in that with room to spare.
++      let request = BGAppRefreshTaskRequest(identifier: BackgroundTaskConstants.BackgroundWorkerIdentifier)
+       request.earliestBeginDate = Date().addingTimeInterval(intervalSeconds)
+ 
+       do {
