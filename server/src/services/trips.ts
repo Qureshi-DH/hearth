@@ -56,6 +56,13 @@ const TRIP_PUSH_FRESHNESS_MS = 60 * 60 * 1000
 const MIN_EXCURSION_METERS = 150
 
 /**
+ * A fix at one place and the next at another, hours apart, says nothing
+ * about when the phone moved. Closer to walking pace across the silence, it
+ * says the phone went straight there.
+ */
+const MIN_BRIDGED_PACE_MPS = 1
+
+/**
  * How far apart two receivers riding in one vehicle can look at the same
  * instant. Wide enough for a sparse sampler interpolated across a bend and for
  * the seconds of clock skew between two handsets, far tighter than the gap
@@ -198,18 +205,32 @@ export async function detectTripsForUser(
   // read again.
   let openFrom: Date | null = null
 
-  for (const [deviceId, points] of groupByDevice(rows)) {
-    const segments = segmentByIdleGap(points, gapMs)
-    const last = segments[segments.length - 1]!
-    const lastIsClosed = truncated || (await hasGoneQuiet(db, userId, deviceId, last, gapMs, now))
-    const closed = lastIsClosed ? segments : segments.slice(0, -1)
+  // Two lone fixes at two different named places, with silence between them
+  // at a pace a person could have kept, are one journey the tracker did not
+  // narrate. The same silence after a fix that is not at a place is a stop.
+  const bridges = (from: Candidate, to: Candidate) => {
+    const origin = placeContaining(pass.places, from)
+    const destination = placeContaining(pass.places, to)
+    if (!origin || !destination || origin === destination) return false
+    const seconds = (to.recordedAt.getTime() - from.recordedAt.getTime()) / 1000
+    return seconds > 0 && haversineMeters(from, to) / seconds >= MIN_BRIDGED_PACE_MPS
+  }
 
-    for (const segment of closed) {
-      if (await persistSegment(db, pass, deviceId, segment)) created += 1
+  for (const [deviceId, points] of groupByDevice(rows)) {
+    const runs = segmentByStops(points, gapMs, DEFAULTS.tripStopRadiusMeters, bridges)
+    const last = runs[runs.length - 1]!
+    const lastIsClosed =
+      truncated ||
+      last.closedByStop ||
+      (await hasGoneQuiet(db, userId, deviceId, last.points, gapMs, now))
+    const closed = lastIsClosed ? runs : runs.slice(0, -1)
+
+    for (const run of closed) {
+      if (await persistSegment(db, pass, deviceId, run.points)) created += 1
     }
 
     if (!lastIsClosed) {
-      const start = last[0]!.recordedAt
+      const start = last.points[0]!.recordedAt
       if (!openFrom || start < openFrom) openFrom = start
     }
   }
@@ -257,20 +278,86 @@ async function scanFloor(db: Database, userId: string, since: Date, now: Date): 
   return new Date(late.recordedAt.getTime() - 1)
 }
 
-export function segmentByIdleGap(points: Candidate[], gapMs: number): Candidate[][] {
-  const segments: Candidate[][] = []
-  let current: Candidate[] = []
+/** A run of fixes and whether the rows themselves show it ended. */
+export interface Run {
+  points: Candidate[]
+  /**
+   * The run was followed, in these rows, by a gap longer than the idle gap or
+   * by the phone staying inside the stop radius for longer than it. Either is
+   * the journey over, whatever came after. A run without this may still be
+   * under way and is judged by hasGoneQuiet.
+   */
+  closedByStop: boolean
+}
 
-  for (const point of points) {
+/**
+ * Splits breadcrumbs into journeys. A gap longer than the idle gap is one
+ * boundary; the other is a stop the phone kept reporting from. A phone that
+ * arrives somewhere and goes on delivering a fix every few minutes from the
+ * same spot used to hold the run open all day, so the morning's drive to work
+ * and the evening's drive home came out as one trip. Now a stretch of fixes
+ * inside the stop radius for longer than the idle gap ends the journey at its
+ * first fix, the fixes inside the stop belong to no journey, and the next
+ * journey starts with the first fix that leaves it.
+ */
+export function segmentByStops(
+  points: Candidate[],
+  gapMs: number,
+  stopRadiusMeters: number,
+  /**
+   * Whether a gap between two lone fixes is a journey the phone kept to
+   * itself rather than a stop: a fix at the door and the next one, ten
+   * minutes later, at a friend's door. The caller knows the places.
+   */
+  bridges: (from: Candidate, to: Candidate) => boolean = () => false,
+): Run[] {
+  const runs: Run[] = []
+  let current: Candidate[] = []
+  let i = 0
+
+  while (i < points.length) {
+    const point = points[i]!
     const previous = current[current.length - 1]
     if (previous && point.recordedAt.getTime() - previous.recordedAt.getTime() > gapMs) {
-      segments.push(current)
-      current = []
+      // A lone fix followed by silence and a fix somewhere else is the one
+      // gap that is not a stop. Anything more than a lone fix was a journey
+      // that ended, and the silence after it is its end.
+      if (!(current.length === 1 && bridges(previous, point))) {
+        runs.push({ points: current, closedByStop: true })
+        current = []
+      }
     }
     current.push(point)
+
+    // How long the phone then stayed within the stop radius of this fix,
+    // reporting all the while. A fix from the same spot after a gap is a
+    // gap, and the gap is its own boundary.
+    let j = i + 1
+    while (
+      j < points.length &&
+      points[j]!.recordedAt.getTime() - points[j - 1]!.recordedAt.getTime() <= gapMs &&
+      haversineMeters(point, points[j]!) <= stopRadiusMeters
+    ) {
+      j += 1
+    }
+    const stayedMs = points[j - 1]!.recordedAt.getTime() - point.recordedAt.getTime()
+    if (j - 1 > i && stayedMs > gapMs) {
+      // The journey ends with the fix that arrived. The last fix inside the
+      // stop is the one that left, and it begins the next journey.
+      runs.push({ points: current, closedByStop: true })
+      current = []
+      i = j - 1
+      continue
+    }
+    i += 1
   }
-  if (current.length > 0) segments.push(current)
-  return segments
+  if (current.length > 0) runs.push({ points: current, closedByStop: false })
+  return runs
+}
+
+/** @deprecated kept for the tests that grew up on it; segmentByStops is the detector's. */
+export function segmentByIdleGap(points: Candidate[], gapMs: number): Candidate[][] {
+  return segmentByStops(points, gapMs, Infinity).map((run) => run.points)
 }
 
 /**
@@ -382,9 +469,17 @@ async function persistSegment(
     return false
   }
 
-  if (segment.length < 3) return false
-
   const columns = tripColumns(segment, pass.places)
+  // Three fixes make a path. Two make one only when each is inside a place
+  // the family named, and not the same one: a phone that reported at the
+  // door and again at a friend's has been somewhere, however little it said
+  // on the way.
+  const placeToPlace =
+    columns.startPlaceId != null &&
+    columns.endPlaceId != null &&
+    columns.startPlaceId !== columns.endPlaceId
+  if (segment.length < 3 && !(segment.length === 2 && placeToPlace)) return false
+
   const durationSeconds = (columns.endedAt.getTime() - columns.startedAt.getTime()) / 1000
   if (durationSeconds < DEFAULTS.tripMinDurationSeconds) return false
   if (columns.distanceMeters < DEFAULTS.tripMinDistanceMeters) return false

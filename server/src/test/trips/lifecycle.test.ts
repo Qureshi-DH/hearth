@@ -750,3 +750,86 @@ describe("what counts as a journey", () => {
     expect(trips[0]!.pointCount).toBe(21)
   })
 })
+
+describe("a stop the phone kept reporting from", () => {
+  const WORK = { lat: 51.5, lon: -2.6 }
+
+  it("splits the morning drive and the evening drive at the stop between them", async () => {
+    const user = await registerUser(ctx.app, { deviceId: "phone-commuter" })
+    await createCircle(user.headers)
+
+    // Out at 08:00, twenty minutes of driving, then a phone at work that kept
+    // handing over a fix every four minutes from the same spot, then home at
+    // 17:00. Every gap is under the idle gap; the stop is the only boundary.
+    const out = drive({
+      from: HOME,
+      startMs: minutesAgo(11 * 60),
+      intervalSeconds: 30,
+      count: 41,
+      speedMps: 15,
+      bearingDeg: 0,
+    })
+    const arrived = out[out.length - 1]!
+    const atWork = Array.from({ length: 120 }, (_, i) => ({
+      lat: arrived.lat + (i % 2 ? 0.0002 : 0),
+      lon: arrived.lon,
+      recordedAt: new Date(Date.parse(arrived.recordedAt) + (i + 1) * 4 * 60_000).toISOString(),
+      accuracyMeters: 25,
+      speedMps: 0,
+    }))
+    const back = drive({
+      from: { lat: arrived.lat, lon: arrived.lon },
+      startMs: Date.parse(atWork[atWork.length - 1]!.recordedAt) + 4 * 60_000,
+      intervalSeconds: 30,
+      count: 41,
+      speedMps: 15,
+      bearingDeg: 180,
+    })
+    await uploadFixes(user.headers, [...out, ...atWork, ...back])
+    await sweep()
+
+    const trips = await myTrips(user.headers)
+    expect(trips).toHaveLength(2)
+    expect(trips[0]!.pointCount).toBe(41)
+    expect(trips[1]!.pointCount).toBe(41)
+    expect(trips[0]!.endedAt).toBe(arrived.recordedAt)
+  })
+
+  it("files a journey between two named places from two fixes alone", async () => {
+    const user = await registerUser(ctx.app, { deviceId: "phone-quiet" })
+    const circle = await createCircle(user.headers)
+    for (const [name, at] of [
+      ["Home", HOME],
+      ["Work", WORK],
+    ] as const) {
+      const place = await ctx.app.inject({
+        method: "POST",
+        url: `/api/v1/circles/${circle.id}/places`,
+        headers: user.headers,
+        payload: { name, lat: at.lat, lon: at.lon, radiusMeters: 150, icon: "home" },
+      })
+      expect(place.statusCode).toBe(201)
+    }
+    // The phone said where it was at the door and again at the other door,
+    // and nothing on the way.
+    await uploadFixes(user.headers, [
+      { ...HOME, recordedAt: new Date(minutesAgo(40)).toISOString(), accuracyMeters: 15 },
+      { ...WORK, recordedAt: new Date(minutesAgo(20)).toISOString(), accuracyMeters: 15 },
+    ])
+    await sweep()
+    const trips = await myTrips(user.headers)
+    expect(trips).toHaveLength(1)
+    expect(trips[0]!.pointCount).toBe(2)
+  })
+
+  it("still refuses two fixes that are not both at named places", async () => {
+    const user = await registerUser(ctx.app, { deviceId: "phone-two" })
+    await createCircle(user.headers)
+    await uploadFixes(user.headers, [
+      { ...HOME, recordedAt: new Date(minutesAgo(40)).toISOString(), accuracyMeters: 15 },
+      { ...WORK, recordedAt: new Date(minutesAgo(20)).toISOString(), accuracyMeters: 15 },
+    ])
+    await sweep()
+    expect(await myTrips(user.headers)).toHaveLength(0)
+  })
+})

@@ -47,7 +47,10 @@ afterEach(() => {
   setRuntime({ pushDriver: original.driver })
 })
 
-async function phoneLastHeard(secondsAgo: number) {
+async function phoneLastHeard(
+  secondsAgo: number,
+  options: { activity?: "still" | "walking" | "driving"; platform?: "ios" | "android" } = {},
+) {
   const user = await registerUser(ctx.app)
   const response = await ctx.app.inject({
     method: "POST",
@@ -60,11 +63,16 @@ async function phoneLastHeard(secondsAgo: number) {
     method: "POST",
     url: "/api/v1/locations/batch",
     headers: user.headers,
-    payload: { points: [{ ...HOME, recordedAt: iso(-secondsAgo), accuracyMeters: 12 }] },
+    payload: {
+      points: [
+        { ...HOME, recordedAt: iso(-secondsAgo), accuracyMeters: 12, activity: options.activity },
+      ],
+    },
   })
   expect(upload.statusCode).toBe(200)
   await getDb().execute(
-    sql`update sessions set push_provider = 'expo', push_token = 'ExponentPushToken[x]'
+    sql`update sessions set push_provider = 'expo', push_token = 'ExponentPushToken[x]',
+        platform = ${options.platform ?? "ios"}
         where user_id = ${user.user.id}::uuid`,
   )
   return user
@@ -285,5 +293,89 @@ describe("asking phones for a fix on demand", () => {
       headers: owner.headers,
     })
     expect(self.statusCode).toBe(400)
+  })
+})
+
+describe("a parked phone", () => {
+  it("is not called offline after an hour of the silence it was expected to keep", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await phoneLastHeard(3 * 60 * 60, { activity: "still" })
+    await getDb().execute(
+      sql`update user_presence set wake_requested_at = now() - interval '2 hours'
+          where user_id = ${user.user.id}::uuid`,
+    )
+    const report = await tick()
+    expect(report.offlineFlagged).toBe(0)
+    expect(await offlineEvents(user.user.id)).toBe(0)
+  })
+
+  it("is called offline after a night", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await phoneLastHeard(13 * 60 * 60, { activity: "still" })
+    await getDb().execute(
+      sql`update user_presence set wake_requested_at = now() - interval '12 hours'
+          where user_id = ${user.user.id}::uuid`,
+    )
+    const report = await tick()
+    expect(report.offlineFlagged).toBe(1)
+  })
+
+  it("last seen moving, is called offline after the hour as before", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await phoneLastHeard(3 * 60 * 60, { activity: "driving" })
+    await getDb().execute(
+      sql`update user_presence set wake_requested_at = now() - interval '2 hours'
+          where user_id = ${user.user.id}::uuid`,
+    )
+    const report = await tick()
+    expect(report.offlineFlagged).toBe(1)
+  })
+})
+
+describe("how often a phone is asked", () => {
+  it("asks an Android phone after a quarter hour and an iPhone after half an hour", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    await phoneLastHeard(20 * 60, { platform: "android" })
+    await phoneLastHeard(20 * 60, { platform: "ios" })
+    const report = await tick()
+    expect(report.phonesWoken).toBe(1)
+  })
+})
+
+describe("a phone that says why it cannot report", () => {
+  it("shows the reason under the member and in the offline alert", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await phoneLastHeard(3 * 60 * 60, { activity: "driving" })
+    const health = await ctx.app.inject({
+      method: "PATCH",
+      url: "/api/v1/me/health",
+      headers: user.headers,
+      payload: { locationPermission: "foreground", locationServices: true },
+    })
+    expect(health.statusCode).toBe(200)
+
+    const circles = await ctx.app.inject({
+      method: "GET",
+      url: "/api/v1/circles",
+      headers: user.headers,
+    })
+    const [circle] = circles.json() as Array<{ id: string }>
+    const presence = await ctx.app.inject({
+      method: "GET",
+      url: `/api/v1/circles/${circle!.id}/locations`,
+      headers: user.headers,
+    })
+    const [me] = presence.json() as Array<{ issues: string[] }>
+    expect(me!.issues).toEqual(["location_permission"])
+
+    await getDb().execute(
+      sql`update user_presence set wake_requested_at = now() - interval '2 hours'
+          where user_id = ${user.user.id}::uuid`,
+    )
+    await tick()
+    const rows = (await getDb().execute(
+      sql`select summary from events where type = 'device_offline' and actor_user_id = ${user.user.id}::uuid`,
+    )) as unknown as Array<{ summary: string }>
+    expect(rows[0]?.summary).toContain("location permission is not set to Always")
   })
 })
