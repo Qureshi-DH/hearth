@@ -18,6 +18,17 @@ if (!existsSync(patchesDir)) process.exit(0)
 const git = (args, options = {}) =>
   execFileSync("git", args, { cwd: root, stdio: ["ignore", "pipe", "pipe"], ...options })
 
+// The server's image installs the workspace on a node:alpine base with no
+// git. Nothing there compiles the packages these patches change, so the
+// honest answer is to say so and step aside, not to report a patch that
+// "does not apply".
+try {
+  git(["--version"])
+} catch {
+  console.log("apply-patches: git is not available here; native patches are not needed for this install")
+  process.exit(0)
+}
+
 for (const file of readdirSync(patchesDir).filter((name) => name.endsWith(".patch"))) {
   // "expo-location@55.1.14.patch", or "@scope+name@1.2.3.patch" as pnpm writes it.
   const spec = file.slice(0, -".patch".length)
