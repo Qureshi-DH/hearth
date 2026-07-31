@@ -268,8 +268,15 @@ iOS is different while parked. A parked iPhone runs no location session at
 all: the stop stops the updates, the fence stays, and the phone is suspended.
 That is the only way it shows no indicator and costs nothing, and it is how
 commercial apps behave. The fence relaunches the app when the phone leaves, and
-while it sits the server's silent push is its heartbeat: the wake after half
-an hour of quiet, the map being opened, and somebody watching. iOS delivers
+while it sits two things are its heartbeat. Background App Refresh is one:
+`patches/expo-background-task@55.0.22.patch` turns expo's processing task,
+which iOS runs when the phone is idle and charging, into an app refresh
+task, which iOS runs for up to thirty seconds about every quarter hour when
+it judges the app worth it, and the sync task takes a fix on it when the
+last is a quarter hour old. The server's silent push is the other: the wake
+after half an hour of quiet, the map being opened, and somebody watching.
+Neither is a clock, and iOS is entitled to skip both, which is why a parked
+phone's silence is not "offline" for twelve hours. iOS delivers
 a few such pushes an hour, which is why the server spends them carefully
 (see the intervals in `locations.routes.ts`). `showsBackgroundLocationIndicator`
 is off in every tier; the small arrow still shows while location is actually
@@ -290,6 +297,31 @@ stop. For any of this the moving session must never pause:
 `pausesUpdatesAutomatically` is off, since a paused manager suspends the app
 with it and a suspended app calls no stop and arms no fence. That was the
 phone that went silent the moment it was put down.
+
+### What the phone says about itself
+
+`services/health.ts` sends `PATCH /me/health` with the checklist's reading
+of the phone: the location permission level, Location Services, Background
+App Refresh on iOS, battery optimisation on Android. It goes when the app
+comes to the front and after the checklist changes anything, and again only
+when something changes or a day has passed. The server keeps it on
+`user_presence.health`, projects it as `issues` on presence, and the rows put
+the first issue under the member's name once the phone is stale. The offline
+sweep reads it too: a quiet phone that has said why it cannot report is
+reported as that, not as offline.
+
+Every fix carries `activity` from the tracker's own tiers, `still` while
+parked, `driving` on the GPS tier, the classifier's word while walking, so
+the server knows a still phone is meant to be quiet and calls it offline
+only after twelve hours rather than one.
+
+### Diagnostics
+
+`services/location/log.ts` keeps the last three hundred things the tracker
+did, on the phone: tier changes and why, fixes delivered and kept, wakes and
+watches, fence exits and whether they were false, the classifier's verdicts.
+The You screen shows and shares it. When a family member says "the
+notification stayed", this is the page to ask for.
 
 ### Watching
 

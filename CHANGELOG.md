@@ -6,6 +6,53 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-31
+
+A fresh look at what the family actually sees against what a family safety app should do,
+with the three things that kept happening (a phone called offline on the
+sofa, journeys that merged or vanished, a notification that stayed) traced
+to their causes. Servers must update before phones: the app calls
+`PATCH /me/health` and the offline rule reads what the phone reports.
+
+### Added
+
+- The phone tells the server what stands between it and reporting: the
+  location permission level, Location Services, Background App Refresh on
+  iOS, battery optimisation on Android. The circle sees "Location permission
+  is not set to Always" under the member instead of a phone that went quiet,
+  and a quiet phone that has said why is reported as such rather than as
+  offline. Server: `PATCH /me/health`, `issues` on presence.
+- "At Home since 3:15 PM". Presence carries when the member arrived.
+- Every fix says what the phone was doing, from the tracker's own tiers:
+  still, walking, driving. The rows show a car for a drive, and the server
+  knows a still phone is meant to be quiet.
+- Tracker diagnostics under You: what the tracker did and why, kept on the
+  phone, shareable. The answer to "the notification stayed" is a page, not a
+  guess.
+- iOS: a real heartbeat while parked. expo-background-task asked iOS for a
+  processing task, which runs when the phone is idle and charging, so a
+  parked iPhone had none. Patched to an app refresh task, which is what
+  Background App Refresh means: up to thirty seconds, about every quarter
+  hour when iOS sees fit. The sync task takes a fix on it when the last one
+  is a quarter hour old.
+
+### Changed
+
+- A parked phone is not called offline after an hour of the silence it was
+  expected to keep; only after twelve. A phone last seen moving that goes
+  quiet is still reported after the hour, and the hour's silent wake before
+  it. An Android phone is asked for a fix after a quarter hour of quiet, an
+  iPhone after half an hour, since iOS delivers a silent push a few times an
+  hour at most.
+- Trips end at a stop the phone kept reporting from. A phone that arrived
+  somewhere and went on delivering a fix every few minutes held the journey
+  open all day, so the morning's drive to work and the evening's drive home
+  came out as one trip. A stretch of fixes inside a hundred metres for
+  longer than the idle gap now ends the journey where the phone arrived and
+  starts the next where it left. Two lone fixes at two different named
+  places, silence between them at a pace a person could keep, are one
+  journey the tracker did not narrate rather than no journey at all.
+
 ### Fixed
 
 - Every remaining way a parked phone was brought back to the moving tier

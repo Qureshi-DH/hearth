@@ -9,6 +9,24 @@ value.
 
 ## Near term
 
+Measured against the family safety apps Hearth sets out to be a self-hosted version
+of, these are the gaps that remain after 0.6.0. The tracker's tiers, places
+with arrival and departure alerts, check-ins, SOS, crash detection, low
+battery alerts, trips, history, and the member statuses other apps show
+("location permission off", "at Home since") are all there.
+
+- Driving events on trips: hard braking, rapid acceleration, phone use while
+  driving, and a weekly driving summary. The sensor pass already sees the
+  braking; see the item below.
+- A time-boxed approximate mode, a "bubble": share a rough area for
+  the next few hours and snap back to precise on its own. Pause already has
+  a timer; approximate does not.
+- A manifest-declared receiver for activity transitions on Android, so a
+  car pulling away can relaunch a reclaimed process at a moment Android
+  allows the location service to start, rather than waiting for the fence.
+- Group messaging inside a circle. Quick messages and check-ins cover the
+  short form today.
+
 - Direct APNs / FCM push drivers, so `expo` isn't the only zero-infra option.
   The `PushDriver` interface is one `send()` method. See
   `server/src/services/push.ts`.

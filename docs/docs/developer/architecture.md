@@ -137,7 +137,8 @@ replica left in `sending`. See [push notifications](../install/push-notification
 
 ### Background jobs (`jobs/scheduler.ts`, every `JOB_INTERVAL_SECONDS`)
 
-drain push → lapse pauses → wake quiet phones (a silent push after half an
+drain push → lapse pauses → wake quiet phones (a silent push after a
+quarter hour on Android, half an
 hour of silence, once per silence) → flag offline devices (>1 h silent, once per
 outage, and withheld entirely when at least eight phones have reported at some
 point and none of them has reported recently, which means the outage was the

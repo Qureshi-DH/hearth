@@ -130,9 +130,11 @@ metres is one and a half times the distance filter and never less than 60, so
 a circle that asks for coarser updates waits out a wider stop. Leaving the
 geofence puts it back into moving. So a phone sitting in a house overnight is
 costing you a few cheap fixes an hour on Android and nothing on iOS, not a
-GPS. What keeps a parked phone from being reported offline is the server: it
-calls a phone offline after an hour of silence, and after half an hour it
-sends a silent push asking for a fix first. Opening the map sends the same
+GPS. A parked phone is expected to be quiet, so the server only calls it
+offline after twelve hours of silence; a phone last seen moving is reported
+after an hour, with a silent push asking for a fix before that. A phone
+that has told the server why it cannot report, a permission not set to
+Always, Location Services off, is shown as that under its name instead. Opening the map sends the same
 push to anyone quiet for a couple of minutes, and opening somebody's page
 asks their phone to report closely for ten minutes, which is the only time
 the GPS runs on a phone that is not driving.
