@@ -43,6 +43,13 @@
       "when": 1789408907720,
       "tag": "0005_device_health",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789482333239,
+      "tag": "0006_watched_until",
+      "breakpoints": true
     }
   ]
 }

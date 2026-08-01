@@ -1,0 +1,1 @@
+ALTER TABLE "user_presence" ADD COLUMN "watched_until" timestamp with time zone;

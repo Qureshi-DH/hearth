@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, lt, notInArray, or, sql } from "drizzle-orm"
+import { and, desc, eq, gt, notInArray, or, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
@@ -9,6 +9,27 @@ import { hydrateEvents } from "../services/feed"
 import { POSITION_DERIVED_EVENT_TYPES, sharesPreciselySql } from "../services/presence"
 
 const circleIdParam = z.object({ circleId: z.string().uuid() })
+
+/**
+ * The feed is ordered by when things happened, and a phone that uploads a
+ * backlog after an outage writes the morning's arrivals at lunchtime, so the
+ * row id alone is no cursor. The cursor is the last row's moment and id, the
+ * id breaking ties between events from the same instant.
+ */
+const formatCursor = (row: { occurredAt: Date; id: number }) =>
+  `${row.occurredAt.getTime()}.${row.id}`
+
+// Number.isSafeInteger is the one predicate that covers the lot: 1.5, 1e-7
+// and 1e26 all survived Number.isFinite and then made Postgres reject the
+// bind and 500.
+function parseCursor(raw: string): { occurredAt: Date; id: number } | null {
+  const [millis, id, ...rest] = raw.split(".")
+  if (rest.length > 0 || !millis || !id) return null
+  const at = Number(millis)
+  const rowId = Number(id)
+  if (!Number.isSafeInteger(at) || at < 0 || !Number.isSafeInteger(rowId) || rowId < 0) return null
+  return { occurredAt: new Date(at), id: rowId }
+}
 
 /**
  * The feed is the one place a member's trail outlives the state they shared it
@@ -35,7 +56,8 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["events"],
         summary: "Activity feed",
         description:
-          "Newest first. Pass the previous page's `nextCursor` to page backwards through history.",
+          "In the order things happened, newest first. Pass the previous page's `nextCursor` " +
+          "to page backwards through history.",
         params: circleIdParam,
         querystring: z.object({
           limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -48,13 +70,8 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       const membership = await requireMembership(request, request.params.circleId)
       const limit = request.query.limit
 
-      // A cursor is an events.id, so a bigint. Number.isSafeInteger is the one
-      // predicate that covers the lot: 1.5, 1e-7 and 1e26 all survived
-      // Number.isFinite and then made Postgres reject the bind and 500.
-      const cursorId = request.query.cursor ? Number(request.query.cursor) : null
-      if (cursorId !== null && (!Number.isSafeInteger(cursorId) || cursorId < 0)) {
-        return { items: [], nextCursor: null }
-      }
+      const cursor = request.query.cursor ? parseCursor(request.query.cursor) : null
+      if (request.query.cursor && !cursor) return { items: [], nextCursor: null }
 
       const rows = await db
         .select()
@@ -63,18 +80,21 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
           and(
             eq(events.circleId, membership.circleId),
             readableBy(auth.userId),
-            cursorId !== null ? lt(events.id, cursorId) : undefined,
+            cursor
+              ? sql`(${events.occurredAt}, ${events.id}) < (${cursor.occurredAt.toISOString()}::timestamptz, ${cursor.id})`
+              : undefined,
           ),
         )
-        .orderBy(desc(events.id))
+        .orderBy(desc(events.occurredAt), desc(events.id))
         .limit(limit + 1)
 
       const page = rows.slice(0, limit)
       const items = await hydrateEvents(db, page)
+      const last = page[page.length - 1]
 
       return {
         items,
-        nextCursor: rows.length > limit ? String(page[page.length - 1]?.id ?? "") : null,
+        nextCursor: rows.length > limit && last ? formatCursor(last) : null,
       }
     },
   )

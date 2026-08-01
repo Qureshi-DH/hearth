@@ -267,6 +267,12 @@ export const userPresence = pgTable("user_presence", {
   offlineNotifiedAt: timestamp("offline_notified_at", { withTimezone: true }),
   /** When a silent push last asked a quiet phone for a fix. Newer than recordedAt while unanswered. */
   wakeRequestedAt: timestamp("wake_requested_at", { withTimezone: true }),
+  /**
+   * Until when somebody has a page open on this member. The phone reads it
+   * off its own upload reply, so a watch reaches a moving phone on its next
+   * fix whether or not the silent push got through.
+   */
+  watchedUntil: timestamp("watched_until", { withTimezone: true }),
   /** The phone's own account of what stands between it and reporting, see PATCH /me/health. */
   health: jsonb("health").$type<DeviceHealth>(),
   /** Watermark for the trip detector, so it never re-scans old breadcrumbs. */
