@@ -168,7 +168,7 @@ export const DEFAULTS = {
   lowBatteryThreshold: 0.15,
   minPlaceRadiusMeters: 50,
   maxPlaceRadiusMeters: 5000,
-  defaultPlaceRadiusMeters: 150,
+  defaultPlaceRadiusMeters: 100,
   /**
    * Leaving requires clearing the radius plus this, or a phone resting on the
    * boundary emits arrive and leave forever.

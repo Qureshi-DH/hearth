@@ -208,6 +208,11 @@ export interface LocationBatchResponse {
     minUpdateIntervalSeconds: number
     distanceFilterMeters: number
   }
+  /**
+   * Somebody has this member's page open until then, so the phone should
+   * report live. Null when nobody is looking.
+   */
+  watchedUntil: string | null
 }
 
 export interface MemberPresence {
