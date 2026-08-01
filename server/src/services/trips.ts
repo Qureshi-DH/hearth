@@ -56,6 +56,13 @@ const TRIP_PUSH_FRESHNESS_MS = 60 * 60 * 1000
 const MIN_EXCURSION_METERS = 150
 
 /**
+ * How far apart two fixes across a silence have to be, when neither is at a
+ * named place, before the silence reads as travel rather than a stop. Well
+ * beyond the stop radius and any accuracy the ingest accepts.
+ */
+const MIN_BRIDGED_DISTANCE_METERS = DEFAULTS.tripMinDistanceMeters
+
+/**
  * A fix at one place and the next at another, hours apart, says nothing
  * about when the phone moved. Closer to walking pace across the silence, it
  * says the phone went straight there.
@@ -205,15 +212,24 @@ export async function detectTripsForUser(
   // read again.
   let openFrom: Date | null = null
 
-  // Two lone fixes at two different named places, with silence between them
-  // at a pace a person could have kept, are one journey the tracker did not
-  // narrate. The same silence after a fix that is not at a place is a stop.
+  // Silence between two fixes is a stop only if the phone was where it had
+  // been. A fix at the door and the next, ten minutes later, a kilometre
+  // away at a pace a person could have kept is a journey the tracker did not
+  // narrate, and the same goes for two named places however near. A parked
+  // phone that drifted a street over an hour has not travelled. And a
+  // silence with another journey's fixes inside it, which this pass does not
+  // read because they are already filed, is not a silence at all.
+  const filed = await filedTimes(db, userId, scanFrom, settleBefore)
   const bridges = (from: Candidate, to: Candidate) => {
+    const seconds = (to.recordedAt.getTime() - from.recordedAt.getTime()) / 1000
+    if (seconds <= 0) return false
+    const metres = haversineMeters(from, to)
+    if (metres / seconds < MIN_BRIDGED_PACE_MPS) return false
+    if (filedBetween(filed.get(from.deviceId), from.recordedAt, to.recordedAt)) return false
     const origin = placeContaining(pass.places, from)
     const destination = placeContaining(pass.places, to)
-    if (!origin || !destination || origin === destination) return false
-    const seconds = (to.recordedAt.getTime() - from.recordedAt.getTime()) / 1000
-    return seconds > 0 && haversineMeters(from, to) / seconds >= MIN_BRIDGED_PACE_MPS
+    if (origin && destination && origin !== destination) return true
+    return metres >= MIN_BRIDGED_DISTANCE_METERS
   }
 
   for (const [deviceId, points] of groupByDevice(rows)) {
@@ -305,9 +321,9 @@ export function segmentByStops(
   gapMs: number,
   stopRadiusMeters: number,
   /**
-   * Whether a gap between two lone fixes is a journey the phone kept to
-   * itself rather than a stop: a fix at the door and the next one, ten
-   * minutes later, at a friend's door. The caller knows the places.
+   * Whether a gap between two fixes is a journey the phone kept to itself
+   * rather than a stop: a fix at the door and the next one, ten minutes
+   * later, at a friend's door. The caller knows the places.
    */
   bridges: (from: Candidate, to: Candidate) => boolean = () => false,
 ): Run[] {
@@ -319,10 +335,9 @@ export function segmentByStops(
     const point = points[i]!
     const previous = current[current.length - 1]
     if (previous && point.recordedAt.getTime() - previous.recordedAt.getTime() > gapMs) {
-      // A lone fix followed by silence and a fix somewhere else is the one
-      // gap that is not a stop. Anything more than a lone fix was a journey
-      // that ended, and the silence after it is its end.
-      if (!(current.length === 1 && bridges(previous, point))) {
+      // Silence ends a journey unless the fix after it shows the phone kept
+      // travelling through it, which is the caller's call to make.
+      if (!bridges(previous, point)) {
         runs.push({ points: current, closedByStop: true })
         current = []
       }
@@ -514,6 +529,47 @@ async function persistSegment(
   // straggler lands has already been announced, and one drive is one line.
   await announceTrip(db, pass, columns)
   return true
+}
+
+/** When each device's already filed fixes in the window were recorded, oldest first. */
+async function filedTimes(
+  db: Database,
+  userId: string,
+  after: Date,
+  before: Date,
+): Promise<Map<string | null, number[]>> {
+  const rows = await db
+    .select({ deviceId: locationPoints.deviceId, recordedAt: locationPoints.recordedAt })
+    .from(locationPoints)
+    .where(
+      and(
+        eq(locationPoints.userId, userId),
+        gt(locationPoints.recordedAt, after),
+        lt(locationPoints.recordedAt, before),
+        isNotNull(locationPoints.tripId),
+      ),
+    )
+    .orderBy(asc(locationPoints.recordedAt))
+    .limit(MAX_POINTS_PER_PASS)
+  const byDevice = new Map<string | null, number[]>()
+  for (const row of rows) {
+    const bucket = byDevice.get(row.deviceId)
+    if (bucket) bucket.push(row.recordedAt.getTime())
+    else byDevice.set(row.deviceId, [row.recordedAt.getTime()])
+  }
+  return byDevice
+}
+
+function filedBetween(times: number[] | undefined, from: Date, to: Date): boolean {
+  if (!times) return false
+  let low = 0
+  let high = times.length
+  while (low < high) {
+    const mid = (low + high) >> 1
+    if (times[mid]! <= from.getTime()) low = mid + 1
+    else high = mid
+  }
+  return low < times.length && times[low]! < to.getTime()
 }
 
 /** The last breadcrumb from this device that already belongs to a trip. */
