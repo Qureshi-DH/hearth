@@ -743,12 +743,14 @@ describe("trips: backlogs and out of order uploads", () => {
     await uploadFixes(user.headers, morning.slice(30))
     await sweep()
 
-    // The straggling first half, and then a separate drive later on.
+    // The straggling first half, and then the drive back, from where the
+    // morning's ended. A next drive that began twenty kilometres from where
+    // the last one ended would be a journey the phone kept quiet about.
     const later = drive({
-      from: HOME,
+      from: morning[morning.length - 1]!,
       startMs: minutesAgo(30),
       intervalSeconds: 30,
-      steps: steady(30, 11, 90),
+      steps: steady(30, 11, 160),
     })
     await uploadFixes(user.headers, morning.slice(0, 30))
     await uploadFixes(user.headers, later)

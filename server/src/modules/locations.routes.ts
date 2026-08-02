@@ -137,6 +137,14 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         ? Math.min(...policyRows.map((row) => row.settings.distanceFilterMeters))
         : DEFAULTS.distanceFilterMeters
 
+      const [watch] = await db
+        .select({ until: userPresence.watchedUntil })
+        .from(userPresence)
+        .where(eq(userPresence.userId, auth.userId))
+        .limit(1)
+      const watchedUntil =
+        watch?.until && watch.until.getTime() > Date.now() ? watch.until.toISOString() : null
+
       return {
         accepted: result.accepted,
         rejected: result.rejected,
@@ -146,6 +154,7 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           minUpdateIntervalSeconds: minInterval,
           distanceFilterMeters: distanceFilter,
         },
+        watchedUntil,
       }
     },
   )
@@ -219,11 +228,11 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["locations"],
         summary: "Follow one person live for a while",
         description:
-          "Called while someone has a member's page open. The member's phone is asked, by " +
-          "silent push, to report at full accuracy every few seconds for the watch window, " +
-          "and the page keeps calling to hold it. A phone that has stopped reports once " +
-          "instead. Only members sharing precisely can be watched, and a phone is asked at " +
-          "most once per window whoever is looking.",
+          "Called while someone has a member's page open. The member's phone is asked to " +
+          "report at full accuracy every few seconds for the watch window, by silent push " +
+          "and by its next upload reply, and the page keeps calling to hold it. A phone that " +
+          "has stopped reports once instead. Only members sharing precisely can be watched, " +
+          "and a phone is pushed at most once per window whoever is looking.",
         params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
         response: {
           200: z.object({ watching: z.boolean(), seconds: z.number().int() }),
@@ -261,10 +270,20 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
       // live updates from their phone would be thrown away by the projection
       // anyway.
       if (state !== "precise") return { watching: false, seconds: 0 }
-      if (getPushDriver()?.provider !== "expo") return { watching: false, seconds: 0 }
 
       const seconds = DEFAULTS.watchWindowSeconds
-      if (!(await pushedRecently(request.params.userId, "watch", WATCH_INTERVAL_MS))) {
+      // The window is recorded whatever the push does. A phone in the middle
+      // of a drive uploads every few seconds and reads it off the reply, so
+      // the push is the fast path for a phone that has nothing to say yet.
+      const watchedUntil = new Date(Date.now() + seconds * 1000)
+      await db
+        .insert(userPresence)
+        .values({ userId: request.params.userId, watchedUntil })
+        .onConflictDoUpdate({ target: userPresence.userId, set: { watchedUntil } })
+      if (
+        getPushDriver()?.provider === "expo" &&
+        !(await pushedRecently(request.params.userId, "watch", WATCH_INTERVAL_MS))
+      ) {
         await enqueuePush(db, [
           {
             userId: request.params.userId,
