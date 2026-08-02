@@ -51,6 +51,17 @@ export function lineString(points: LatLng[]): Feature {
   }
 }
 
+export function multiLineString(lines: LatLng[][]): Feature {
+  return {
+    type: "Feature",
+    properties: {},
+    geometry: {
+      type: "MultiLineString",
+      coordinates: lines.map((line) => line.map((p) => [p.lon, p.lat])),
+    },
+  }
+}
+
 export function zoomForRadius(radiusMeters: number): number {
   const clamped = Math.min(20_000, Math.max(50, radiusMeters))
   return Math.max(10, Math.min(18, 19.2 - Math.log2(clamped / 50)))

@@ -1,4 +1,4 @@
-import { simplifyTrail } from "./trail"
+import { simplifyTrail, splitTrail } from "./trail"
 
 // Roughly 0.00027 degrees of latitude is 30 metres.
 const step = 0.0003
@@ -28,5 +28,34 @@ describe("simplifyTrail", () => {
     expect(simplifyTrail([])).toEqual([])
     const only = { lat: 1, lon: 2 }
     expect(simplifyTrail([only])).toEqual([only])
+  })
+})
+
+describe("splitTrail", () => {
+  const a = { lat: 51.4545, lon: -2.5879 }
+  const b = { lat: a.lat + 0.001, lon: a.lon } // about 110 m on
+  const c = { lat: b.lat + 0.001, lon: a.lon }
+  const far = { lat: c.lat + 0.02, lon: a.lon } // over two kilometres of silence
+  const after = { lat: far.lat + 0.001, lon: a.lon }
+
+  it("draws what the phone reported and marks what it did not", () => {
+    const { drawn, gaps } = splitTrail([a, b, c, far, after], 500)
+    expect(drawn).toEqual([
+      [a, b, c],
+      [far, after],
+    ])
+    expect(gaps).toEqual([[c, far]])
+  })
+
+  it("is one line when every step was reported", () => {
+    const { drawn, gaps } = splitTrail([a, b, c], 500)
+    expect(drawn).toEqual([[a, b, c]])
+    expect(gaps).toEqual([])
+  })
+
+  it("has nothing to draw between two lone fixes", () => {
+    const { drawn, gaps } = splitTrail([a, far], 500)
+    expect(drawn).toEqual([])
+    expect(gaps).toEqual([[a, far]])
   })
 })

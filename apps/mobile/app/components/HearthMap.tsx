@@ -13,7 +13,7 @@ import {
 
 import { useAuthStore } from "@/stores/auth"
 import { useAppTheme } from "@/theme/context"
-import { circlesCollection, lineString } from "@/utils/map"
+import { circlesCollection, multiLineString } from "@/utils/map"
 
 export interface HearthMapProps extends Omit<MapProps, "mapStyle" | "style"> {
   style?: StyleProp<ViewStyle>
@@ -116,17 +116,25 @@ export function PlaceLayers({
 export function TrailLayer({
   id,
   points,
+  segments,
   color,
   width = 4,
 }: {
   id: string
-  points: Array<{ lat: number; lon: number }>
+  /** One continuous line. */
+  points?: Array<{ lat: number; lon: number }>
+  /** The stretches the phone reported, drawn as separate lines. */
+  segments?: Array<Array<{ lat: number; lon: number }>>
   color?: string
   width?: number
 }) {
   const { theme } = useAppTheme()
-  const shape = useMemo(() => lineString(points), [points])
-  if (points.length < 2) return null
+  const lines = useMemo(
+    () => (segments ?? (points ? [points] : [])).filter((line) => line.length > 1),
+    [points, segments],
+  )
+  const shape = useMemo(() => multiLineString(lines), [lines])
+  if (lines.length === 0) return null
   return (
     <GeoJSONSource id={id} data={shape} lineMetrics>
       <Layer
@@ -155,6 +163,40 @@ export function TrailLayer({
             1,
             color ?? theme.colors.path,
           ],
+        }}
+      />
+    </GeoJSONSource>
+  )
+}
+
+/**
+ * A silence between two fixes, dashed. The road between them is a guess,
+ * and drawing the guess as a road is how a trail came to look like a
+ * ruler laid across town.
+ */
+export function TrailGapLayer({
+  id,
+  gaps,
+  color,
+}: {
+  id: string
+  gaps: Array<[{ lat: number; lon: number }, { lat: number; lon: number }]>
+  color?: string
+}) {
+  const { theme } = useAppTheme()
+  const shape = useMemo(() => multiLineString(gaps), [gaps])
+  if (gaps.length === 0) return null
+  return (
+    <GeoJSONSource id={id} data={shape}>
+      <Layer
+        id={`${id}-line`}
+        type="line"
+        layout={{ "line-cap": "round", "line-join": "round" }}
+        paint={{
+          "line-color": color ?? theme.colors.path,
+          "line-width": 3,
+          "line-opacity": 0.55,
+          "line-dasharray": [1, 2.5],
         }}
       />
     </GeoJSONSource>

@@ -31,6 +31,12 @@ class RealtimeClient {
   private pingTimer: ReturnType<typeof setInterval> | null = null
   private wanted = false
   private listeners = new Set<Listener>()
+  /**
+   * Whether a socket has been open before. The one that follows it has a
+   * gap behind it, in the background or through a dropped connection, and
+   * what the server said during the gap is gone.
+   */
+  private hadSocket = false
 
   connect() {
     this.wanted = true
@@ -74,6 +80,8 @@ class RealtimeClient {
       this.pingTimer = setInterval(() => {
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }))
       }, PING_INTERVAL_MS)
+      if (this.hadSocket) refetchMissed()
+      this.hadSocket = true
     }
 
     socket.onmessage = (event) => {
@@ -145,7 +153,7 @@ class RealtimeClient {
             if (!first || first.items.some((item) => item.id === message.event.id)) return current
             return {
               ...current,
-              pages: [{ ...first, items: [message.event, ...first.items] }, ...rest],
+              pages: [{ ...first, items: placeByTime(first.items, message.event) }, ...rest],
             }
           },
         )
@@ -178,6 +186,26 @@ class RealtimeClient {
 }
 
 export const realtime = new RealtimeClient()
+
+/** Everything the socket keeps current, asked for again after a gap in it. */
+function refetchMissed() {
+  void queryClient.invalidateQueries({ queryKey: ["events"] })
+  void queryClient.invalidateQueries({ queryKey: ["presence"] })
+  void queryClient.invalidateQueries({ queryKey: ["trips"] })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.myTrips })
+}
+
+/**
+ * The feed is in the order things happened. An event that reaches the
+ * socket late, because the phone it is about uploaded a backlog, belongs
+ * below the ones that happened after it, not on top.
+ */
+function placeByTime(items: FeedEvent[], event: FeedEvent): FeedEvent[] {
+  const at = Date.parse(event.occurredAt)
+  const index = items.findIndex((item) => Date.parse(item.occurredAt) <= at)
+  if (index === -1) return [...items, event]
+  return [...items.slice(0, index), event, ...items.slice(index)]
+}
 
 /** Mount this once, near the root. */
 export function useRealtimeConnection() {

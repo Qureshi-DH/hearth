@@ -22,3 +22,30 @@ export function simplifyTrail<T extends { lat: number; lon: number }>(
   if (newest && kept[kept.length - 1] !== newest) kept.push(newest)
   return kept
 }
+
+/**
+ * A trail is drawn only where the phone reported it. Two fixes further
+ * apart than this are a silence, and a line across it would be a guess at
+ * the road, so the silence is handed back separately for drawing as one.
+ */
+export const TRAIL_MAX_STEP_METERS = 500
+
+export function splitTrail<T extends { lat: number; lon: number }>(
+  points: T[],
+  maxStepMeters = TRAIL_MAX_STEP_METERS,
+): { drawn: T[][]; gaps: Array<[T, T]> } {
+  const drawn: T[][] = []
+  const gaps: Array<[T, T]> = []
+  let run: T[] = []
+  for (const point of points) {
+    const last = run[run.length - 1]
+    if (last && haversineMeters(last, point) > maxStepMeters) {
+      gaps.push([last, point])
+      if (run.length > 1) drawn.push(run)
+      run = []
+    }
+    run.push(point)
+  }
+  if (run.length > 1) drawn.push(run)
+  return { drawn, gaps }
+}
