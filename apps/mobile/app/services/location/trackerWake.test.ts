@@ -3,11 +3,13 @@ import * as Location from "expo-location"
 
 import { useTrackingStore } from "@/stores/tracking"
 
+import { useAuthStore } from "@/stores/auth"
 import {
   enterDriving,
   enterMoving,
   enterStationary,
   enterWatched,
+  flush,
   ingest,
   isDriving,
   reassertService,
@@ -886,5 +888,88 @@ describe("what a fix says the phone is doing", () => {
     await enterStationary(HOME.lat, HOME.lon)
     await jest.advanceTimersByTimeAsync(0)
     expect(useTrackingStore.getState().queue.at(-1)?.activity).toBe("still")
+  })
+})
+
+const mockUpload = jest.fn()
+jest.mock("@/services/api", () => ({
+  endpoints: { locations: { upload: (...args: unknown[]) => mockUpload(...args) } },
+}))
+jest.mock("@/stores/tokenVault", () => ({
+  tokenVault: { hydrate: async () => ({ accessToken: "a", refreshToken: "r" }), peek: () => null },
+}))
+
+describe("a watched phone learns so from its own upload", () => {
+  const reply = (watchedUntil: string | null) => ({
+    accepted: 1,
+    rejected: 0,
+    placeEvents: 0,
+    serverTime: new Date().toISOString(),
+    policy: { minUpdateIntervalSeconds: 30, distanceFilterMeters: 60 },
+    watchedUntil,
+  })
+  const queued = () =>
+    useTrackingStore
+      .getState()
+      .enqueue([
+        { ...HOME, recordedAt: new Date().toISOString(), accuracyMeters: 10, source: "background" },
+      ])
+
+  beforeEach(() => {
+    Platform.OS = "android"
+    mockServiceStatus = "running"
+    useAuthStore.getState().setServer("https://hearth.test", null as never)
+  })
+
+  it("goes live for the rest of the window the reply names", async () => {
+    await enterMoving()
+    start.mockClear()
+    const until = new Date(Date.now() + 9 * 60_000).toISOString()
+    mockUpload.mockResolvedValueOnce(reply(until))
+    queued()
+
+    await flush()
+
+    expect(useTrackingStore.getState().watchedUntil).toBe(until)
+    expect(start).toHaveBeenCalled()
+    expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(5_000)
+  })
+
+  it("stays as it was on a reply that names nobody", async () => {
+    await enterMoving()
+    start.mockClear()
+    mockUpload.mockResolvedValueOnce(reply(null))
+    queued()
+
+    await flush()
+
+    expect(useTrackingStore.getState().watchedUntil).toBeNull()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it("does not re-register for a window it already holds", async () => {
+    await enterMoving()
+    await enterWatched(600)
+    start.mockClear()
+    mockUpload.mockResolvedValueOnce(reply(new Date(Date.now() + 590_000).toISOString()))
+    queued()
+
+    await flush()
+
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it("answers a watch with one fix while parked, as the push would", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    getPosition.mockClear()
+    mockUpload.mockResolvedValueOnce(reply(new Date(Date.now() + 600_000).toISOString()))
+    queued()
+
+    await flush()
+    // The reply is acted on beside the upload loop, not inside it, so a slow
+    // fix cannot hold the next batch back.
+    await jest.advanceTimersByTimeAsync(0)
+
+    expect(getPosition).toHaveBeenCalled()
   })
 })

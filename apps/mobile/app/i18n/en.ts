@@ -191,6 +191,7 @@ const en = {
     makeMember: "Make member",
     transferOwnership: "Transfer ownership",
     transferConfirm: "Make {{name}} the owner? You will become an admin.",
+    live: "Live",
     directions: "Directions",
     directionsIn: "Get directions in",
     appleMaps: "Apple Maps",
@@ -264,6 +265,11 @@ const en = {
     send: "Check in",
     sent: "Checked in",
     at: "at {{place}}",
+  },
+  live: {
+    title: "Live",
+    stopped: "{{name}} has stopped",
+    gap: "Trail not drawn where the phone was quiet",
   },
   trips: {
     title: "Trips",

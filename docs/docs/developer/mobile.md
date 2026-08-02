@@ -325,17 +325,25 @@ notification stayed", this is the page to ask for.
 
 ### Watching
 
-Opening a member's page is the one time the family wants to see a car move
-along a road, and the one time the GPS runs on a phone nobody is driving.
-The page calls `POST /circles/:id/members/:userId/watch` on focus and every
-minute after; the server sends the phone a silent `watch` push once per
-window and answers the rest from memory. The phone puts `watchedUntil` in
-its store and `currentOptions()` returns the live tier, full accuracy every
-five seconds, until it passes; the first fix past the window steps the
-request back down, since no timer runs in the Android background between
-deliveries. A parked phone answers with one fix instead, because it is not
-going anywhere, and goes live only if the fence then sends it moving inside
-the window.
+The Live page is the one time the family wants to see a car move along a
+road, and the one time the GPS runs on a phone nobody is driving. A member's
+profile offers it only while their phone says they are on the move. The
+page calls `POST /circles/:id/members/:userId/watch` on focus and every
+minute after. The server records the window on the member and sends the
+phone a silent `watch` push once per window; every upload reply also
+carries `watchedUntil`, so a phone that is already reporting picks the
+watch up on its next batch whether or not the push arrived. The phone puts
+`watchedUntil` in its store and `currentOptions()` returns the live tier,
+full accuracy every five seconds, until it passes; the first fix past the
+window steps the request back down, since no timer runs in the Android
+background between deliveries. A parked phone answers with one fix instead,
+because it is not going anywhere, and goes live only if the fence then
+sends it moving inside the window.
+
+The Live page draws the fixes that arrive while it is open and nothing
+else. A trip draws its own trail, and only where the phone reported it: a
+silence between two fixes is dashed (`splitTrail` in `utils/trail.ts`),
+because the road between them is a guess. The profile map draws no trail.
 
 Opening the map calls `POST /circles/:id/locations/refresh`, which sends one
 `wake` to each member quiet for a couple of minutes, at most once every ten

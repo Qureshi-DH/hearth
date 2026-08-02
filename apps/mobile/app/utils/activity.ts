@@ -97,3 +97,20 @@ export function activityIconName(activity: string | null | undefined): IoniconNa
       return null
   }
 }
+
+/**
+ * Whether a member is travelling right now, as their phone last said. Live
+ * is offered for them and nobody else: a parked phone has nothing to show
+ * live, and asking it would only cost battery.
+ */
+export function onTheMove(
+  presence: { activity: string | null; stale: boolean; sharingState: string } | null | undefined,
+): boolean {
+  if (!presence || presence.stale || presence.sharingState !== "precise") return false
+  return (
+    presence.activity === "driving" ||
+    presence.activity === "cycling" ||
+    presence.activity === "running" ||
+    presence.activity === "walking"
+  )
+}

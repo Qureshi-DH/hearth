@@ -253,6 +253,10 @@ const AppStack = () => {
             getComponent={() => require("@/screens/TripDetailScreen").TripDetailScreen}
           />
           <Stack.Screen
+            name="Live"
+            getComponent={() => require("@/screens/LiveScreen").LiveScreen}
+          />
+          <Stack.Screen
             name="Admin"
             getComponent={() => require("@/screens/AdminScreen").AdminScreen}
           />

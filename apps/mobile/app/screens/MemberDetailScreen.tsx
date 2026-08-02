@@ -1,13 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react"
-import { AppState, View, type ViewStyle } from "react-native"
+import { useEffect, useRef, useState, type FC } from "react"
+import { View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { QUICK_MESSAGES, type QuickMessageKey } from "@hearth/shared"
-import { useFocusEffect } from "@react-navigation/native"
 
 import { Avatar } from "@/components/Avatar"
 import { BatteryPill } from "@/components/BatteryPill"
-import { HearthMap, PlaceLayers, TrailLayer } from "@/components/HearthMap"
+import { HearthMap, PlaceLayers } from "@/components/HearthMap"
 import { ListGroup, ListRow } from "@/components/ListRow"
 import { MemberMarker, MEMBER_MARKER_LABEL_HEIGHT } from "@/components/MemberMarker"
 import { ringFor, statusLine, useMemberNearby } from "@/components/MemberRow"
@@ -20,7 +19,6 @@ import { SectionHeader } from "@/components/SectionHeader"
 import { Text } from "@/components/Text"
 import {
   useCircle,
-  useHistory,
   useMember,
   useNudge,
   usePlaces,
@@ -32,19 +30,16 @@ import {
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { TripCard } from "@/screens/TripsScreen"
-import { endpoints } from "@/services/api"
 import { alert } from "@/stores/alert"
 import { useAuthStore } from "@/stores/auth"
 import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { activityIconName } from "@/utils/activity"
+import { activityIconName, onTheMove } from "@/utils/activity"
 import { availableDirectionsApps, openDirections, type DirectionsApp } from "@/utils/directions"
 import { formatSpeed } from "@/utils/format"
-import { fitBoundsFor } from "@/utils/map"
 import { relativeTime } from "@/utils/time"
-import { simplifyTrail } from "@/utils/trail"
 import { useHeader } from "@/utils/useHeader"
 
 /**
@@ -52,7 +47,6 @@ import { useHeader } from "@/utils/useHeader"
  * only sends a fresh push once the phone's window is nearly out, so this is
  * cheap; it is the window that decides the battery.
  */
-const WATCH_HOLD_MS = 60_000
 
 export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   navigation,
@@ -76,36 +70,13 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   const entry = presence?.find((item) => item.userId === userId)
   const nearby = useMemberNearby(entry)
 
-  // Having this page open is the one time the family wants live movement,
-  // so the phone is asked to go live for a while and asked again each minute
-  // to stay so. The server spends the pushes; this only says who is looking.
-  const watchable = !isSelf && entry?.sharingState === "precise" && !entry.approximate
-  useFocusEffect(
-    useCallback(() => {
-      if (!watchable) return
-      const ask = () => {
-        if (AppState.currentState !== "active") return
-        endpoints.locations.watch(circleId, userId).catch(() => undefined)
-      }
-      ask()
-      const timer = setInterval(ask, WATCH_HOLD_MS)
-      return () => clearInterval(timer)
-    }, [circleId, userId, watchable]),
-  )
+  // Live is the one thing that asks their phone for more than it would
+  // send anyway, and it is only offered while they are going somewhere.
+  const liveAvailable = !isSelf && !entry?.approximate && onTheMove(entry)
   const canSeeHistory =
     entry?.sharingState === "precise" &&
     !entry.approximate &&
     (isSelf || circle?.settings.allowHistory)
-
-  const todayRange = useMemo(() => {
-    const now = new Date()
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    return { from: start.toISOString(), to: now.toISOString() }
-  }, [])
-  const { data: history } = useHistory(circleId, userId, canSeeHistory ? todayRange : null)
-  // The day's fixes as a line worth looking at, not the wander of a phone
-  // sitting indoors.
-  const trail = useMemo(() => (history ? simplifyTrail(history) : history), [history])
 
   const name = member?.nickname ?? member?.user.displayName ?? ""
   useHeader({ title: name, leftIcon: "back", onLeftPress: () => navigation.goBack() }, [
@@ -113,19 +84,13 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
     navigation,
   ])
 
+  // Where they are, and only that. The day's breadcrumbs used to be drawn
+  // here too, and a trail across the whole city read as noise next to the
+  // trips, which draw their own.
   useEffect(() => {
-    const points = [
-      ...(trail ?? []).map((point) => ({ lat: point.lat, lon: point.lon })),
-      ...(entry?.lat != null && entry.lon != null ? [{ lat: entry.lat, lon: entry.lon }] : []),
-    ]
-    const bounds = fitBoundsFor(points, 120)
-    if (bounds) {
-      cameraRef.current?.fitBounds([bounds.sw[0], bounds.sw[1], bounds.ne[0], bounds.ne[1]], {
-        padding: { top: 30, bottom: 30, left: 30, right: 30 },
-        duration: 500,
-      })
-    }
-  }, [trail?.length, entry?.lat, entry?.lon]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (entry?.lat == null || entry.lon == null) return
+    cameraRef.current?.flyTo({ center: [entry.lon, entry.lat], zoom: 15, duration: 500 })
+  }, [entry?.lat, entry?.lon])
 
   const [choosingDirections, setChoosingDirections] = useState(false)
   const directionsTo = (app: DirectionsApp) => {
@@ -260,7 +225,6 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
           touchRotate={false}
         >
           <PlaceLayers places={places ?? []} highlightId={entry?.atPlace?.id} />
-          {trail && trail.length > 1 ? <TrailLayer id="member-trail" points={trail} /> : null}
           {entry?.lat != null && entry.lon != null ? (
             <Marker
               lngLat={[entry.lon, entry.lat]}
@@ -292,6 +256,16 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
           </View>
         ) : null}
       </View>
+
+      {liveAvailable ? (
+        <View style={{ paddingHorizontal: theme.spacing.md, marginTop: theme.spacing.md }}>
+          <PrimaryButton
+            tx="member:live"
+            onPress={() => navigation.navigate("Live", { circleId, userId })}
+            Left={<Ionicons name="radio-outline" size={18} color={theme.colors.onTint} />}
+          />
+        </View>
+      ) : null}
 
       {!isSelf ? (
         <View

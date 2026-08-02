@@ -1,8 +1,8 @@
-import { useEffect, useRef, type FC } from "react"
+import { useEffect, useMemo, useRef, type FC } from "react"
 import { View, type ViewStyle } from "react-native"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 
-import { HearthMap, TrailLayer } from "@/components/HearthMap"
+import { HearthMap, TrailGapLayer, TrailLayer } from "@/components/HearthMap"
 import { Screen } from "@/components/Screen"
 import { StatTile } from "@/components/StatTile"
 import { Text } from "@/components/Text"
@@ -17,6 +17,7 @@ import type { ThemedStyle } from "@/theme/types"
 import { formatDistance, formatSpeed, TRIP_SPEED_MIN_MPS } from "@/utils/format"
 import { fitBoundsFor } from "@/utils/map"
 import { formatDuration, formatWhen } from "@/utils/time"
+import { splitTrail } from "@/utils/trail"
 import { useHeader } from "@/utils/useHeader"
 
 export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ navigation, route }) => {
@@ -37,6 +38,11 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
   useHeader({ titleTx: "trips:title", leftIcon: "back", onLeftPress: () => navigation.goBack() }, [
     navigation,
   ])
+
+  // Only the stretches the phone reported are drawn as the road. A silence
+  // between two fixes is dashed, so a straight line across town reads as
+  // "no data here" rather than as the route.
+  const { drawn, gaps } = useMemo(() => splitTrail(trip?.path ?? []), [trip?.path])
 
   useEffect(() => {
     if (!trip) return
@@ -75,7 +81,8 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
           initialCenter={[trip.startLon, trip.startLat]}
           initialZoom={13}
         >
-          <TrailLayer id="trip" points={trip.path} width={5} />
+          <TrailLayer id="trip" segments={drawn} width={5} />
+          <TrailGapLayer id="trip-gaps" gaps={gaps} />
           <Marker lngLat={[trip.startLon, trip.startLat]} anchor="center">
             {endpointDot(theme.colors.success)}
           </Marker>
@@ -90,6 +97,9 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
         <Text size="xs" style={{ color: theme.colors.textDim }}>
           {formatWhen(trip.startedAt)} to {formatWhen(trip.endedAt)}
         </Text>
+        {gaps.length > 0 ? (
+          <Text size="xxs" tx="live:gap" style={{ color: theme.colors.textFaint }} />
+        ) : null}
       </View>
 
       <View style={{ flexDirection: "row", gap: theme.spacing.xs, padding: theme.spacing.md }}>
