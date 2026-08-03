@@ -413,14 +413,15 @@ describe("a drive whose first fixes arrive late", () => {
       bearingDeg: 20,
     })
 
-    // The batch in the middle of the drive is the one that fails. The two
-    // ends are four kilometres apart at driving pace, so the sweep reads the
-    // silence as travel and makes one trip of them, and the retry has to
-    // land inside it rather than beside it.
+    // The batch in the middle of the drive is the one that fails. The last
+    // fix before the hole is a stop (a red light, at speed zero, where the
+    // fix before it was), so the sweep cannot read the silence as travel and
+    // makes a trip of each end. The retry has to close the gap.
+    fixes[24] = { ...fixes[24]!, lat: fixes[23]!.lat, lon: fixes[23]!.lon, speedMps: 0 }
     await uploadFixes(user.headers, fixes.slice(0, 25))
     await uploadFixes(user.headers, fixes.slice(35))
     await sweep()
-    expect(await myTrips(user.headers)).toHaveLength(1)
+    expect(await myTrips(user.headers)).toHaveLength(2)
 
     await uploadFixes(user.headers, fixes.slice(25, 35))
     await sweep()

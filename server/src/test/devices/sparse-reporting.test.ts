@@ -199,10 +199,54 @@ describe("the feed is in the order things happened", () => {
     expect(second.nextCursor).toBeNull()
   })
 
+  it("pages through rows the database stamped itself without losing one", async () => {
+    const owner = await registerUser(ctx.app)
+    const circle = await createCircle(owner.headers)
+    // No occurredAt from the caller, so Postgres stamps now() at microsecond
+    // precision, and rows written in one statement share it to the microsecond.
+    const ids = (
+      await getDb()
+        .insert(events)
+        .values(
+          ["one", "two", "three", "four"].map((summary) => ({
+            circleId: circle.id,
+            actorUserId: owner.user.id,
+            type: "check_in" as const,
+            summary,
+            payload: {},
+          })),
+        )
+        .returning({ id: events.id })
+    ).map((row) => String(row.id))
+
+    const seen: string[] = []
+    let cursor: string | null = null
+    for (let i = 0; i < 8 && (cursor !== null || seen.length === 0); i += 1) {
+      const page = await feed(
+        owner.headers,
+        circle.id,
+        `?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      )
+      seen.push(...page.items.map((item) => item.id))
+      cursor = page.nextCursor
+    }
+
+    expect(seen).toEqual([...ids].reverse())
+  })
+
   it("rejects a cursor it did not hand out without a 500", async () => {
     const owner = await registerUser(ctx.app)
     const circle = await createCircle(owner.headers)
-    for (const cursor of ["1.5", "abc", "1e26", "2026-01-01T00:00:00Z|x", "|1"]) {
+    for (const cursor of [
+      "1.5",
+      "abc",
+      "1e26",
+      "2026-01-01T00:00:00Z|x",
+      "|1",
+      "8640000000000001.1",
+      "253402300800000000.1",
+      "9007199254740993.1",
+    ]) {
       const response = await ctx.app.inject({
         method: "GET",
         url: `/api/v1/circles/${circle.id}/events?cursor=${encodeURIComponent(cursor)}`,
@@ -254,6 +298,112 @@ describe("a sparse drive is still a drive", () => {
     await detectTripsForUser(getDb(), dan.user.id)
 
     expect(await myTrips(dan.headers)).toHaveLength(2)
+  })
+
+  it("assembles a sparse drive fix by fix, the way the sweep meets it", async () => {
+    const dan = await registerUser(ctx.app)
+    const circle = await createCircle(dan.headers)
+    await createPlace(dan.headers, circle.id, "Home", HOME)
+
+    const start = minutesAgo(60).getTime()
+    const at = (minute: number) => new Date(start + minute * 60_000)
+    const fixes = [
+      { ...HOME, recordedAt: at(0) },
+      { ...east(HOME, 1_000), recordedAt: at(10), speedMps: 8 },
+      { ...east(HOME, 1_200), recordedAt: at(13), speedMps: 1 },
+      { ...HOME, recordedAt: at(21) },
+    ]
+    // Each fix is uploaded when it happens and the sweep runs every minute,
+    // which is how a live server meets a drive: never all at once.
+    let next = 0
+    for (let minute = 0; minute <= 30; minute += 1) {
+      while (next < fixes.length && fixes[next]!.recordedAt.getTime() <= at(minute).getTime()) {
+        await upload(dan.headers, [fixes[next]!])
+        next += 1
+      }
+      await detectTripsForUser(getDb(), dan.user.id, at(minute))
+    }
+
+    const trips = await myTrips(dan.headers)
+    expect(trips).toHaveLength(1)
+    expect(trips[0]!.pointCount).toBe(4)
+  })
+
+  it("does not merge two drives across a stop the phone reported", async () => {
+    const dan = await registerUser(ctx.app)
+    await createCircle(dan.headers)
+
+    // Out to a shop, reporting every 30 s. One resting fix from the shop
+    // five minutes after arriving, inside the idle gap. Eight minutes of
+    // nothing, then the drive home, whose first fix is 500 m out because
+    // the fence took that long to notice.
+    const start = minutesAgo(90).getTime()
+    const at = (second: number) => new Date(start + second * 1000)
+    const SHOP = east(HOME, 7_800)
+    const out = Array.from({ length: 21 }, (_, i) => ({
+      ...east(HOME, i * 390),
+      recordedAt: at(i * 30),
+      speedMps: 13,
+    }))
+    const rest = { ...SHOP, recordedAt: at(20 * 30 + 300), speedMps: 0 }
+    const backStart = 20 * 30 + 300 + 8 * 60
+    const back = Array.from({ length: 19 }, (_, i) => ({
+      ...east(HOME, 7_800 - 500 - i * 390),
+      recordedAt: at(backStart + i * 30),
+      speedMps: 13,
+    }))
+    await upload(dan.headers, [...out, rest, ...back])
+    await detectTripsForUser(getDb(), dan.user.id)
+
+    expect(await myTrips(dan.headers)).toHaveLength(2)
+  })
+
+  it("does not join fixes a coarse one cannot vouch for", async () => {
+    const dan = await registerUser(ctx.app)
+    const circle = await createCircle(dan.headers)
+    await createPlace(dan.headers, circle.id, "Home", HOME)
+
+    // Parked at home. The middle fix is a kilometre out with a kilometre of
+    // uncertainty, which is a Wi-Fi guess, not a journey.
+    const response = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/locations/batch",
+      headers: dan.headers,
+      payload: {
+        points: [
+          { ...HOME, recordedAt: minutesAgo(50).toISOString(), accuracyMeters: 15 },
+          { ...east(HOME, 1_000), recordedAt: minutesAgo(35).toISOString(), accuracyMeters: 1_200 },
+          { ...HOME, recordedAt: minutesAgo(20).toISOString(), accuracyMeters: 15 },
+        ].map((point) => ({ ...point, speedMps: 0, source: "background" })),
+      },
+    })
+    expect(response.statusCode).toBe(200)
+    await detectTripsForUser(getDb(), dan.user.id)
+
+    expect(await myTrips(dan.headers)).toHaveLength(0)
+  })
+
+  it("keeps a silence inside one large place a stop", async () => {
+    const dan = await registerUser(ctx.app)
+    const circle = await createCircle(dan.headers)
+    const campus = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: dan.headers,
+      payload: { name: "Campus", lat: HOME.lat, lon: HOME.lon, radiusMeters: 2_000, icon: "work" },
+    })
+    expect(campus.statusCode).toBe(201)
+
+    // A phone carried across a campus between lectures, quiet in between.
+    await upload(dan.headers, [
+      { ...HOME, recordedAt: minutesAgo(60) },
+      { ...east(HOME, 900), recordedAt: minutesAgo(50) },
+      { ...east(HOME, 1_800), recordedAt: minutesAgo(40) },
+      { ...HOME, recordedAt: minutesAgo(30) },
+    ])
+    await detectTripsForUser(getDb(), dan.user.id)
+
+    expect(await myTrips(dan.headers)).toHaveLength(0)
   })
 
   it("does not join two fixes a street apart across a long silence", async () => {
