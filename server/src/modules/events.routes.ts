@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, notInArray, or, sql } from "drizzle-orm"
+import { and, desc, eq, getTableColumns, gt, notInArray, or, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
@@ -14,21 +14,29 @@ const circleIdParam = z.object({ circleId: z.string().uuid() })
  * The feed is ordered by when things happened, and a phone that uploads a
  * backlog after an outage writes the morning's arrivals at lunchtime, so the
  * row id alone is no cursor. The cursor is the last row's moment and id, the
- * id breaking ties between events from the same instant.
+ * id breaking ties between events from the same instant. The moment is
+ * carried in microseconds, which is what Postgres stores: a JavaScript Date
+ * holds milliseconds, and a cursor rounded to those sat just before every
+ * row stamped inside the same millisecond and skipped them.
  */
-const formatCursor = (row: { occurredAt: Date; id: number }) =>
-  `${row.occurredAt.getTime()}.${row.id}`
+const occurredMicros = sql<string>`(extract(epoch from ${events.occurredAt}) * 1000000)::bigint`
+
+const formatCursor = (row: { micros: string; id: number }) => `${row.micros}.${row.id}`
+
+/** No row can have happened later than this, so no cursor can point past it. */
+const cursorHorizonMicros = () => (Date.now() + 24 * 60 * 60 * 1000) * 1000
 
 // Number.isSafeInteger is the one predicate that covers the lot: 1.5, 1e-7
 // and 1e26 all survived Number.isFinite and then made Postgres reject the
 // bind and 500.
-function parseCursor(raw: string): { occurredAt: Date; id: number } | null {
-  const [millis, id, ...rest] = raw.split(".")
-  if (rest.length > 0 || !millis || !id) return null
-  const at = Number(millis)
+function parseCursor(raw: string): { micros: string; id: number } | null {
+  const [micros, id, ...rest] = raw.split(".")
+  if (rest.length > 0 || !micros || !id || !/^\d+$/.test(micros)) return null
+  const at = Number(micros)
   const rowId = Number(id)
-  if (!Number.isSafeInteger(at) || at < 0 || !Number.isSafeInteger(rowId) || rowId < 0) return null
-  return { occurredAt: new Date(at), id: rowId }
+  if (!Number.isSafeInteger(at) || at > cursorHorizonMicros()) return null
+  if (!Number.isSafeInteger(rowId) || rowId < 0) return null
+  return { micros, id: rowId }
 }
 
 /**
@@ -74,14 +82,14 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       if (request.query.cursor && !cursor) return { items: [], nextCursor: null }
 
       const rows = await db
-        .select()
+        .select({ ...getTableColumns(events), micros: occurredMicros })
         .from(events)
         .where(
           and(
             eq(events.circleId, membership.circleId),
             readableBy(auth.userId),
             cursor
-              ? sql`(${events.occurredAt}, ${events.id}) < (${cursor.occurredAt.toISOString()}::timestamptz, ${cursor.id})`
+              ? sql`(${events.occurredAt}, ${events.id}) < (timestamptz 'epoch' + ${cursor.micros}::bigint * interval '1 microsecond', ${cursor.id})`
               : undefined,
           ),
         )
@@ -89,7 +97,10 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
         .limit(limit + 1)
 
       const page = rows.slice(0, limit)
-      const items = await hydrateEvents(db, page)
+      const items = await hydrateEvents(
+        db,
+        page.map(({ micros: _micros, ...row }) => row),
+      )
       const last = page[page.length - 1]
 
       return {
