@@ -6,6 +6,53 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-03
+
+What a week of family feedback said was unreliable, taken one item at a
+time: a feed in the wrong order, trips that never appeared, trails drawn as
+rulers across town, a page that had to be pulled to refresh. Servers must
+update before phones: the app reads `watchedUntil` off the upload reply and
+the feed cursor changed shape.
+
+### Added
+
+- Live. A member's profile offers a Live button while their phone says they
+  are on the move. It follows them on the map, shows the speed they are
+  doing and the street they are on, and draws the trail from the fixes that
+  arrive while it is open. Their phone is asked to report every few seconds
+  for as long as the page is open, and nobody else's is.
+- A phone learns it is being watched from its own upload reply
+  (`watchedUntil` on `POST /locations/batch`), so a car already reporting
+  goes live on its next fix whether or not the silent push got through.
+  Server: `user_presence.watched_until`, migration 0006.
+
+### Changed
+
+- The activity feed is in the order things happened, and pages by it. A
+  backlog uploaded after an outage used to put the morning's arrivals under
+  lunchtime's.
+- A trail is drawn only where the phone reported it. A silence between two
+  fixes is dashed, and the trip says so, instead of a straight line that
+  looked like the route.
+- A member's profile shows where they are, not the day's breadcrumbs, and
+  no longer asks their phone to go live just for being opened. Live does
+  that.
+- The trip detector reads a silence between two fixes as travel when the
+  phone was clearly somewhere else afterwards, at a pace a person could have
+  kept. Fixes ten minutes apart used to cut a drive into single points, and
+  single points are never a trip.
+- The app refetches the feed, presence and trips every time its socket
+  reconnects, which is every time it comes back from the background. A
+  feed event that arrives late over the socket lands where it happened.
+- New places default to a 100 m radius. 150 covered the whole street.
+
+### Fixed
+
+- The feed no longer scrambles after a phone uploads a backlog.
+- A drive out to a kilometre away and back, reported sparsely, now counts.
+- The Activity page no longer needs a pull to refresh after the app was in
+  the background.
+
 ## [0.6.0] - 2026-07-31
 
 A fresh look at what the family actually sees against what a family safety app should do,
