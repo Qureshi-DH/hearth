@@ -151,10 +151,9 @@ class RealtimeClient {
             if (!current || current.pages.length === 0) return current
             const [first, ...rest] = current.pages
             if (!first || first.items.some((item) => item.id === message.event.id)) return current
-            return {
-              ...current,
-              pages: [{ ...first, items: placeByTime(first.items, message.event) }, ...rest],
-            }
+            const items = placeByTime(first.items, message.event, first.nextCursor != null)
+            if (items === first.items) return current
+            return { ...current, pages: [{ ...first, items }, ...rest] }
           },
         )
         void queryClient.invalidateQueries({ queryKey: queryKeys.circles })
@@ -187,8 +186,20 @@ class RealtimeClient {
 
 export const realtime = new RealtimeClient()
 
-/** Everything the socket keeps current, asked for again after a gap in it. */
+/**
+ * Everything the socket keeps current, asked for again after a gap in it.
+ * Only a feed's first page can hold anything new, and refetching an
+ * infinite query refetches every page it has, so a feed scrolled deep is
+ * cut back to its first page first.
+ */
 function refetchMissed() {
+  queryClient.setQueriesData<{ pages: Paginated<FeedEvent>[]; pageParams: unknown[] }>(
+    { queryKey: ["events"] },
+    (current) =>
+      current && current.pages.length > 1
+        ? { pages: current.pages.slice(0, 1), pageParams: current.pageParams.slice(0, 1) }
+        : current,
+  )
   void queryClient.invalidateQueries({ queryKey: ["events"] })
   void queryClient.invalidateQueries({ queryKey: ["presence"] })
   void queryClient.invalidateQueries({ queryKey: ["trips"] })
@@ -198,12 +209,14 @@ function refetchMissed() {
 /**
  * The feed is in the order things happened. An event that reaches the
  * socket late, because the phone it is about uploaded a backlog, belongs
- * below the ones that happened after it, not on top.
+ * below the ones that happened after it, not on top. One older than
+ * everything loaded belongs on a page not loaded yet, if there is one, and
+ * the next fetch brings it; appending it here would show it twice.
  */
-function placeByTime(items: FeedEvent[], event: FeedEvent): FeedEvent[] {
+function placeByTime(items: FeedEvent[], event: FeedEvent, morePages: boolean): FeedEvent[] {
   const at = Date.parse(event.occurredAt)
   const index = items.findIndex((item) => Date.parse(item.occurredAt) <= at)
-  if (index === -1) return [...items, event]
+  if (index === -1) return morePages ? items : [...items, event]
   return [...items.slice(0, index), event, ...items.slice(index)]
 }
 

@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type FC } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react"
 import { AppState, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { haversineMeters } from "@hearth/shared"
 import { useFocusEffect } from "@react-navigation/native"
 
-import { HearthMap, PlaceLayers, TrailLayer } from "@/components/HearthMap"
+import { HearthMap, PlaceLayers, TrailGapLayer, TrailLayer } from "@/components/HearthMap"
 import { MemberMarker, MEMBER_MARKER_LABEL_HEIGHT } from "@/components/MemberMarker"
 import { ringFor } from "@/components/MemberRow"
 import { Screen } from "@/components/Screen"
@@ -21,16 +21,20 @@ import type { ThemedStyle } from "@/theme/types"
 import { activityIconName, onTheMove } from "@/utils/activity"
 import { formatSpeed } from "@/utils/format"
 import { relativeTime } from "@/utils/time"
+import { splitTrail } from "@/utils/trail"
 import { useHeader } from "@/utils/useHeader"
 
 /** The watch window is ten minutes; asking each minute holds it open. */
 const WATCH_HOLD_MS = 60_000
 /** Anything closer than this to the last drawn point is the same spot. */
 const TRAIL_MIN_STEP_METERS = 5
+/** Four hours of five-second fixes. A longer watch drops its oldest point. */
+const TRAIL_MAX_POINTS = 3_000
 
-interface LatLng {
+interface TrailPoint {
   lat: number
   lon: number
+  recordedAt?: string
 }
 
 /**
@@ -69,17 +73,28 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
     }, [circleId, userId]),
   )
 
-  const [trail, setTrail] = useState<LatLng[]>([])
+  const [trail, setTrail] = useState<TrailPoint[]>([])
+  // The first fix sets the zoom; after that the map only follows, so a
+  // viewer who zoomed out to see the road ahead is not snapped back in.
+  const framed = useRef(false)
   useEffect(() => {
     if (entry?.lat == null || entry.lon == null) return
-    const here = { lat: entry.lat, lon: entry.lon }
+    const here = { lat: entry.lat, lon: entry.lon, recordedAt: entry.recordedAt ?? undefined }
     setTrail((current) => {
       const last = current[current.length - 1]
       if (last && haversineMeters(last, here) < TRAIL_MIN_STEP_METERS) return current
-      return [...current, here]
+      return [...current, here].slice(-TRAIL_MAX_POINTS)
     })
-    cameraRef.current?.flyTo({ center: [here.lon, here.lat], zoom: 16, duration: 600 })
-  }, [entry?.lat, entry?.lon])
+    cameraRef.current?.flyTo({
+      center: [here.lon, here.lat],
+      ...(framed.current ? {} : { zoom: 16 }),
+      duration: 600,
+    })
+    framed.current = true
+  }, [entry?.lat, entry?.lon, entry?.recordedAt])
+  // The socket is closed while the app is away, so a Live view brought back
+  // has a hole in its trail, and a hole is dashed, not drawn as the road.
+  const { drawn, gaps } = useMemo(() => splitTrail(trail), [trail])
 
   const moving = onTheMove(entry)
   const speed = entry?.approximate ? null : formatSpeed(entry?.speedMps, units)
@@ -89,6 +104,16 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
     : nearby
       ? translate("map:near", { where: nearby })
       : null
+  // "Stopped" is a claim about the person; a paused share or a quiet phone
+  // says nothing about them.
+  const headline =
+    entry?.sharingState === "paused"
+      ? translate("map:paused")
+      : entry?.stale
+        ? translate("map:stale")
+        : moving
+          ? name
+          : translate("live:stopped", { name })
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} contentContainerStyle={themed($container)}>
@@ -99,7 +124,8 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
         initialZoom={16}
       >
         <PlaceLayers places={places ?? []} highlightId={entry?.atPlace?.id} />
-        {trail.length > 1 ? <TrailLayer id="live-trail" points={trail} width={5} /> : null}
+        <TrailLayer id="live-trail" segments={drawn} width={5} />
+        <TrailGapLayer id="live-trail-gaps" gaps={gaps} />
         {member && entry?.lat != null && entry.lon != null ? (
           <Marker
             lngLat={[entry.lon, entry.lat]}
@@ -130,7 +156,7 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
             <Ionicons name="pause-circle-outline" size={16} color={theme.colors.textDim} />
           )}
           <Text preset="subheading" numberOfLines={1} style={{ flexShrink: 1 }}>
-            {moving ? name : translate("live:stopped", { name })}
+            {headline}
           </Text>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.xs }}>

@@ -59,7 +59,12 @@ async function move(presence: MemberPresence) {
   })
 }
 
-const mockTrailProps: Array<{ points: Array<{ lat: number; lon: number }> }> = []
+const mockTrailProps: Array<{
+  points?: Array<{ lat: number; lon: number }>
+  segments?: Array<Array<{ lat: number; lon: number }>>
+}> = []
+const mockGapProps: Array<{ gaps: unknown[] }> = []
+const mockFlyTo = jest.fn()
 const mockWatch = jest.fn(async () => ({ watching: true, seconds: 600 }))
 const mockNavigation = { navigate: jest.fn(), goBack: jest.fn() }
 
@@ -89,14 +94,19 @@ jest.mock("../components/HearthMap", () => {
   const rn = require("react-native")
   return {
     HearthMap: react.forwardRef(function HearthMap(
-      { children }: { children?: unknown },
+      { children, cameraRef }: { children?: unknown; cameraRef?: { current: unknown } },
       _ref: unknown,
     ) {
+      if (cameraRef) cameraRef.current = { flyTo: mockFlyTo }
       return react.createElement(rn.View, null, children)
     }),
     PlaceLayers: () => null,
-    TrailLayer: (props: { points: Array<{ lat: number; lon: number }> }) => {
-      mockTrailProps.push(props)
+    TrailLayer: (props: { points?: unknown; segments?: unknown }) => {
+      mockTrailProps.push(props as never)
+      return null
+    },
+    TrailGapLayer: (props: { gaps: unknown[] }) => {
+      mockGapProps.push(props)
       return null
     },
   }
@@ -157,8 +167,16 @@ beforeEach(() => {
   jest.useFakeTimers()
   jest.clearAllMocks()
   mockTrailProps.length = 0
+  mockGapProps.length = 0
   mockPresence = [presenceFor("driving", START, 11.1)]
 })
+
+/** The points of the last drawn trail, whichever prop carried them. */
+const lastTrail = () => {
+  const last = mockTrailProps[mockTrailProps.length - 1]
+  if (!last) return []
+  return last.segments ? last.segments.flat() : (last.points ?? [])
+}
 
 afterEach(() => {
   jest.useRealTimers()
@@ -190,21 +208,63 @@ describe("the live view", () => {
     await move(presenceFor("driving", { lat: 33.702, lon: 73.05 }, 12))
     await move(presenceFor("driving", { lat: 33.704, lon: 73.05 }, 12))
 
-    const last = mockTrailProps[mockTrailProps.length - 1]!
-    expect(last.points).toHaveLength(3)
-    expect(last.points[0]).toMatchObject(START)
-    expect(last.points[2]).toMatchObject({ lat: 33.704, lon: 73.05 })
+    const points = lastTrail()
+    expect(points).toHaveLength(3)
+    expect(points[0]).toMatchObject(START)
+    expect(points[2]).toMatchObject({ lat: 33.704, lon: 73.05 })
   })
 
   it("does not draw a fix twice", async () => {
     await renderLive()
     await move(presenceFor("driving", START, 11.1))
-    expect(mockTrailProps.length === 0 || mockTrailProps.at(-1)!.points.length < 2).toBe(true)
+    expect(lastTrail().length < 2).toBe(true)
+  })
+
+  it("dashes a stretch the phone was quiet for", async () => {
+    await renderLive()
+    await move(presenceFor("driving", { lat: 33.702, lon: 73.05 }, 12))
+    // Twenty minutes and three kilometres later: the app was in the
+    // background and the socket closed. The road between is a guess.
+    await act(async () => {
+      jest.advanceTimersByTime(20 * 60_000)
+    })
+    await move(presenceFor("driving", { lat: 33.73, lon: 73.05 }, 12))
+    await move(presenceFor("driving", { lat: 33.732, lon: 73.05 }, 12))
+
+    const trail = mockTrailProps[mockTrailProps.length - 1]!
+    expect(trail.segments).toHaveLength(2)
+    const gaps = mockGapProps[mockGapProps.length - 1]!
+    expect(gaps.gaps).toHaveLength(1)
+  })
+
+  it("keeps the viewer's zoom after the first fix", async () => {
+    await renderLive()
+    await move(presenceFor("driving", { lat: 33.702, lon: 73.05 }, 12))
+    await move(presenceFor("driving", { lat: 33.704, lon: 73.05 }, 12))
+
+    const calls = mockFlyTo.mock.calls.map(([options]) => options as { zoom?: number })
+    expect(calls.length).toBeGreaterThanOrEqual(3)
+    expect(calls[0]!.zoom).toBeDefined()
+    expect(calls.slice(1).every((call) => call.zoom === undefined)).toBe(true)
   })
 
   it("says so when they stop", async () => {
     const screen = await renderLive()
     await move(presenceFor("still", { lat: 33.704, lon: 73.05 }, 0))
     expect(screen.getByText(/live:stopped/)).toBeTruthy()
+  })
+
+  it("says paused rather than stopped when they paused sharing", async () => {
+    const screen = await renderLive()
+    await move({ ...presenceFor("driving", START, 11.1), sharingState: "paused" })
+    expect(screen.queryByText(/live:stopped/)).toBeNull()
+    expect(screen.getByText(/map:paused/)).toBeTruthy()
+  })
+
+  it("says the phone has gone quiet rather than stopped when the fix is stale", async () => {
+    const screen = await renderLive()
+    await move({ ...presenceFor("driving", START, 11.1), stale: true })
+    expect(screen.queryByText(/live:stopped/)).toBeNull()
+    expect(screen.getByText(/map:stale/)).toBeTruthy()
   })
 })

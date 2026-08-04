@@ -947,16 +947,41 @@ describe("a watched phone learns so from its own upload", () => {
     expect(start).not.toHaveBeenCalled()
   })
 
-  it("does not re-register for a window it already holds", async () => {
+  it("extends a window it already holds without re-registering", async () => {
     await enterMoving()
     await enterWatched(600)
     start.mockClear()
-    mockUpload.mockResolvedValueOnce(reply(new Date(Date.now() + 590_000).toISOString()))
+    // The page asks again each minute, so every reply pushes the end out.
+    const later = new Date(Date.now() + 600_000 + 60_000).toISOString()
+    mockUpload.mockResolvedValueOnce(reply(later))
     queued()
 
     await flush()
+    await jest.advanceTimersByTimeAsync(0)
 
     expect(start).not.toHaveBeenCalled()
+    expect(useTrackingStore.getState().watchedUntil).toBe(later)
+  })
+
+  it("measures the window by the server's clock, not the phone's", async () => {
+    await enterMoving()
+    start.mockClear()
+    // The phone's clock is five minutes slow. The server says "until ten
+    // minutes from my now"; the phone must hold it for ten minutes of its
+    // own, not fifteen.
+    const serverNow = Date.now() + 5 * 60_000
+    mockUpload.mockResolvedValueOnce({
+      ...reply(new Date(serverNow + 600_000).toISOString()),
+      serverTime: new Date(serverNow).toISOString(),
+    })
+    queued()
+
+    await flush()
+    await jest.advanceTimersByTimeAsync(0)
+
+    const held = Date.parse(useTrackingStore.getState().watchedUntil!) - Date.now()
+    expect(held).toBeGreaterThan(595_000)
+    expect(held).toBeLessThanOrEqual(600_000)
   })
 
   it("answers a watch with one fix while parked, as the push would", async () => {

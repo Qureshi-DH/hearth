@@ -96,6 +96,29 @@ describe("reconnecting", () => {
     expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["trips"] })
   })
 
+  it("keeps only the first page of a long feed before asking for it again", () => {
+    queryClient.setQueryData(queryKeys.events("c1"), {
+      pages: [
+        { items: [event("30", 1)], nextCursor: "a" },
+        { items: [event("20", 5)], nextCursor: "b" },
+        { items: [event("10", 60)], nextCursor: null },
+      ],
+      pageParams: [undefined, "a", "b"],
+    })
+    realtime.connect()
+    sockets[0]!.accept()
+    sockets[0]!.drop()
+    jest.advanceTimersByTime(1_000)
+    sockets[1]!.accept()
+
+    const cached = queryClient.getQueryData<{ pages: unknown[]; pageParams: unknown[] }>(
+      queryKeys.events("c1"),
+    )!
+    expect(cached.pages).toHaveLength(1)
+    expect(cached.pageParams).toHaveLength(1)
+    expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["events"] })
+  })
+
   it("refetches after the app comes back from the background too", () => {
     realtime.connect()
     sockets[0]!.accept()
@@ -127,6 +150,20 @@ describe("a feed event over the socket", () => {
   it("lands where it happened when it arrives late", () => {
     sockets[0]!.receive({ type: "event", circleId: "c1", event: event("30", 30) })
     expect(feedIds()).toEqual(["20", "30", "10"])
+  })
+
+  it("goes at the end when it is older than everything loaded and there is no more", () => {
+    sockets[0]!.receive({ type: "event", circleId: "c1", event: event("5", 120) })
+    expect(feedIds()).toEqual(["20", "10", "5"])
+  })
+
+  it("is left for the next page when it is older than what is loaded so far", () => {
+    queryClient.setQueryData(queryKeys.events("c1"), {
+      pages: [{ items: [event("20", 5), event("10", 60)], nextCursor: "some-cursor" }],
+      pageParams: [undefined],
+    })
+    sockets[0]!.receive({ type: "event", circleId: "c1", event: event("5", 120) })
+    expect(feedIds()).toEqual(["20", "10"])
   })
 
   it("is not added twice", () => {

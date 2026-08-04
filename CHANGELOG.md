@@ -17,10 +17,11 @@ the feed cursor changed shape.
 ### Added
 
 - Live. A member's profile offers a Live button while their phone says they
-  are on the move. It follows them on the map, shows the speed they are
-  doing and the street they are on, and draws the trail from the fixes that
-  arrive while it is open. Their phone is asked to report every few seconds
-  for as long as the page is open, and nobody else's is.
+  are on the move. It follows them on the map at the zoom you choose, shows
+  the speed they are doing and the street they are on, and draws the trail
+  from the fixes that arrive while it is open, dashed across any stretch it
+  missed. Their phone is asked to report every few seconds for as long as
+  the page is open, and nobody else's is.
 - A phone learns it is being watched from its own upload reply
   (`watchedUntil` on `POST /locations/batch`), so a car already reporting
   goes live on its next fix whether or not the silent push got through.
@@ -30,7 +31,9 @@ the feed cursor changed shape.
 
 - The activity feed is in the order things happened, and pages by it. A
   backlog uploaded after an outage used to put the morning's arrivals under
-  lunchtime's.
+  lunchtime's. The cursor carries the moment to the microsecond, which is
+  how Postgres stamps it, so rows written in the same millisecond are not
+  skipped between pages.
 - A trail is drawn only where the phone reported it. A silence between two
   fixes is dashed, and the trip says so, instead of a straight line that
   looked like the route.
@@ -39,11 +42,21 @@ the feed cursor changed shape.
   that.
 - The trip detector reads a silence between two fixes as travel when the
   phone was clearly somewhere else afterwards, at a pace a person could have
-  kept. Fixes ten minutes apart used to cut a drive into single points, and
-  single points are never a trip.
+  kept, and the fix before the silence still showed travel. Fixes ten
+  minutes apart used to cut a drive into single points, and single points
+  are never a trip. A resting fix from where the drive ended still ends it,
+  a fix a kilometre out with a kilometre of doubt vouches for nothing, a
+  walk across one large place stays inside it, a silence longer than half
+  an hour is a lost journey rather than one under way, and a silence with
+  another trip's fixes inside it is never bridged. A fix too lonely to be a
+  journey is kept for one to grow from, and a trip already filed grows by
+  the same rule, so a drive is assembled fix by fix the way the sweep meets
+  it, not only when the whole of it is uploaded at once.
 - The app refetches the feed, presence and trips every time its socket
-  reconnects, which is every time it comes back from the background. A
-  feed event that arrives late over the socket lands where it happened.
+  reconnects, which is every time it comes back from the background. A feed
+  scrolled deep is cut back to its first page first, so the refetch is one
+  request. A feed event that arrives late over the socket lands where it
+  happened, or waits for the page it belongs to.
 - New places default to a 100 m radius. 150 covered the whole street.
 
 ### Fixed

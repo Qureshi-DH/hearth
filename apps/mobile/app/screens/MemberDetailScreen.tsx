@@ -42,12 +42,6 @@ import { formatSpeed } from "@/utils/format"
 import { relativeTime } from "@/utils/time"
 import { useHeader } from "@/utils/useHeader"
 
-/**
- * How often an open page reminds the server somebody is looking. The server
- * only sends a fresh push once the phone's window is nearly out, so this is
- * cheap; it is the window that decides the battery.
- */
-
 export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   navigation,
   route,

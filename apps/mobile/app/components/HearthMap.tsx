@@ -13,7 +13,9 @@ import {
 
 import { useAuthStore } from "@/stores/auth"
 import { useAppTheme } from "@/theme/context"
-import { circlesCollection, multiLineString } from "@/utils/map"
+import type { FeatureCollection } from "geojson"
+
+import { circlesCollection, lineString, multiLineString } from "@/utils/map"
 
 export interface HearthMapProps extends Omit<MapProps, "mapStyle" | "style"> {
   style?: StyleProp<ViewStyle>
@@ -133,7 +135,13 @@ export function TrailLayer({
     () => (segments ?? (points ? [points] : [])).filter((line) => line.length > 1),
     [points, segments],
   )
-  const shape = useMemo(() => multiLineString(lines), [lines])
+  // One LineString feature per stretch, not one MultiLineString: MapLibre
+  // computes the metrics the gradient reads per LineString and the parts
+  // of a multi-line get none, so their gradient never draws.
+  const shape = useMemo<FeatureCollection>(
+    () => ({ type: "FeatureCollection", features: lines.map(lineString) }),
+    [lines],
+  )
   if (lines.length === 0) return null
   return (
     <GeoJSONSource id={id} data={shape} lineMetrics>

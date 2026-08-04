@@ -58,4 +58,25 @@ describe("splitTrail", () => {
     expect(drawn).toEqual([])
     expect(gaps).toEqual([[a, far]])
   })
+
+  it("draws a motorway stretch the phone reported every ten seconds", () => {
+    // 600 m apart, ten seconds apart: a fast road, thinned by the upload
+    // gate, not a silence.
+    const t = (seconds: number) => new Date(Date.UTC(2026, 8, 15, 9, 0, seconds)).toISOString()
+    const p1 = { lat: a.lat, lon: a.lon, recordedAt: t(0) }
+    const p2 = { lat: a.lat + 0.0054, lon: a.lon, recordedAt: t(10) }
+    const p3 = { lat: a.lat + 0.0108, lon: a.lon, recordedAt: t(20) }
+    const { drawn, gaps } = splitTrail([p1, p2, p3], 500)
+    expect(drawn).toEqual([[p1, p2, p3]])
+    expect(gaps).toEqual([])
+  })
+
+  it("marks the same stretch a silence when the fixes are minutes apart", () => {
+    const t = (minutes: number) => new Date(Date.UTC(2026, 8, 15, 9, minutes)).toISOString()
+    const p1 = { lat: a.lat, lon: a.lon, recordedAt: t(0) }
+    const p2 = { lat: a.lat + 0.0054, lon: a.lon, recordedAt: t(10) }
+    const { drawn, gaps } = splitTrail([p1, p2], 500)
+    expect(drawn).toEqual([])
+    expect(gaps).toEqual([[p1, p2]])
+  })
 })

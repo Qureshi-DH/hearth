@@ -87,9 +87,6 @@ const STILL_AFTER_MS = 5 * 60 * 1000
 
 /** The live tier, for as long as somebody is watching. */
 const LIVE_INTERVAL_MS = 5_000
-// The page asking every minute and the reply carrying the answer on every
-// batch would otherwise re-register the live tier for a few seconds' gain.
-const WATCH_SLACK_MS = 30_000
 const LIVE_DISTANCE_METERS = 5
 /** A fix older than this is not "now" to somebody who has just opened the app. */
 const FOREGROUND_MAX_AGE_MS = 10_000
@@ -264,7 +261,7 @@ async function doFlush(): Promise<void> {
       const result = await endpoints.locations.upload(batch)
       useTrackingStore.getState().dequeue(batch)
       useTrackingStore.getState().recordUpload(result.accepted)
-      void adoptWatch(result.watchedUntil)
+      void adoptWatch(result.watchedUntil, result.serverTime)
       if (
         result.policy.minUpdateIntervalSeconds !== store.policy.minUpdateIntervalSeconds ||
         result.policy.distanceFilterMeters !== store.policy.distanceFilterMeters
@@ -1033,16 +1030,24 @@ export async function enterWatched(seconds: number): Promise<void> {
 /**
  * The upload reply says until when somebody has this phone's owner's page
  * open. A moving phone uploads every few seconds, so this reaches it whether
- * or not the silent push did. A window it already holds is left alone, so
- * the reply does not re-register the tier on every batch.
+ * or not the silent push did. The window is measured against the server's
+ * own clock, since the phone's may be minutes out. A window already held is
+ * only moved out, never re-registered: the tier steps down on its own when
+ * the window lapses, see ingest.
  */
-async function adoptWatch(until: string | null | undefined): Promise<void> {
+async function adoptWatch(until: string | null | undefined, serverTime?: string): Promise<void> {
   if (!until) return
-  const remaining = (Date.parse(until) - Date.now()) / 1000
-  if (!(remaining > 0)) return
-  const held = useTrackingStore.getState().watchedUntil
-  if (held && Date.parse(held) >= Date.parse(until) - WATCH_SLACK_MS) return
-  await enterWatched(Math.ceil(remaining))
+  const serverNow = serverTime ? Date.parse(serverTime) : NaN
+  const remainingMs = Date.parse(until) - (Number.isFinite(serverNow) ? serverNow : Date.now())
+  if (!(remainingMs > 0)) return
+  const store = useTrackingStore.getState()
+  const held = store.watchedUntil ? Date.parse(store.watchedUntil) : null
+  if (held != null && held > Date.now()) {
+    const ends = Date.now() + remainingMs
+    if (ends > held) store.setWatchedUntil(new Date(ends).toISOString())
+    return
+  }
+  await enterWatched(Math.ceil(remainingMs / 1000))
 }
 
 /** True while somebody is watching, and the moment it stops being so the tier steps back down. */

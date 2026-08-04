@@ -25,12 +25,26 @@ export function simplifyTrail<T extends { lat: number; lon: number }>(
 
 /**
  * A trail is drawn only where the phone reported it. Two fixes further
- * apart than this are a silence, and a line across it would be a guess at
+ * apart than this, and longer apart in time than a phone on the move takes
+ * between fixes, are a silence, and a line across it would be a guess at
  * the road, so the silence is handed back separately for drawing as one.
+ * Distance alone is not enough: a fast road reported every ten seconds is
+ * thinned by the upload gate to fixes hundreds of metres apart.
  */
 export const TRAIL_MAX_STEP_METERS = 500
+export const TRAIL_MAX_STEP_SECONDS = 60
 
-export function splitTrail<T extends { lat: number; lon: number }>(
+function isSilence(
+  from: { lat: number; lon: number; recordedAt?: string },
+  to: { lat: number; lon: number; recordedAt?: string },
+  maxStepMeters: number,
+): boolean {
+  if (haversineMeters(from, to) <= maxStepMeters) return false
+  if (!from.recordedAt || !to.recordedAt) return true
+  return Date.parse(to.recordedAt) - Date.parse(from.recordedAt) > TRAIL_MAX_STEP_SECONDS * 1000
+}
+
+export function splitTrail<T extends { lat: number; lon: number; recordedAt?: string }>(
   points: T[],
   maxStepMeters = TRAIL_MAX_STEP_METERS,
 ): { drawn: T[][]; gaps: Array<[T, T]> } {
@@ -39,7 +53,7 @@ export function splitTrail<T extends { lat: number; lon: number }>(
   let run: T[] = []
   for (const point of points) {
     const last = run[run.length - 1]
-    if (last && haversineMeters(last, point) > maxStepMeters) {
+    if (last && isSilence(last, point, maxStepMeters)) {
       gaps.push([last, point])
       if (run.length > 1) drawn.push(run)
       run = []
