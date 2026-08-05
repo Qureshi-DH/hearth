@@ -637,15 +637,20 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "What stands between this phone and reporting",
         description:
           "The phone's own account of its permissions and switches: the location permission " +
-          "level, Location Services, Background App Refresh on iOS, battery optimisation on " +
-          "Android. The circle sees it under the member's name instead of a mystery, and a " +
-          "quiet phone that has said why is reported as such rather than as offline.",
+          "level, Location Services, Background App Refresh on iOS, battery optimisation and " +
+          "background restriction on Android, power saving on either, and whether the " +
+          "location service died without being asked. The circle sees it under the member's " +
+          "name instead of a mystery, and a quiet phone that has said why is reported as such " +
+          "rather than as offline.",
         body: z.object({
           locationPermission: z.enum(["always", "foreground", "denied", "unknown"]),
           locationServices: z.boolean(),
           backgroundRefresh: z.enum(["available", "denied", "restricted"]).optional(),
           batteryOptimised: z.boolean().optional(),
+          backgroundRestricted: z.boolean().optional(),
           lowPowerMode: z.boolean().optional(),
+          manufacturer: z.string().max(80).optional(),
+          serviceStopped: z.boolean().optional(),
         }),
         response: { 200: z.object({ ok: z.literal(true) }) },
       },

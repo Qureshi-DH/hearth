@@ -99,6 +99,8 @@ export function presenceIssues(health: DeviceHealth | null | undefined): Presenc
   }
   if (health.batteryOptimised) issues.push("battery_optimisation")
   if (health.lowPowerMode) issues.push("low_power_mode")
+  if (health.backgroundRestricted) issues.push("background_restricted")
+  if (health.serviceStopped) issues.push("service_stopped")
   return issues
 }
 

@@ -475,12 +475,13 @@ describe("speed alerts: per-circle thresholds", () => {
     expect(await speedAlerts(user.headers, family.id)).toHaveLength(1)
     expect(await speedAlerts(user.headers, roadtrip.id)).toHaveLength(0)
 
-    // Eight minutes later the same drive reaches 145 km/h, which is the first
-    // thing that has ever crossed the second circle's threshold. That circle
-    // has been told nothing so far, so it has no cooldown to be inside.
+    // Eight minutes and twelve kilometres later the same drive reaches
+    // 145 km/h, which is the first thing that has ever crossed the second
+    // circle's threshold. That circle has been told nothing so far, so it has
+    // no cooldown to be inside.
     await uploadFixes(
       user.headers,
-      drive({ from: northOf(MOTORWAY, 20_000), startSecondsAgo: -120, count: 4, speedMps: 40.3 }),
+      drive({ from: northOf(MOTORWAY, 12_000), startSecondsAgo: -120, count: 4, speedMps: 40.3 }),
     )
 
     const heard = await speedAlerts(user.headers, roadtrip.id)

@@ -198,7 +198,9 @@ export function healthReason(health: DeviceHealth | null | undefined): string | 
     return "Background App Refresh is off"
   }
   if (health.batteryOptimised) return "battery optimisation is still on"
-  if (health.lowPowerMode) return "Low Power Mode is on"
+  if (health.lowPowerMode) return "power saving mode is on"
+  if (health.backgroundRestricted) return "background activity is restricted"
+  if (health.serviceStopped) return "location service was stopped"
   return null
 }
 

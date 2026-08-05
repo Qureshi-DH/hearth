@@ -1,4 +1,10 @@
-import { DEFAULTS, haversineMeters, pathDistanceMeters, type FeedEvent } from "@hearth/shared"
+import {
+  DEFAULTS,
+  agreedMaxSpeedMps,
+  haversineMeters,
+  pathDistanceMeters,
+  type FeedEvent,
+} from "@hearth/shared"
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
@@ -96,6 +102,7 @@ interface Fix {
   lat: number
   lon: number
   speedMps: number | null
+  accuracyMeters?: number | null
 }
 
 /** Where a device was, without the extras a trip's totals are built from. */
@@ -735,6 +742,7 @@ async function recomputeTrip(db: Database, pass: Pass, tripId: string): Promise<
       lat: locationPoints.lat,
       lon: locationPoints.lon,
       speedMps: locationPoints.speedMps,
+      accuracyMeters: locationPoints.accuracyMeters,
     })
     .from(locationPoints)
     .where(eq(locationPoints.tripId, tripId))
@@ -860,7 +868,9 @@ function tripColumns(points: Fix[], placeRows: PlaceRow[]) {
     startedAt: first.recordedAt,
     endedAt: last.recordedAt,
     distanceMeters: Math.round(distance),
-    maxSpeedMps: confirmedMaxSpeedMps(points),
+    // The same rule the speed alert quotes, so the card can never deny the
+    // number the family was already told.
+    maxSpeedMps: agreedMaxSpeedMps(points, DEFAULTS.tripIdleGapSeconds * 1000),
     avgSpeedMps: durationSeconds > 0 ? distance / durationSeconds : null,
     pointCount: points.length,
     startLat: first.lat,
@@ -870,25 +880,6 @@ function tripColumns(points: Fix[], placeRows: PlaceRow[]) {
     startPlaceId: placeContaining(placeRows, first) ?? null,
     endPlaceId: placeContaining(placeRows, last) ?? null,
   }
-}
-
-/**
- * A single sample is not evidence: a provider switch emits one impossible
- * velocity, and this number is shown on every trip card. Report the fastest
- * speed two consecutive fixes agree on, the same confirmation the speed alert
- * waits for before it fires.
- */
-function confirmedMaxSpeedMps(points: Fix[]): number | null {
-  let confirmed: number | null = null
-  for (let i = 1; i < points.length; i += 1) {
-    const previous = points[i - 1]!.speedMps
-    const current = points[i]!.speedMps
-    if (previous == null || current == null) continue
-    if (!Number.isFinite(previous) || !Number.isFinite(current)) continue
-    const agreed = Math.min(previous, current)
-    if (confirmed === null || agreed > confirmed) confirmed = agreed
-  }
-  return confirmed
 }
 
 /**

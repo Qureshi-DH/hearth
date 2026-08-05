@@ -1,6 +1,8 @@
 import {
   DEFAULTS,
   activityFromSpeed,
+  agreedMaxSpeedMps,
+  agreedSpeedMps,
   haversineMeters,
   isValidLatLng,
   type ActivityType,
@@ -51,22 +53,6 @@ const INCIDENT_MOVING_AT_COARSE_STOP_MPS = DEFAULTS.incidentMinSpeedMps
 const INCIDENT_WINDOW_MAX_FIXES = 200
 /** Bounds the read of the run so far. Two consecutive fixes make a run. */
 const SPEED_RUN_MAX_PRIOR_FIXES = 200
-/** How far apart two consecutive speeds can be and still be one measurement. */
-const SPEED_AGREEMENT_TOLERANCE = 0.1
-
-/**
- * What two consecutive fixes support between them. A Doppler speed carries a
- * few percent of noise, so a pair this close is one measurement read twice and
- * the faster of the two is a number both fixes stand behind. Further apart than
- * that and only the slower one is supported, which is what keeps the lone
- * impossible velocity a provider switch emits out of an alert that quotes it.
- */
-function agreedSpeedMps(a: number | null | undefined, b: number | null | undefined): number | null {
-  if (a == null || b == null) return null
-  const faster = Math.max(a, b)
-  const slower = Math.min(a, b)
-  return faster - slower <= faster * SPEED_AGREEMENT_TOLERANCE ? faster : slower
-}
 
 /**
  * How the phone itself said the member was travelling. The activity recogniser
@@ -109,9 +95,12 @@ interface AlertPresence {
   lowBatteryNotifiedLevel: number | null
 }
 
-/** The three fields a speeding run is judged on, from history or from a batch. */
+/** What a speeding run is judged on, from history or from a batch. */
 interface RunFix {
   recordedAt: Date
+  lat: number
+  lon: number
+  accuracyMeters: number | null
   speedMps: number | null
   activity: ActivityType | null
 }
@@ -455,6 +444,9 @@ async function maybeRaiseDrivingAlerts(
       await db
         .select({
           recordedAt: locationPoints.recordedAt,
+          lat: locationPoints.lat,
+          lon: locationPoints.lon,
+          accuracyMeters: locationPoints.accuracyMeters,
           speedMps: locationPoints.speedMps,
           activity: locationPoints.activity,
         })
@@ -471,12 +463,15 @@ async function maybeRaiseDrivingAlerts(
         .limit(SPEED_RUN_MAX_PRIOR_FIXES)
     ).reverse()
 
+    // A run is a streak of over-threshold fixes, with whatever measured no
+    // speed in between: a cell-derived fix reports none mid-drive, and it
+    // confirms nothing, but reading it as a zero would break a run the car
+    // never came out of. The run that satisfied the streak rule decides both
+    // the speed reported and which circles hear it, through the same rule the
+    // trip card uses, so the family is never told a number the card denies.
     let streak = 0
-    let runPeakMps = 0
+    let run: RunFix[] = []
 
-    // The run that satisfied the streak rule decides both the speed reported
-    // and which circles hear it. Taking the maximum over the whole batch would
-    // hand the alert back the lone GPS spike that rule exists to discard.
     let alertPeakMps = 0
     // What the phone called the run, and when the run ended. The alert is
     // about that stretch, so it is worded and dated from it rather than from
@@ -486,24 +481,23 @@ async function maybeRaiseDrivingAlerts(
     let alertActivities = new Set<ActivityType>()
     let alertAt: Date | null = null
     const closeRun = () => {
-      if (streak >= DEFAULTS.speedAlertConsecutiveFixes && runPeakMps > alertPeakMps) {
+      if (streak < DEFAULTS.speedAlertConsecutiveFixes) return
+      const runPeakMps = agreedMaxSpeedMps(run, DEFAULTS.staleAfterSeconds * 1000) ?? 0
+      if (runPeakMps > alertPeakMps) {
         alertPeakMps = runPeakMps
         alertActivities = new Set(runActivities)
         alertAt = runEndAt
       }
     }
 
-    // Speeds pair off these two so the reported peak is one two fixes agreed on,
-    // and the timestamps apply the gap rule: a gap means that run ended, or one
+    // The timestamps apply the gap rule: a gap means that run ended, or one
     // fast fix on Friday and another on Monday add up to a streak.
-    let previousMps: number | null = null
     let previousAt: number | null = null
 
     const breakRun = () => {
       closeRun()
       streak = 0
-      runPeakMps = 0
-      previousMps = null
+      run = []
       runActivities = new Set()
       runEndAt = null
     }
@@ -516,17 +510,15 @@ async function maybeRaiseDrivingAlerts(
       }
       previousAt = recordedAt
 
-      // A null speed is a speed the platform could not measure, which is what
-      // a cell-derived fix reports mid-drive. It confirms nothing, but reading
-      // it as a zero would break a run the car never came out of.
       const speedMps = fix.speedMps
-      if (speedMps == null) continue
+      if (speedMps == null) {
+        if (streak > 0) run.push(fix)
+        continue
+      }
 
       if (speedMps * 3.6 > lowestThresholdKmh) {
         streak += 1
-        const agreed = agreedSpeedMps(previousMps, speedMps)
-        if (agreed !== null) runPeakMps = Math.max(runPeakMps, agreed)
-        previousMps = speedMps
+        run.push(fix)
         // A fix with no label at all is not a dissenting opinion about how the
         // run was travelling, so it does not force the wording back to driving.
         if (fix.activity) runActivities.add(fix.activity)
