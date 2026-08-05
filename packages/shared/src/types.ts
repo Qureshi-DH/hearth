@@ -5,6 +5,7 @@ import type {
   LocationSource,
   Platform,
   PlaceIcon,
+  PresenceIssue,
   PushProvider,
   RegistrationMode,
   SharingState,
@@ -242,14 +243,7 @@ export interface MemberPresence {
   issues: PresenceIssue[]
 }
 
-export const PRESENCE_ISSUES = [
-  "location_permission",
-  "location_services",
-  "background_refresh",
-  "battery_optimisation",
-  "low_power_mode",
-] as const
-export type PresenceIssue = (typeof PRESENCE_ISSUES)[number]
+export type { PresenceIssue } from "./constants"
 
 /** What a phone reports about its own ability to share, see PATCH /me/health. */
 export interface DeviceHealth {
@@ -260,8 +254,39 @@ export interface DeviceHealth {
   backgroundRefresh?: "available" | "denied" | "restricted"
   /** Android: the app is still subject to battery optimisation. */
   batteryOptimised?: boolean
+  /**
+   * Android: the user set the app's background usage to Restricted, which
+   * ends its foreground service the moment the screen locks.
+   */
+  backgroundRestricted?: boolean
+  /** iOS Low Power Mode or Android Battery Saver. Either one starves the tracker. */
   lowPowerMode?: boolean
+  /** Which vendor's battery manager the family is up against. */
+  manufacturer?: string
+  /** Android: the foreground service died without the app asking it to. */
+  serviceStopped?: boolean
   reportedAt?: string
+}
+
+/**
+ * What POST /circles/:id/members/:userId/watch did and what it knew, so the
+ * Live page can say whether the phone was reached rather than draw a red dot
+ * over a twelve-minute-old fix.
+ */
+export interface WatchResponse {
+  watching: boolean
+  seconds: number
+  /**
+   * "sent" is a silent push queued by this call, "held" one withheld because
+   * the phone was pushed moments ago, "no_device" a member with no push token,
+   * "unsupported" a server whose push provider cannot carry a silent push.
+   */
+  pushed: "sent" | "held" | "no_device" | "unsupported"
+  lastFixAt: string | null
+  /** The last time the phone spoke at all, fix or no fix. */
+  lastHeardAt: string | null
+  activity: ActivityType | null
+  issues: PresenceIssue[]
 }
 
 export interface HistoryPoint {

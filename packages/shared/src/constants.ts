@@ -58,6 +58,21 @@ export const ACTIVITY_TYPES = [
 ] as const
 export type ActivityType = (typeof ACTIVITY_TYPES)[number]
 
+/**
+ * What a phone can say stands between it and reporting, in the order the
+ * checklist asks about them. The circle sees these under the member's name.
+ */
+export const PRESENCE_ISSUES = [
+  "location_permission",
+  "location_services",
+  "background_refresh",
+  "battery_optimisation",
+  "low_power_mode",
+  "background_restricted",
+  "service_stopped",
+] as const
+export type PresenceIssue = (typeof PRESENCE_ISSUES)[number]
+
 export const PLATFORMS = ["ios", "android", "web", "other"] as const
 export type Platform = (typeof PLATFORMS)[number]
 
