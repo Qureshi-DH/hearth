@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { getDb } from "../../db/client"
 import { getConfig } from "../../env"
 import { runJobs } from "../../jobs/scheduler"
-import { registerUser, startTestApp, type TestContext } from "../helpers"
+import { registerUser, silentSinceLastFix, startTestApp, type TestContext } from "../helpers"
 
 /**
  * Low battery, device offline and device online alerts, through the HTTP API
@@ -461,6 +461,7 @@ describe("device offline", () => {
     await uploadFixes(user.headers, [
       { ...HOME, recordedAt: iso(-70 * 60), accuracyMeters: 12, batteryLevel: 0.55 },
     ])
+    await silentSinceLastFix(user.user.id)
 
     const first = await tick()
     expect(first.offlineFlagged).toBe(1)
@@ -496,6 +497,7 @@ describe("device offline", () => {
     await uploadFixes(user.headers, [
       { ...HOME, recordedAt: iso(-80 * 60), accuracyMeters: 12, batteryLevel: 0.2 },
     ])
+    await silentSinceLastFix(user.user.id)
     await tick()
     await tick()
 
@@ -516,6 +518,7 @@ describe("device offline", () => {
     await uploadFixes(teen.headers, [
       { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 12, batteryLevel: 0.4 },
     ])
+    await silentSinceLastFix(teen.user.id)
     await setSharing(teen.headers, circle.id, { sharingState: "paused" })
 
     await tick()
@@ -567,6 +570,7 @@ describe("device offline", () => {
       await uploadFixes(member.headers, [
         { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 12, batteryLevel: 0.5 },
       ])
+      await silentSinceLastFix(member.user.id)
     }
 
     const report = await tick()
@@ -585,6 +589,7 @@ describe("device offline", () => {
       await uploadFixes(member.headers, [
         { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 12, batteryLevel: 0.5 },
       ])
+      await silentSinceLastFix(member.user.id)
     }
 
     const report = await tick()
@@ -600,6 +605,7 @@ describe("device offline", () => {
       await uploadFixes(member.headers, [
         { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 12, batteryLevel: 0.5 },
       ])
+      await silentSinceLastFix(member.user.id)
       members.push(member)
     }
 
@@ -628,6 +634,7 @@ describe("device offline", () => {
       await uploadFixes(member.headers, [
         { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 12, batteryLevel: 0.5 },
       ])
+      await silentSinceLastFix(member.user.id)
     }
     for (let i = 0; i < 8; i += 1) {
       const member = await registerUser(ctx.app)
@@ -649,6 +656,7 @@ describe("device offline", () => {
     await uploadFixes(user.headers, [
       { ...HOME, recordedAt: iso(-70 * 60), accuracyMeters: 12, batteryLevel: 0.3 },
     ])
+    await silentSinceLastFix(user.user.id)
     await tick()
     expect(
       (await feedTypes(user.headers, circle.id)).filter((t) => t === "device_offline"),
@@ -663,7 +671,9 @@ describe("device offline", () => {
     // Ninety minutes pass with nothing further from it. Moving the stored fix
     // back is how this suite gets to skip the wait.
     await getDb().execute(
-      sql`update user_presence set recorded_at = now() - interval '95 minutes'
+      sql`update user_presence
+          set recorded_at = now() - interval '95 minutes',
+              last_heard_at = now() - interval '95 minutes'
           where user_id = ${user.user.id}::uuid`,
     )
 
@@ -682,6 +692,7 @@ describe("device offline", () => {
     await uploadFixes(teen.headers, [
       { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 12, batteryLevel: 0.09 },
     ])
+    await silentSinceLastFix(teen.user.id)
 
     // Sharing paused for the evening, with an expiry so it lapses on its own.
     await setSharing(teen.headers, circle.id, {
@@ -711,6 +722,7 @@ describe("device offline", () => {
     await uploadFixes(user.headers, [
       { ...HOME, recordedAt: iso(-50 * 3600), accuracyMeters: 12, batteryLevel: 0.35 },
     ])
+    await silentSinceLastFix(user.user.id)
     await tick()
     expect(
       (await feedTypes(user.headers, circle.id)).filter((t) => t === "device_offline"),
@@ -765,6 +777,7 @@ describe("device online", () => {
     await uploadFixes(user.headers, [
       { ...HOME, recordedAt: iso(-2 * 24 * 3600), accuracyMeters: 12, batteryLevel: 0.22 },
     ])
+    await silentSinceLastFix(user.user.id)
     await tick()
     expect(await feedTypes(user.headers, circle.id)).toContain("device_offline")
 
@@ -787,6 +800,7 @@ describe("device online", () => {
     await uploadFixes(user.headers, [
       { ...HOME, recordedAt: iso(-95 * 60), accuracyMeters: 12, batteryLevel: 0.15 },
     ])
+    await silentSinceLastFix(user.user.id)
     await tick()
 
     // Stamped half a minute ago, which on a phone whose clock runs slow lands
@@ -813,6 +827,7 @@ describe("device online", () => {
     await uploadFixes(teen.headers, [
       { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 12, batteryLevel: 0.12 },
     ])
+    await silentSinceLastFix(teen.user.id)
     await tick()
     expect(await feedTypes(parent.headers, circle.id)).toContain("device_offline")
 

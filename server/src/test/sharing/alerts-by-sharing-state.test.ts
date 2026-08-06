@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { getDb } from "../../db/client"
 import { getConfig } from "../../env"
 import { runJobs } from "../../jobs/scheduler"
-import { registerUser, startTestApp, type TestContext } from "../helpers"
+import { registerUser, silentSinceLastFix, startTestApp, type TestContext } from "../helpers"
 
 /**
  * Every alert the server raises, checked against the sharing state of the
@@ -362,6 +362,7 @@ describe("device offline", () => {
 
     // The last fix her phone managed before it died, 90 minutes ago.
     await uploadFixes(alice.headers, [{ ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 16 }])
+    await silentSinceLastFix(alice.user.id)
     await runJobs(getDb(), getConfig(), ctx.app.log)
 
     expect(await feedTypes(bob.headers, A)).toContain("device_offline")
@@ -373,6 +374,7 @@ describe("device offline", () => {
     const { alice, carol, B } = await household()
 
     await uploadFixes(alice.headers, [{ ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 16 }])
+    await silentSinceLastFix(alice.user.id)
     await runJobs(getDb(), getConfig(), ctx.app.log)
     expect(await feedTypes(carol.headers, B)).toContain("device_offline")
 

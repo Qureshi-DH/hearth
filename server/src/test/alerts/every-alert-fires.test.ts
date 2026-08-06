@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { getDb } from "../../db/client"
 import { getConfig } from "../../env"
 import { runJobs } from "../../jobs/scheduler"
-import { registerUser, startTestApp, type TestContext } from "../helpers"
+import { registerUser, silentSinceLastFix, startTestApp, type TestContext } from "../helpers"
 
 /**
  * One realistic positive case for every alert the server raises. The rest of
@@ -620,6 +620,7 @@ describe("device_offline and device_online fire for a real outage", () => {
     await uploadFixes(kid.headers, [
       { ...HOME, recordedAt: at(-70 * 60), accuracyMeters: 14, batteryLevel: 0.22 },
     ])
+    await silentSinceLastFix(kid.user.id)
 
     const first = await tick()
     expect(first.offlineFlagged).toBe(1)

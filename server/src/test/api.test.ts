@@ -4,7 +4,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { getDb } from "../db/client"
 import { getConfig } from "../env"
 import { runJobs } from "../jobs/scheduler"
-import { registerUser, sessionIdOf, startTestApp, type TestContext } from "./helpers"
+import {
+  registerUser,
+  sessionIdOf,
+  silentSinceLastFix,
+  startTestApp,
+  type TestContext,
+} from "./helpers"
 
 // A quiet residential street and a school ~1.2 km away, both in Bristol.
 const HOME = { lat: 51.4545, lon: -2.5879 }
@@ -1904,12 +1910,13 @@ describe("driving and battery alerts", () => {
 })
 
 describe("offline detection", () => {
-  it("announces a phone as offline once while it keeps uploading", async () => {
+  it("does not announce a phone that keeps uploading, however slow its clock", async () => {
     const user = await registerUser(ctx.app)
     const circle = await createCircle(user.headers)
 
-    // Every fix is stamped by a clock over an hour slow, so the device looks
-    // quiet to the sweep while it is in fact reporting normally.
+    // Every fix is stamped by a clock over an hour slow. The fixes look old,
+    // but a phone that reaches the server is not a phone that has gone
+    // quiet, and silence is measured from the upload as much as the fix.
     await uploadFixes(user.headers, [{ ...HOME, recordedAt: iso(-75 * 60), accuracyMeters: 8 }])
     await runJobs(getDb(), getConfig(), ctx.app.log)
 
@@ -1919,7 +1926,7 @@ describe("offline detection", () => {
     const offline = (await feedItems(user.headers, circle.id)).filter(
       (item) => item.type === "device_offline",
     )
-    expect(offline).toHaveLength(1)
+    expect(offline).toHaveLength(0)
   })
 
   it("alerts every quiet phone even when several in the household go quiet together", async () => {
@@ -1931,6 +1938,7 @@ describe("offline detection", () => {
       await uploadFixes(member.headers, [
         { ...HOME, recordedAt: iso(offsetSeconds), accuracyMeters: 8 },
       ])
+      await silentSinceLastFix(member.user.id)
     }
 
     await runJobs(getDb(), getConfig(), ctx.app.log)

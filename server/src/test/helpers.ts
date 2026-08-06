@@ -105,6 +105,18 @@ export async function registerUser(
   }
 }
 
+/**
+ * The phone has said nothing since its last fix. An upload marks the phone
+ * as heard whatever it carried, so a test that stages a dead phone by
+ * uploading an old fix has to take the upload itself back to when the fix
+ * was taken.
+ */
+export async function silentSinceLastFix(userId: string): Promise<void> {
+  await getDb().execute(
+    sql`update user_presence set last_heard_at = recorded_at where user_id = ${userId}::uuid`,
+  )
+}
+
 /** The session claim a token carries, read without verifying it. */
 export const sessionIdOf = (accessToken: string): string => {
   const [, claims] = accessToken.split(".")

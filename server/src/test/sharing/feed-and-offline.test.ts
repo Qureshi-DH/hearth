@@ -5,7 +5,7 @@ import { getDb } from "../../db/client"
 import { events } from "../../db/schema"
 import { getConfig } from "../../env"
 import { runJobs } from "../../jobs/scheduler"
-import { registerUser, startTestApp, type TestContext } from "../helpers"
+import { registerUser, silentSinceLastFix, startTestApp, type TestContext } from "../helpers"
 
 /**
  * The feed re-checks the subject's current sharing state the way the map does,
@@ -382,6 +382,7 @@ describe("the offline alert is owed to each circle separately", () => {
     await joinCircle(teen.headers, friends.invite.code)
 
     await uploadFixes(teen.headers, [{ ...HOME, recordedAt: iso(-95 * 60), accuracyMeters: 14 }])
+    await silentSinceLastFix(teen.user.id)
     await setSharing(teen.headers, family.id, { sharingState: "paused" })
 
     await tick()
@@ -408,12 +409,15 @@ describe("the offline alert is owed to each circle separately", () => {
     await joinCircle(teen.headers, family.invite.code)
 
     await uploadFixes(teen.headers, [{ ...HOME, recordedAt: iso(-95 * 60), accuracyMeters: 14 }])
+    await silentSinceLastFix(teen.user.id)
     await tick()
     await tick()
 
     await uploadFixes(teen.headers, [{ ...HOME, recordedAt: iso(-30), accuracyMeters: 12 }])
     await getDb().execute(
-      sql`update user_presence set recorded_at = now() - interval '95 minutes'
+      sql`update user_presence
+          set recorded_at = now() - interval '95 minutes',
+              last_heard_at = now() - interval '95 minutes'
           where user_id = ${teen.user.id}::uuid`,
     )
     await tick()

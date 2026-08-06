@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { getDb } from "../../db/client"
 import { getConfig } from "../../env"
 import { runJobs } from "../../jobs/scheduler"
-import { registerUser, startTestApp, type TestContext } from "../helpers"
+import { registerUser, silentSinceLastFix, startTestApp, type TestContext } from "../helpers"
 
 /**
  * The device offline alert goes to each circle once per outage, and a circle
@@ -127,7 +127,8 @@ async function passTime(userId: string, minutes: number) {
   )
   await db.execute(
     sql`update user_presence
-        set recorded_at = recorded_at - make_interval(mins => ${minutes}::int)
+        set recorded_at = recorded_at - make_interval(mins => ${minutes}::int),
+            last_heard_at = last_heard_at - make_interval(mins => ${minutes}::int)
         where user_id = ${userId}::uuid`,
   )
 }
@@ -142,6 +143,7 @@ describe("device offline and the once-per-outage latch", () => {
     await uploadFixes(teen.headers, [
       { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 11, batteryLevel: 0.34 },
     ])
+    await silentSinceLastFix(teen.user.id)
 
     const first = await tick()
     expect(first.offlineFlagged).toBe(1)
@@ -162,6 +164,7 @@ describe("device offline and the once-per-outage latch", () => {
     await uploadFixes(teen.headers, [
       { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 11, batteryLevel: 0.21 },
     ])
+    await silentSinceLastFix(teen.user.id)
     await setSharing(teen.headers, circle.id, {
       sharingState: "paused",
       pausedUntil: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
@@ -182,6 +185,7 @@ describe("device offline and the once-per-outage latch", () => {
     await uploadFixes(teen.headers, [
       { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 11, batteryLevel: 0.21 },
     ])
+    await silentSinceLastFix(teen.user.id)
     await setSharing(teen.headers, circle.id, {
       sharingState: "paused",
       pausedUntil: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
@@ -208,6 +212,7 @@ describe("device offline and the once-per-outage latch", () => {
     await uploadFixes(teen.headers, [
       { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 11, batteryLevel: 0.07 },
     ])
+    await silentSinceLastFix(teen.user.id)
     await setSharing(teen.headers, circle.id, {
       sharingState: "paused",
       pausedUntil: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
@@ -245,6 +250,7 @@ describe("device offline and the once-per-outage latch", () => {
     await uploadFixes(teen.headers, [
       { ...HOME, recordedAt: iso(-95 * 60), accuracyMeters: 14, batteryLevel: 0.05 },
     ])
+    await silentSinceLastFix(teen.user.id)
     await setSharing(teen.headers, family.id, { sharingState: "paused" })
 
     await tick()

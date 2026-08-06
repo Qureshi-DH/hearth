@@ -75,7 +75,22 @@ async function phoneLastHeard(
         platform = ${options.platform ?? "ios"}
         where user_id = ${user.user.id}::uuid`,
   )
+  // The upload itself counts as the phone speaking, so the silence has to be
+  // written back to when the fix was taken.
+  await getDb().execute(
+    sql`update user_presence set last_heard_at = recorded_at
+        where user_id = ${user.user.id}::uuid`,
+  )
   return user
+}
+
+/** Every wake already sent, the last of them that long ago, none answered. */
+async function wakesSpent(userId: string, minutesAgo: number) {
+  await getDb().execute(
+    sql`update user_presence
+        set wake_count = 3, wake_requested_at = now() - make_interval(mins => ${minutesAgo})
+        where user_id = ${userId}::uuid`,
+  )
 }
 
 async function outboxRows() {
@@ -94,7 +109,7 @@ async function offlineEvents(userId: string) {
 const tick = () => runJobs(getDb(), getConfig(), ctx.app.log)
 
 describe("waking a quiet phone", () => {
-  it("pings a phone quiet for half an hour, silently, and only once per silence", async () => {
+  it("pings a quiet phone silently, and not again until it has had time to answer", async () => {
     const driver = new ExpoLikeDriver()
     setRuntime({ pushDriver: driver })
     const user = await phoneLastHeard(40 * 60)
@@ -119,14 +134,14 @@ describe("waking a quiet phone", () => {
     expect(await offlineEvents(user.user.id)).toBe(0)
   })
 
-  it("leaves a phone alone that reported twenty minutes ago", async () => {
+  it("leaves a phone alone that reported five minutes ago", async () => {
     setRuntime({ pushDriver: new ExpoLikeDriver() })
-    await phoneLastHeard(20 * 60)
+    await phoneLastHeard(5 * 60)
     const report = await tick()
     expect(report.phonesWoken).toBe(0)
   })
 
-  it("flags the phone offline only after the wake went unanswered", async () => {
+  it("flags the phone offline only after two wakes went unanswered", async () => {
     setRuntime({ pushDriver: new ExpoLikeDriver() })
     const user = await phoneLastHeard(70 * 60)
 
@@ -139,12 +154,21 @@ describe("waking a quiet phone", () => {
     const second = await tick()
     expect(second.offlineFlagged).toBe(0)
 
+    // One lost push is one lost push. Ten minutes on it is asked again.
     await getDb().execute(
       sql`update user_presence set wake_requested_at = now() - interval '11 minutes'
           where user_id = ${user.user.id}::uuid`,
     )
     const third = await tick()
-    expect(third.offlineFlagged).toBe(1)
+    expect(third.phonesWoken).toBe(1)
+    expect(third.offlineFlagged).toBe(0)
+
+    await getDb().execute(
+      sql`update user_presence set wake_requested_at = now() - interval '11 minutes'
+          where user_id = ${user.user.id}::uuid`,
+    )
+    const fourth = await tick()
+    expect(fourth.offlineFlagged).toBe(1)
     expect(await offlineEvents(user.user.id)).toBe(1)
   })
 
@@ -207,7 +231,10 @@ describe("asking phones for a fix on demand", () => {
     return { owner, circleId: id, others }
   }
 
-  async function reportedAgo(user: { headers: Record<string, string> }, secondsAgo: number) {
+  async function reportedAgo(
+    user: { headers: Record<string, string>; user: { id: string } },
+    secondsAgo: number,
+  ) {
     const upload = await ctx.app.inject({
       method: "POST",
       url: "/api/v1/locations/batch",
@@ -215,6 +242,10 @@ describe("asking phones for a fix on demand", () => {
       payload: { points: [{ ...HOME, recordedAt: iso(-secondsAgo), accuracyMeters: 12 }] },
     })
     expect(upload.statusCode).toBe(200)
+    await getDb().execute(
+      sql`update user_presence set last_heard_at = recorded_at
+          where user_id = ${user.user.id}::uuid`,
+    )
   }
 
   it("wakes the quiet members once, leaves the fresh one alone, and not again for ten minutes", async () => {
@@ -263,7 +294,7 @@ describe("asking phones for a fix on demand", () => {
       headers: owner.headers,
     })
     expect(first.statusCode).toBe(200)
-    expect(first.json()).toEqual({ watching: true, seconds: 600 })
+    expect(first.json()).toMatchObject({ watching: true, seconds: 600, pushed: "sent" })
 
     // The page calls again a minute later to hold it. No second push.
     const held = await ctx.app.inject({
@@ -271,7 +302,7 @@ describe("asking phones for a fix on demand", () => {
       url: `/api/v1/circles/${circleId}/members/${watched!.user.id}/watch`,
       headers: owner.headers,
     })
-    expect(held.json()).toEqual({ watching: true, seconds: 600 })
+    expect(held.json()).toMatchObject({ watching: true, seconds: 600, pushed: "held" })
     const rows = (await outboxRows()).filter((row) => row.type === "watch")
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ silent: true })
@@ -285,7 +316,7 @@ describe("asking phones for a fix on demand", () => {
       url: `/api/v1/circles/${circleId}/members/${approximate!.user.id}/watch`,
       headers: owner.headers,
     })
-    expect(refused.json()).toEqual({ watching: false, seconds: 0 })
+    expect(refused.json()).toMatchObject({ watching: false, seconds: 0 })
 
     const self = await ctx.app.inject({
       method: "POST",
@@ -312,10 +343,7 @@ describe("a parked phone", () => {
   it("is called offline after a night", async () => {
     setRuntime({ pushDriver: new ExpoLikeDriver() })
     const user = await phoneLastHeard(13 * 60 * 60, { activity: "still" })
-    await getDb().execute(
-      sql`update user_presence set wake_requested_at = now() - interval '12 hours'
-          where user_id = ${user.user.id}::uuid`,
-    )
+    await wakesSpent(user.user.id, 12 * 60)
     const report = await tick()
     expect(report.offlineFlagged).toBe(1)
   })
@@ -323,22 +351,20 @@ describe("a parked phone", () => {
   it("last seen moving, is called offline after the hour as before", async () => {
     setRuntime({ pushDriver: new ExpoLikeDriver() })
     const user = await phoneLastHeard(3 * 60 * 60, { activity: "driving" })
-    await getDb().execute(
-      sql`update user_presence set wake_requested_at = now() - interval '2 hours'
-          where user_id = ${user.user.id}::uuid`,
-    )
+    await wakesSpent(user.user.id, 2 * 60)
     const report = await tick()
     expect(report.offlineFlagged).toBe(1)
   })
 })
 
 describe("how often a phone is asked", () => {
-  it("asks an Android phone after a quarter hour and an iPhone after half an hour", async () => {
+  it("asks by what the phone was doing, not by what it runs", async () => {
     setRuntime({ pushDriver: new ExpoLikeDriver() })
-    await phoneLastHeard(20 * 60, { platform: "android" })
-    await phoneLastHeard(20 * 60, { platform: "ios" })
+    await phoneLastHeard(20 * 60, { platform: "android", activity: "driving" })
+    await phoneLastHeard(20 * 60, { platform: "ios", activity: "driving" })
+    await phoneLastHeard(20 * 60, { platform: "android", activity: "still" })
     const report = await tick()
-    expect(report.phonesWoken).toBe(1)
+    expect(report.phonesWoken).toBe(2)
   })
 })
 
@@ -368,10 +394,7 @@ describe("a phone that says why it cannot report", () => {
     const [me] = presence.json() as Array<{ issues: string[] }>
     expect(me!.issues).toEqual(["location_permission"])
 
-    await getDb().execute(
-      sql`update user_presence set wake_requested_at = now() - interval '2 hours'
-          where user_id = ${user.user.id}::uuid`,
-    )
+    await wakesSpent(user.user.id, 2 * 60)
     await tick()
     const rows = (await getDb().execute(
       sql`select summary from events where type = 'device_offline' and actor_user_id = ${user.user.id}::uuid`,
