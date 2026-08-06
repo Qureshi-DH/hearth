@@ -265,8 +265,16 @@ export const userPresence = pgTable("user_presence", {
   overSpeedCount: integer("over_speed_count").notNull().default(0),
   incidentFlaggedAt: timestamp("incident_flagged_at", { withTimezone: true }),
   offlineNotifiedAt: timestamp("offline_notified_at", { withTimezone: true }),
-  /** When a silent push last asked a quiet phone for a fix. Newer than recordedAt while unanswered. */
+  /**
+   * When the phone last uploaded anything at all, accepted or not. A fix can
+   * be old, a duplicate or a replay and the phone that sent it is still
+   * alive, so silence is measured from here as much as from recordedAt.
+   */
+  lastHeardAt: timestamp("last_heard_at", { withTimezone: true }),
+  /** When a silent push last asked a quiet phone for a fix. */
   wakeRequestedAt: timestamp("wake_requested_at", { withTimezone: true }),
+  /** Wakes sent since the phone was last heard. Two unanswered is the bar for "offline". */
+  wakeCount: integer("wake_count").notNull().default(0),
   /**
    * Until when somebody has a page open on this member. The phone reads it
    * off its own upload reply, so a watch reaches a moving phone on its next

@@ -50,6 +50,13 @@
       "when": 1789482333239,
       "tag": "0006_watched_until",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789672617041,
+      "tag": "0007_last_heard",
+      "breakpoints": true
     }
   ]
 }

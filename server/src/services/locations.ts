@@ -9,7 +9,7 @@ import {
   type LocationFixInput,
   type LocationSource,
 } from "@hearth/shared"
-import { and, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm"
+import { and, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import {
@@ -163,6 +163,21 @@ function normalize(input: LocationFixInput, now: Date): NormalizedFix | null {
 }
 
 /**
+ * The phone spoke. Recorded before anything is judged about what it said, so
+ * a batch that is old, a duplicate or rejected outright still proves the
+ * phone is alive, and every wake it was owed counts as answered.
+ */
+export async function markHeard(db: Database, userId: string, now: Date): Promise<void> {
+  await db
+    .insert(userPresence)
+    .values({ userId, lastHeardAt: now, wakeCount: 0 })
+    .onConflictDoUpdate({
+      target: userPresence.userId,
+      set: { lastHeardAt: now, wakeCount: 0 },
+    })
+}
+
+/**
  * Order matters here. History insert first, then the presence snapshot, then
  * the geofence replay, the alerts, and the websocket fan-out. Everything after
  * the insert can fail without corrupting history.
@@ -211,13 +226,31 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
         source: fix.source,
       })),
     )
-    .onConflictDoNothing({
+    // A retry is free, and so is the one re-report that matters. The park fix
+    // is taken in the same tick as the fix that settled the phone, and Android
+    // hands back the cached position with the same timestamp, so the only fix
+    // that ever says "still" collided with the one before it and was dropped.
+    // A stop re-reported at the same instant adopts the word; nothing else
+    // about the fix is rewritten, and no other re-report is.
+    .onConflictDoUpdate({
       target: [locationPoints.userId, locationPoints.deviceId, locationPoints.recordedAt],
+      set: { activity: sql`excluded.activity`, source: sql`excluded.source` },
+      setWhere: sql`excluded.activity = 'still'`,
     })
-    .returning({ id: locationPoints.id, recordedAt: locationPoints.recordedAt })
+    .returning({
+      id: locationPoints.id,
+      recordedAt: locationPoints.recordedAt,
+      adopted: sql<boolean>`(xmax <> 0)`,
+    })
 
   const idByTime = new Map(inserted.map((row) => [row.recordedAt.getTime(), row.id]))
   const latest = fixes[fixes.length - 1]!
+  // A stop adopted onto an existing fix is not a new position: it enters the
+  // presence row below and nothing else.
+  const newTimes = new Set(
+    inserted.filter((row) => !row.adopted).map((row) => row.recordedAt.getTime()),
+  )
+  const latestLanded = idByTime.has(latest.recordedAt.getTime())
 
   // Read before the upsert below overwrites it. The alerts need the state as
   // it stood when this batch arrived, and the stored timestamp is what tells
@@ -254,7 +287,7 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
     .onConflictDoUpdate({
       target: userPresence.userId,
       set: {
-        lastPointId: sql`excluded.last_point_id`,
+        lastPointId: sql`coalesce(excluded.last_point_id, ${userPresence.lastPointId})`,
         lat: sql`excluded.lat`,
         lon: sql`excluded.lon`,
         accuracyMeters: sql`excluded.accuracy_meters`,
@@ -271,8 +304,15 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
         offlineNotifiedAt: sql`case when excluded.recorded_at > ${offlineCutoff.toISOString()}::timestamptz then null else ${userPresence.offlineNotifiedAt} end`,
         updatedAt: sql`excluded.updated_at`,
       },
-      // An out-of-order retry must never rewind "where are they now".
-      setWhere: sql`${userPresence.recordedAt} is null or ${userPresence.recordedAt} < excluded.recorded_at`,
+      // An out-of-order retry must never rewind "where are they now". The
+      // same instant is not a rewind: a stop re-reported on the settle fix's
+      // timestamp has to reach the row, or the sweep goes on judging a phone
+      // parked at Home by the rule for one last seen on the road. Only a
+      // re-report the history insert took gets that far, so a retried copy
+      // of the older word cannot undo the stop.
+      setWhere: sql`${userPresence.recordedAt} is null
+        or ${userPresence.recordedAt} < excluded.recorded_at
+        or (${userPresence.recordedAt} = excluded.recorded_at and ${latestLanded})`,
     })
 
   // A buffered or retried upload can be older than the presence row it lost
@@ -296,7 +336,7 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
   // Only genuinely new fixes enter the geofence replay. A retried batch or an
   // out-of-order straggler must not re-derive transitions the circle has
   // already been told about.
-  const freshFixes = fixes.filter((fix) => idByTime.has(fix.recordedAt.getTime()))
+  const freshFixes = fixes.filter((fix) => newTimes.has(fix.recordedAt.getTime()))
 
   await resumeExpiredPauses(db, options.userId, now)
   const sharing = await sharingStateByCircle(db, options.userId, now)
@@ -323,7 +363,29 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
   // replay still take the old batch.
   const isRecent = now.getTime() - latest.recordedAt.getTime() < DEFAULTS.staleAfterSeconds * 1000
 
-  if (isCurrent) {
+  // The drive belongs to the device. The member row moves with whichever
+  // device uploaded last, so a tablet on the kitchen table landing its fix a
+  // moment after the phone's batch would make the phone's fast run "not
+  // current" and the alert would never fire. The device's own history
+  // decides whether this batch is its newest word.
+  const deviceCurrent =
+    isCurrent ||
+    (freshFixes.length > 0 &&
+      (
+        await db
+          .select({ id: locationPoints.id })
+          .from(locationPoints)
+          .where(
+            and(
+              eq(locationPoints.userId, options.userId),
+              eq(locationPoints.deviceId, options.deviceId),
+              gt(locationPoints.recordedAt, latest.recordedAt),
+            ),
+          )
+          .limit(1)
+      ).length === 0)
+
+  if (isCurrent || deviceCurrent) {
     const alertCircleIds = [...sharing.entries()]
       .filter(([, state]) => state !== "paused")
       .map(([id]) => id)
@@ -335,23 +397,25 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
             .where(inArray(circles.id, alertCircleIds))
         : []
 
-    await maybeRaiseDrivingAlerts(
-      db,
-      options.userId,
-      options.deviceId,
-      freshFixes,
-      now,
-      alertCircles.filter((circle) => sharing.get(circle.id) === "precise"),
-      presence,
-      isRecent,
-    )
+    if (deviceCurrent) {
+      await maybeRaiseDrivingAlerts(
+        db,
+        options.userId,
+        options.deviceId,
+        freshFixes,
+        now,
+        alertCircles.filter((circle) => sharing.get(circle.id) === "precise"),
+        presence,
+        isRecent,
+      )
+    }
     // A battery reading keeps its meaning until the phone counts as offline.
     // The presence window is shorter because it is about where somebody is, and
     // a phone that has said nothing since it reported 4 percent is the case the
     // family most wants to hear about.
     const batteryStillMeansSomething =
       now.getTime() - latest.recordedAt.getTime() < DEFAULTS.offlineAfterSeconds * 1000
-    if (batteryStillMeansSomething) {
+    if (isCurrent && batteryStillMeansSomething) {
       await maybeRaiseBatteryAlert(db, options.userId, latest, now, alertCircles)
     }
   }

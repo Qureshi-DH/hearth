@@ -1,6 +1,6 @@
 import type postgres from "postgres"
 import { MUTABLE_EVENT_TYPES, type PushProvider } from "@hearth/shared"
-import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm"
+import { and, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import { circleMembers, notificationOutbox, sessions, type OutboxRow } from "../db/schema"
@@ -53,6 +53,28 @@ const MAX_ATTEMPTS = 6
 const BACKOFF = [10, 60, 300, 900, 3600, 21600]
 
 /**
+ * How long a silent push may wait for the phone before the provider drops
+ * it. Without a lifetime FCM and APNs hold a message for up to four weeks,
+ * and a wake that Doze held back is then delivered out of context: the phone
+ * fires its GPS at a random moment to answer a question nobody is asking. A
+ * watch is worth nothing once the viewer has moved on, a wake is worth one
+ * sweep interval or so, and a nudge lasts about as long as the asker's
+ * patience.
+ */
+const SILENT_TTL_SECONDS: Record<string, number> = {
+  watch: 60,
+  wake: 300,
+  nudge: 600,
+  nudge_requested: 600,
+}
+const DEFAULT_SILENT_TTL_SECONDS = 300
+
+function silentTtlSeconds(data: Record<string, unknown> | undefined): number {
+  const type = typeof data?.type === "string" ? data.type : ""
+  return SILENT_TTL_SECONDS[type] ?? DEFAULT_SILENT_TTL_SECONDS
+}
+
+/**
  * No push transport configured. The app still works, since it polls and holds
  * a websocket while in the foreground. Rows are marked "skipped" so operators
  * can see what would have been sent.
@@ -82,6 +104,7 @@ class ExpoDriver implements PushDriver {
     }
     if (this.accessToken) headers.authorization = `Bearer ${this.accessToken}`
 
+    const ttl = silentTtlSeconds(message.data)
     const response = await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
       headers,
@@ -90,7 +113,13 @@ class ExpoDriver implements PushDriver {
           ? {
               to: target.token,
               data: message.data ?? {},
-              priority: "high",
+              ttl,
+              expiration: Math.floor(Date.now() / 1000) + ttl,
+              // Apple documents a content-available push sent at priority 10
+              // as an error and throttles it; 5, which expo calls normal, is
+              // what a background push is meant to travel at. Android stays
+              // high, since that is what carries a data message through Doze.
+              priority: target.platform === "ios" ? "normal" : "high",
               // iOS content-available. Android reads a message with no title
               // or body as data only and hands it to the background task.
               _contentAvailable: true,
@@ -253,6 +282,33 @@ export async function enqueuePush(db: Database, messages: PushMessage[]): Promis
       ...(message.notBefore ? { nextAttemptAt: message.notBefore } : {}),
     })),
   )
+}
+
+/**
+ * Silent pushes of one kind sent to the account since a moment, newest
+ * first, counting only the rows that are in flight or went. A row skipped for
+ * want of a token, or failed at the provider, never reached the phone, so it
+ * is neither an attempt to wait on nor a reason to hold the next one back.
+ */
+export async function recentSilentPushes(
+  db: Database,
+  userId: string,
+  type: "wake" | "watch",
+  since: Date,
+): Promise<Array<{ createdAt: Date }>> {
+  return db
+    .select({ createdAt: notificationOutbox.createdAt })
+    .from(notificationOutbox)
+    .where(
+      and(
+        eq(notificationOutbox.userId, userId),
+        eq(notificationOutbox.silent, true),
+        sql`${notificationOutbox.data}->>'type' = ${type}`,
+        gt(notificationOutbox.createdAt, since),
+        inArray(notificationOutbox.status, ["pending", "sending", "sent"]),
+      ),
+    )
+    .orderBy(desc(notificationOutbox.createdAt))
 }
 
 export async function resolveCircleRecipients(

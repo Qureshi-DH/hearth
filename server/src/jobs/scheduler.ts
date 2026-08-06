@@ -3,7 +3,14 @@ import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from "
 import type { FastifyBaseLogger } from "fastify"
 
 import { getSql, type Database } from "../db/client"
-import { circleMembers, events, sessions, userPresence, users } from "../db/schema"
+import {
+  circleMembers,
+  events,
+  placeMemberships,
+  sessions,
+  userPresence,
+  users,
+} from "../db/schema"
 import type { AppConfig } from "../env"
 import { getPushDriver } from "../runtime"
 import { broadcastEvent, recordEvent } from "../services/feed"
@@ -116,66 +123,118 @@ async function pruneSessions(db: Database): Promise<number> {
 const OUTAGE_MIN_REPORTING = 8
 
 /**
- * How long a phone is left quiet before it is asked for a fix, silently. A
- * high priority push reaches an Android phone even in Doze, and posting a
- * notification for it, which the app does, is what keeps FCM treating the
- * app's pushes as high priority, so Android can be asked often. iOS delivers
- * a silent push a few times an hour at most and drops the rest, so an
- * iPhone is asked at half the offline window and no more.
+ * How long a quiet phone is given before each silent wake: the first counted
+ * from when it was last heard, the rest from the wake before. A phone last
+ * seen moving that goes quiet is the one worth finding quickly. A parked
+ * phone is expected to be quiet, and iOS drops silent pushes past a few an
+ * hour, so it is asked at a walking pace. After the last gap the server
+ * stops asking; a phone that ignored three wakes will not answer a fourth.
  */
-const WAKE_AFTER_ANDROID_MS = 15 * 60 * 1000
-const WAKE_AFTER_MS = (DEFAULTS.offlineAfterSeconds * 1000) / 2
+const WAKE_GAPS_MOVING_MS = [10, 10, 20].map((minutes) => minutes * 60 * 1000)
+const WAKE_GAPS_PARKED_MS = [30, 30, 30].map((minutes) => minutes * 60 * 1000)
 /** How long a woken phone gets to answer before the offline sweep may go ahead. */
 const WAKE_GRACE_MS = 10 * 60 * 1000
+/**
+ * One lost push is one lost push: FCM defers a data message in Doze, and
+ * iOS keeps only the newest undelivered one. Two, ten minutes apart, is a
+ * phone that is not there.
+ */
+const UNANSWERED_WAKES_FOR_OFFLINE = 2
 
 /**
- * The phone's own heartbeat is the first line: the resting watch reports
- * every quarter hour. This is the second. Neither OS lets an app set a timer
- * it can count on in the background, and both wake an app for a data-only
- * push, Android even from Doze, so a phone that has missed two heartbeats is
- * pinged once per silence. Only the expo provider can send one.
+ * The last moment the phone spoke, fix or no fix. greatest() ignores a null,
+ * so a row that predates the column reads its last fix as before.
+ */
+const heardAt = sql`greatest(${userPresence.recordedAt}, ${userPresence.lastHeardAt})`
+
+/**
+ * Whether the phone can be reached by a silent push at all. The provider has
+ * to carry one and the phone has to have registered for it; a phone that has
+ * not is judged on its silence alone, as it always was.
+ */
+const wakeable = sql`exists (
+  select 1 from ${sessions}
+  where ${sessions.userId} = ${userPresence.userId}
+    and ${sessions.revokedAt} is null
+    and ${sessions.pushToken} is not null
+    and ${sessions.pushProvider} = 'expo'
+)`
+
+/**
+ * Whether the phone is parked, judged from everything the server knows and
+ * not from the one label the phone may never manage to send. The fix that
+ * arrives somewhere is by construction a moving fix: it crossed the fence
+ * while the tracker still called the phone "driving", and the stop that
+ * would say "still" is the least reliable request the phone makes. So a
+ * phone inside a place the family named is parked, and so is one that
+ * measured itself standing still with a fix sharp enough to mean it.
+ */
+const parked = sql`(
+  ${userPresence.activity} = 'still'
+  or exists (
+    select 1 from ${placeMemberships} inside
+    where inside.user_id = ${userPresence.userId} and inside.is_inside
+  )
+  or (
+    ${userPresence.speedMps} is not null
+    and ${userPresence.speedMps} < ${DEFAULTS.incidentStoppedSpeedMps}
+    and ${userPresence.accuracyMeters} is not null
+    and ${userPresence.accuracyMeters} <= ${DEFAULTS.geofenceMaxAccuracyMeters}
+  )
+)`
+
+/**
+ * The phone's own heartbeat is the first line. This is the second. Neither
+ * OS lets an app set a timer it can count on in the background, and both
+ * wake an app for a data-only push, Android even from Doze, so a quiet phone
+ * is pinged on a schedule that gives it time to answer each one. Every wake
+ * is counted, and the count is what the offline sweep reads. Only the expo
+ * provider can send one.
  */
 async function wakeQuietPhones(db: Database, driver: PushDriver | null): Promise<number> {
   if (driver?.provider !== "expo") return 0
-  const quietSince = new Date(Date.now() - WAKE_AFTER_MS)
-  const androidQuietSince = new Date(Date.now() - WAKE_AFTER_ANDROID_MS)
-  const unanswered = or(
-    isNull(userPresence.wakeRequestedAt),
-    lt(userPresence.wakeRequestedAt, userPresence.recordedAt),
-  )
-  const hasAndroid = sql`exists (
-    select 1 from ${sessions}
-    where ${sessions.userId} = ${userPresence.userId}
-      and ${sessions.revokedAt} is null
-      and ${sessions.pushToken} is not null
-      and ${sessions.platform} = 'android'
-  )`
-  const quiet = await db
-    .select({ userId: userPresence.userId })
+  const now = new Date()
+  const shortestGap = Math.min(...WAKE_GAPS_MOVING_MS, ...WAKE_GAPS_PARKED_MS)
+  const candidates = await db
+    .select({
+      userId: userPresence.userId,
+      wakeCount: userPresence.wakeCount,
+      wakeRequestedAt: userPresence.wakeRequestedAt,
+      // As milliseconds, because a computed timestamp comes back from the
+      // driver as text rather than a Date.
+      heardAtMs: sql<number>`(extract(epoch from ${heardAt}) * 1000)::float8`,
+      parked: sql<boolean>`${parked}`,
+    })
     .from(userPresence)
     .innerJoin(users, eq(users.id, userPresence.userId))
     .where(
       and(
         eq(users.isActive, true),
         isNotNull(userPresence.recordedAt),
-        sql`${userPresence.recordedAt} < (case when ${hasAndroid}
-          then ${androidQuietSince.toISOString()}::timestamptz
-          else ${quietSince.toISOString()}::timestamptz end)`,
-        // Once per silence: a wake newer than the last fix is still pending.
-        unanswered,
+        wakeable,
+        lt(userPresence.wakeCount, WAKE_GAPS_MOVING_MS.length),
+        sql`${heardAt} < ${new Date(now.getTime() - shortestGap).toISOString()}::timestamptz`,
       ),
     )
+    .orderBy(heardAt)
     .limit(200)
-  if (quiet.length === 0) return 0
 
-  const now = new Date()
   let woken = 0
-  for (const row of quiet) {
+  for (const row of candidates) {
+    const gaps = row.parked ? WAKE_GAPS_PARKED_MS : WAKE_GAPS_MOVING_MS
+    const gap = gaps[row.wakeCount]
+    if (gap === undefined) continue
+    const sinceMs =
+      row.wakeCount === 0 ? row.heardAtMs : (row.wakeRequestedAt?.getTime() ?? row.heardAtMs)
+    if (now.getTime() - sinceMs < gap) continue
+
     await db.transaction(async (tx) => {
+      // The count is the claim: two replicas ticking together both read the
+      // same count and only one of them moves it.
       const claimed = await tx
         .update(userPresence)
-        .set({ wakeRequestedAt: now })
-        .where(and(eq(userPresence.userId, row.userId), unanswered))
+        .set({ wakeRequestedAt: now, wakeCount: row.wakeCount + 1 })
+        .where(and(eq(userPresence.userId, row.userId), eq(userPresence.wakeCount, row.wakeCount)))
         .returning({ userId: userPresence.userId })
       if (claimed.length === 0) return
       await enqueuePush(tx as unknown as Database, [
@@ -216,18 +275,26 @@ async function flagOfflineDevices(
   driver: PushDriver | null,
 ): Promise<number> {
   const cutoff = new Date(Date.now() - DEFAULTS.offlineAfterSeconds * 1000)
-  // A phone whose last word was that it had parked is expected to go quiet:
-  // iOS suspends it, and answers a silent push only when it feels like it.
-  // Silence from a parked phone is news after a night, not after an hour.
-  // A phone last seen moving that goes quiet is the one worth a word.
+  // A parked phone is expected to go quiet: iOS suspends it, and answers a
+  // silent push only when it feels like it. Silence from a parked phone is
+  // news after a night, not after an hour. A phone last seen moving that
+  // goes quiet is the one worth a word.
   const parkedCutoff = new Date(Date.now() - DEFAULTS.parkedOfflineAfterSeconds * 1000)
-  const quietFor = sql`${userPresence.recordedAt} < (case when ${userPresence.activity} = 'still'
+  const quietFor = sql`${heardAt} < (case when ${parked}
     then ${parkedCutoff.toISOString()}::timestamptz
     else ${cutoff.toISOString()}::timestamptz end)`
   // A phone that was never asked cannot have failed to answer. Where no wake
-  // can be sent the silence alone has to do, as it always did.
-  const canWake = driver?.provider === "expo"
+  // can be sent the silence alone has to do, as it always did. Where one
+  // can, the verdict waits for two to go unanswered and the last of them to
+  // have had its time.
   const graceCutoff = new Date(Date.now() - WAKE_GRACE_MS)
+  const askedAndSilent = or(
+    sql`not ${wakeable}`,
+    and(
+      gte(userPresence.wakeCount, UNANSWERED_WAKES_FOR_OFFLINE),
+      lt(userPresence.wakeRequestedAt, graceCutoff),
+    ),
+  )
 
   const [totals] = await db
     .select({
@@ -278,13 +345,7 @@ async function flagOfflineDevices(
         eq(users.isActive, true),
         isNotNull(userPresence.recordedAt),
         quietFor,
-        ...(canWake
-          ? [
-              isNotNull(userPresence.wakeRequestedAt),
-              gt(userPresence.wakeRequestedAt, userPresence.recordedAt),
-              lt(userPresence.wakeRequestedAt, graceCutoff),
-            ]
-          : []),
+        ...(driver?.provider === "expo" ? [askedAndSilent] : []),
       ),
     )
     .orderBy(sql`${userPresence.offlineNotifiedAt} asc nulls first`, userPresence.userId)
