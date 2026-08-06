@@ -291,14 +291,22 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["auth"],
         summary: "Exchange a refresh token for a new pair",
-        description: "Refresh tokens are single-use. Each call rotates the token.",
-        body: z.object({ refreshToken: z.string().min(10).max(512) }),
+        description:
+          "Refresh tokens are single-use. Each call rotates the token. A spent token " +
+          "presented again ends the session, unless it comes from the device the session " +
+          "belongs to within one access token's lifetime, which is a client racing itself " +
+          "rather than a thief; send `deviceId` so that can be told apart.",
+        body: z.object({
+          refreshToken: z.string().min(10).max(512),
+          deviceId: z.string().min(6).max(128).optional(),
+        }),
       },
     },
     async (request) =>
       rotateSession(app, db, request.body.refreshToken, {
         ip: request.ip,
         userAgent: request.headers["user-agent"] ?? null,
+        deviceId: request.body.deviceId ?? null,
       }),
   )
 

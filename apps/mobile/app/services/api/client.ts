@@ -32,6 +32,11 @@ export interface ApiClientHooks {
   setTokens(tokens: TokenPair | null): Promise<void> | void
   /** Called when a refresh fails for good. The app should sign the user out. */
   onSessionExpired(): void
+  /**
+   * Sent with every refresh, so the server can tell this phone's two runtimes
+   * racing over one token from a stolen token being replayed.
+   */
+  getDeviceId?(): string | null
 }
 
 export interface RequestOptions {
@@ -200,7 +205,10 @@ export class ApiClient {
     if (!current) return null
 
     const result = await this.send<AuthTokens>("POST", "/auth/refresh", {
-      body: { refreshToken: current.refreshToken },
+      body: {
+        refreshToken: current.refreshToken,
+        deviceId: this.hooks.getDeviceId?.() ?? undefined,
+      },
       auth: false,
     })
 

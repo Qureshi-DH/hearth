@@ -21,6 +21,8 @@ export interface IssueOptions {
 export interface RotateOptions {
   ip?: string | null
   userAgent?: string | null
+  /** The device the client says it is, so a replay can be told from a race. */
+  deviceId?: string | null
 }
 
 /**
@@ -29,6 +31,13 @@ export interface RotateOptions {
  * retries one whose response never arrived, presents the spent token within
  * seconds. Both are refused, but ending the family's session over a double
  * submit would be its own outage.
+ *
+ * The same device gets longer. An Android phone can run two JavaScript
+ * runtimes, the app's and the headless one a background task starts, each
+ * holding its own copy of the pair, and whichever refreshes second presents
+ * a token its twin spent minutes ago. That can happen once per access token,
+ * so a replay from the device the token was issued to is a race for as long
+ * as one lives, and a theft after that.
  */
 const REFRESH_RETRY_GRACE_MS = 30_000
 
@@ -184,7 +193,9 @@ async function containReuse(db: Database, hash: string, origin: RotateOptions): 
     .limit(1)
 
   if (!spent) return
-  if (Date.now() - (spent.rotatedAt?.getTime() ?? 0) <= REFRESH_RETRY_GRACE_MS) return
+  const sameDevice = origin.deviceId != null && origin.deviceId === spent.deviceId
+  const grace = sameDevice ? getConfig().ACCESS_TOKEN_TTL_SECONDS * 1000 : REFRESH_RETRY_GRACE_MS
+  if (Date.now() - (spent.rotatedAt?.getTime() ?? 0) <= grace) return
 
   await revokeSession(db, spent.id)
   await db.insert(auditLog).values({

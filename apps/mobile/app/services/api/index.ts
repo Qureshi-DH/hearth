@@ -10,6 +10,7 @@ import { createEndpoints } from "./endpoints"
 
 export const api = new ApiClient({
   getBaseUrl: () => useAuthStore.getState().serverUrl,
+  getDeviceId: () => useAuthStore.getState().deviceId,
   getTokens: () => tokenVault.peek(),
   setTokens: async (tokens) => {
     await tokenVault.set(tokens)
