@@ -230,7 +230,7 @@ describe("the parked heartbeat", () => {
 })
 
 describe("the resting watch", () => {
-  // Android's. A parked iPhone runs no request at all, see trackerWake.
+  // Android's. A parked iPhone runs a cell-only session instead, see trackerWake.
   const { Platform } = require("react-native") as { Platform: { OS: string } }
   const os = Platform.OS
   beforeAll(() => {
@@ -263,7 +263,7 @@ describe("the resting watch", () => {
 
   // Stopping the service left the next word to the OS task schedulers, and
   // both of them let a parked phone sit for hours.
-  it("steps the service down rather than stopping it when the phone parks", async () => {
+  it("steps the request down rather than stopping it when the phone parks", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     expect(Location.stopLocationUpdatesAsync).not.toHaveBeenCalled()
     expect(start).toHaveBeenCalledTimes(1)
@@ -271,27 +271,29 @@ describe("the resting watch", () => {
     expect(options.accuracy).toBe(Location.Accuracy.Balanced)
     expect(options.timeInterval).toBe(RESTING_HEARTBEAT_MS)
     expect(options.pausesUpdatesAutomatically).toBe(false)
-    // No foreground service while parked, which is what takes the Android
-    // notification away. Registering without it stops a running service.
-    expect(options.foregroundService).toBeUndefined()
+    // Under the same service as every other tier. Without it Android treats
+    // the phone as a background app and throttles every way it has to report.
+    expect(options.foregroundService).toBeDefined()
     expect(useTrackingStore.getState().mode).toBe("stationary")
   })
 
-  it("shows one plain notification while moving, and never colours it", async () => {
+  it("shows one plain notification in every tier, and never colours it", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     start.mockClear()
     await ingest([sample(HOME.lat + 0.005, HOME.lon, Date.now())], "background")
     const [, options] = start.mock.calls[0] as [string, Location.LocationTaskOptions]
     expect(options.foregroundService).toMatchObject({
       notificationTitle: "Hearth",
-      notificationBody: "Updating your location",
+      notificationBody: "Sharing your location with your family",
     })
     expect(options.foregroundService?.notificationColor).toBeUndefined()
   })
 
   it("passes one fix per heartbeat while the phone stays put, and drops the rest", async () => {
     await enterStationary(HOME.lat, HOME.lon)
-    const t0 = Date.now()
+    // The arrival fix has just said "here", so the first resting fix worth
+    // keeping is a heartbeat later.
+    const t0 = Date.now() + RESTING_HEARTBEAT_MS
     await ingest([sample(HOME.lat, HOME.lon, t0)], "background")
     expect(useTrackingStore.getState().lastFix?.recordedAt).toBe(new Date(t0).toISOString())
 

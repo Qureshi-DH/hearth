@@ -204,23 +204,27 @@ describe("the driving tier", () => {
     expect(lastOptions().distanceInterval).toBe(300)
   })
 
-  it("comes off the GPS after three minutes of crawling", async () => {
+  // On iOS the walking tier is GPS too, so what the end of a drive changes is
+  // the interval and the activity type, not the accuracy.
+  it("comes off the driving tier after three minutes of crawling", async () => {
     const t0 = Date.now()
     await ingest([sample(HOME.lat, HOME.lon, t0, 15)], "background")
     await ingest([sample(HOME.lat + 0.001, HOME.lon, t0 + 60_000, 1)], "background")
     expect(isDriving()).toBe(true)
     await ingest([sample(HOME.lat + 0.001, HOME.lon, t0 + 4 * 60_000, 0.5)], "background")
     expect(isDriving()).toBe(false)
-    expect(lastOptions().accuracy).toBe(Location.Accuracy.Balanced)
+    expect(lastOptions().activityType).toBe(Location.ActivityType.Other)
+    expect(lastOptions().timeInterval).toBe(30_000)
   })
 
   it("follows the classifier into a drive and out of it", async () => {
     await classifier()("automotive", 90)
     expect(isDriving()).toBe(true)
-    expect(lastOptions().accuracy).toBe(Location.Accuracy.High)
+    expect(lastOptions().timeInterval).toBe(DRIVING_INTERVAL_MS)
     await classifier()("walking", 90)
     expect(isDriving()).toBe(false)
-    expect(lastOptions().accuracy).toBe(Location.Accuracy.Balanced)
+    expect(lastOptions().activityType).toBe(Location.ActivityType.Other)
+    expect(lastOptions().timeInterval).toBe(30_000)
   })
 
   it("ends the drive when the phone parks", async () => {
