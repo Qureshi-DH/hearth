@@ -6,6 +6,69 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+Why the family's phones went silent, taken apart and put back. Servers must
+update before phones: the app reads `pushed` and `lastHeardAt` off the watch
+reply, and the batch route now records every upload.
+
+### Added
+
+- A phone that uploads has been heard, whatever it uploaded. The server
+  records the moment (`user_presence.last_heard_at`, migration 0007) and
+  measures silence from the later of the last fix and the last upload, so
+  a phone retrying a batch or draining old fixes is never called offline.
+- The watch reply says what became of the phone: whether a silent push was
+  `sent`, `held` because one went moments ago or the phone has uploaded
+  since, or impossible for want of a push token (`no_device`) or a provider
+  that can carry one (`unsupported`), along with the last fix, the last time
+  the phone spoke, what it was doing, and what it said stands in its way.
+  A phone that has not uploaded since the first push is asked again after
+  ninety seconds, three times per window at most.
+- A phone can report that its background activity is restricted, that a
+  power saving mode is on, which vendor made it, and that its location
+  service was stopped without being asked. The circle sees these under the
+  member's name and the offline alert names them.
+- `POST /auth/refresh` takes the device id. A spent refresh token replayed
+  by the device the session belongs to, inside one access token's lifetime,
+  is a phone racing itself between two runtimes and is refused without
+  ending the session. From anywhere else it still ends the session.
+
+### Changed
+
+- One speed rule for the speed alert and the trip card (`agreedMaxSpeedMps`
+  in the shared package). Fixes that measured a speed are paired across any
+  that measured none, two readings within a tenth of each other stand at the
+  faster and any other pair at the slower, and the answer is floored at the
+  ground covered between two sharp fixes. A drive announced at 92 km/h was
+  filed with a top speed of 21, below its own average, because the card
+  paired only adjacent fixes and every road-speed fix on a mixed GPS and
+  network stream sat between two that carried no speed.
+- Parked is judged from everything the server knows, not from the one label
+  the phone may never have managed to send: the last fix said "still", or
+  the member is inside a named place, or the last fix measured under 1 m/s
+  with an accuracy of 250 m or better. A parked phone gets the twelve-hour
+  rule; one last seen on the road, the hour.
+- A phone the server can push is only called offline after two wakes have
+  gone unanswered. Wakes follow a schedule measured from when the phone was
+  last heard: at 10, 20 and 40 minutes for a phone last seen moving, every
+  half hour up to three times for a parked one, and the count starts again
+  the moment the phone uploads anything. One wake per silence, and one lost
+  push, used to be "stopped reporting" at 61 minutes.
+- The park fix lands even when it shares its timestamp with the fix that
+  settled the phone, which on Android it always does. A stop re-reported at
+  the same instant adopts "still" onto the stored fix and the presence row,
+  instead of being dropped as a duplicate and leaving the phone "driving"
+  at Home for the offline sweep to judge by the wrong rule.
+- Silent pushes carry a lifetime: a minute for a watch, five for a wake, ten
+  for a nudge. A wake held back by Doze used to be delivered whenever, up to
+  weeks later. On iOS a content-available push travels at normal priority,
+  which is what Apple documents for a background push; Android stays high.
+  The per-phone guards count only pushes that are in flight or went, so a
+  push skipped for want of a token no longer holds the next one back for
+  ten minutes.
+- The speed alert is gated on the device's own history rather than the
+  member row, so a tablet landing a fix a moment after the phone's batch
+  cannot swallow the phone's fast run.
+
 ## [0.7.0] - 2026-08-03
 
 What a week of family feedback said was unreliable, taken one item at a

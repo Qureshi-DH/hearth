@@ -135,19 +135,40 @@ and sends them through the configured `PushDriver` (`none` / `expo` / `ntfy` /
 exponential back-off, dead-token cleanup, and re-queueing of rows a crashed
 replica left in `sending`. See [push notifications](../install/push-notifications.md).
 
+A silent push (`silent: true`, the `wake`, `watch` and nudge rows) carries a
+lifetime: `ttl` and `expiration` of 60 s for a watch, 300 s for a wake and
+600 s for a nudge. Without one FCM and APNs hold a message for up to four
+weeks, and a wake that Doze held back is then delivered out of context, so
+the phone fires its GPS at a random moment to answer a question nobody is
+asking. On iOS a content-available push travels at normal priority (APNs 5),
+which is what Apple documents for a background push; sending it at 10 is an
+error condition and gets throttled. Android stays high, since that is what
+carries a data message through Doze. The per-phone guards that decide
+whether a silent push went recently (`recentSilentPushes`) count only rows
+that are `pending`, `sending` or `sent`: a row skipped for want of a token or
+failed at the provider never reached the phone, so it neither counts as an
+attempt nor holds the next one back.
+
 ### Background jobs (`jobs/scheduler.ts`, every `JOB_INTERVAL_SECONDS`)
 
-drain push → lapse pauses → wake quiet phones (a silent push after a
-quarter hour on Android, half an
-hour of silence, once per silence) → flag offline devices (>1 h silent, once per
-outage, and withheld entirely when at least eight phones have reported at some
-point and none of them has reported recently, which means the outage was the
-server's) → detect
-trips (paged over active users, one advisory lock per user so replicas never
-double-detect) → prune history (per-circle retention under the server-wide
-ceiling, in 5 000-row batches so a big sweep never holds locks for minutes) →
-prune outbox → prune dead sessions. Each step is isolated. One failure never
-stops the rest.
+drain push → lapse pauses → wake quiet phones (silent pushes on a schedule
+measured from when the phone was last heard, `greatest(recorded_at,
+last_heard_at)`: a phone last seen moving is asked at 10, 20 and 40 minutes,
+a parked one every half hour up to three times, and `wake_count` resets when
+the phone uploads anything at all) → flag offline devices (>1 h silent, or
+
+> 12 h for a parked phone, where parked means the last fix said "still", or
+> the member is inside a named place, or the last fix measured under 1 m/s
+> with an accuracy of 250 m or better; a phone the server can push is only
+> called offline once two wakes have gone unanswered; once per outage, and
+> withheld entirely when at least eight phones have reported at some point and
+> none of them has reported recently, which means the outage was the server's)
+> → detect
+> trips (paged over active users, one advisory lock per user so replicas never
+> double-detect) → prune history (per-circle retention under the server-wide
+> ceiling, in 5 000-row batches so a big sweep never holds locks for minutes) →
+> prune outbox → prune dead sessions. Each step is isolated. One failure never
+> stops the rest.
 
 The sweep reads the ceiling from `server_settings` on every tick, falling back to
 `MAX_HISTORY_RETENTION_DAYS`. Reading the env value instead was the bug: changing

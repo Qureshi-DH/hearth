@@ -330,9 +330,12 @@ road, and the one time the GPS runs on a phone nobody is driving. A member's
 profile offers it only while their phone says they are on the move. The
 page calls `POST /circles/:id/members/:userId/watch` on focus and every
 minute after. The server records the window on the member and sends the
-phone a silent `watch` push once per window; every upload reply also
-carries `watchedUntil`, so a phone that is already reporting picks the
-watch up on its next batch whether or not the push arrived. The phone puts
+phone a silent `watch` push, again after ninety seconds if the phone has
+not uploaded since, three times per window at most, and the reply says
+whether one went (`pushed`), when the phone was last heard and what it said
+stands in its way; every upload reply also carries `watchedUntil`, so a
+phone that is already reporting picks the watch up on its next batch
+whether or not the push arrived. The phone puts
 `watchedUntil` in its store and `currentOptions()` returns the live tier,
 full accuracy every five seconds, until it passes; the first fix past the
 window steps the request back down, since no timer runs in the Android

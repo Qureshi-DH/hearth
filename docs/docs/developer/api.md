@@ -16,7 +16,7 @@ and every error shares the shape `{ error: { code, message, details? } }`.
 ```text
 POST /auth/register   { email, password, displayName, inviteCode?, device }
 POST /auth/login      { email, password, device }
-POST /auth/refresh    { refreshToken }              # single-use, rotates
+POST /auth/refresh    { refreshToken, deviceId? }   # single-use, rotates
 POST /auth/logout
 ```
 
@@ -29,6 +29,13 @@ on that account's Signed-in devices screen until it is signed out or its
 refresh token expires (`REFRESH_TOKEN_TTL_DAYS`, 60 by default). A session you
 opened from curl or from Swagger's "Try it out" is one of those rows, so call
 `POST /auth/logout` with it when you are done.
+
+A refresh token works once. Presenting a spent one again ends the session,
+because a token replayed minutes after it was rotated is in somebody else's
+hands. The exception is a replay from the device the session belongs to
+inside one access token's lifetime: an Android phone can run two JavaScript
+runtimes, and whichever refreshes second presents a token its twin already
+spent. Send `deviceId` with the refresh so the server can tell the two apart.
 
 ## Endpoint map
 
@@ -98,15 +105,26 @@ Response:
   "rejected": 0,
   "placeEvents": 1,
   "serverTime": "2026-09-06T10:15:03.412Z",
-  "policy": { "minUpdateIntervalSeconds": 30, "distanceFilterMeters": 60 }
+  "policy": { "minUpdateIntervalSeconds": 30, "distanceFilterMeters": 60 },
+  "watchedUntil": null
 }
 ```
 
 Points are deduplicated on `(user, device, recordedAt)`, so retrying a failed
-upload is safe. Implausible points (future, >7 days old, out of range) get
-counted in `rejected` without failing the whole batch. `policy` is the
-strictest setting across the caller's circles, and the device is expected to
-apply it.
+upload is safe. The one re-report that is taken is a stop: a fix that arrives
+with the same timestamp as one already stored and `activity: "still"` has
+its activity and source adopted, because the park fix is taken in the same
+tick as the fix that settled the phone and shares its timestamp. Implausible
+points (future, >7 days old, out of range) get counted in `rejected` without
+failing the whole batch. `policy` is the strictest setting across the
+caller's circles, and the device is expected to apply it. `watchedUntil` is
+set while somebody has the member's page open, see [watching](#watching-a-member).
+
+Every authenticated upload, whatever it carried, records that the phone was
+heard (`user_presence.last_heard_at`). The offline sweep, the wake schedule
+and the refresh route measure silence from the later of the last fix and the
+last upload, so a phone draining old fixes, or retrying a batch, is a phone
+that is alive.
 
 `source` is one of `LOCATION_SOURCES` in `packages/shared` and defaults to
 `background`. `heartbeat` marks a fix the app takes on a timer while it is open
@@ -121,6 +139,40 @@ nothing about how it came to a stop.
 projected for the caller (see `packages/shared/src/types.ts`). `lat`/`lon` are
 `null` for paused members. `approximate: true` means the coordinates were
 snapped to a coarse grid.
+
+## Watching a member
+
+```http
+POST /api/v1/circles/:id/members/:userId/watch
+```
+
+Called while someone has a member's Live page open, and every minute after to
+hold the window. The member's phone is asked to report at full accuracy every
+few seconds for `DEFAULTS.watchWindowSeconds`, by a silent push and by its
+next upload reply. The reply is a `WatchResponse`:
+
+```json
+{
+  "watching": true,
+  "seconds": 600,
+  "pushed": "sent",
+  "lastFixAt": "2026-09-17T14:27:10.000Z",
+  "lastHeardAt": "2026-09-17T14:27:11.204Z",
+  "activity": "driving",
+  "issues": []
+}
+```
+
+`pushed` says what became of the silent push: `sent` when this call queued
+one, `held` when the phone was pushed moments ago or has uploaded since,
+`no_device` when the member has no push token, and `unsupported` when the
+push provider cannot carry a silent push. A phone that has not uploaded since
+the first push is pushed again after 90 s, three times per window at most.
+`lastFixAt` is the last position, `lastHeardAt` the last upload of any kind,
+`activity` what the phone last called itself, and `issues` what the phone
+itself reported stands between it and reporting (`PRESENCE_ISSUES` in the
+shared package). A member sharing approximately or paused cannot be watched:
+`watching` is false and every other field is empty.
 
 ## Websocket
 
