@@ -6,15 +6,23 @@ import { storage } from "@/utils/storage"
 
 import { mmkvStorage } from "./mmkv"
 
+import type { MotionActivity } from "../../modules/hearth-motion"
+
 export type PermissionLevel = "unknown" | "denied" | "foreground" | "always"
 
 /**
- * "moving" runs the OS location service, which on Android means a permanent
- * notification. "stationary" shuts it down and waits on a geofence around the
- * spot the phone stopped, which is what makes the notification come and go
- * instead of sitting there all day.
+ * "moving" is continuous updates in whatever tier the phone is in. "stationary"
+ * steps the request down to the resting one and waits on a geofence around
+ * the spot the phone stopped. On Android the foreground service stays up in
+ * both, since without it the phone is an ordinary background app and every
+ * way of reporting from there is throttled or refused.
  */
 export type TrackingMode = "off" | "moving" | "stationary"
+
+export interface DriveState {
+  distance: number
+  slowSince: number | null
+}
 
 export interface TrackingPolicy {
   minUpdateIntervalSeconds: number
@@ -35,9 +43,9 @@ interface TrackingState {
   /** Where the phone settled, and when it got there. Survives a process kill. */
   stillAnchor: { lat: number; lon: number; since: string } | null
   /**
-   * Outlives the process for the same reason the anchor does: a parked phone
-   * runs no foreground service, so the OS reclaims it between sync wakes and
-   * anything held in module scope is back to zero on every one of them.
+   * Outlives the process for the same reason the anchor does: the OS may
+   * still reclaim a parked phone's process between sync wakes, and anything
+   * held in module scope is back to zero on every one of them.
    */
   lastDriftCheckAt: string | null
   /**
@@ -46,6 +54,19 @@ interface TrackingState {
    * does.
    */
   watchedUntil: string | null
+  /**
+   * The drive as the tracker sees it, the classifier's last word and the
+   * start of its still streak. All three used to live in module scope, and a
+   * process the OS cold-starts for a background event throws its React host
+   * away after every task, so each delivery began a new drive, uploaded
+   * "unknown" and lost the crawl guard that keeps a traffic queue from
+   * parking the phone.
+   */
+  driving: DriveState | null
+  lastVerdict: MotionActivity | null
+  motionStillSince: number | null
+  /** When the Android foreground service was last found down without the app stopping it. */
+  serviceStoppedAt: string | null
   lastFix: LocationFixInput | null
   lastUploadAt: string | null
   lastError: string | null
@@ -63,6 +84,10 @@ interface TrackingState {
   setStillAnchor(anchor: { lat: number; lon: number; since: string } | null): void
   markDriftChecked(): void
   setWatchedUntil(until: string | null): void
+  setDriving(driving: DriveState | null): void
+  setLastVerdict(verdict: MotionActivity | null): void
+  setMotionStillSince(since: number | null): void
+  setServiceStoppedAt(at: string | null): void
   enqueue(fixes: LocationFixInput[]): void
   dequeue(fixes: LocationFixInput[]): void
   recordUpload(accepted: number): void
@@ -246,6 +271,10 @@ export const useTrackingStore = create<TrackingState>()(
       stillAnchor: null,
       lastDriftCheckAt: null,
       watchedUntil: null,
+      driving: null,
+      lastVerdict: null,
+      motionStillSince: null,
+      serviceStoppedAt: null,
       lastFix: restored.lastFix,
       lastUploadAt: null,
       lastError: null,
@@ -262,6 +291,10 @@ export const useTrackingStore = create<TrackingState>()(
       setStillAnchor: (stillAnchor) => set({ stillAnchor }),
       markDriftChecked: () => set({ lastDriftCheckAt: new Date().toISOString() }),
       setWatchedUntil: (watchedUntil) => set({ watchedUntil }),
+      setDriving: (driving) => set({ driving }),
+      setLastVerdict: (lastVerdict) => set({ lastVerdict }),
+      setMotionStillSince: (motionStillSince) => set({ motionStillSince }),
+      setServiceStoppedAt: (serviceStoppedAt) => set({ serviceStoppedAt }),
       enqueue: (fixes) => {
         const lastFix = fixes[fixes.length - 1] ?? get().lastFix
         set({ queue: pushFixes(fixes, lastFix), lastFix })
@@ -288,6 +321,10 @@ export const useTrackingStore = create<TrackingState>()(
           stillAnchor: null,
           lastDriftCheckAt: null,
           watchedUntil: null,
+          driving: null,
+          lastVerdict: null,
+          motionStillSince: null,
+          serviceStoppedAt: null,
           lastFix: null,
           lastUploadAt: null,
           lastError: null,
@@ -309,6 +346,10 @@ export const useTrackingStore = create<TrackingState>()(
         stillAnchor: state.stillAnchor,
         lastDriftCheckAt: state.lastDriftCheckAt,
         watchedUntil: state.watchedUntil,
+        driving: state.driving,
+        lastVerdict: state.lastVerdict,
+        motionStillSince: state.motionStillSince,
+        serviceStoppedAt: state.serviceStoppedAt,
         lastUploadAt: state.lastUploadAt,
       }),
       // v2 put the motion permission on the setup checklist. The checklist only

@@ -48,7 +48,7 @@ let mockHere = { ...HOME }
 let mockSpeed = 0
 
 jest.mock("expo-location", () => ({
-  Accuracy: { Balanced: 3, High: 4, Highest: 6 },
+  Accuracy: { Lowest: 1, Balanced: 3, High: 4, Highest: 6 },
   ActivityType: { Other: 1, AutomotiveNavigation: 2 },
   GeofencingEventType: { Enter: 1, Exit: 2 },
   PermissionStatus: { GRANTED: "granted", DENIED: "denied", UNDETERMINED: "undetermined" },
@@ -166,18 +166,20 @@ describe("a journey starting in the background on Android", () => {
     expect(isDriving()).toBe(true)
   })
 
-  it("leaves a running service, a parked phone and iOS alone", async () => {
+  it("leaves a running service and iOS alone, and brings a refused one back in any tier", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     await enterMoving()
     start.mockClear()
     await reassertService()
     expect(start).not.toHaveBeenCalled()
 
+    // Parked too: the service is wanted in every tier.
     mockServiceStatus = "refused"
     await enterStationary(HOME.lat, HOME.lon)
     start.mockClear()
     await reassertService()
-    expect(start).not.toHaveBeenCalled()
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(optionsOf(0).timeInterval).toBe(RESTING_HEARTBEAT_MS)
 
     Platform.OS = "ios"
     await enterMoving()
@@ -186,20 +188,15 @@ describe("a journey starting in the background on Android", () => {
     expect(start).not.toHaveBeenCalled()
   })
 
-  it("answers a wake with the service up for the fix and down again after", async () => {
+  it("answers a wake with one fix under the service it already has", async () => {
     await enterStationary(HOME.lat, HOME.lon)
-    // Let the arrival fix land, then forget it.
-    await jest.advanceTimersByTimeAsync(0)
+    // Forget the arrival fix.
     useTrackingStore.setState({ queue: [] })
     start.mockClear()
     getPosition.mockClear()
     await wakeFix()
-    // Up with the notification, the fix, and down without it.
-    expect(start).toHaveBeenCalledTimes(2)
-    expect(optionsOf(0).foregroundService).toMatchObject({ notificationTitle: "Hearth" })
-    expect(optionsOf(0).timeInterval).toBe(RESTING_HEARTBEAT_MS)
-    expect(optionsOf(1).foregroundService).toBeUndefined()
-    expect(start.mock.invocationCallOrder[0]).toBeLessThan(getPosition.mock.invocationCallOrder[0]!)
+    expect(start).not.toHaveBeenCalled()
+    expect(getPosition).toHaveBeenCalledTimes(1)
     expect(useTrackingStore.getState().queue.map((fix) => fix.source)).toContain("nudge")
     expect(useTrackingStore.getState().mode).toBe("stationary")
   })
@@ -212,15 +209,14 @@ describe("a journey starting in the background on Android", () => {
     expect(useTrackingStore.getState().queue).toHaveLength(1)
   })
 
-  it("takes the service down again even when the fix never comes", async () => {
+  it("gives up on a wake fix the OS never answers", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     getPosition.mockImplementationOnce(() => new Promise(() => {}))
     start.mockClear()
     const fix = wakeFix()
     await jest.advanceTimersByTimeAsync(30_000 + 10)
     expect(await fix).toBeNull()
-    expect(start).toHaveBeenCalledTimes(2)
-    expect(optionsOf(1).foregroundService).toBeUndefined()
+    expect(start).not.toHaveBeenCalled()
   })
 })
 
@@ -257,28 +253,24 @@ describe("being watched", () => {
     await ingest([sample(Date.now())], "background")
     expect(start).not.toHaveBeenCalled()
 
-    // Past it: the next fix steps the request back to the tier it was in.
+    // Past it: the next fix steps the request back down. Ten minutes at one
+    // spot is also a stop, so the request it lands on is the parked one.
     jest.setSystemTime(Date.now() + 601_000)
     await ingest([sample(Date.now())], "background")
-    expect(start).toHaveBeenCalledTimes(1)
+    expect(start).toHaveBeenCalled()
     expect(optionsOf(0).accuracy).not.toBe(Location.Accuracy.High)
     expect(useTrackingStore.getState().watchedUntil).toBeNull()
   })
 
-  it("answers with one fix when parked, since it is not going anywhere", async () => {
+  it("goes live at Wi-Fi grade when parked, and answers straight away", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     getPosition.mockClear()
     start.mockClear()
     await enterWatched(600)
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(useTrackingStore.getState().mode).toBe("stationary")
-    // No live request while parked.
-    expect(
-      start.mock.calls.every(
-        ([, options]) =>
-          (options as Location.LocationTaskOptions).accuracy !== Location.Accuracy.High,
-      ),
-    ).toBe(true)
+    expect(optionsOf(0).accuracy).toBe(Location.Accuracy.Balanced)
+    expect(optionsOf(0).timeInterval).toBe(5_000)
   })
 
   it("stays live in the driving tier's place until the window ends", async () => {
@@ -307,12 +299,12 @@ describe("a parked iPhone", () => {
     Platform.OS = "ios"
   })
 
-  it("runs no location session at all, only the fence", async () => {
+  it("keeps a cell-only session as well as the fence", async () => {
     await enterMoving()
     start.mockClear()
     await enterStationary(HOME.lat, HOME.lon)
-    expect(start).not.toHaveBeenCalled()
-    expect(Location.stopLocationUpdatesAsync).toHaveBeenCalled()
+    expect(Location.stopLocationUpdatesAsync).not.toHaveBeenCalled()
+    expect(optionsOf(start.mock.calls.length - 1).accuracy).toBe(Location.Accuracy.Lowest)
     expect(Location.startGeofencingAsync).toHaveBeenCalled()
     expect(useTrackingStore.getState().mode).toBe("stationary")
   })
@@ -326,13 +318,13 @@ describe("a parked iPhone", () => {
     }
   })
 
-  it("asks for one arrival fix from where it actually settled", async () => {
+  it("asks for one arrival fix from where it actually settled, and calls it still", async () => {
     await enterMoving()
     getPosition.mockClear()
     await enterStationary(HOME.lat, HOME.lon)
-    await jest.advanceTimersByTimeAsync(0)
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(useTrackingStore.getState().queue[0]?.source).toBe("significant")
+    expect(useTrackingStore.getState().queue[0]?.activity).toBe("still")
   })
 })
 
@@ -358,7 +350,7 @@ describe("one request for the tier the tracker is in", () => {
     const last = optionsOf(start.mock.calls.length - 1)
     expect(useTrackingStore.getState().mode).toBe("stationary")
     expect(last.timeInterval).toBe(RESTING_HEARTBEAT_MS)
-    expect(last.foregroundService).toBeUndefined()
+    expect(last.foregroundService).toBeDefined()
   })
 })
 
@@ -440,7 +432,8 @@ describe("the background clock on iOS", () => {
     await jest.advanceTimersByTimeAsync(5 * 60_000 + 10)
     expect(getPosition).not.toHaveBeenCalled()
 
-    // Parked, the phone is suspended and the server's wake is the heartbeat.
+    // Parked, the quarter hour word comes from the fix the OS already has,
+    // not from a fresh one.
     AppState.currentState = "background"
     await enterStationary(HOME.lat, HOME.lon)
     await jest.advanceTimersByTimeAsync(0)
@@ -507,8 +500,9 @@ describe("calling the stop on Android without the classifier", () => {
     start.mockClear()
     await ingest([still(t0 + 5 * 60_000 + 1000)], "background")
     expect(useTrackingStore.getState().mode).toBe("stationary")
-    // The service and its notification go with the request.
-    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeUndefined()
+    // The request steps down to the resting one, under the same service.
+    expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(RESTING_HEARTBEAT_MS)
+    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeDefined()
   })
 
   it("does not let a loose Wi-Fi fix reset the clock, and does not let one call the phone gone", async () => {
@@ -563,18 +557,14 @@ describe("the classifier on a parked phone", () => {
     getPosition.mockClear()
   })
 
-  it("does not bring the service back for 'walking' from a phone fidgeting in bed", async () => {
+  it("does not bring the full tier back for 'walking' from a phone fidgeting in bed", async () => {
     // The fix that confirms the verdict is where the phone parked.
     mockHere = { ...HOME }
     classifier()!("walking", 60)
     await jest.advanceTimersByTimeAsync(0)
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(useTrackingStore.getState().mode).toBe("stationary")
-    expect(
-      start.mock.calls.every(
-        ([, options]) => (options as Location.LocationTaskOptions).foregroundService === undefined,
-      ),
-    ).toBe(true)
+    expect(start).not.toHaveBeenCalled()
   })
 
   it("brings it back once a fix shows the phone has actually walked off", async () => {
@@ -648,12 +638,12 @@ describe("the other ways a parked phone was made to leave", () => {
     mockHere = { ...HOME }
     ;(Location.startGeofencingAsync as unknown as jest.Mock).mockClear()
     await exit()
-    // The service came up inside the allowed moment, and went straight back
-    // down once the fix showed the phone had not left.
+    // The full tier came up inside the allowed moment, and stepped straight
+    // back down once the fix showed the phone had not left.
     expect(useTrackingStore.getState().mode).toBe("stationary")
     expect(Location.startGeofencingAsync).toHaveBeenCalledTimes(1)
-    expect(optionsOf(0).foregroundService).toBeDefined()
-    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeUndefined()
+    expect(optionsOf(0).timeInterval).not.toBe(RESTING_HEARTBEAT_MS)
+    expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(RESTING_HEARTBEAT_MS)
   })
 
   it("does nothing to a phone already moving but re-assert the service", async () => {
@@ -703,7 +693,7 @@ describe("the other ways a parked phone was made to leave", () => {
     })
   })
 
-  it("parks at the first fix when sharing is switched on, rather than running the service to learn it is still", async () => {
+  it("parks at the first fix when sharing is switched on, rather than running the full tier to learn it is still", async () => {
     await stopTracking()
     useTrackingStore.getState().setEnabled(true)
     start.mockClear()
@@ -713,7 +703,8 @@ describe("the other ways a parked phone was made to leave", () => {
     expect(useTrackingStore.getState().stillAnchor).toMatchObject(HOME)
     expect(
       start.mock.calls.every(
-        ([, options]) => (options as Location.LocationTaskOptions).foregroundService === undefined,
+        ([, options]) =>
+          (options as Location.LocationTaskOptions).timeInterval === RESTING_HEARTBEAT_MS,
       ),
     ).toBe(true)
   })
@@ -893,6 +884,7 @@ describe("what a fix says the phone is doing", () => {
 
 const mockUpload = jest.fn()
 jest.mock("@/services/api", () => ({
+  ApiError: jest.requireActual("@/services/api/client").ApiError,
   endpoints: { locations: { upload: (...args: unknown[]) => mockUpload(...args) } },
 }))
 jest.mock("@/stores/tokenVault", () => ({

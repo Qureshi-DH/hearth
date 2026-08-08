@@ -68,6 +68,24 @@ reply, and the batch route now records every upload.
 - The speed alert is gated on the device's own history rather than the
   member row, so a tablet landing a fix a moment after the phone's batch
   cannot swallow the phone's fast run.
+- The tracker no longer goes quiet at home. On Android the location
+  foreground service stays up for as long as sharing is on, in every tier,
+  with one silent notification in the shade; without it Android treated the
+  phone as a background app and throttled or refused every way it had to
+  report, which is how a family member sitting at home came to be "not
+  reporting" an hour after arriving. On iOS a parked phone keeps a cell-only
+  location session instead of none, so it stays alive to say "still here"
+  every quarter hour and to notice leaving. Both platforms send the arrival
+  fix, stamped still, before the request steps down, and make one up from
+  the parking spot if the OS does not answer in time. A phone being watched
+  goes live whatever it was doing and answers straight away. Every one-shot
+  fix has a deadline, failed uploads retry on their own, a red light no
+  longer parks a car, Android's network fixes stop reading as a stopped car,
+  the drive survives a background relaunch, and the diagnostics log records
+  what each report, upload and service start came to. The expo-location
+  patch grows two changes: a restarted Android service promotes itself so a
+  redelivery cannot crash the app, and iOS one-shot fixes are served in the
+  background.
 
 ## [0.7.0] - 2026-08-03
 

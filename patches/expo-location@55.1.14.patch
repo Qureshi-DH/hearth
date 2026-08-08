@@ -54,8 +54,156 @@ index 523d08f2c9421b642274cfdeb2c8b18ced00d8dc..b5fe5bd5d78d39437173e348370efdfc
      AsyncFunction("hasStartedLocationUpdatesAsync") { taskName: String ->
        return@AsyncFunction mTaskManager.taskHasConsumerOfClass(taskName, LocationTaskConsumer::class.java)
      }
+diff --git a/android/src/main/java/expo/modules/location/services/LocationTaskService.kt b/android/src/main/java/expo/modules/location/services/LocationTaskService.kt
+index 4b30e78d5b51c4400f6eb20429a6aa249071e148..23bfbf43bd4a5fe0c72eb74e0fe9b927fb1ff938 100644
+--- a/android/src/main/java/expo/modules/location/services/LocationTaskService.kt
++++ b/android/src/main/java/expo/modules/location/services/LocationTaskService.kt
+@@ -14,10 +14,12 @@ import android.os.Binder
+ import android.os.Build
+ import android.os.Bundle
+ import android.os.IBinder
++import expo.modules.location.ForegroundServiceState
+ 
+ class LocationTaskService : Service() {
+   private var mChannelId: String? = null
+   private var mKillService = false
++  private var mStoppedOnPurpose = false
+   private lateinit var mParentContext: Context
+   private val mServiceId = sServiceId++
+   private val mBinder: IBinder = ServiceBinder()
+@@ -32,12 +34,23 @@ class LocationTaskService : Service() {
+   }
+ 
+   @TargetApi(26)
+-  override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
+-    val extras = intent.extras
++  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
++    val extras = intent?.extras
+     if (extras != null) {
+       mChannelId = extras.getString("appId") + ":" + extras.getString("taskName")
+       mKillService = extras.getBoolean("killService", false)
++      extras.getBundle(SERVICE_OPTIONS_KEY)?.let { persistServiceOptions(it) }
++    } else {
++      restoreChannel()
+     }
++    // Hearth: the promotion happens here as well as in the consumer's bind
++    // callback. When the OS kills the process and restarts the service it
++    // redelivers the intent to a process with no consumer bound, and a
++    // service started without a startForeground is killed a few seconds
++    // later with an exception that takes the process with it. The options
++    // were persisted for exactly this, and the notification the consumer
++    // posts a moment later is the same one, so nothing shows twice.
++    promoteFromPersistedOptions()
+     return START_REDELIVER_INTENT
+   }
+ 
+@@ -48,6 +61,7 @@ class LocationTaskService : Service() {
+   }
+ 
+   fun stop() {
++    mStoppedOnPurpose = true
+     stopForeground(true)
+     stopSelf()
+   }
+@@ -59,12 +73,67 @@ class LocationTaskService : Service() {
+     }
+   }
+ 
++  override fun onDestroy() {
++    // Hearth: a stop the app did not ask for, an OEM battery manager most
++    // often. "none" while a tier still wants the service is what tells the
++    // app to bring it back and to say so in its health report.
++    if (!mStoppedOnPurpose) ForegroundServiceState.status = "none"
++    super.onDestroy()
++  }
++
+   fun startForeground(serviceOptions: Bundle) {
++    persistServiceOptions(serviceOptions)
+     val notification = buildServiceNotification(serviceOptions)
+     startForeground(mServiceId, notification)
+   }
+ 
+   //region private
++  @TargetApi(26)
++  private fun promoteFromPersistedOptions() {
++    val options = restoreServiceOptions() ?: return
++    if (!::mParentContext.isInitialized) mParentContext = applicationContext
++    try {
++      startForeground(options)
++      ForegroundServiceState.status = "running"
++    } catch (e: Exception) {
++      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && e is android.app.ForegroundServiceStartNotAllowedException) {
++        ForegroundServiceState.status = "refused"
++        stopSelf()
++        return
++      }
++      throw e
++    }
++  }
++
++  private fun prefs() = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
++
++  private fun persistServiceOptions(serviceOptions: Bundle) {
++    prefs().edit()
++      .putString(PREF_CHANNEL_ID, mChannelId)
++      .putBoolean(PREF_KILL_SERVICE, mKillService)
++      .putString(PREF_TITLE, serviceOptions.getString("notificationTitle"))
++      .putString(PREF_BODY, serviceOptions.getString("notificationBody"))
++      .putString(PREF_COLOR, serviceOptions.getString("notificationColor"))
++      .apply()
++  }
++
++  private fun restoreChannel() {
++    val stored = prefs()
++    mChannelId = stored.getString(PREF_CHANNEL_ID, null)
++    mKillService = stored.getBoolean(PREF_KILL_SERVICE, false)
++  }
++
++  private fun restoreServiceOptions(): Bundle? {
++    val stored = prefs()
++    if (!stored.contains(PREF_TITLE) && !stored.contains(PREF_BODY)) return null
++    if (mChannelId == null) restoreChannel()
++    return Bundle().apply {
++      stored.getString(PREF_TITLE, null)?.let { putString("notificationTitle", it) }
++      stored.getString(PREF_BODY, null)?.let { putString("notificationBody", it) }
++      stored.getString(PREF_COLOR, null)?.let { putString("notificationColor", it) }
++    }
++  }
++
+   @TargetApi(26)
+   private fun buildServiceNotification(serviceOptions: Bundle): Notification {
+     prepareChannel(mChannelId)
+@@ -117,7 +186,12 @@ class LocationTaskService : Service() {
+     val appName = applicationInfo.loadLabel(packageManager).toString()
+     var channel = notificationManager.getNotificationChannel(id)
+     if (channel == null) {
+-      channel = NotificationChannel(id, appName, NotificationManager.IMPORTANCE_LOW)
++      // Hearth: the service is up for as long as sharing is on, so the
++      // notification is a permanent one and belongs in the silent part of
++      // the shade, not the status bar. The app creates this channel first
++      // at the same importance; this is for a service the OS restarts
++      // before the app has run.
++      channel = NotificationChannel(id, appName, NotificationManager.IMPORTANCE_MIN)
+       channel.description = "Background location notification channel"
+       notificationManager.createNotificationChannel(channel)
+     }
+@@ -135,5 +209,14 @@ class LocationTaskService : Service() {
+     private var sServiceId = 481756
+     const val META_DATA_FOREGROUND_SERVICE_ICON_KEY: String =
+       "expo.modules.location.foreground_service_icon"
++    // Hearth: the notification options ride in the start intent and in
++    // SharedPreferences, so a restarted service can promote itself.
++    const val SERVICE_OPTIONS_KEY: String = "serviceOptions"
++    private const val PREFS_NAME = "expo.modules.location.service"
++    private const val PREF_CHANNEL_ID = "channelId"
++    private const val PREF_KILL_SERVICE = "killService"
++    private const val PREF_TITLE = "notificationTitle"
++    private const val PREF_BODY = "notificationBody"
++    private const val PREF_COLOR = "notificationColor"
+   }
+ }
 diff --git a/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt b/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
-index b4f6c06ab28e48d377e7ae7e63f334792b2c9633..d41931fbcfb9ac4b62511ce1f2c9202b2127d806 100644
+index b4f6c06ab28e48d377e7ae7e63f334792b2c9633..eb92ed191476a5324804b4c53112b4f2872c2e97 100644
 --- a/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
 +++ b/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
 @@ -25,7 +25,7 @@ import expo.modules.interfaces.taskManager.TaskConsumerInterface
@@ -91,9 +239,14 @@ index b4f6c06ab28e48d377e7ae7e63f334792b2c9633..d41931fbcfb9ac4b62511ce1f2c9202b
        return
      }
  
-@@ -211,7 +213,16 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
+@@ -210,8 +212,21 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
+       extras.putString("appId", task.appScopeKey)
        extras.putString("taskName", task.name)
        extras.putBoolean("killService", serviceOptions.getBoolean("killServiceOnDestroy", false))
++      // Hearth: the service promotes itself from these in onStartCommand, so
++      // a redelivery after a process kill does not wait on a bind that never
++      // comes. See LocationTaskService.
++      extras.putBundle(LocationTaskService.SERVICE_OPTIONS_KEY, serviceOptions)
        serviceIntent.putExtras(extras)
 -      context.startForegroundService(serviceIntent)
 +      try {
@@ -109,7 +262,7 @@ index b4f6c06ab28e48d377e7ae7e63f334792b2c9633..d41931fbcfb9ac4b62511ce1f2c9202b
        context.bindService(
          serviceIntent,
          object : ServiceConnection {
-@@ -219,25 +230,57 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
+@@ -219,25 +234,57 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
              mService = (service as? ServiceBinder)?.service
              mService?.let {
                it.setParentContext(context)
@@ -169,3 +322,32 @@ index b4f6c06ab28e48d377e7ae7e63f334792b2c9633..d41931fbcfb9ac4b62511ce1f2c9202b
    }
  
    /**
+diff --git a/ios/Providers/BaseLocationProvider.swift b/ios/Providers/BaseLocationProvider.swift
+index ae9135ae4ff6fa17b2468f833fbb7771d54305b3..4d79615c47f951283ccadc29ca94bc4ca097d3ef 100644
+--- a/ios/Providers/BaseLocationProvider.swift
++++ b/ios/Providers/BaseLocationProvider.swift
+@@ -9,9 +9,23 @@ internal class BaseLocationProvider: NSObject, CLLocationManagerDelegate {
+   @MainActor
+   init(options: LocationOptions) {
+     super.init()
+-    manager.allowsBackgroundLocationUpdates = false
++    // Hearth: a manager without this is one Core Location need not keep the
++    // app running to serve, so a one-shot fix asked for from the background
++    // could hang or never come, and every wake, park and watch answer is
++    // such a fix. Setting it is only legal with the location background
++    // mode declared and only useful with Always granted, so it is set
++    // exactly then and the stock behaviour stands otherwise.
++    manager.allowsBackgroundLocationUpdates = BaseLocationProvider.servesInBackground(manager)
+     manager.distanceFilter = options.distanceInterval
+     manager.desiredAccuracy = options.accuracy.toCLLocationAccuracy()
+     manager.delegate = self
+   }
++
++  private static func servesInBackground(_ manager: CLLocationManager) -> Bool {
++    guard let modes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String],
++      modes.contains("location") else {
++      return false
++    }
++    return manager.authorizationStatus == .authorizedAlways
++  }
+ }

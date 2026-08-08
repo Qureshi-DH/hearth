@@ -26,7 +26,7 @@ import { startDriveSensors, stopDriveSensors } from "@/services/location/driveSe
 import { useIncidentStore } from "@/stores/incident"
 import { useSettingsStore } from "@/stores/settings"
 import { tokenVault } from "@/stores/tokenVault"
-import { logTracker } from "@/services/location/log"
+import { logTracker, setTrackerLogHeader } from "@/services/location/log"
 import { useTrackingStore, type PermissionLevel, type TrackingPolicy } from "@/stores/tracking"
 
 export const BACKGROUND_LOCATION_TASK = "hearth-background-location"
@@ -66,15 +66,11 @@ const MOTION_MIN_CONFIDENCE = 50
 const MOTION_SURE_CONFIDENCE = 75
 
 /**
- * Android will not hand out continuous location without a foreground service,
- * and a location foreground service must show a notification. What drains the
- * battery is not the service but the GPS behind it, which never sleeps while
- * the phone is treated as moving.
- *
- * So the GPS runs only while the phone is moving. Once it has sat still, the
- * service steps down to the resting watch, see restingOptions, and an OS
- * geofence, which is cheap because it rides on the location the system is
- * already computing for everything else, is what brings the GPS back.
+ * A stop is called from a small circle the phone has not left for a few
+ * minutes. What drains the battery is the GPS behind a drive, not the
+ * request itself, so the parked request stays registered at Wi-Fi grade and
+ * an OS geofence, which rides on the location the system computes anyway,
+ * is one of the things that bring the full tier back.
  */
 const STILL_RADIUS_METERS = 60
 /**
@@ -84,14 +80,24 @@ const STILL_RADIUS_METERS = 60
  */
 const STILL_MAX_ACCURACY_METERS = DEFAULTS.geofenceMaxAccuracyMeters
 const STILL_AFTER_MS = 5 * 60 * 1000
+/** At or under this a fix came from GPS; above it, from Wi-Fi or a cell. */
+const GPS_CLASS_ACCURACY_METERS = 30
 
 /** The live tier, for as long as somebody is watching. */
 const LIVE_INTERVAL_MS = 5_000
 const LIVE_DISTANCE_METERS = 5
 /** A fix older than this is not "now" to somebody who has just opened the app. */
 const FOREGROUND_MAX_AGE_MS = 10_000
-/** Android's getCurrentPositionAsync has no timeout of its own, and a wake's service must not outlive its fix. */
+/**
+ * Android's getCurrentPositionAsync has no timeout of its own, and a request
+ * a background app makes can hang for the life of the process. Every one-shot
+ * fix waits this long and no longer.
+ */
 const WAKE_FIX_TIMEOUT_MS = 30_000
+/** iOS gives an app refresh task about thirty seconds, so its fixes get half. */
+const SYNC_FIX_TIMEOUT_MS = 15_000
+/** The OS's last fix may stand in for one that never came while it is this fresh. */
+const LAST_KNOWN_MAX_AGE_MS = 2 * 60 * 1000
 /** Bigger than the still radius so GPS jitter at a standstill cannot trip it. */
 const STATIONARY_GEOFENCE_RADIUS_METERS = 150
 /**
@@ -100,6 +106,22 @@ const STATIONARY_GEOFENCE_RADIUS_METERS = 150
  * first minutes of a drive. Android's fences are fine at the floor above.
  */
 const IOS_GEOFENCE_MIN_METERS = 200
+
+/**
+ * A phone is on a journey, and a still verdict at the lights is not a stop,
+ * while it has gone this far in the last ten minutes or done walking pace
+ * within the last three. The classifier alone then cannot park it; the
+ * position has to agree, see onMotion.
+ */
+const JOURNEY_WINDOW_MS = 10 * 60 * 1000
+const JOURNEY_DISTANCE_METERS = 400
+const JOURNEY_SPEED_WINDOW_MS = 3 * 60 * 1000
+const JOURNEY_SPEED_MPS = 3
+
+/** A failed upload tries again on this ladder, then waits for the next delivery. */
+const RETRY_DELAYS_MS = [30_000, 60_000, 120_000]
+/** How long a service found dead stays on the health report. */
+const SERVICE_DEATH_MEMORY_MS = 24 * 60 * 60 * 1000
 
 /**
  * The OS withholds any fix closer to the last one it delivered than the
@@ -118,10 +140,9 @@ export function stationaryRadiusMeters(policy: TrackingPolicy): number {
   return Math.max(floor, stillRadiusMeters(policy) * 1.5)
 }
 
-async function batterySnapshot(): Promise<{
-  batteryLevel: number | null
-  isCharging: boolean | null
-}> {
+type BatterySnapshot = { batteryLevel: number | null; isCharging: boolean | null }
+
+async function batterySnapshot(): Promise<BatterySnapshot> {
   try {
     const [level, state] = await Promise.all([
       Battery.getBatteryLevelAsync(),
@@ -144,21 +165,23 @@ async function batterySnapshot(): Promise<{
 export function toFix(
   location: Location.LocationObject,
   source: LocationSource,
-  battery: { batteryLevel: number | null; isCharging: boolean | null },
+  battery: BatterySnapshot,
+  activity: ActivityType = currentActivity(),
 ): LocationFixInput {
   const c = location.coords
+  // iOS reports a negative accuracy to mean "this component is invalid",
+  // which is routine for altitude on a Wi-Fi or cell derived fix. Sending it
+  // on is how a whole batch used to be rejected and then thrown away.
+  const accuracy = c.accuracy != null && c.accuracy >= 0 ? c.accuracy : null
   return {
     recordedAt: new Date(location.timestamp).toISOString(),
     lat: c.latitude,
     lon: c.longitude,
-    // iOS reports a negative accuracy to mean "this component is invalid",
-    // which is routine for altitude on a Wi-Fi or cell derived fix. Sending it
-    // on is how a whole batch used to be rejected and then thrown away.
-    accuracyMeters: c.accuracy != null && c.accuracy >= 0 ? c.accuracy : null,
+    accuracyMeters: accuracy,
     altitudeMeters: c.altitude ?? null,
     altitudeAccuracyMeters:
       c.altitudeAccuracy != null && c.altitudeAccuracy >= 0 ? c.altitudeAccuracy : null,
-    speedMps: c.speed != null && c.speed >= 0 ? c.speed : null,
+    speedMps: measuredSpeed(c.speed, accuracy),
     headingDegrees: c.heading != null && c.heading >= 0 ? c.heading : null,
     batteryLevel: battery.batteryLevel,
     isCharging: battery.isCharging,
@@ -166,14 +189,33 @@ export function toFix(
     // car for a drive and the server knows a still phone is meant to be
     // quiet. Speed alone read a parked phone as "still" and a Wi-Fi jump as
     // walking.
-    activity: currentActivity(),
+    activity,
     source,
   }
 }
 
+/**
+ * Android hands over 0 for a speed it never measured, where iOS says -1, and
+ * a Wi-Fi or cell fix never measures one. Read as a real zero, every network
+ * fix on Android was a car that had stopped: the derived speed never ran,
+ * the speed rule never started a drive, and a run of them under a flyover
+ * ended one. A zero on a GPS fix is a real stop and stays.
+ */
+function measuredSpeed(speed: number | null | undefined, accuracy: number | null): number | null {
+  if (speed == null || speed < 0) return null
+  if (
+    Platform.OS === "android" &&
+    speed === 0 &&
+    (accuracy == null || accuracy > GPS_CLASS_ACCURACY_METERS)
+  ) {
+    return null
+  }
+  return speed
+}
+
 /** The tracker's own verdict on what the phone is doing right now. */
 export function currentActivity(): ActivityType {
-  const { mode } = useTrackingStore.getState()
+  const { mode, driving, lastVerdict } = useTrackingStore.getState()
   if (mode === "stationary") return "still"
   if (driving) return "driving"
   if (lastVerdict === "walking" || lastVerdict === "running" || lastVerdict === "cycling") {
@@ -181,8 +223,6 @@ export function currentActivity(): ActivityType {
   }
   return "unknown"
 }
-
-let lastVerdict: MotionActivity | null = null
 
 /**
  * The OS already applies a distance filter, but iOS emits bursts of
@@ -234,18 +274,30 @@ export function thin(
 }
 
 let flushing: Promise<void> | null = null
+let flushAgain = false
 
 /**
  * Network failures leave the queue intact for the next attempt. A 4xx that is
  * not an auth problem means the batch itself is bad, so it gets dropped. One
  * poison fix must not wedge the pipeline forever.
+ *
+ * Single flight, and a call that lands while one is running asks for one more
+ * pass after it, so a fix enqueued as the loop was ending is not left waiting
+ * for the next delivery.
  */
 export function flush(): Promise<void> {
-  if (!flushing) {
-    flushing = doFlush().finally(() => {
-      flushing = null
-    })
+  if (flushing) {
+    flushAgain = true
+    return flushing
   }
+  flushing = (async () => {
+    do {
+      flushAgain = false
+      await doFlush()
+    } while (flushAgain)
+  })().finally(() => {
+    flushing = null
+  })
   return flushing
 }
 
@@ -253,6 +305,7 @@ async function doFlush(): Promise<void> {
   const store = useTrackingStore.getState()
   if (!store.enabled) return
   if (!useAuthStore.getState().serverUrl) return
+  if (useTrackingStore.getState().queue.length === 0) return
   if (!(await tokenVault.hydrate())) return
 
   while (useTrackingStore.getState().queue.length > 0) {
@@ -261,6 +314,12 @@ async function doFlush(): Promise<void> {
       const result = await endpoints.locations.upload(batch)
       useTrackingStore.getState().dequeue(batch)
       useTrackingStore.getState().recordUpload(result.accepted)
+      clearRetry()
+      logTracker("flush", {
+        sent: batch.length,
+        accepted: result.accepted,
+        queued: useTrackingStore.getState().queue.length,
+      })
       void adoptWatch(result.watchedUntil, result.serverTime)
       if (
         result.policy.minUpdateIntervalSeconds !== store.policy.minUpdateIntervalSeconds ||
@@ -270,24 +329,105 @@ async function doFlush(): Promise<void> {
         void applyPolicy()
       }
     } catch (error) {
+      const queued = useTrackingStore.getState().queue.length
       if (error instanceof ApiError) {
         if (error.isNetwork || error.status >= 500 || error.status === 429) {
           useTrackingStore.getState().setError(error.message)
+          logTracker("flush failed", { status: error.isNetwork ? "network" : error.status, queued })
+          scheduleRetry()
           return
         }
         if (error.status === 401) {
           useTrackingStore.getState().setError("Signed out. Sharing paused.")
+          logTracker("flush failed", { status: 401, queued })
           return
         }
         // Validation or permission failure, so this batch will never succeed.
         useTrackingStore.getState().dequeue(batch)
         useTrackingStore.getState().setError(error.message)
+        logTracker("flush failed", { status: error.status, dropped: batch.length, queued })
         continue
       }
       useTrackingStore.getState().setError((error as Error).message)
+      logTracker("flush failed", { status: "error", error: (error as Error).message, queued })
+      scheduleRetry()
       return
     }
   }
+}
+
+let retryTimer: ReturnType<typeof setTimeout> | null = null
+let retryAttempt = 0
+
+/**
+ * A failed upload used to wait for the next delivery that kept a fix, which
+ * on a parked phone is a quarter of an hour at best. A short ladder covers a
+ * network that was only away for a moment. It is bounded, so a phone with no
+ * coverage does not spend its battery hammering, and an upload that gets
+ * through starts it over for the next failure.
+ */
+function scheduleRetry(): void {
+  if (retryTimer) return
+  const delay = RETRY_DELAYS_MS[retryAttempt]
+  if (delay == null) {
+    retryAttempt = 0
+    return
+  }
+  retryAttempt += 1
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    void flush()
+  }, delay)
+}
+
+function clearRetry(): void {
+  if (retryTimer) clearTimeout(retryTimer)
+  retryTimer = null
+  retryAttempt = 0
+}
+
+/**
+ * The last ten minutes of what the OS delivered, kept or not, for the
+ * journey test in onMotion. In memory only: the process now stays up on
+ * both platforms, and after a kill the position evidence stands on its own.
+ */
+interface RecentFix {
+  at: number
+  lat: number
+  lon: number
+  accuracyMeters: number | null
+  speedMps: number | null
+}
+let recentFixes: RecentFix[] = []
+
+function rememberFixes(fixes: LocationFixInput[]): void {
+  const cutoff = Date.now() - JOURNEY_WINDOW_MS
+  for (const fix of fixes) {
+    recentFixes.push({
+      at: Date.parse(fix.recordedAt),
+      lat: fix.lat,
+      lon: fix.lon,
+      accuracyMeters: fix.accuracyMeters ?? null,
+      speedMps: fix.speedMps ?? null,
+    })
+  }
+  recentFixes = recentFixes.filter((fix) => fix.at >= cutoff)
+}
+
+/** Whether the fixes of the last few minutes describe a phone going somewhere. */
+function inJourney(): boolean {
+  const now = Date.now()
+  const recent = recentFixes.filter((fix) => now - fix.at <= JOURNEY_WINDOW_MS)
+  const newest = recent[recent.length - 1]
+  if (!newest) return false
+  const travelled = recent.some((fix) => clearOf(newest, fix, JOURNEY_DISTANCE_METERS))
+  const fast = recent.some(
+    (fix) =>
+      now - fix.at <= JOURNEY_SPEED_WINDOW_MS &&
+      fix.speedMps != null &&
+      fix.speedMps >= JOURNEY_SPEED_MPS,
+  )
+  return travelled || fast
 }
 
 export async function ingest(locations: Location.LocationObject[], source: LocationSource) {
@@ -296,18 +436,20 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
   const state = useTrackingStore.getState()
   const all = locations.map((location) => toFix(location, source, battery))
   const newest = all[all.length - 1]!
+  if (source === "background" || source === "significant") rememberFixes(all)
+  const live = watchedNow()
   // The tier's distance filter, applied to what is uploaded rather than by
   // the OS on Android, so the fixes keep coming while the phone is still
   // and the stop can be judged from them. Live means every fix.
   const gate =
-    state.mode !== "moving" || watchedNow()
+    state.mode !== "moving" || live
       ? 0
-      : driving
-        ? driving.distance
+      : state.driving
+        ? state.driving.distance
         : state.policy.distanceFilterMeters
   let fixes = thin(all, state.lastFix, state.policy, gate)
   if (source === "background" && state.mode === "stationary") {
-    fixes = await restingFixes(fixes.length > 0 ? fixes : [newest])
+    fixes = await restingFixes(fixes.length > 0 ? fixes : [newest], live)
   }
   if (fixes.length > 0) state.enqueue(fixes)
   if (source === "background") {
@@ -332,26 +474,23 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
     // how long they stop coming.
     armBackgroundClock()
     // The live tier delivers every few seconds, so the first fix past the
-    // window is what steps it back down. No timer: none runs in the Android
-    // background between deliveries.
-    const { watchedUntil } = useTrackingStore.getState()
-    if (watchedUntil && !watchedNow()) {
-      useTrackingStore.getState().setWatchedUntil(null)
-      if (useTrackingStore.getState().mode === "moving") await applyRegistration()
-    }
+    // window is what steps it back down, whether or not the timer got there.
+    await endWatchIfOver()
   }
-  if (fixes.length > 0) await flush()
+  // Whether or not this delivery kept a fix: the queue may hold an upload
+  // that failed, and on a parked phone the next kept fix is a quarter hour off.
+  await flush()
 }
 
 /**
  * The resting watch is cheap but not quiet: iOS in particular hands over a
  * new estimate whenever the Wi-Fi picture shifts. One fix per heartbeat is
- * all the server needs while the phone stays put. A fix outside the circle
- * means the phone left and the fence never said so, which Android's fences
- * do after the process is killed, so that one goes through and brings the
- * full service back.
+ * all the server needs while the phone stays put, unless somebody is
+ * watching, when every fix is news. A fix outside the circle means the phone
+ * left and the fence never said so, which Android's fences do after the
+ * process is killed, so that one goes through and brings the full tier back.
  */
-async function restingFixes(fixes: LocationFixInput[]): Promise<LocationFixInput[]> {
+async function restingFixes(fixes: LocationFixInput[], live: boolean): Promise<LocationFixInput[]> {
   const { stillAnchor, lastFix, policy } = useTrackingStore.getState()
   const radius = stationaryRadiusMeters(policy)
   const left = fixes.find((fix) => stillAnchor && clearOf(stillAnchor, fix, radius))
@@ -359,28 +498,106 @@ async function restingFixes(fixes: LocationFixInput[]): Promise<LocationFixInput
     await enterMoving()
     return fixes.slice(fixes.indexOf(left))
   }
+  if (live) return fixes
   const newest = fixes[fixes.length - 1]
   if (!newest) return []
   const age = lastFix ? Date.parse(newest.recordedAt) - Date.parse(lastFix.recordedAt) : Infinity
   return age >= RESTING_HEARTBEAT_MS ? [newest] : []
 }
 
-/** Fixes still being acquired, which the heartbeat counts as fresh. */
+/**
+ * Fixes still being acquired, which the heartbeat counts as fresh. Counted
+ * and dated: the count says one is in flight, the deadline says for how long
+ * that can be believed, so a native request that never settles cannot hold
+ * the heartbeat off for the rest of the process.
+ */
 let acquiring = 0
+let acquiringUntil = 0
+
+function acquisitionStarted(timeoutMs: number): void {
+  acquiring += 1
+  acquiringUntil = Math.max(acquiringUntil, Date.now() + timeoutMs)
+}
+
+function acquisitionEnded(): void {
+  acquiring = Math.max(0, acquiring - 1)
+  if (acquiring === 0) acquiringUntil = 0
+}
+
+function acquisitionInFlight(): boolean {
+  return acquiring > 0 && Date.now() < acquiringUntil
+}
+
+function withDeadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${what} timed out`)), ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
+/**
+ * One fix, bounded. When the fresh one is late, the fix the OS already has
+ * will do where the caller says so: a wake wants to know the phone is alive
+ * more than it wants a new estimate, while a fence check wants the truth
+ * about right now and a stale fix inside the circle would re-park a phone
+ * that has just left.
+ */
+async function acquireFix(
+  accuracy: Location.Accuracy,
+  timeoutMs: number,
+  lastKnown: boolean,
+): Promise<{ location: Location.LocationObject; cached: boolean }> {
+  try {
+    const location = await withDeadline(
+      Location.getCurrentPositionAsync({ accuracy }),
+      timeoutMs,
+      "Location request",
+    )
+    return { location, cached: false }
+  } catch (error) {
+    if (!lastKnown) throw error
+    const last = await Location.getLastKnownPositionAsync({
+      maxAge: LAST_KNOWN_MAX_AGE_MS,
+    }).catch(() => null)
+    if (!last) throw error
+    return { location: last, cached: true }
+  }
+}
+
+interface ReportOptions {
+  /** Whether a fix clear of a parked phone's anchor ends the stop. Callers judging the same thing themselves pass false. */
+  judge?: boolean
+  /** Stamped on the fix instead of the tracker's current verdict. */
+  activity?: ActivityType
+  timeoutMs?: number
+  /** Whether the OS's last fix may stand in when the fresh one is late. */
+  lastKnown?: boolean
+}
 
 export async function reportNow(
   source: LocationSource = "manual",
   accuracy: Location.Accuracy = source === "sos"
     ? Location.Accuracy.Highest
     : Location.Accuracy.High,
-  { judge = true }: { judge?: boolean } = {},
+  { judge = true, activity, timeoutMs = WAKE_FIX_TIMEOUT_MS, lastKnown = true }: ReportOptions = {},
 ): Promise<LocationFixInput | null> {
-  acquiring += 1
+  const started = Date.now()
+  logTracker("report", { source, accuracy })
+  acquisitionStarted(timeoutMs)
   try {
-    const location = await Location.getCurrentPositionAsync({ accuracy })
+    const { location, cached } = await acquireFix(accuracy, timeoutMs, lastKnown)
     const battery = await batterySnapshot()
-    const fix = toFix(location, source, battery)
+    const fix = toFix(location, source, battery, activity)
     useTrackingStore.getState().enqueue([fix])
+    logTracker("report done", {
+      source,
+      acc: Math.round(fix.accuracyMeters ?? -1),
+      ms: Date.now() - started,
+      ...(cached ? { cached } : {}),
+    })
     // A wake, a nudge or the app opening can be the first word from a phone
     // that drove off while its fence was forgotten. The fix says so. Callers
     // deciding the same thing with the same fix pass judge: false.
@@ -396,23 +613,25 @@ export async function reportNow(
     await flush()
     return fix
   } catch (error) {
-    useTrackingStore.getState().setError((error as Error).message)
+    const message = (error as Error).message
+    useTrackingStore.getState().setError(message)
+    logTracker("report failed", { source, ms: Date.now() - started, error: message })
     return null
   } finally {
-    acquiring -= 1
+    acquisitionEnded()
   }
 }
 
 /**
  * Nothing above refreshes the user's own row while they sit looking at the
  * map. The OS holds back every fix closer than the distance filter, a parked
- * phone has stopped asking for updates altogether, and the sync task never
- * runs while the app is open. So while it is open, and only then, ask for a
- * fix at the circle's interval whenever the last one is older than that.
+ * phone asks for one a quarter hour, and the sync task never runs while the
+ * app is open. So while it is open, and only then, ask for a fix at the
+ * circle's interval whenever the last one is older than that.
  *
  * The mode is read and never written. A parked phone stays parked, fence and
  * anchor untouched, because one Balanced fix is far cheaper than bringing the
- * foreground service back for a phone that has not moved.
+ * full tier back for a phone that has not moved.
  */
 let heartbeat: ReturnType<typeof setTimeout> | null = null
 
@@ -441,43 +660,43 @@ function scheduleHeartbeat(): void {
   }, policy.minUpdateIntervalSeconds * 1000)
 }
 
-/**
- * Android's getCurrentPositionAsync has no timeout of its own. Left hanging, the
- * fix would hold the in-flight count up and every later tick would read it as
- * fresh, for the rest of the process.
- */
 const HEARTBEAT_FIX_TIMEOUT_MS = 30_000
 
 async function heartbeatTick(maxAgeMs?: number): Promise<void> {
   const store = useTrackingStore.getState()
   if (AppState.currentState !== "active") return
   if (!store.enabled || store.mode === "off") return
-  if (store.permission === "denied" || !store.servicesEnabled) return
-  if (acquiring > 0) return
+  if (store.permission === "denied") {
+    logTracker("heartbeat skipped", { reason: "permission" })
+    return
+  }
+  if (!store.servicesEnabled) {
+    logTracker("heartbeat skipped", { reason: "services" })
+    return
+  }
+  if (acquisitionInFlight()) {
+    logTracker("heartbeat skipped", { reason: "acquiring" })
+    return
+  }
   const age = store.lastFix ? Date.now() - Date.parse(store.lastFix.recordedAt) : Infinity
   if (age < (maxAgeMs ?? store.policy.minUpdateIntervalSeconds * 1000)) return
 
-  acquiring += 1
-  let deadline: ReturnType<typeof setTimeout> | undefined
+  acquisitionStarted(HEARTBEAT_FIX_TIMEOUT_MS)
   try {
-    const location = await Promise.race([
-      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-      new Promise<never>((_, reject) => {
-        deadline = setTimeout(
-          () => reject(new Error("Heartbeat fix timed out")),
-          HEARTBEAT_FIX_TIMEOUT_MS,
-        )
-      }),
-    ])
+    const { location } = await acquireFix(
+      Location.Accuracy.Balanced,
+      HEARTBEAT_FIX_TIMEOUT_MS,
+      false,
+    )
     const battery = await batterySnapshot()
     useTrackingStore.getState().enqueue([toFix(location, "heartbeat", battery)])
     await flush()
-  } catch {
+  } catch (error) {
     // Not reportNow, because that pins the failure on the You screen, and a
     // fix that times out indoors would repaint it red every interval.
+    logTracker("report failed", { source: "heartbeat", error: (error as Error).message })
   } finally {
-    clearTimeout(deadline)
-    acquiring -= 1
+    acquisitionEnded()
   }
 }
 
@@ -489,9 +708,9 @@ async function heartbeatTick(maxAgeMs?: number): Promise<void> {
  * Native keeps a timer going in it. So this is, on iOS, the clock the sync
  * task is on Android. Moving, it asks for a fix once no update has come for
  * STILL_AFTER_MS, which is a phone that has not crossed the distance filter,
- * and judges the stop from it. Parked, it asks for the quarter hour fix
- * itself in case the Wi-Fi picture never shifts. It stands down while the
- * app is open, where the heartbeat does the asking.
+ * and judges the stop from it. Parked, it is the quarter hour heartbeat,
+ * since the cell-only session delivers nothing while the estimate holds. It
+ * stands down while the app is open, where the heartbeat does the asking.
  */
 let backgroundClock: ReturnType<typeof setTimeout> | null = null
 
@@ -510,21 +729,28 @@ function armBackgroundClock(): void {
   const { enabled, mode } = useTrackingStore.getState()
   if (!enabled || mode === "off") return
   if (AppState.currentState === "active") return
-  // Parked, the phone is suspended on iOS and the server's wake is the
-  // heartbeat; only a moving phone has a stop to judge.
-  if (mode !== "moving") return
-  const delay = STILL_AFTER_MS
+  if (mode === "moving") {
+    backgroundClock = setTimeout(() => {
+      backgroundClock = null
+      void backgroundClockTick()
+    }, STILL_AFTER_MS)
+    return
+  }
   backgroundClock = setTimeout(() => {
     backgroundClock = null
-    void backgroundClockTick()
-  }, delay)
+    void restingHeartbeat()
+  }, RESTING_HEARTBEAT_MS)
 }
 
 async function backgroundClockTick(): Promise<void> {
   const { enabled, mode } = useTrackingStore.getState()
   if (!enabled || mode === "off" || AppState.currentState === "active") return
   try {
-    const here = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+    const { location: here } = await acquireFix(
+      Location.Accuracy.Balanced,
+      WAKE_FIX_TIMEOUT_MS,
+      true,
+    )
     // Five minutes without a fix in the driving tier is a car that has not
     // moved its distance filter in five minutes: it has parked, and the drive
     // is over before the fix is judged, or the stop could never be called.
@@ -536,7 +762,7 @@ async function backgroundClockTick(): Promise<void> {
     }
     const store = useTrackingStore.getState()
     const stillHere = last != null && !clearOf(last, point, stillRadiusMeters(store.policy))
-    if (driving && stillHere) {
+    if (store.driving && stillHere) {
       await leaveDriving()
     }
     // Five minutes without a delivery is a phone that has not crossed the
@@ -548,10 +774,69 @@ async function backgroundClockTick(): Promise<void> {
     // Through ingest so a moving phone is judged for the stop and a parked
     // one has its fix thinned and checked against the fence like any other.
     await ingest([here], "background")
-  } catch {
-    // No fix this time. The next tick asks again.
+  } catch (error) {
+    logTracker("report failed", { source: "clock", error: (error as Error).message })
   }
   armBackgroundClock()
+}
+
+/**
+ * The parked iPhone's quarter hour word. The cell-only session keeps the
+ * process alive but delivers nothing while its estimate holds, so this reads
+ * the fix the OS already has and sends it stamped still, dated now: the
+ * phone has not left the fence, and "here, now" is what that means. A last
+ * fix clear of the fence is a departure the session and the fence both
+ * missed, and goes through ingest to end the stop.
+ */
+async function restingHeartbeat(): Promise<void> {
+  const { enabled, mode, stillAnchor, policy } = useTrackingStore.getState()
+  if (!enabled || mode !== "stationary" || AppState.currentState === "active") return
+  try {
+    const last = await Location.getLastKnownPositionAsync().catch(() => null)
+    const here = last
+      ? {
+          lat: last.coords.latitude,
+          lon: last.coords.longitude,
+          accuracyMeters: last.coords.accuracy,
+        }
+      : null
+    if (last && here && stillAnchor && clearOf(stillAnchor, here, stationaryRadiusMeters(policy))) {
+      await ingest([last], "background")
+      return
+    }
+    if (!last && !stillAnchor) return
+    const battery = await batterySnapshot()
+    const fix: LocationFixInput = last
+      ? { ...toFix(last, "heartbeat", battery, "still"), recordedAt: new Date().toISOString() }
+      : syntheticFix(stillAnchor!.lat, stillAnchor!.lon, "heartbeat", battery)
+    useTrackingStore.getState().enqueue([fix])
+    logTracker("heartbeat", { mode, acc: Math.round(fix.accuracyMeters ?? -1) })
+    await flush()
+  } finally {
+    armBackgroundClock()
+  }
+}
+
+function syntheticFix(
+  lat: number,
+  lon: number,
+  source: LocationSource,
+  battery: BatterySnapshot,
+): LocationFixInput {
+  return {
+    recordedAt: new Date().toISOString(),
+    lat,
+    lon,
+    accuracyMeters: null,
+    altitudeMeters: null,
+    altitudeAccuracyMeters: null,
+    speedMps: null,
+    headingDegrees: null,
+    batteryLevel: battery.batteryLevel,
+    isCharging: battery.isCharging,
+    activity: "still",
+    source,
+  }
 }
 
 // defineTask has to run at module scope. The OS can hand us a background event
@@ -559,16 +844,20 @@ async function backgroundClockTick(): Promise<void> {
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (error) {
     useTrackingStore.getState().setError(error.message)
+    logTracker("delivery failed", { error: error.message })
     return
   }
   const locations = (data as { locations?: Location.LocationObject[] } | undefined)?.locations ?? []
   await ingest(locations, "background")
+  // Each delivery is a fresh chance to bring back a service Android refused,
+  // which several OEMs allow on a location PendingIntent and stock Android
+  // does not; asking costs nothing when the service is up.
+  await reassertService()
 })
 
 /**
- * The only thing listening while the phone is parked. Leaving the circle we
- * drew around the stopping point means a journey started, so bring the service
- * back and start reporting properly again.
+ * Leaving the circle we drew around the stopping point means a journey
+ * started, so bring the full tier back and start reporting properly again.
  */
 TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
   if (error) {
@@ -597,10 +886,10 @@ TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
   // taken as the departure, since one missed is the worse error and five
   // still minutes park the phone again anyway.
   await enterMoving()
-  const fix = await Promise.race([
-    reportNow("significant", Location.Accuracy.Balanced, { judge: false }),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), WAKE_FIX_TIMEOUT_MS)),
-  ])
+  const fix = await reportNow("significant", Location.Accuracy.Balanced, {
+    judge: false,
+    lastKnown: false,
+  })
   const clearlyInside =
     fix != null &&
     stillAnchor != null &&
@@ -608,7 +897,8 @@ TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
     haversineMeters(stillAnchor, fix) + (fix.accuracyMeters ?? 0) <= stationaryRadiusMeters(policy)
   if (clearlyInside && stillAnchor) {
     logTracker("fence exit was false", { accuracy: fix?.accuracyMeters })
-    await enterStationary(stillAnchor.lat, stillAnchor.lon)
+    // The fix just uploaded is from this spot; the anchor says still for it.
+    await enterStationary(stillAnchor.lat, stillAnchor.lon, "synthesize")
   }
 })
 
@@ -617,7 +907,16 @@ const DRIFT_CHECK_MS = 60 * 60 * 1000
 
 TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
   try {
-    const { enabled, mode, policy, stillAnchor, lastDriftCheckAt } = useTrackingStore.getState()
+    const { enabled, mode, policy, stillAnchor, lastDriftCheckAt, lastFix, queue } =
+      useTrackingStore.getState()
+    logTracker("sync", {
+      mode,
+      stale: !lastFix || Date.now() - Date.parse(lastFix.recordedAt) > STALE_FIX_MS,
+      queued: queue.length,
+    })
+    // WorkManager running is not one of Android's allowed moments, but some
+    // OEMs let the start through, and asking costs nothing when it is up.
+    await reassertService()
 
     // Android forgets geofences when the app process is killed, and expo's
     // geofencing does not restart a terminated app the way iOS does. Rather
@@ -632,9 +931,11 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
       if (rearmed || due) {
         useTrackingStore.getState().markDriftChecked()
         try {
-          const here = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          })
+          const { location: here } = await acquireFix(
+            Location.Accuracy.Balanced,
+            SYNC_FIX_TIMEOUT_MS,
+            true,
+          )
           // Waking the location stack already spent the battery this mode
           // exists to save, so the fix is worth reporting whether or not it
           // turns out to be far enough to call the stop over.
@@ -649,26 +950,28 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
             stationaryRadiusMeters(policy),
           )
           if (left) await enterMoving()
-        } catch {
-          // No fix available this wake. The fence is still armed.
+        } catch (error) {
+          logTracker("report failed", { source: "drift", error: (error as Error).message })
         }
       }
     }
 
     // The OS stops delivering while the phone sits inside the distance filter,
     // so a journey that ends in the background produces no fix to judge and
-    // nothing else would ever call the stop. Without this pass the service, and
-    // its notification, stay on for good.
+    // nothing else would ever call the stop. Without this pass the GPS tier
+    // stays on for good.
     if (enabled && mode === "moving") {
       try {
-        const here = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        })
+        const { location: here } = await acquireFix(
+          Location.Accuracy.Balanced,
+          SYNC_FIX_TIMEOUT_MS,
+          true,
+        )
         // Through ingest, so the fix carries its accuracy into the judgement
         // and is gated, uploaded and read for speed like any other.
         await ingest([here], "background")
-      } catch {
-        // No fix available this wake, so it stays moving until the next one.
+      } catch (error) {
+        logTracker("report failed", { source: "sync", error: (error as Error).message })
       }
     }
 
@@ -680,13 +983,15 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
     // than the session's, so without the mode check a signed-out phone holding
     // "Always" woke the receiver every half hour for good and queued fixes no
     // session could ever upload.
-    const { mode: currentMode, lastFix } = useTrackingStore.getState()
-    const stale = !lastFix || Date.now() - Date.parse(lastFix.recordedAt) > STALE_FIX_MS
+    const { mode: currentMode, lastFix: currentFix } = useTrackingStore.getState()
+    const stale = !currentFix || Date.now() - Date.parse(currentFix.recordedAt) > STALE_FIX_MS
     if (enabled && currentMode !== "off" && stale && (await currentPermission()) === "always") {
       // Balanced, like the drift check: this repeats on a timer for as long as
       // the phone stays put, and it is the wake the rest of this task is built
       // to avoid paying for.
-      await reportNow("significant", Location.Accuracy.Balanced)
+      await reportNow("significant", Location.Accuracy.Balanced, {
+        timeoutMs: SYNC_FIX_TIMEOUT_MS,
+      })
     } else {
       await flush()
     }
@@ -733,15 +1038,19 @@ export function drivingDistanceMeters(speedMps: number | null): number {
 }
 
 /**
- * The only notification the service ever shows, and only while the phone is
- * on the move, since that is the only time Android needs a foreground
- * service for live updates. Plain, no colour, on a channel the app created
- * at minimum importance, and on Android 13 and later the user can swipe it
- * away. A parked phone runs no service and shows nothing.
+ * Android hands out continuous location only to a foreground service, and
+ * without one the phone is an ordinary background app: a few fixes an hour,
+ * none in Doze, no network until a maintenance window, a process reclaimed
+ * within minutes on most OEM builds, and a service start refused later
+ * except at a handful of moments. So the service is up for as long as
+ * sharing is on, in every tier, the way family safety apps do it. The notification
+ * is one plain line on a channel the app created at minimum importance, so
+ * it sits collapsed in the silent part of the shade rather than in the
+ * status bar. iOS ignores the key.
  */
 const SERVICE_NOTIFICATION = {
   notificationTitle: "Hearth",
-  notificationBody: "Updating your location",
+  notificationBody: "Sharing your location with your family",
   killServiceOnDestroy: false,
 }
 
@@ -761,29 +1070,27 @@ function drivingOptions(distanceMeters: number): Location.LocationTaskOptions {
   }
 }
 
-/** The drive as the tracker sees it. Not persisted: a relaunch starts walking and lets the classifier say otherwise. */
-let driving: { distance: number; slowSince: number | null } | null = null
-
 export function isDriving(): boolean {
-  return driving !== null
+  return useTrackingStore.getState().driving !== null
 }
 
 export async function enterDriving(speedMps: number | null): Promise<void> {
   const store = useTrackingStore.getState()
   if (store.mode !== "moving") return
   const distance = drivingDistanceMeters(speedMps)
-  if (driving?.distance === distance) return
-  driving = { distance, slowSince: driving?.slowSince ?? null }
+  const current = store.driving
+  if (current?.distance === distance) return
+  store.setDriving({ distance, slowSince: current?.slowSince ?? null })
   logTracker("driving", { distance })
   await applyRegistration()
 }
 
 export async function leaveDriving(): Promise<void> {
-  if (!driving) return
-  const stoppedAt = driving.slowSince
-  driving = null
-  logTracker("drive over")
   const store = useTrackingStore.getState()
+  if (!store.driving) return
+  const stoppedAt = store.driving.slowSince
+  store.setDriving(null)
+  logTracker("drive over")
   if (store.mode !== "moving") return
   // The car stopped when it began to crawl, and the stop is dated from
   // then, so the still clock is not started over once the drive is called.
@@ -803,12 +1110,10 @@ export async function leaveDriving(): Promise<void> {
  * no motion permission, keeps the filter elastic through a drive, and ends
  * the tier after a few minutes of crawling, which the classifier can miss
  * when a phone sits face down in a footwell after arriving.
- */
-/**
- * Android's network fixes carry no speed, and the tracker used to read the
- * zero they arrived with as a car that had stopped. A fix without one is
- * given the speed the phone must have had to get here from the last fix,
- * when both are sharp enough for that to mean anything.
+ *
+ * A fix without a measured speed is given the speed the phone must have had
+ * to get here from the last fix, when both are sharp enough for that to mean
+ * anything.
  */
 function withDerivedSpeed(
   fix: LocationFixInput,
@@ -828,23 +1133,30 @@ function withDerivedSpeed(
 async function trackDriveBySpeed(fix: LocationFixInput): Promise<void> {
   const speed = fix.speedMps
   if (speed == null) return
+  const store = useTrackingStore.getState()
+  const driving = store.driving
   if (!driving) {
     if (speed >= DRIVING_SPEED_MPS) await enterDriving(speed)
     return
   }
   const at = Date.parse(fix.recordedAt)
   if (speed < DRIVING_STOP_SPEED_MPS) {
-    driving.slowSince ??= at
-    if (at - driving.slowSince >= DRIVING_STOP_AFTER_MS) await leaveDriving()
+    const slowSince = driving.slowSince ?? at
+    if (driving.slowSince == null) store.setDriving({ ...driving, slowSince })
+    if (at - slowSince >= DRIVING_STOP_AFTER_MS) await leaveDriving()
     return
   }
-  driving.slowSince = null
+  if (driving.slowSince != null) store.setDriving({ ...driving, slowSince: null })
   await enterDriving(speed)
 }
 
 function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
   return {
-    accuracy: Location.Accuracy.Balanced,
+    // iOS 16.4 and later suspend a low accuracy session that has a distance
+    // filter once significant-change monitoring is also on, and expo-location
+    // always adds that, so the moving iPhone sat silent until relaunched.
+    // GPS with the circle's filter is what stays alive.
+    accuracy: Platform.OS === "ios" ? Location.Accuracy.High : Location.Accuracy.Balanced,
     timeInterval: policy.minUpdateIntervalSeconds * 1000,
     // Android delivers on the interval whether or not the phone moved, and
     // ingest applies the circle's distance filter to what it uploads. With
@@ -862,8 +1174,7 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
     // app when it does, and a suspended app never calls the stop, never arms
     // the fence and never starts the resting watch, so a phone left on a desk
     // went silent until it moved far enough for the significant change
-    // service to relaunch it. The stop is called here instead, by the clock
-    // below, and Balanced accuracy is Wi-Fi grade with no GPS to park anyway.
+    // service to relaunch it. The stop is called here instead, by the clock.
     pausesUpdatesAutomatically: false,
     activityType: Location.ActivityType.Other,
     showsBackgroundLocationIndicator: false,
@@ -872,26 +1183,38 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
 }
 
 /**
- * Parked is not silent, but it is quiet. The request stays registered at
- * Wi-Fi grade with no GPS, so iOS keeps the app alive and reports as its
- * estimate shifts, which restingFixes thins to one fix a quarter hour. On
- * Android the request stays too but without the foreground service, which
- * is what takes the notification away: registering without that option
- * stops a running service. A background app then gets a few fixes an hour
- * from the OS, the periodic sync re-arms the fence, and the server's silent
- * wake asks for a fix after half an hour of nothing. The service comes back
- * the moment the phone moves.
+ * Parked is not silent, but it is quiet. On Android the request stays at
+ * Wi-Fi grade with one fix wanted a quarter hour, under the same service as
+ * every other tier. On iOS it is a cell-only session with the fence radius
+ * as its distance filter: it costs almost nothing, it keeps the process
+ * alive so the quarter hour heartbeat and the classifier keep running, and
+ * a departure is seen by the session's own filter rather than at the
+ * fence's leisure. A parked iPhone used to run no session at all and was
+ * suspended within seconds; the arrival fix went with it, and the fence,
+ * which iOS reports minutes late and not at all with Background App Refresh
+ * off, was the only way back.
  */
-function restingOptions(): Location.LocationTaskOptions {
+function restingOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
+  if (Platform.OS === "ios") {
+    return {
+      accuracy: Location.Accuracy.Lowest,
+      distanceInterval: stationaryRadiusMeters(policy),
+      // A paused manager suspends the app with it, and nothing would wake it
+      // short of the fence.
+      pausesUpdatesAutomatically: false,
+      activityType: Location.ActivityType.Other,
+      showsBackgroundLocationIndicator: false,
+      foregroundService: SERVICE_NOTIFICATION,
+    }
+  }
   return {
     accuracy: Location.Accuracy.Balanced,
     timeInterval: RESTING_HEARTBEAT_MS,
     distanceInterval: 0,
-    // A paused manager suspends the app with it, and nothing would wake it
-    // short of the fence.
     pausesUpdatesAutomatically: false,
     activityType: Location.ActivityType.Other,
     showsBackgroundLocationIndicator: false,
+    foregroundService: SERVICE_NOTIFICATION,
   }
 }
 
@@ -901,35 +1224,29 @@ function restingOptions(): Location.LocationTaskOptions {
  * mid drive re-asserts the driving request, not the walking one.
  */
 function currentOptions(): Location.LocationTaskOptions | null {
-  const { enabled, mode, policy, watchedUntil } = useTrackingStore.getState()
+  const { enabled, mode, policy, driving } = useTrackingStore.getState()
   // Off is derived like every other tier, so a transition that was queued
   // behind the stop lands on nothing rather than re-registering the service.
   if (!enabled || mode === "off") return null
-  if (mode === "stationary") {
-    // A parked iPhone runs no session at all. The fence relaunches the app
-    // when the phone leaves, and until then the phone is suspended, which is
-    // the only way it shows no location indicator and costs nothing. Android
-    // keeps the cheap request, which the OS throttles to a few fixes an hour,
-    // and adds the service only for the length of a wake's fix.
-    if (Platform.OS !== "android") return null
-    return briefService
-      ? { ...restingOptions(), foregroundService: SERVICE_NOTIFICATION }
-      : restingOptions()
+  // Somebody is looking, whatever the phone was doing. A parked phone goes
+  // live at Wi-Fi grade: it is not going anywhere, and the point is that
+  // the page hears from it every few seconds rather than once.
+  if (watchedNow()) {
+    return liveOptions(mode === "stationary" ? Location.Accuracy.Balanced : Location.Accuracy.High)
   }
-  if (watchedUntil && Date.parse(watchedUntil) > Date.now()) return liveOptions()
+  if (mode === "stationary") return restingOptions(policy)
   if (driving) return drivingOptions(driving.distance)
   return updateOptions(policy)
 }
 
 /**
- * Somebody has this phone's owner's page open. Full accuracy every few
- * seconds, uploaded as it comes, for the watch window and no longer: the
- * one time the family wants to see a car move along a road is when they are
- * looking at it.
+ * Somebody has this phone's owner's page open. Every few seconds, uploaded
+ * as it comes, for the watch window and no longer: the one time the family
+ * wants to see a car move along a road is when they are looking at it.
  */
-function liveOptions(): Location.LocationTaskOptions {
+function liveOptions(accuracy: Location.Accuracy): Location.LocationTaskOptions {
   return {
-    accuracy: Location.Accuracy.High,
+    accuracy,
     timeInterval: LIVE_INTERVAL_MS,
     // Android: on the interval, so the first fix past the window is always
     // delivered and steps the tier down. A car at the lights sends the same
@@ -942,27 +1259,48 @@ function liveOptions(): Location.LocationTaskOptions {
   }
 }
 
-/** Android only: the resting request carries the service for one wake's fix. */
-let briefService = false
+export type ForegroundServiceStatus = "none" | "starting" | "running" | "refused" | "unknown"
 
-export type ForegroundServiceStatus = "none" | "starting" | "running" | "refused"
+/** What the last read of the service said, for the log header. */
+let lastServiceStatus: ForegroundServiceStatus = "unknown"
 
 /**
  * Whether the service behind the request is up. expo-location does not say,
- * so the patch in patches/ records it and this reads it back. Everything but
- * Android is "none": there is no service to be up.
+ * so the patch in patches/ records it and this reads it back. "unknown" is
+ * iOS, where there is no service to be up, and a build without the patch;
+ * "none" is the patched build saying the service is down.
  */
 export async function foregroundServiceStatus(): Promise<ForegroundServiceStatus> {
-  if (Platform.OS !== "android") return "none"
+  if (Platform.OS !== "android") return "unknown"
   try {
     const module = requireOptionalNativeModule<{
       getForegroundServiceStatusAsync?: () => Promise<string>
     }>("ExpoLocation")
     const status = await module?.getForegroundServiceStatusAsync?.()
-    return status === "starting" || status === "running" || status === "refused" ? status : "none"
+    lastServiceStatus =
+      status === "none" || status === "starting" || status === "running" || status === "refused"
+        ? status
+        : "unknown"
   } catch {
-    return "none"
+    lastServiceStatus = "unknown"
   }
+  return lastServiceStatus
+}
+
+/**
+ * A service found down while a tier wants it went down without the app
+ * asking: an OEM battery manager, most often. Remembered for a day so the
+ * health report can tell the family why, since the next re-assert brings
+ * it straight back and the moment would otherwise leave no trace.
+ */
+function noteServiceDied(): void {
+  useTrackingStore.getState().setServiceStoppedAt(new Date().toISOString())
+  logTracker("service died")
+}
+
+export function serviceDiedUnexpectedly(): boolean {
+  const at = useTrackingStore.getState().serviceStoppedAt
+  return at != null && Date.now() - Date.parse(at) < SERVICE_DEATH_MEMORY_MS
 }
 
 /**
@@ -982,7 +1320,16 @@ function applyRegistration(): Promise<ForegroundServiceStatus> {
       return "none" as const
     }
     await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, options)
-    return foregroundServiceStatus()
+    const status = await foregroundServiceStatus()
+    if (Platform.OS === "android") {
+      logTracker("service", {
+        status,
+        accuracy: options.accuracy,
+        interval: options.timeInterval,
+      })
+      if (status === "none") noteServiceDied()
+    }
+    return status
   })
   registration = next.catch(() => undefined)
   return next
@@ -992,39 +1339,46 @@ function applyRegistration(): Promise<ForegroundServiceStatus> {
  * Android 12 lets a background app start its location service only at a few
  * moments: a geofence exit, an activity transition, a high priority push, or
  * at any time once the app is exempt from battery optimisation. A stop can
- * end on none of them, when the classifier's sampled verdict changes or a
- * resting fix lands outside the fence, and then the start is refused. This
- * is the answer at the next allowed moment: the server's wake or a nudge
- * lands as a high priority push, and the app opening is a user visible
- * state. It re-asserts the request the tracker already believes in, and
- * only when the service is wanted and missing.
+ * end on none of them, and then the start is refused; a service can also be
+ * killed under the app by an OEM battery manager. This is the answer at the
+ * next allowed moment, and at every delivery, wake, watch, transition, sync
+ * and app open in between. It re-asserts the request the tracker already
+ * believes in, and only when the service is wanted and missing.
  */
 export async function reassertService(): Promise<void> {
   if (Platform.OS !== "android") return
   const { enabled, mode } = useTrackingStore.getState()
-  if (!enabled || mode !== "moving") return
-  if ((await foregroundServiceStatus()) !== "refused") return
-  const service = await applyRegistration().catch(() => "refused" as const)
+  if (!enabled || mode === "off") return
+  const before = await foregroundServiceStatus()
+  if (before !== "refused" && before !== "none") return
+  if (before === "none") noteServiceDied()
+  const after = await applyRegistration().catch(() => "refused" as const)
+  logTracker("reassert", { before, after })
   // The fence the refusal left armed has done its job once the service is up.
-  if (service !== "refused" && useTrackingStore.getState().mode === "moving") await dropFence()
+  if (after !== "refused" && after !== "none" && useTrackingStore.getState().mode === "moving") {
+    await dropFence()
+  }
 }
 
 /**
- * Somebody opened this phone's owner's page. A parked phone answers with one
- * fix, since it is not going anywhere. A moving one goes live for the window
- * and the fixes it delivers carry it back down when the window ends, see
- * ingest.
+ * Somebody opened this phone's owner's page. The phone goes live for the
+ * window whatever it was doing, and answers with one fix straight away:
+ * iOS ignores the interval and delivers on distance, so a phone at rest
+ * would otherwise say nothing for the whole window. The window ends by the
+ * clock and by the first fix past it, whichever comes first.
  */
 export async function enterWatched(seconds: number): Promise<void> {
   const store = useTrackingStore.getState()
   if (!store.enabled || store.mode === "off") return
   logTracker("watched", { seconds, mode: store.mode })
   store.setWatchedUntil(new Date(Date.now() + seconds * 1000).toISOString())
-  if (store.mode === "stationary") {
-    await wakeFix()
-    return
-  }
+  armWatchTimer()
   await applyRegistration()
+  await reportNow(
+    "nudge",
+    store.mode === "stationary" ? Location.Accuracy.Balanced : Location.Accuracy.High,
+    { judge: store.mode === "stationary" },
+  )
 }
 
 /**
@@ -1033,7 +1387,7 @@ export async function enterWatched(seconds: number): Promise<void> {
  * or not the silent push did. The window is measured against the server's
  * own clock, since the phone's may be minutes out. A window already held is
  * only moved out, never re-registered: the tier steps down on its own when
- * the window lapses, see ingest.
+ * the window lapses.
  */
 async function adoptWatch(until: string | null | undefined, serverTime?: string): Promise<void> {
   if (!until) return
@@ -1042,9 +1396,13 @@ async function adoptWatch(until: string | null | undefined, serverTime?: string)
   if (!(remainingMs > 0)) return
   const store = useTrackingStore.getState()
   const held = store.watchedUntil ? Date.parse(store.watchedUntil) : null
+  logTracker("watch adopted", { remaining: Math.round(remainingMs / 1000), held: held != null })
   if (held != null && held > Date.now()) {
     const ends = Date.now() + remainingMs
-    if (ends > held) store.setWatchedUntil(new Date(ends).toISOString())
+    if (ends > held) {
+      store.setWatchedUntil(new Date(ends).toISOString())
+      armWatchTimer()
+    }
     return
   }
   await enterWatched(Math.ceil(remainingMs / 1000))
@@ -1056,46 +1414,46 @@ function watchedNow(): boolean {
   return watchedUntil != null && Date.parse(watchedUntil) > Date.now()
 }
 
+let watchTimer: ReturnType<typeof setTimeout> | null = null
+
+function armWatchTimer(): void {
+  if (watchTimer) clearTimeout(watchTimer)
+  watchTimer = null
+  const { watchedUntil } = useTrackingStore.getState()
+  if (!watchedUntil) return
+  // A second past the end, so the timer never finds the window still open.
+  const delay = Math.max(0, Date.parse(watchedUntil) - Date.now()) + 1_000
+  watchTimer = setTimeout(() => {
+    watchTimer = null
+    void endWatchIfOver()
+  }, delay)
+}
+
+async function endWatchIfOver(): Promise<void> {
+  const store = useTrackingStore.getState()
+  if (!store.watchedUntil || watchedNow()) return
+  store.setWatchedUntil(null)
+  if (watchTimer) clearTimeout(watchTimer)
+  watchTimer = null
+  logTracker("watch over", { mode: store.mode })
+  if (store.mode !== "off") await applyRegistration()
+}
+
 /**
- * The answer to a wake or a nudge. On Android a parked phone runs no
- * service, and a background app gets a location a few times an hour and
- * none in Doze, so the resting request carries the service for the length
- * of this one fix: the notification shows for the second or two the fix
- * takes and goes, which is the same trick a messaging app plays to check
- * for messages. A high priority push is also one of the moments Android
- * allows that start, and posting a notification for it is what keeps the
- * app's pushes at high priority. Bounded, so a fix that never settles cannot
- * leave the service up.
+ * The answer to a wake or a nudge: one fix, uploaded. The push that carried
+ * it is one of the moments Android lets the service start, so a refused one
+ * is re-asserted first, while the moment lasts.
  */
 export async function wakeFix(): Promise<LocationFixInput | null> {
   const { enabled, mode } = useTrackingStore.getState()
   if (!enabled || mode === "off") return null
-  const brief = Platform.OS === "android" && mode === "stationary"
-  logTracker("wake", { mode, brief })
-  if (brief) {
-    briefService = true
-    await applyRegistration().catch(() => undefined)
-  }
-  let deadline: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      reportNow("nudge", Location.Accuracy.Balanced),
-      new Promise<null>((resolve) => {
-        deadline = setTimeout(() => resolve(null), WAKE_FIX_TIMEOUT_MS)
-      }),
-    ])
-  } finally {
-    clearTimeout(deadline)
-    if (brief) {
-      briefService = false
-      await applyRegistration().catch(() => undefined)
-    }
-  }
+  logTracker("wake", { mode })
+  await reassertService()
+  return reportNow("nudge", Location.Accuracy.Balanced)
 }
 
 let motionSubscription: { remove: () => void } | null = null
 let motionStarting = false
-let motionStillSince: number | null = null
 
 /**
  * Play Services and Core Motion already classify movement for the system, so
@@ -1138,7 +1496,7 @@ export async function refreshMotionWatch(): Promise<void> {
 async function stopMotionWatch(): Promise<void> {
   await stopMotion(motionSubscription)
   motionSubscription = null
-  motionStillSince = null
+  useTrackingStore.getState().setMotionStillSince(null)
   // With the classifier gone nothing will report a change, so this is the last
   // moment anything asks the sensors to stop. Leaving them running samples at
   // 50Hz for a journey nobody is watching.
@@ -1152,9 +1510,9 @@ async function onMotion(
 ): Promise<void> {
   const store = useTrackingStore.getState()
   if (!store.enabled || store.mode === "off" || confidence < MOTION_MIN_CONFIDENCE) return
-  if (activity !== "unknown" && activity !== lastVerdict) {
+  if (activity !== "unknown" && activity !== store.lastVerdict) {
     logTracker("motion", { activity, confidence, source, mode: store.mode })
-    lastVerdict = activity
+    store.setLastVerdict(activity)
   }
 
   // Impact sensing is only worth its battery inside a vehicle, and only there
@@ -1175,8 +1533,11 @@ async function onMotion(
 
   if (activity === "unknown") return
 
+  // A transition is the exempt moment Android names for a service start.
+  if (source === "transition") await reassertService()
+
   if (activity === "automotive") {
-    motionStillSince = null
+    store.setMotionStillSince(null)
     if (store.mode === "stationary") {
       // A vehicle ends a stop, and the fence would cost the first minute of
       // the drive. A sampled verdict in the doubtful band is confirmed like
@@ -1191,29 +1552,41 @@ async function onMotion(
 
   if (activity === "still") {
     if (store.mode !== "moving") return
-    motionStillSince ??= Date.now()
+    const since = store.motionStillSince ?? Date.now()
+    if (store.motionStillSince == null) store.setMotionStillSince(since)
     // A car at the lights reads still too, so a drive waits the crawl's
     // three minutes before a still streak parks it, and then parks in one
     // step, GPS off and fence armed.
-    const window = driving ? DRIVING_STOP_AFTER_MS : MOTION_STILL_CONFIRM_MS
-    if (Date.now() - motionStillSince < window) return
+    const window = store.driving ? DRIVING_STOP_AFTER_MS : MOTION_STILL_CONFIRM_MS
+    if (Date.now() - since < window) return
+    // A phone on a journey is not parked by the classifier alone: a queue
+    // of traffic reads still for minutes, and on Android the drive guard
+    // above is often missing. The position has to agree, which is the same
+    // evidence the location path parks on.
+    if (inJourney() && !heldStill()) return
     const fix = store.lastFix
     if (fix) await enterStationary(fix.lat, fix.lon)
     return
   }
 
   // Walking, running, cycling. Any of them ends a drive, and a still streak.
-  motionStillSince = null
-  if (driving) await leaveDriving()
+  store.setMotionStillSince(null)
+  if (store.driving) await leaveDriving()
   if (store.mode !== "stationary") return
 
   // On foot is a different matter from a vehicle. A phone handled in bed
   // reads as walking at fifty or sixty percent, and taking that alone
-  // brought the service and its notification back to a phone going nowhere.
-  // So the verdict has to be confirmed by a fix clear of where the phone
-  // parked, and until then the fence is the judge, as it would have been
-  // anyway a minute later.
+  // brought the full tier back to a phone going nowhere. So the verdict has
+  // to be confirmed by a fix clear of where the phone parked, and until
+  // then the fence is the judge, as it would have been anyway a minute
+  // later.
   if (await confirmedLeft(store.policy)) await enterMoving()
+}
+
+/** No fix clear of the anchor for as long as the location path needs to park. */
+function heldStill(): boolean {
+  const { stillAnchor } = useTrackingStore.getState()
+  return stillAnchor != null && Date.now() - Date.parse(stillAnchor.since) >= STILL_AFTER_MS
 }
 
 /**
@@ -1225,10 +1598,10 @@ async function onMotion(
 async function confirmedLeft(policy: TrackingPolicy): Promise<boolean> {
   if (Date.now() - lastMotionCheck < MOTION_CHECK_INTERVAL_MS) return false
   lastMotionCheck = Date.now()
-  const fix = await Promise.race([
-    reportNow("significant", Location.Accuracy.Balanced, { judge: false }),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), WAKE_FIX_TIMEOUT_MS)),
-  ])
+  const fix = await reportNow("significant", Location.Accuracy.Balanced, {
+    judge: false,
+    lastKnown: false,
+  })
   const anchor = useTrackingStore.getState().stillAnchor
   return fix != null && anchor != null && clearOf(anchor, fix, stationaryRadiusMeters(policy))
 }
@@ -1252,18 +1625,18 @@ async function dropFence(): Promise<void> {
   }
 }
 
-/** Continuous updates on. This is the state that shows the Android notification. */
+/** Continuous updates on, in the walking tier until a drive is judged. */
 export async function enterMoving(): Promise<void> {
   const store = useTrackingStore.getState()
   const previous = store.mode
   // A still streak counted before the departure is not evidence about the
   // journey that follows.
-  motionStillSince = null
+  store.setMotionStillSince(null)
   // Registering again on a running task swaps its options, which is how the
   // resting watch is stepped back up to the full one. A drive is decided
   // afresh from the fixes that follow, unless the phone is already moving,
   // in which case this is a re-assert and the drive it is on stands.
-  if (previous !== "moving") driving = null
+  if (previous !== "moving") store.setDriving(null)
   store.setMode("moving")
   let service: ForegroundServiceStatus
   try {
@@ -1294,9 +1667,48 @@ export async function enterMoving(): Promise<void> {
   await startMotionWatch()
 }
 
-/** Geofence armed, service stepped down to the resting watch. */
-export async function enterStationary(lat: number, lon: number): Promise<void> {
+/**
+ * How the fix that says "arrived" is had. "acquire" asks the OS, with the
+ * moving registration still up; a location already in hand is uploaded as
+ * it is; "synthesize" sends the anchor itself, for a re-park whose fix was
+ * just uploaded; "none" is a launch or re-arm while already parked.
+ */
+export type ParkFix = "acquire" | "synthesize" | "none" | Location.LocationObject
+
+let parking: Promise<void> | null = null
+
+/**
+ * Geofence armed, request stepped down to the resting one. The stop is
+ * called once at a time: a delivery landing while the arrival fix is on its
+ * way judges the same stop and joins this one rather than starting another.
+ */
+export function enterStationary(
+  lat: number,
+  lon: number,
+  parkFix: ParkFix = "acquire",
+): Promise<void> {
+  if (parking) return parking
+  parking = settle(lat, lon, parkFix).finally(() => {
+    parking = null
+  })
+  return parking
+}
+
+async function settle(lat: number, lon: number, parkFix: ParkFix): Promise<void> {
   const store = useTrackingStore.getState()
+  const previous = store.mode
+  // The word "still" leaves first, while the moving registration still holds
+  // the process and, on Android, the service: the last fix of a journey is
+  // taken while the phone is still called moving, so without this the server
+  // never heard the stop and applied its hour rule to a phone at home.
+  if (previous !== "stationary" && parkFix !== "none") {
+    await sendParkFix(lat, lon, parkFix)
+    // Sharing went off, or a departure landed, while the fix was on its way.
+    if (useTrackingStore.getState().mode !== previous) {
+      logTracker("park abandoned", { mode: useTrackingStore.getState().mode })
+      return
+    }
+  }
   try {
     await Location.startGeofencingAsync(STATIONARY_GEOFENCE_TASK, [
       {
@@ -1309,13 +1721,12 @@ export async function enterStationary(lat: number, lon: number): Promise<void> {
     ])
   } catch {
     // With nothing armed to wake us there would be no way back, so it is safer
-    // to keep burning the service than to go silent.
+    // to keep the full tier than to go silent.
     await enterMoving()
     return
   }
-  driving = null
-  motionStillSince = null
-  const previous = store.mode
+  store.setDriving(null)
+  store.setMotionStillSince(null)
   store.setMode("stationary")
   try {
     await applyRegistration()
@@ -1341,13 +1752,40 @@ export async function enterStationary(lat: number, lon: number): Promise<void> {
   store.setStillAnchor({ lat, lon, since: new Date().toISOString() })
   store.setBackgroundActive(true)
   armBackgroundClock()
-  // The last fix of the journey was up to a distance filter short of the
-  // door. One Wi-Fi grade fix from where the phone actually settled is what
-  // says "arrived" now rather than whenever the next one happens along. Only
-  // when the stop is new: a launch while parked comes through here too.
-  if (previous !== "stationary") {
-    void reportNow("significant", Location.Accuracy.Balanced, { judge: false })
+}
+
+/**
+ * The arrival fix, stamped still whatever the tracker's verdict, uploaded
+ * before the request steps down. When the OS does not answer in time the
+ * anchor itself is sent, dated now: where the phone stopped is known, and
+ * the server hearing "still" is what turns its hour rule into its twelve
+ * hour one.
+ */
+async function sendParkFix(lat: number, lon: number, how: Exclude<ParkFix, "none">): Promise<void> {
+  const started = Date.now()
+  let fix: LocationFixInput | null = null
+  if (typeof how === "object") {
+    fix = toFix(how, "significant", await batterySnapshot(), "still")
+    useTrackingStore.getState().enqueue([fix])
+  } else if (how === "acquire") {
+    fix = await reportNow("significant", Location.Accuracy.Balanced, {
+      judge: false,
+      activity: "still",
+      lastKnown: false,
+    })
   }
+  const synthesized = fix == null
+  if (!fix) {
+    fix = syntheticFix(lat, lon, "significant", await batterySnapshot())
+    useTrackingStore.getState().enqueue([fix])
+  }
+  await flush()
+  logTracker("park fix", {
+    synthesized,
+    acc: Math.round(fix.accuracyMeters ?? -1),
+    ms: Date.now() - started,
+    uploaded: !useTrackingStore.getState().queue.some((queued) => queued === fix),
+  })
 }
 
 /**
@@ -1385,21 +1823,23 @@ function clearOf(
 }
 
 async function evaluateStillness(
-  fix: Pick<LocationFixInput, "lat" | "lon" | "recordedAt">,
+  fix: Pick<LocationFixInput, "lat" | "lon" | "recordedAt"> & { accuracyMeters?: number | null },
 ): Promise<void> {
   const store = useTrackingStore.getState()
   if (store.mode !== "moving") return
-  // A car held at lights or in a queue is not parked. The drive ends first,
-  // on the classifier or on minutes of crawling, and only then can a stop be
-  // called from where the fixes stopped coming.
-  if (driving) return
 
+  // The anchor is kept through a drive too, so the classifier's still rule
+  // can read how long the car has really sat here, but a drive is never
+  // parked from here: a car held at lights or in a queue is not parked. The
+  // drive ends first, on the classifier or on minutes of crawling, and only
+  // then can a stop be called from where the fixes stopped coming.
   const anchor = store.stillAnchor
   switch (stillnessDecision(anchor, fix, stillRadiusMeters(store.policy))) {
     case "reanchor":
       store.setStillAnchor({ lat: fix.lat, lon: fix.lon, since: fix.recordedAt })
       return
     case "settle":
+      if (store.driving) return
       if (anchor) await enterStationary(anchor.lat, anchor.lon)
       return
     case "wait":
@@ -1475,17 +1915,25 @@ export async function startTracking(): Promise<boolean> {
   const anchor = mode === "stationary" ? stillAnchor : null
   const parkedAt = anchor && !(await hasLeft(anchor)) ? anchor : null
   if (parkedAt) {
-    await enterStationary(parkedAt.lat, parkedAt.lon)
+    await enterStationary(parkedAt.lat, parkedAt.lon, "none")
   } else if (mode === "off") {
     // Sharing just switched on, most often at home. Starting on the move
-    // would run the service for five minutes to learn the phone is still;
+    // would run the GPS tier for five minutes to learn the phone is still;
     // parking at the first fix costs a fence, and a phone that is in fact
     // moving crosses it within a minute or two, or the classifier says so.
-    const first = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-    }).catch(() => null)
-    if (first) await enterStationary(first.coords.latitude, first.coords.longitude)
-    else await enterMoving()
+    // The fix is the arrival fix too, so it is not asked for twice.
+    const first = await acquireFix(Location.Accuracy.Balanced, WAKE_FIX_TIMEOUT_MS, true).catch(
+      () => null,
+    )
+    if (first) {
+      await enterStationary(
+        first.location.coords.latitude,
+        first.location.coords.longitude,
+        first.location,
+      )
+    } else {
+      await enterMoving()
+    }
   } else {
     await enterMoving()
   }
@@ -1493,6 +1941,7 @@ export async function startTracking(): Promise<boolean> {
   // and a window somebody was watching may have run out while it was away.
   const store = useTrackingStore.getState()
   if (store.watchedUntil && !watchedNow()) store.setWatchedUntil(null)
+  else if (store.watchedUntil) armWatchTimer()
 
   await startMotionWatch()
   await registerBackgroundSync()
@@ -1511,9 +1960,13 @@ export async function stopTracking(): Promise<void> {
   logTracker("off")
   stopForegroundHeartbeat()
   stopBackgroundClock()
-  driving = null
-  motionStillSince = null
+  clearRetry()
+  if (watchTimer) clearTimeout(watchTimer)
+  watchTimer = null
+  recentFixes = []
   const store = useTrackingStore.getState()
+  store.setDriving(null)
+  store.setMotionStillSince(null)
   // Off first, then the stop goes through the same chain as every other
   // registration, so a transition or a wake still in flight lands on "off"
   // and registers nothing rather than bringing the service back after this.
@@ -1576,4 +2029,44 @@ export async function resumeIfEnabled(): Promise<void> {
     await startTracking()
   }
   void flush()
+}
+
+/**
+ * What a shared log opens with: the tracker's beliefs at the moment of
+ * sharing, which the lines below cannot always be read back to.
+ */
+export function headerForTrackerLog(): string {
+  const { mode, stillAnchor, queue, lastError, permission, driving, watchedUntil, enabled } =
+    useTrackingStore.getState()
+  return [
+    `mode ${mode}${driving ? ` (driving, gate ${driving.distance} m)` : ""}${enabled ? "" : " (sharing off)"}`,
+    `anchor ${
+      stillAnchor
+        ? `${stillAnchor.lat.toFixed(5)},${stillAnchor.lon.toFixed(5)} since ${stillAnchor.since}`
+        : "none"
+    }`,
+    `queue ${queue.length}`,
+    `lastError ${lastError ?? "none"}`,
+    `permission ${permission}`,
+    `service ${lastServiceStatus}`,
+    `watched ${watchedUntil ?? "no"}`,
+    `platform ${Platform.OS}`,
+  ].join("\n")
+}
+
+setTrackerLogHeader(headerForTrackerLog)
+
+// A process the OS started for a background event runs this module before
+// anything else, and the log used to have no way to tell that from a launch
+// by the user. The classifier goes on with it: a headless boot on Android
+// used to run every drive and stop from position alone.
+{
+  const { enabled, mode, queue } = useTrackingStore.getState()
+  logTracker("boot", {
+    headless: AppState.currentState !== "active",
+    mode,
+    enabled,
+    queued: queue.length,
+  })
+  if (enabled && mode !== "off") void startMotionWatch()
 }

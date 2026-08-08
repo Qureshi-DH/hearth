@@ -151,238 +151,281 @@ HEARTH_APP_LINK_HOST=hearth.yourfamily.com npx expo prebuild --platform android
 All of this lives in `app/services/location/tracker.ts`.
 
 1. `TaskManager.defineTask(BACKGROUND_LOCATION_TASK)` at module scope (imported
-   from `app.tsx` as a side effect) so the OS can wake the JS runtime.
-2. `Location.startLocationUpdatesAsync` with `Balanced` accuracy, the circle's
-   interval/distance policy, deferred updates so the OS batches while still,
-   and an Android foreground service notification.
-3. Each delivery → `toFix()` (adds battery) → `thin()` (drops near-duplicates)
-   → MMKV-persisted queue → `flush()` (single-flight upload, oldest first).
+   from `app.tsx` as a side effect) so the OS can wake the JS runtime. The
+   module writes a `boot` line to the diagnostics log saying whether the
+   process is headless, and re-attaches the motion classifier if sharing is
+   on, because a process the OS cold-starts for a fix runs this before any
+   React code and used to run the whole journey without a classifier.
+2. `Location.startLocationUpdatesAsync` with the options of whatever tier the
+   tracker is in, see below. `currentOptions()` is the one place the OS
+   request is derived from what the tracker believes, so a re-registration
+   from a wake or a watch cannot disagree with the tier. On Android every
+   tier carries the foreground service.
+3. Each delivery → `toFix()` (adds battery and the tracker's own `activity`)
+   → `thin()` (drops near-duplicates, and on Android applies the circle's
+   distance filter to what is uploaded) → MMKV-persisted queue → `flush()`
+   (single-flight upload, oldest first). The flush runs on every delivery
+   whether or not it kept a fix, so an upload that failed earlier is not
+   left waiting for the next kept fix, which on a parked phone is a quarter
+   hour away.
 4. While the app is in the foreground, a heartbeat asks for one `Balanced` fix
    at the circle's interval whenever the last fix is older than that, tagged
-   `source: "heartbeat"`. The OS delivers nothing inside the distance filter
-   and a parked phone has stopped asking, so without it your own row went
-   stale while you watched the map. It reads the moving/stationary mode and
-   never changes it, swallows a failed acquisition rather than showing it as
-   an error, and trip detection and the possible-incident check both ignore
-   its fixes.
-5. `expo-background-task` registers `com.binary.rewind.hearth.sync` to flush the queue
-   (and take a fix if the last one is >30 min old) when the OS grants time,
-   which is never while the app is open.
+   `source: "heartbeat"`. It reads the moving/stationary mode and never
+   changes it, swallows a failed acquisition rather than showing it as an
+   error, and trip detection and the possible-incident check both ignore its
+   fixes. A fix still being acquired counts as fresh only until its deadline,
+   so a native request that never settles cannot hold the heartbeat off for
+   the rest of the process, which is what "not reporting while online" was.
+5. `expo-background-task` registers `com.binary.rewind.hearth.sync` to flush
+   the queue, re-arm the fence and take a fix if the last one is stale, when
+   the OS grants time, which is never while the app is open. Its fixes are
+   bounded at fifteen seconds, since iOS gives the task about thirty.
 6. The server's response carries the current policy. If it changed, updates
    restart with the new intervals, throttled to once a minute.
 
 Turning off _Share my location_ in the app stops the OS updates entirely. No
 fixes are captured or queued.
 
-### Driving
+### The tiers
 
-The GPS runs in exactly one state, a drive. Speed and heading only come from
-GPS, and the walking tier never turns it on, so without this tier a driver's
-dot sat off the road and their speed read as noise. The tier starts when the
-classifier says automotive, or from speed alone on a phone without the
-permission, and asks for High accuracy every ten seconds with a distance
-filter that follows the speed in fifty metre steps, so fixes land about one
-interval apart whether the car is in town or on a motorway. It ends when the
-classifier says otherwise, after three minutes of crawling, or when the
-phone parks. Nothing is deferred while driving.
+The tracker is in one of three modes, `moving`, `stationary` or `off`. Inside
+`moving` it may also be on the driving tier, and in any mode it goes live
+while somebody is watching.
 
-### Moving and stationary
+**Moving** is the walking tier. On Android it asks for `Balanced` accuracy on
+the circle's interval with no OS distance filter, so a still phone keeps
+delivering fixes the stop can be judged from, and `thin` applies the circle's
+distance filter to what is uploaded. On iOS it asks for `High` accuracy with
+the circle's distance filter at the OS: iOS 16.4 and later suspend a low
+accuracy session that has a distance filter once significant-change
+monitoring is also on, and expo-location always adds that, so a `Balanced`
+moving iPhone sat silent until relaunched.
 
-Continuous location on Android requires a foreground service, and a location
-foreground service must show a notification the user cannot dismiss. Running one
-around the clock is what makes that notification permanent and what actually
-drains the battery, because the GPS never sleeps.
+**Driving** is the one state the GPS runs for its own sake. Speed and heading
+only come from GPS, and without this tier a driver's dot sat off the road and
+their speed read as noise. It starts when the classifier says automotive, or
+from speed alone on a phone without the permission, and asks for `High`
+accuracy every ten seconds with a distance gate that follows the speed in
+fifty metre steps. It ends when the classifier says otherwise, after three
+minutes of crawling, or when the phone parks. The drive, the classifier's last
+verdict and the start of its still streak are persisted in the tracking
+store rather than held in module scope: a process the OS cold-starts for a
+background event throws its React host away after every task, so each
+delivery used to begin a new drive, upload `unknown`, and lose the guard that
+keeps a queue of traffic from parking the phone.
 
-So the tracker has two states. **Moving** is continuous updates, and it is the
-only state that runs the service. Its notification is one plain line, "Hearth,
-updating your location", with no colour and no other copy. The app creates the
-notification's channel at minimum importance before the service ever starts,
-which keeps it out of the status bar. It sits collapsed in the silent part of
-the shade instead. expo-location names the channel after the package and the
-task and only creates one when nothing by that name exists, so the id in
-`services/notifications.ts` has to match. Once the phone has stayed for five
-minutes inside a circle of 60 m, or 1.5 times the policy's distance filter
-where that is wider, it switches to **stationary**: the same task is
-re-registered with resting options, Balanced accuracy, no GPS, one fix wanted
-every quarter hour, and an exit geofence is armed around where it stopped. The
-resting options carry no foreground service, and expo-location stops a running
-service when the task is registered without one, so the notification goes with
-it. Leaving the circle puts the phone back into moving, and so does a resting
-fix outside the circle, which covers a fence Android forgot after killing the
-process. The geofence is cheap because it rides on the location the system
-computes anyway.
+Android reports a speed of 0 for a fix it never measured, where iOS reports
+-1, and a Wi-Fi or cell fix never measures one. `toFix` reads a zero on a fix
+looser than GPS class (30 m) as unmeasured, so the derived speed runs, the
+6 m/s rule can start a drive without the classifier, and a run of network
+fixes under a flyover no longer ends one. A zero on a GPS fix is a real stop.
 
-Starting the service again from the background is where stock expo-location
-gives up. It refuses to register a location task with a foreground service
-unless the app is in the foreground, which is the rule Android 12 has for
-ordinary apps and not the one for a geofence exit, an activity transition, a
-high priority push or an app exempt from battery optimisation, all of which
-Android allows. The refusal also failed the whole registration, so the fence
-had been torn down and nothing was moving. `patches/expo-location@55.1.14.patch`
-removes that refusal, makes the attempt, catches only Android's own
-`ForegroundServiceStartNotAllowedException`, and records the outcome where
-the app can read it (`getForegroundServiceStatusAsync`). Expo ships its
-modules to Android as prebuilt AARs, and a patch to Kotlin source does
-nothing to one of those, so `apps/mobile/package.json` lists expo-location
-under `expo.autolinking.android.buildFromSource`. Check the build log: the
-module must appear without the package icon that marks a prebuilt. The patch
-is applied by `scripts/apply-patches.mjs` from the root `postinstall`, not by
-pnpm's `patchedDependencies`: with `node-linker=hoisted`, which Metro needs,
-pnpm applies a patch again on every install, and `expo prebuild` runs one,
-which left the Kotlin declared twice. The script applies each patch once and
-leaves one already in place alone. The tracker
-registers the request first and only then decides about the fence: with the
-service up the fence has done its job, and refused, the fence stays, because
-its exit is a moment Android does allow the start and the plain request
-carries the phone on throttled fixes until then. The next high priority push,
-the server's wake or a nudge, re-asserts the request in whatever tier the
-tracker is in, and so does the app opening. `hearth-motion` asks for activity
-transitions as well as the sampled verdicts, since a transition is the
-exempt trigger Android names, and tags each verdict with its source. Both
-reach the app through a receiver registered by the running process, so
-neither can relaunch a process Android has reclaimed; the fence does that.
-A fence exit brings the service up first, inside the allowed moment, and
-then checks the exit against one bounded fix: a sharp fix clearly inside
-the circle is a false exit and the phone parks again at once.
+**Parked** (`stationary`) is quiet but never silent. Once the phone has stayed
+for five minutes inside a circle of 60 m, or 1.5 times the policy's distance
+filter where that is wider, the request steps down and an exit geofence is
+armed around where it stopped. Before it steps down, while the moving
+registration still holds the process and, on Android, the service, the
+tracker takes one arrival fix, stamps it `still` whatever its own verdict,
+and waits for the upload. If the OS does not answer within thirty seconds a
+fix is made up from the parking spot, dated now, so the word `still` always
+leaves. The last fix of every journey is taken while the phone is still called
+moving, so without this the server never heard the stop and applied its hour
+rule to a phone sitting at home.
 
-A server side second line stands behind the heartbeat. The scheduler sends a
-silent push to a phone that has been quiet for half an hour, once per
-silence, and the app answers it with a fix from a background task that runs
-even when the app is not open. The offline sweep waits for that answer, so
-a phone is only reported offline once it has ignored both its own heartbeat
-and the wake. Without the expo provider no wake can be sent and the hour of
-silence alone decides, as it always did. The admin screen shows each
-account's longest silence over the last day, which is how the whole
-arrangement is judged on real phones.
+On Android the parked request is `Balanced` with one fix wanted a quarter
+hour, under the same foreground service as every other tier. On iOS it is a
+cell-only session (`Accuracy.Lowest`) with the fence radius as its distance
+filter: it costs almost nothing, it keeps the process alive so the
+tracker's own timer can send a `still` fix every quarter hour from the fix
+the OS already has, and a departure is seen by the session's own filter
+rather than at the fence's leisure. The 200 m fence stays as a third signal.
+A parked iPhone used to run no session at all and was suspended within
+seconds: the arrival fix went with it, there was no heartbeat, and the fence,
+which iOS reports minutes late and not at all with Background App Refresh
+off, was the only way back.
 
-The service used to stop outright while parked and take the request with
-it. That left the phone's next word to the OS task schedulers, and Doze lets
-a phone sit for hours, at which point the server, which calls a phone
-offline after an hour of silence, told the family the phone had gone quiet.
-On Android the request now stays: a background app gets a handful of fixes
-an hour, which is enough for a quarter hour heartbeat most of the time,
-`restingFixes` thins anything more frequent back to one per heartbeat, and
-the server's wake covers the rest.
+**Live** is the tier for as long as somebody has the member's page open, see
+Watching below.
 
-iOS is different while parked. A parked iPhone runs no location session at
-all: the stop stops the updates, the fence stays, and the phone is suspended.
-That is the only way it shows no indicator and costs nothing, and it is how
-commercial apps behave. The fence relaunches the app when the phone leaves, and
-while it sits two things are its heartbeat. Background App Refresh is one:
-`patches/expo-background-task@55.0.22.patch` turns expo's processing task,
-which iOS runs when the phone is idle and charging, into an app refresh
-task, which iOS runs for up to thirty seconds about every quarter hour when
-it judges the app worth it, and the sync task takes a fix on it when the
-last is a quarter hour old. The server's silent push is the other: the wake
-after half an hour of quiet, the map being opened, and somebody watching.
-Neither is a clock, and iOS is entitled to skip both, which is why a parked
-phone's silence is not "offline" for twelve hours. iOS delivers
-a few such pushes an hour, which is why the server spends them carefully
-(see the intervals in `locations.routes.ts`). `showsBackgroundLocationIndicator`
-is off in every tier; the small arrow still shows while location is actually
-being read, as it does for every app, and the blue Dynamic Island pill does
-not.
+### The Android service
 
-Two things make the stop callable on iOS at all. Core Motion reports an
-activity when it changes and then says nothing while it holds, so "still for
-ninety seconds" never got the second reading the tracker waits for; the
-native module repeats the current verdict every thirty seconds, which is the
-shape Android's classifier already had. And a phone that has not crossed the
-distance filter delivers no fix to judge, so the tracker's background clock,
-a React Native timer that `RCTTiming` keeps as an `NSTimer` while the moving
-session keeps the app alive, asks for one Balanced fix once no update has
-come for five minutes and judges the stop from it, unless the tracker
-believes the phone is driving, in which case a queue of traffic is not a
-stop. For any of this the moving session must never pause:
-`pausesUpdatesAutomatically` is off, since a paused manager suspends the app
-with it and a suspended app calls no stop and arms no fence. That was the
-phone that went silent the moment it was put down.
+Android hands out continuous location only to a foreground service, and
+without one the phone is an ordinary background app: a few fixes an hour,
+none in Doze, no network until a maintenance window, a process reclaimed
+within minutes on most OEM builds, and a service start refused later except
+at a handful of moments. The tracker used to drop the service while parked to
+take the notification away, and every path back (the park fix, the resting
+request, the fence exit, the sync, the server's wake) then ran under those
+limits. That is how a family member sitting at home with the app open came to
+be "not reporting" an hour after arriving.
+
+So the service is up for as long as sharing is on, in every tier, the way
+family safety apps do it. The notification is one plain line, "Hearth, sharing your
+location with your family", on a channel the app creates at minimum
+importance before the service ever starts (`services/notifications.ts`; the
+id has to match the one expo-location derives from the package and the
+task). It sits collapsed in the silent part of the shade rather than in the
+status bar, and the patched service creates the channel at the same
+importance if it is ever first.
+
+Android 12 still refuses a service start from the background except at a
+geofence exit, an activity transition, a high priority push, an app exempt
+from battery optimisation, or the app being opened. Stock expo-location
+refused the whole registration unless the app was in the foreground;
+`patches/expo-location@55.1.14.patch` makes the attempt, catches only
+Android's own `ForegroundServiceStartNotAllowedException`, records the
+outcome where the app can read it (`getForegroundServiceStatusAsync`), and
+registers the location request either way. `reassertService` answers a
+refusal at every allowed moment: every delivery, an activity transition, a
+wake or watch push, the sync task and the app opening. A status of `none`
+while a tier wants the service means it went down without the app asking,
+an OEM battery manager most often; the tracker brings it back, remembers the
+moment for a day, and `serviceDiedUnexpectedly()` is what the health report
+sends as `serviceStopped`.
+
+The patch also has the service promote itself to the foreground in
+`onStartCommand` from options it persisted, so when the OS kills the process
+and restarts the service with a redelivered intent, nobody has to bind to it
+first; a service started without a `startForeground` is killed a few seconds
+later with an exception that takes the process with it.
+
+Expo ships its modules to Android as prebuilt AARs, and a patch to Kotlin
+source does nothing to one of those, so `apps/mobile/package.json` lists
+expo-location under `expo.autolinking.android.buildFromSource`. Check the
+build log: the module must appear without the package icon that marks a
+prebuilt. The patch is applied by `scripts/apply-patches.mjs` from the root
+`postinstall`, not by pnpm's `patchedDependencies`: with
+`node-linker=hoisted`, which Metro needs, pnpm applies a patch again on every
+install, and `expo prebuild` runs one, which left the Kotlin declared twice.
+The script applies each patch once and leaves one already in place alone.
+
+### One-shot fixes
+
+Every one-shot fix (`reportNow`, the background clock, the sync task, the
+fence check, the classifier's confirmation) has a thirty second deadline
+inside `reportNow` itself. Android's `getCurrentPositionAsync` has no timeout
+of its own, and a request a background app makes can hang for the life of the
+process. When the fresh fix is late, the fix the OS already has stands in
+where that is still useful (a wake, a nudge, the app opening, the clock) and
+not where it would lie (a fence check, where a stale fix inside the circle
+would re-park a phone that has just left; the park fix, which is made up from
+the anchor instead).
+
+On iOS, expo-location's one-shot manager had `allowsBackgroundLocationUpdates`
+off, which Apple documents as a manager Core Location need not keep the app
+running to serve. The patch sets it when the app is authorised Always and
+declares the location background mode, so wakes, park fixes and watch answers
+are served in the background.
+
+### Calling the stop
+
+The classifier is the normal path: it calls a stop after ninety seconds of
+the phone reading still, three minutes inside a detected drive, and ends one
+the instant you start moving. A phone on a journey is not parked by the
+classifier alone: while it has travelled more than 400 m in the last ten
+minutes or done 3 m/s in the last three, a still verdict at the lights needs
+the position to agree, which means no fix clear of the anchor for the same
+five minutes the location path parks on. The anchor is kept through a drive
+for exactly this, though a drive is never parked from the location path.
+
+The position watch is the fallback, for a phone that refused the permission
+or cannot classify motion. On iOS a phone that has not crossed the distance
+filter delivers no fix to judge, so the tracker's background clock, a React
+Native timer that `RCTTiming` keeps as an `NSTimer` while the session keeps
+the app alive, asks for one fix once no update has come for five minutes and
+judges the stop from it. For any of this the session must never pause:
+`pausesUpdatesAutomatically` is off in every tier, since a paused manager
+suspends the app with it and a suspended app calls no stop and arms no fence.
+
+A parked phone does not leave on the classifier's word alone unless the word
+is a sure "automotive" (a transition, or a sample at 75% or better). Handled
+in bed, a phone reads as walking at fifty or sixty percent, and taking that
+alone brought the full tier back to a phone going nowhere. On foot the
+verdict is confirmed by one Balanced fix, at most every two minutes, and only
+a fix clear of the anchor by more than its own error ends the stop; otherwise
+the fence is the judge, as it would have been a minute later anyway. A fence
+exit on Android brings the full tier up first, inside the allowed moment, and
+then checks the exit against one bounded fix: a sharp fix clearly inside the
+circle is a false exit and the phone parks again at once.
+
+Deferred delivery is off in every tier. It looked like the OS batching for
+battery and is not: both of expo's consumers hold the fixes in the process,
+and the ones held were the last of every journey, the fixes that say where
+the phone stopped.
+
+### Uploads
+
+A failed upload (network, 5xx, 429) keeps the queue and retries on its own
+after thirty seconds, then a minute, then two, while the process lives; after
+that it waits for the next delivery, which flushes whether or not it kept a
+fix. An upload that gets through starts the ladder over. A 4xx that is not
+an auth problem drops that batch so one bad fix cannot wedge the pipeline.
 
 ### What the phone says about itself
 
-`services/health.ts` sends `PATCH /me/health` with the checklist's reading
-of the phone: the location permission level, Location Services, Background
-App Refresh on iOS, battery optimisation on Android. It goes when the app
-comes to the front and after the checklist changes anything, and again only
-when something changes or a day has passed. The server keeps it on
-`user_presence.health`, projects it as `issues` on presence, and the rows put
-the first issue under the member's name once the phone is stale. The offline
-sweep reads it too: a quiet phone that has said why it cannot report is
-reported as that, not as offline.
+`services/health.ts` sends `PATCH /me/health` with the checklist's reading of
+the phone: the location permission level, Location Services, Background App
+Refresh on iOS, battery optimisation on Android, and whether the Android
+service has died under the app. It goes when the app comes to the front and
+after the checklist changes anything, and again only when something changes
+or a day has passed. The server keeps it on `user_presence.health`, projects
+it as `issues` on presence, and the rows put the first issue under the
+member's name once the phone is stale. The offline sweep reads it too: a
+quiet phone that has said why it cannot report is reported as that, not as
+offline.
 
 Every fix carries `activity` from the tracker's own tiers, `still` while
-parked, `driving` on the GPS tier, the classifier's word while walking, so
-the server knows a still phone is meant to be quiet and calls it offline
-only after twelve hours rather than one.
+parked and on the arrival fix, `driving` on the GPS tier, the classifier's
+word while walking, so the server knows a still phone is meant to be quiet
+and calls it offline only after twelve hours rather than one.
 
 ### Diagnostics
 
-`services/location/log.ts` keeps the last three hundred things the tracker
-did, on the phone: tier changes and why, fixes delivered and kept, wakes and
-watches, fence exits and whether they were false, the classifier's verdicts.
-The You screen shows and shares it. When a family member says "the
-notification stayed", this is the page to ask for.
+`services/location/log.ts` keeps the last thousand things the tracker did,
+on the phone: `boot` with whether the process was headless, tier changes and
+why, `fixes` delivered and kept, `report` / `report done` / `report failed`
+for every one-shot fix with its source, accuracy and elapsed time, `flush` /
+`flush failed` with sizes and status, `service` with the Android service's
+status after every registration, `reassert` before and after, `sync` for
+each run of the sync task, `watched` and `watch adopted`, `wake`, fence
+exits and whether they were false, the classifier's verdicts, and
+`heartbeat skipped` with the reason. A shared log opens with a header from
+`headerForTrackerLog()`: mode, anchor, queue length, last error, permission
+and service status. When a family member says "the notification stayed" or
+"it went quiet at home", this is the page to ask for; a stop that was called
+and a park fix that never left used to look identical.
 
 ### Watching
 
 The Live page is the one time the family wants to see a car move along a
-road, and the one time the GPS runs on a phone nobody is driving. A member's
-profile offers it only while their phone says they are on the move. The
-page calls `POST /circles/:id/members/:userId/watch` on focus and every
-minute after. The server records the window on the member and sends the
-phone a silent `watch` push, again after ninety seconds if the phone has
+road. The page calls `POST /circles/:id/members/:userId/watch` on focus and
+every minute after. The server records the window on the member and sends
+the phone a silent `watch` push, again after ninety seconds if the phone has
 not uploaded since, three times per window at most, and the reply says
 whether one went (`pushed`), when the phone was last heard and what it said
-stands in its way; every upload reply also carries `watchedUntil`, so a
-phone that is already reporting picks the watch up on its next batch
-whether or not the push arrived. The phone puts
-`watchedUntil` in its store and `currentOptions()` returns the live tier,
-full accuracy every five seconds, until it passes; the first fix past the
-window steps the request back down, since no timer runs in the Android
-background between deliveries. A parked phone answers with one fix instead,
-because it is not going anywhere, and goes live only if the fence then
-sends it moving inside the window.
+stands in its way; every upload reply also carries `watchedUntil`, so a phone that is already reporting picks the watch up on
+its next batch whether or not the push arrived. Either way the phone puts
+`watchedUntil` in its store and `currentOptions()` returns the live tier
+whatever the phone was doing: `High` accuracy every five seconds on the move,
+`Balanced` at the same interval when parked, since a parked phone is not
+going anywhere and the point is that the page hears from it every few
+seconds rather than once. The phone also answers with one fix straight away,
+because iOS ignores the interval and delivers on distance, so a phone at rest
+would otherwise say nothing for the whole window. The window ends by a timer
+and by the first fix past it, whichever comes first, and the request steps
+back to the tier it was in.
 
-The Live page draws the fixes that arrive while it is open and nothing
-else. A trip draws its own trail, and only where the phone reported it: a
-silence between two fixes is dashed (`splitTrail` in `utils/trail.ts`),
-because the road between them is a guess. The profile map draws no trail.
+The Live page draws the fixes that arrive while it is open and nothing else.
+A trip draws its own trail, and only where the phone reported it: a silence
+between two fixes is dashed (`splitTrail` in `utils/trail.ts`), because the
+road between them is a guess. The profile map draws no trail.
 
 Opening the map calls `POST /circles/:id/locations/refresh`, which sends one
 `wake` to each member quiet for a couple of minutes, at most once every ten
 minutes per phone. Both routes refuse a provider that cannot carry a silent
 push and a member sharing approximately, whose live fixes the projection
-would throw away anyway.
-
-Deferred delivery is off in every tier too. It looked like the OS batching
-for battery and is not: both of expo's consumers hold the fixes in the
-process, which is alive either way, and the ones held were the last of every
-journey, the fixes that say where the phone stopped. They only surfaced on
-the next delivery, which a parked phone never makes, so the stop was judged
-against a stale anchor.
-
-On Android the moving request carries no distance filter: the OS delivers
-on the interval whether or not the phone moved, and `thin` in the tracker
-applies the circle's distance filter to what is uploaded. With the filter at
-the OS a still phone delivered nothing, and nothing could judge the stop
-while the classifier read a phone in a hand as tilting, so the service and
-its notification stayed up. Now the stop is judged from every fix, and one
-whose error circle still covers the anchor neither resets the clock nor, on
-a parked phone, counts as leaving.
-
-A parked phone does not leave on the classifier's word alone unless the word
-is a sure "automotive" (a transition, or a sample at 75% or better). Handled in bed, a phone reads as walking at fifty or sixty
-percent, and taking that alone brought the service back to a phone going
-nowhere. On foot the verdict is confirmed by one Balanced fix, at most every
-two minutes, and only a fix clear of the anchor by more than its own error
-ends the stop; otherwise the fence is the judge, as it would have been a
-minute later anyway.
-
-The OS classifier is the normal path for both ends of a stop: it calls one
-after ninety seconds of the phone reading still, and ends one the instant you
-start moving, before a geofence or the periodic wake would have. The position
-watch above is the fallback, for a phone that refused the permission or cannot
-classify motion.
+would throw away anyway. The server's own wake after half an hour of quiet is
+a second line behind the phone's heartbeats, not the heartbeat itself.
 
 ### Crash detection
 

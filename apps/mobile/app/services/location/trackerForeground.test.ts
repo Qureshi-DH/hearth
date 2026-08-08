@@ -249,9 +249,8 @@ describe("the foreground heartbeat", () => {
     await settle()
     expect(getPosition).toHaveBeenCalledTimes(1)
 
-    // The deadline and the next tick land together, so it takes the one after
-    // to find the count back at zero.
-    await tick()
+    // The deadline and the next tick land together, and a request past its
+    // deadline no longer counts as in flight, so that tick asks.
     await tick()
 
     expect(getPosition).toHaveBeenCalledTimes(2)
