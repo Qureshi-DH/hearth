@@ -28,8 +28,10 @@ export function simplifyTrail<T extends { lat: number; lon: number }>(
  * apart than this, and longer apart in time than a phone on the move takes
  * between fixes, are a silence, and a line across it would be a guess at
  * the road, so the silence is handed back separately for drawing as one.
- * Distance alone is not enough: a fast road reported every ten seconds is
- * thinned by the upload gate to fixes hundreds of metres apart.
+ * A silence needs both: the driving tier's upload gate lets a fix through
+ * every 300 m at speed, which with a late fix is 450 m in 30 s, so a gated
+ * drive clears neither limit; and a crawl that took minutes over a few
+ * hundred metres has no road unreported, only a jam.
  */
 export const TRAIL_MAX_STEP_METERS = 500
 export const TRAIL_MAX_STEP_SECONDS = 60
