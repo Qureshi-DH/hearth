@@ -173,6 +173,23 @@ describe("Live on a member's profile", () => {
   })
 })
 
+describe("what a quiet phone says about itself", () => {
+  it("is named under the member, in the words the map uses", async () => {
+    mockPresence = [
+      {
+        ...presenceFor("unknown"),
+        recordedAt: new Date(Date.now() - 61 * 60_000).toISOString(),
+        stale: true,
+        issues: ["background_restricted"],
+      },
+    ]
+    const screen = await renderProfile()
+    expect(screen.getByText(/map:issue_background_restricted/)).toBeTruthy()
+    // A phone the OS holds back is not on the move, whatever it last said.
+    expect(screen.queryByText(/member:live/)).toBeNull()
+  })
+})
+
 describe("the profile map", () => {
   it("does not draw the day's trail", async () => {
     mockHistory = [
