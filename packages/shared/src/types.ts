@@ -248,8 +248,27 @@ export const PRESENCE_ISSUES = [
   "background_refresh",
   "battery_optimisation",
   "low_power_mode",
+  "background_restricted",
+  "service_stopped",
 ] as const
 export type PresenceIssue = (typeof PRESENCE_ISSUES)[number]
+
+/**
+ * What POST /circles/:id/members/:userId/watch tells the viewer. `pushed`
+ * is what became of the silent push: "held" when one went out recently,
+ * "no_device" when the member has no push token, "unsupported" when the
+ * server's push provider cannot carry a silent push. The Live page reads
+ * the rest to say why a phone is quiet instead of freezing on an old dot.
+ */
+export interface WatchResponse {
+  watching: boolean
+  seconds: number
+  pushed: "sent" | "held" | "no_device" | "unsupported"
+  lastFixAt: string | null
+  lastHeardAt: string | null
+  activity: ActivityType | null
+  issues: PresenceIssue[]
+}
 
 /** What a phone reports about its own ability to share, see PATCH /me/health. */
 export interface DeviceHealth {
