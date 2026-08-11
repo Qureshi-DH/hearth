@@ -79,4 +79,45 @@ describe("splitTrail", () => {
     expect(drawn).toEqual([])
     expect(gaps).toEqual([[p1, p2]])
   })
+
+  describe("against the driving upload gate", () => {
+    const t = (seconds: number) => new Date(Date.UTC(2026, 8, 15, 9, 0, seconds)).toISOString()
+    // The gate lets a fix through every 300 m at speed. With slack for a fix
+    // that lands late, 450 m in 30 s is the widest step a gated drive makes.
+    const gateStep = 0.00404 // about 449 m of latitude
+
+    it("draws the steps of a gated drive as one line", () => {
+      const p1 = { lat: a.lat, lon: a.lon, recordedAt: t(0) }
+      const p2 = { lat: a.lat + gateStep, lon: a.lon, recordedAt: t(30) }
+      const p3 = { lat: a.lat + 2 * gateStep, lon: a.lon, recordedAt: t(60) }
+      const { drawn, gaps } = splitTrail([p1, p2, p3])
+      expect(drawn).toEqual([[p1, p2, p3]])
+      expect(gaps).toEqual([])
+    })
+
+    it("dashes a step that is beyond the gate in both distance and time", () => {
+      const p1 = { lat: a.lat, lon: a.lon, recordedAt: t(0) }
+      const p2 = { lat: a.lat + 0.005, lon: a.lon, recordedAt: t(70) } // about 555 m
+      const { drawn, gaps } = splitTrail([p1, p2])
+      expect(drawn).toEqual([])
+      expect(gaps).toEqual([[p1, p2]])
+    })
+
+    it("does not dash a crawl: a phone that barely moved has no road unreported", () => {
+      // Five minutes to cover 300 m is a traffic jam, and the gate lets one
+      // fix through every few minutes of a stop. The line is the road.
+      const p1 = { lat: a.lat, lon: a.lon, recordedAt: t(0) }
+      const p2 = { lat: a.lat + 0.0027, lon: a.lon, recordedAt: t(300) }
+      const { drawn, gaps } = splitTrail([p1, p2])
+      expect(drawn).toEqual([[p1, p2]])
+      expect(gaps).toEqual([])
+    })
+
+    it("dashes a long step it cannot date", () => {
+      const p1 = { lat: a.lat, lon: a.lon }
+      const p2 = { lat: a.lat + 0.005, lon: a.lon }
+      const { gaps } = splitTrail([p1, p2])
+      expect(gaps).toEqual([[p1, p2]])
+    })
+  })
 })

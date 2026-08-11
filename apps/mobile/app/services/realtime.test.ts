@@ -1,4 +1,4 @@
-import type { FeedEvent } from "@hearth/shared"
+import type { FeedEvent, MemberPresence } from "@hearth/shared"
 
 import { queryKeys } from "@/hooks/queryKeys"
 import { queryClient } from "@/services/queryClient"
@@ -129,6 +129,41 @@ describe("reconnecting", () => {
     sockets[1]!.accept()
 
     expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["events"] })
+  })
+})
+
+describe("a location over the socket", () => {
+  const presenceOf = (recordedAt: string): MemberPresence => ({
+    userId: "sam",
+    lat: 33.7,
+    lon: 73.05,
+    accuracyMeters: 10,
+    recordedAt,
+    batteryLevel: 0.6,
+    isCharging: false,
+    activity: "driving",
+    speedMps: 11,
+    headingDegrees: null,
+    approximate: false,
+    sharingState: "precise",
+    stale: false,
+    atPlace: null,
+    sosAlertId: null,
+    issues: [],
+  })
+
+  it("replaces that member's presence in the cache, recordedAt included", () => {
+    const before = new Date(Date.now() - 12 * 60_000).toISOString()
+    const now = new Date().toISOString()
+    queryClient.setQueryData(queryKeys.presence("c1"), [presenceOf(before)])
+    realtime.connect()
+    sockets[0]!.accept()
+
+    sockets[0]!.receive({ type: "location", circleId: "c1", presence: presenceOf(now) })
+
+    const cached = queryClient.getQueryData<MemberPresence[]>(queryKeys.presence("c1"))!
+    expect(cached).toHaveLength(1)
+    expect(cached[0]!.recordedAt).toBe(now)
   })
 })
 

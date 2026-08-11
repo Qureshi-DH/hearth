@@ -245,6 +245,23 @@ export interface MemberPresence {
 
 export type { PresenceIssue } from "./constants"
 
+/**
+ * What POST /circles/:id/members/:userId/watch tells the viewer. `pushed`
+ * is what became of the silent push: "held" when one went out recently,
+ * "no_device" when the member has no push token, "unsupported" when the
+ * server's push provider cannot carry a silent push. The Live page reads
+ * the rest to say why a phone is quiet instead of freezing on an old dot.
+ */
+export interface WatchResponse {
+  watching: boolean
+  seconds: number
+  pushed: "sent" | "held" | "no_device" | "unsupported"
+  lastFixAt: string | null
+  lastHeardAt: string | null
+  activity: ActivityType | null
+  issues: PresenceIssue[]
+}
+
 /** What a phone reports about its own ability to share, see PATCH /me/health. */
 export interface DeviceHealth {
   /** "always" is the only level that reports from the background. */
@@ -266,27 +283,6 @@ export interface DeviceHealth {
   /** Android: the foreground service died without the app asking it to. */
   serviceStopped?: boolean
   reportedAt?: string
-}
-
-/**
- * What POST /circles/:id/members/:userId/watch did and what it knew, so the
- * Live page can say whether the phone was reached rather than draw a red dot
- * over a twelve-minute-old fix.
- */
-export interface WatchResponse {
-  watching: boolean
-  seconds: number
-  /**
-   * "sent" is a silent push queued by this call, "held" one withheld because
-   * the phone was pushed moments ago, "no_device" a member with no push token,
-   * "unsupported" a server whose push provider cannot carry a silent push.
-   */
-  pushed: "sent" | "held" | "no_device" | "unsupported"
-  lastFixAt: string | null
-  /** The last time the phone spoke at all, fix or no fix. */
-  lastHeardAt: string | null
-  activity: ActivityType | null
-  issues: PresenceIssue[]
 }
 
 export interface HistoryPoint {
