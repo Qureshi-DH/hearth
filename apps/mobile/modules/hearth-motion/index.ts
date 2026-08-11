@@ -39,9 +39,15 @@ export interface SensorBatchEvent {
   samples: SensorSample[]
 }
 
+/** iOS Low Power Mode or Android Battery Saver, whichever the phone just flipped. */
+export interface PowerStateEvent {
+  lowPowerMode: boolean
+}
+
 declare class HearthMotionModule extends NativeModule<{
   onMotionChange: (event: MotionChangeEvent) => void
   onSensorBatch: (event: SensorBatchEvent) => void
+  onPowerStateChange: (event: PowerStateEvent) => void
 }> {
   /** False on a simulator, an old device, or where Play Services is missing. */
   isAvailableAsync(): Promise<boolean>
@@ -58,6 +64,30 @@ declare class HearthMotionModule extends NativeModule<{
   stopSensorsAsync(): Promise<void>
   /** iOS only. Android rejects. */
   getBackgroundRefreshStatusAsync(): Promise<BackgroundRefreshStatus>
+  /** iOS only. Android rejects. */
+  isLowPowerModeAsync(): Promise<boolean>
+  /**
+   * Android only, iOS rejects. True when the person set Hearth's background
+   * usage to Restricted, which stops the location service outright. Always
+   * false below Android 9, where the switch does not exist.
+   */
+  getBackgroundRestrictedAsync(): Promise<boolean>
+  /** Android only, iOS rejects. Battery Saver. */
+  isPowerSaveModeAsync(): Promise<boolean>
+  /**
+   * Android only, iOS rejects. Raises the system's own "let this app ignore
+   * battery optimisation" dialog for this package. Resolves whether the
+   * dialog could be launched at all, not what the person chose; the OS
+   * answers that through the battery optimisation read.
+   */
+  requestIgnoreBatteryOptimizationsAsync(): Promise<boolean>
+  /**
+   * Android only, iOS rejects. Opens the vendor's own autostart or power
+   * manager screen for this make of phone, falling back to Hearth's app
+   * settings page. Resolves "package/class" of the screen that opened,
+   * "app_settings" for the fallback, or null when nothing would open.
+   */
+  openVendorPowerManagerAsync(): Promise<string | null>
 }
 
 export default requireNativeModule<HearthMotionModule>("HearthMotion")

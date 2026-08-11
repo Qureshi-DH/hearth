@@ -64,11 +64,12 @@ public class HearthMotionModule: Module {
   private var latestPressure: Double?
   private var bootEpoch = 0.0
   private var batchTimer: DispatchSourceTimer?
+  private var powerObserver: NSObjectProtocol?
 
   public func definition() -> ModuleDefinition {
     Name("HearthMotion")
 
-    Events("onMotionChange", "onSensorBatch")
+    Events("onMotionChange", "onSensorBatch", "onPowerStateChange")
 
     AsyncFunction("isAvailableAsync") { () -> Bool in
       CMMotionActivityManager.isActivityAvailable()
@@ -157,6 +158,21 @@ public class HearthMotionModule: Module {
       }
     }
 
+    // Low Power Mode turns Background App Refresh off underneath us while
+    // backgroundRefreshStatus keeps reading .available, so it has to be read
+    // from the one place that says.
+    AsyncFunction("isLowPowerModeAsync") { () -> Bool in
+      ProcessInfo.processInfo.isLowPowerModeEnabled
+    }
+
+    OnStartObserving {
+      self.startObservingPower()
+    }
+
+    OnStopObserving {
+      self.stopObservingPower()
+    }
+
     AsyncFunction("startSensorsAsync") { () -> Bool in
       self.startSensors()
     }
@@ -170,7 +186,31 @@ public class HearthMotionModule: Module {
       self.activityTimer?.cancel()
       self.activityTimer = nil
       self.stopSensors()
+      self.stopObservingPower()
     }
+  }
+
+  private func startObservingPower() {
+    guard self.powerObserver == nil else { return }
+    // The notification arrives on a background queue. Queued onto main so
+    // the event goes out the same way every other event here does.
+    self.powerObserver = NotificationCenter.default.addObserver(
+      forName: .NSProcessInfoPowerStateDidChange,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.sendEvent(
+        "onPowerStateChange",
+        ["lowPowerMode": ProcessInfo.processInfo.isLowPowerModeEnabled]
+      )
+    }
+  }
+
+  private func stopObservingPower() {
+    if let observer = self.powerObserver {
+      NotificationCenter.default.removeObserver(observer)
+    }
+    self.powerObserver = nil
   }
 
   /**
