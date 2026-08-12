@@ -248,6 +248,8 @@ export const PRESENCE_ISSUES = [
   "background_refresh",
   "battery_optimisation",
   "low_power_mode",
+  "background_restricted",
+  "service_stopped",
 ] as const
 export type PresenceIssue = (typeof PRESENCE_ISSUES)[number]
 
@@ -260,7 +262,17 @@ export interface DeviceHealth {
   backgroundRefresh?: "available" | "denied" | "restricted"
   /** Android: the app is still subject to battery optimisation. */
   batteryOptimised?: boolean
+  /**
+   * Android: the person set Hearth's background usage to Restricted, which
+   * stops the location service outright. ActivityManager.isBackgroundRestricted.
+   */
+  backgroundRestricted?: boolean
+  /** iOS Low Power Mode, or Android Battery Saver. Both stop background work. */
   lowPowerMode?: boolean
+  /** Build.MANUFACTURER, lowercased, so a viewer can be told which vendor's power manager to look in. */
+  manufacturer?: string
+  /** Android: the location service died without the tracker asking, so the phone or its vendor killed it. */
+  serviceStopped?: boolean
   reportedAt?: string
 }
 

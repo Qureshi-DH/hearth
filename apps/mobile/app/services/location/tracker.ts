@@ -945,6 +945,11 @@ function liveOptions(): Location.LocationTaskOptions {
 /** Android only: the resting request carries the service for one wake's fix. */
 let briefService = false
 
+/** Whether the location service died without being asked to. The tracker owner fills this in. */
+export function serviceDiedUnexpectedly(): boolean {
+  return false
+}
+
 export type ForegroundServiceStatus = "none" | "starting" | "running" | "refused"
 
 /**
