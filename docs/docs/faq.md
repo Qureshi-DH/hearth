@@ -156,6 +156,51 @@ Three other things affect it:
 The single biggest cause of background location dying on Android is the battery
 optimiser, which is why the app asks for an exemption during setup.
 
+## My family member's phone keeps going quiet on Android
+
+Almost always the phone closed Hearth to save battery, and the family is
+looking at the last position it sent before that. Android does this to any
+app that runs in the background, and several makers ship a power manager of
+their own that does it sooner and without asking. Xiaomi, Redmi and POCO,
+Huawei and Honor, OPPO, realme and OnePlus, vivo and iQOO, Samsung, and
+Infinix, Tecno and itel all need settings changed by hand. Pixels and most
+Motorola phones do not.
+
+Open Hearth on that phone and go to _You → Tracking status_. On those makes
+there is a row, _Keep Hearth running in the background_, which opens a page
+with that phone's steps and a button that takes you to the maker's own
+settings. The same page shows whether background use is set to Restricted
+and whether the battery optimiser still applies, which are the two things
+Android will admit to. The short version, per maker:
+
+- **Xiaomi, Redmi, POCO.** Manage apps > Hearth: Autostart on, Battery saver
+  set to No restrictions. Lock Hearth's card in Recents.
+- **Huawei, Honor.** Apps > Hearth > Battery > App launch: turn off Manage
+  automatically and turn on all three switches under it.
+- **OPPO, realme, OnePlus.** App management > Hearth > Battery usage: allow
+  background activity and auto-launch. Battery optimisation: Don't optimise.
+  Turn off Sleep standby optimisation.
+- **vivo, iQOO.** Battery > Background power consumption management: allow
+  Hearth. i Manager > Autostart manager: Hearth on.
+- **Samsung.** Apps > Hearth > Battery: Unrestricted. Battery > Background
+  usage limits: turn off Put unused apps to sleep and add Hearth to Never
+  sleeping apps.
+- **Infinix, Tecno, itel.** Phone Master > Auto-start management: Hearth on.
+  App battery management: allow it in the background.
+- **Everything else.** Settings > Apps > Hearth > Battery: Unrestricted, and
+  leave Battery Saver off or exempt Hearth from it.
+
+The wording moves around between versions, and some of these settings switch
+themselves back after a system update. When a phone goes quiet again, the
+first thing to do is open the same page and check.
+
+The phone reports its own state to the server, so a member whose phone has
+said that Battery Saver is on, that background use is Restricted, or that the
+location service was stopped is shown as that under their name rather than as
+offline. A phone that was closed outright cannot report anything until
+somebody opens Hearth on it again, and that is the one case nothing on the
+server can help with.
+
 ## Does any location data leave my server?
 
 Coordinates never leave it.
