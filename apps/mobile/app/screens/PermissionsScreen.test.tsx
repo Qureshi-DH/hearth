@@ -14,6 +14,9 @@ let mockMotionGate: Promise<void> | null = null
 
 let mockBattery: "exempt" | "optimized" | "n/a" = "n/a"
 let mockRefresh: "available" | "restricted" | "denied" | "n/a" = "available"
+let mockManufacturer: string | null = "google"
+let mockRestricted = false
+let mockLowPower = false
 
 jest.mock("../services/permissions", () => ({
   getPermissionSnapshot: jest.fn(async () => ({
@@ -23,8 +26,16 @@ jest.mock("../services/permissions", () => ({
     notifications: "granted",
     batteryOptimization: mockBattery,
     backgroundRefresh: mockRefresh,
+    backgroundRestricted: mockRestricted,
+    lowPowerMode: mockLowPower,
+    manufacturer: mockManufacturer,
+    serviceStopped: false,
   })),
+  // The real one, because a copy in a mock would be a second list of makes
+  // to keep in step with the first.
+  vendorFor: jest.requireActual("../services/permissions").vendorFor,
   openAppSettings: jest.fn(async () => {}),
+  openBatterySaverSettings: jest.fn(async () => {}),
   openLocationSettings: jest.fn(async () => {}),
   requestBatteryExemption: jest.fn(async () => {}),
   requestNotifications: jest.fn(async () => "granted"),
@@ -110,7 +121,81 @@ describe("PermissionsScreen", () => {
     mockMotionGate = null
     mockBattery = "n/a"
     mockRefresh = "available"
+    mockManufacturer = "google"
+    mockRestricted = false
+    mockLowPower = false
     useSettingsStore.setState({ incidentDetection: false })
+  })
+
+  /** Runs the body on one platform and puts the other back whatever happens. */
+  async function on(platform: "android" | "ios", body: () => Promise<void>) {
+    const { Platform } = require("react-native")
+    const os = Platform.OS
+    Platform.OS = platform
+    try {
+      await body()
+    } finally {
+      Platform.OS = os
+    }
+  }
+
+  it("offers the keep-alive page on a phone whose maker kills background apps", async () => {
+    await on("android", async () => {
+      mockManufacturer = "xiaomi"
+      const { getByText, getAllByText } = await renderScreen()
+
+      expect(getByText("permissions:keepAliveTitle")).toBeTruthy()
+      // Nothing can read the vendor's switches, so it is a Check like Wi-Fi,
+      // and a Check does not keep the checklist from reading Done.
+      expect(getAllByText("permissions:stateInfo")).toHaveLength(2)
+      await act(async () => {
+        fireEvent.press(getByText(/permissions:keepAliveOpen/))
+      })
+      expect(navigation.navigate).toHaveBeenCalledWith("KeepAlive")
+    })
+  })
+
+  it("shows the keep-alive row as Off when background usage is Restricted, whatever the maker", async () => {
+    await on("android", async () => {
+      mockRestricted = true
+      const { getByText, queryByText } = await renderScreen()
+
+      expect(getByText("permissions:keepAliveTitle")).toBeTruthy()
+      expect(getByText("permissions:restrictedBody")).toBeTruthy()
+      expect(getByText("permissions:stateBlocked")).toBeTruthy()
+      expect(queryByText("common:done")).toBeNull()
+    })
+  })
+
+  it("leaves the keep-alive row out on a phone that leaves apps alone", async () => {
+    await on("android", async () => {
+      const { queryByText } = await renderScreen()
+      expect(queryByText("permissions:keepAliveTitle")).toBeNull()
+    })
+  })
+
+  it("names Battery Saver only while it is on", async () => {
+    await on("android", async () => {
+      const off = await renderScreen()
+      expect(off.queryByText("permissions:batterySaverTitle")).toBeNull()
+      off.unmount()
+
+      mockLowPower = true
+      const { getByText, queryByText } = await renderScreen()
+      expect(getByText("permissions:batterySaverTitle")).toBeTruthy()
+      expect(getByText("permissions:stateBlocked")).toBeTruthy()
+      expect(queryByText("common:done")).toBeNull()
+    })
+  })
+
+  it("calls it Low Power Mode on an iPhone", async () => {
+    await on("ios", async () => {
+      mockLowPower = true
+      const { getByText, queryByText } = await renderScreen()
+      expect(getByText("permissions:lowPowerTitle")).toBeTruthy()
+      expect(queryByText("permissions:batterySaverTitle")).toBeNull()
+      expect(queryByText("permissions:keepAliveTitle")).toBeNull()
+    })
   })
 
   // The row used to read "On" with a Review link beside it once the exemption
