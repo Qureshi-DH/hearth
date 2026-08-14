@@ -123,7 +123,7 @@ export function App() {
         void refreshLocationStatus().then(() => reportHealth())
         // The app open is a moment Android allows the location service to
         // start, and a journey that began while it was refused is waiting.
-        void reassertService()
+        void reassertService({ exempt: true })
         stopBackgroundClock()
         startForegroundHeartbeat()
       } else {

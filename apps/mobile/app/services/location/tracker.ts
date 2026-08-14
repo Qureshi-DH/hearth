@@ -874,7 +874,7 @@ TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
   // the moment Android allows the start, and nothing more: the anchor by
   // now is a moving stretch, not a parking spot, and must not be parked at.
   if (mode !== "stationary") {
-    if (mode === "moving") await reassertService()
+    if (mode === "moving") await reassertService({ exempt: true })
     return
   }
   // The exit is the moment Android allows the service to start, so the
@@ -1194,11 +1194,15 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
  * which iOS reports minutes late and not at all with Background App Refresh
  * off, was the only way back.
  */
-function restingOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
+function restingOptions(): Location.LocationTaskOptions {
   if (Platform.OS === "ios") {
     return {
       accuracy: Location.Accuracy.Lowest,
-      distanceInterval: stationaryRadiusMeters(policy),
+      // No distance filter on purpose: a low accuracy session with one is
+      // the shape iOS 16.4 and later suspend once significant-change
+      // monitoring is on, and expo-location always adds that. Cell fixes
+      // change rarely, and restingFixes uploads one a quarter hour anyway.
+      distanceInterval: 0,
       // A paused manager suspends the app with it, and nothing would wake it
       // short of the fence.
       pausesUpdatesAutomatically: false,
@@ -1232,9 +1236,15 @@ function currentOptions(): Location.LocationTaskOptions | null {
   // live at Wi-Fi grade: it is not going anywhere, and the point is that
   // the page hears from it every few seconds rather than once.
   if (watchedNow()) {
-    return liveOptions(mode === "stationary" ? Location.Accuracy.Balanced : Location.Accuracy.High)
+    // Wi-Fi grade on Android only. On iOS a low accuracy session with the
+    // live distance filter is the shape the OS suspends, see restingOptions.
+    return liveOptions(
+      mode === "stationary" && Platform.OS === "android"
+        ? Location.Accuracy.Balanced
+        : Location.Accuracy.High,
+    )
   }
-  if (mode === "stationary") return restingOptions(policy)
+  if (mode === "stationary") return restingOptions()
   if (driving) return drivingOptions(driving.distance)
   return updateOptions(policy)
 }
@@ -1345,15 +1355,35 @@ function applyRegistration(): Promise<ForegroundServiceStatus> {
  * and app open in between. It re-asserts the request the tracker already
  * believes in, and only when the service is wanted and missing.
  */
-export async function reassertService(): Promise<void> {
+const REASSERT_REFUSED_BACKOFF_MS = 10 * 60 * 1000
+
+export async function reassertService({
+  exempt = false,
+}: { exempt?: boolean } = {}): Promise<void> {
   if (Platform.OS !== "android") return
   const { enabled, mode } = useTrackingStore.getState()
   if (!enabled || mode === "off") return
   const before = await foregroundServiceStatus()
   if (before !== "refused" && before !== "none") return
   if (before === "none") noteServiceDied()
+  // Re-registering the request hands back the fix the OS already had, which
+  // is another delivery, and a delivery is not a moment Android allows the
+  // start. Trying on every one would spin until something else let it
+  // through. The moments it does allow are tried at once.
+  const refusedAt = useTrackingStore.getState().serviceRefusedAt
+  if (
+    before === "refused" &&
+    !exempt &&
+    refusedAt != null &&
+    Date.now() - Date.parse(refusedAt) < REASSERT_REFUSED_BACKOFF_MS
+  ) {
+    return
+  }
   const after = await applyRegistration().catch(() => "refused" as const)
-  logTracker("reassert", { before, after })
+  useTrackingStore
+    .getState()
+    .setServiceRefusedAt(after === "refused" ? new Date().toISOString() : null)
+  logTracker("reassert", { before, after, exempt })
   // The fence the refusal left armed has done its job once the service is up.
   if (after !== "refused" && after !== "none" && useTrackingStore.getState().mode === "moving") {
     await dropFence()
@@ -1448,7 +1478,7 @@ export async function wakeFix(): Promise<LocationFixInput | null> {
   const { enabled, mode } = useTrackingStore.getState()
   if (!enabled || mode === "off") return null
   logTracker("wake", { mode })
-  await reassertService()
+  await reassertService({ exempt: true })
   return reportNow("nudge", Location.Accuracy.Balanced)
 }
 
@@ -1534,7 +1564,7 @@ async function onMotion(
   if (activity === "unknown") return
 
   // A transition is the exempt moment Android names for a service start.
-  if (source === "transition") await reassertService()
+  if (source === "transition") await reassertService({ exempt: true })
 
   if (activity === "automotive") {
     store.setMotionStillSince(null)
@@ -1721,7 +1751,11 @@ async function settle(lat: number, lon: number, parkFix: ParkFix): Promise<void>
     ])
   } catch {
     // With nothing armed to wake us there would be no way back, so it is safer
-    // to keep the full tier than to go silent.
+    // to keep the full tier than to go silent. The anchor is re-dated so the
+    // phone sits still for the whole window again before the next attempt:
+    // a permission short of Always throws here every time, and retrying on
+    // the next fix would spend a fix and an upload per delivery.
+    store.setStillAnchor({ lat, lon, since: new Date().toISOString() })
     await enterMoving()
     return
   }
@@ -1870,8 +1904,11 @@ export async function refreshLocationStatus(): Promise<{
   store.setServicesEnabled(servicesEnabled)
 
   // Keeping a dead foreground service alive would show a notification claiming
-  // to share a position we cannot get.
-  if (store.enabled && store.mode !== "off" && (permission === "denied" || !servicesEnabled)) {
+  // to share a position we cannot get, and a phone allowed only "while
+  // using" cannot arm a fence or run in the background at all: it reports
+  // from the foreground heartbeat until Always is granted, as startTracking
+  // already decides.
+  if (store.enabled && store.mode !== "off" && (permission !== "always" || !servicesEnabled)) {
     await stopTracking()
   }
 

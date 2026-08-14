@@ -67,6 +67,8 @@ interface TrackingState {
   motionStillSince: number | null
   /** When the Android foreground service was last found down without the app stopping it. */
   serviceStoppedAt: string | null
+  /** When Android last refused to start the service, so deliveries do not retry it in a loop. */
+  serviceRefusedAt: string | null
   lastFix: LocationFixInput | null
   lastUploadAt: string | null
   lastError: string | null
@@ -88,6 +90,7 @@ interface TrackingState {
   setLastVerdict(verdict: MotionActivity | null): void
   setMotionStillSince(since: number | null): void
   setServiceStoppedAt(at: string | null): void
+  setServiceRefusedAt(at: string | null): void
   enqueue(fixes: LocationFixInput[]): void
   dequeue(fixes: LocationFixInput[]): void
   recordUpload(accepted: number): void
@@ -275,6 +278,7 @@ export const useTrackingStore = create<TrackingState>()(
       lastVerdict: null,
       motionStillSince: null,
       serviceStoppedAt: null,
+      serviceRefusedAt: null,
       lastFix: restored.lastFix,
       lastUploadAt: null,
       lastError: null,
@@ -295,6 +299,7 @@ export const useTrackingStore = create<TrackingState>()(
       setLastVerdict: (lastVerdict) => set({ lastVerdict }),
       setMotionStillSince: (motionStillSince) => set({ motionStillSince }),
       setServiceStoppedAt: (serviceStoppedAt) => set({ serviceStoppedAt }),
+      setServiceRefusedAt: (serviceRefusedAt) => set({ serviceRefusedAt }),
       enqueue: (fixes) => {
         const lastFix = fixes[fixes.length - 1] ?? get().lastFix
         set({ queue: pushFixes(fixes, lastFix), lastFix })
@@ -325,6 +330,7 @@ export const useTrackingStore = create<TrackingState>()(
           lastVerdict: null,
           motionStillSince: null,
           serviceStoppedAt: null,
+          serviceRefusedAt: null,
           lastFix: null,
           lastUploadAt: null,
           lastError: null,
@@ -350,6 +356,7 @@ export const useTrackingStore = create<TrackingState>()(
         lastVerdict: state.lastVerdict,
         motionStillSince: state.motionStillSince,
         serviceStoppedAt: state.serviceStoppedAt,
+        serviceRefusedAt: state.serviceRefusedAt,
         lastUploadAt: state.lastUploadAt,
       }),
       // v2 put the motion permission on the setup checklist. The checklist only

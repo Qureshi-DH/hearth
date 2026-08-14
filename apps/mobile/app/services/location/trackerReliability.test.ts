@@ -14,6 +14,7 @@ import {
   enterMoving,
   enterStationary,
   enterWatched,
+  refreshLocationStatus,
   flush,
   headerForTrackerLog,
   ingest,
@@ -274,21 +275,44 @@ describe("the Android foreground service", () => {
     expect(lastOptions().foregroundService).toBeDefined()
   })
 
-  it("tries again on every delivery while the service is refused, and stops once it is up", async () => {
+  it("tries once per ten minutes on deliveries while refused, since a re-register re-delivers", async () => {
     await enterMoving()
     mockServiceStatus = "refused"
-    start.mockClear()
+    clearTrackerLog()
     const deliver = () =>
       taskBodies.get(BACKGROUND_LOCATION_TASK)!({
         data: { locations: [at(HOME.lat, HOME.lon, Date.now())] },
         error: null,
       })
+    const reasserts = () => readTrackerLog().filter((entry) => entry.what === "reassert").length
     await deliver()
-    expect(start).toHaveBeenCalledTimes(1)
+    expect(reasserts()).toBe(1)
+    // A fresh request hands back the fix it already had, which is another
+    // delivery. Trying again on it would spin until Android relented.
+    await deliver()
+    await deliver()
+    expect(reasserts()).toBe(1)
+    await jest.advanceTimersByTimeAsync(10 * 60_000 + 1)
+    await deliver()
+    expect(reasserts()).toBe(2)
     mockServiceStatus = "running"
-    start.mockClear()
     await deliver()
-    expect(start).not.toHaveBeenCalled()
+    expect(reasserts()).toBe(2)
+  })
+
+  it("tries at once on a transition even inside the backoff, since Android allows that start", async () => {
+    await startTracking()
+    await enterMoving()
+    mockServiceStatus = "refused"
+    start.mockClear()
+    await taskBodies.get(BACKGROUND_LOCATION_TASK)!({
+      data: { locations: [at(HOME.lat, HOME.lon, Date.now())] },
+      error: null,
+    })
+    expect(start).toHaveBeenCalledTimes(1)
+    classifier()("walking", 90, "transition")
+    await jest.advanceTimersByTimeAsync(0)
+    expect(start).toHaveBeenCalledTimes(2)
   })
 
   it("tries again on an activity transition, which is a moment Android allows the start", async () => {
@@ -328,6 +352,37 @@ describe("the Android foreground service", () => {
     await reassertService()
     expect(start).not.toHaveBeenCalled()
     expect(serviceDiedUnexpectedly()).toBe(false)
+  })
+})
+
+describe("a stop the phone cannot arm", () => {
+  it("is not tried again on the next delivery when the fence cannot be set", async () => {
+    await enterMoving()
+    const fence = Location.startGeofencingAsync as unknown as jest.Mock
+    fence.mockRejectedValueOnce(new Error("background location not granted"))
+    const before = Date.now()
+    await enterStationary(HOME.lat, HOME.lon)
+    expect(useTrackingStore.getState().mode).toBe("moving")
+    // The anchor is re-dated, so the phone has to sit still for the full
+    // window again before it tries to park, rather than on the next fix.
+    const anchor = useTrackingStore.getState().stillAnchor
+    expect(anchor).not.toBeNull()
+    expect(Date.parse(anchor!.since)).toBeGreaterThanOrEqual(before)
+    fence.mockClear()
+    await taskBodies.get(BACKGROUND_LOCATION_TASK)!({
+      data: { locations: [at(HOME.lat, HOME.lon, Date.now())] },
+      error: null,
+    })
+    expect(fence).not.toHaveBeenCalled()
+  })
+
+  it("stops the background tiers when the permission drops to while-using", async () => {
+    await enterMoving()
+    ;(Location.getBackgroundPermissionsAsync as unknown as jest.Mock).mockResolvedValueOnce({
+      status: "denied",
+    })
+    await refreshLocationStatus()
+    expect(useTrackingStore.getState().mode).toBe("off")
   })
 })
 
@@ -399,19 +454,27 @@ describe("a parked iPhone", () => {
     Platform.OS = "ios"
   })
 
-  it("keeps a cell-only session with the fence radius as its filter", async () => {
+  it("keeps a cell-only session with no distance filter, the shape iOS does not suspend", async () => {
     await enterMoving()
     start.mockClear()
     await enterStationary(HOME.lat, HOME.lon)
     expect(stop).not.toHaveBeenCalled()
     expect(lastOptions()).toMatchObject({
       accuracy: Location.Accuracy.Lowest,
-      distanceInterval: 200,
+      distanceInterval: 0,
       pausesUpdatesAutomatically: false,
       activityType: Location.ActivityType.Other,
       showsBackgroundLocationIndicator: false,
     })
     expect(Location.startGeofencingAsync).toHaveBeenCalled()
+  })
+
+  it("goes live at full accuracy when watched while parked, never a filtered low one", async () => {
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    start.mockClear()
+    await enterWatched(600)
+    expect(lastOptions().accuracy).toBe(Location.Accuracy.High)
   })
 
   it("says it is still there every quarter hour from the fix the OS already has", async () => {

@@ -196,7 +196,7 @@ TaskManager.defineTask(NOTIFICATION_WAKE_TASK, async ({ data, error }) => {
   // service start from the background. A phone whose journey began at a
   // moment Android refused has been on throttled fixes since, and this is
   // where the service comes back. The service first, while the moment lasts.
-  await reassertService()
+  await reassertService({ exempt: true })
   await wakeFix()
 })
 

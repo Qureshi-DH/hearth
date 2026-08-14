@@ -99,6 +99,13 @@ the feed cursor changed shape.
 
 ### Added
 
+- A phone Android will not let start its service is retried at the moments
+  Android allows (a transition, a fence exit, a push, the app opening) and
+  otherwise once per ten minutes, since re-registering hands back the fix
+  the OS already had and retrying on that spun. A stop the phone cannot arm,
+  because its permission dropped to "while using", is not retried on the next
+  fix, and the checklist takes over. A parked iPhone's session carries no
+  distance filter, the shape iOS 16.4 and later suspend.
 - Live. A member's profile offers a Live button while their phone says they
   are on the move. It follows them on the map at the zoom you choose, shows
   the speed they are doing and the street they are on, and draws the trail

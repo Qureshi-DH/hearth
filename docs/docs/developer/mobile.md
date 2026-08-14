@@ -270,11 +270,16 @@ rule to a phone sitting at home.
 
 On Android the parked request is `Balanced` with one fix wanted a quarter
 hour, under the same foreground service as every other tier. On iOS it is a
-cell-only session (`Accuracy.Lowest`) with the fence radius as its distance
-filter: it costs almost nothing, it keeps the process alive so the
-tracker's own timer can send a `still` fix every quarter hour from the fix
-the OS already has, and a departure is seen by the session's own filter
-rather than at the fence's leisure. The 200 m fence stays as a third signal.
+cell-only session (`Accuracy.Lowest`) with no distance filter, because a low
+accuracy session with one is the shape iOS 16.4 and later suspend once
+significant-change monitoring is on, and expo-location always adds that. It
+costs almost nothing, it keeps the process alive so the tracker's own timer
+can send a `still` fix every quarter hour from the fix the OS already has,
+and a departure is seen by the session's own fixes rather than at the
+fence's leisure. The 200 m fence stays as a third signal. Whether a parked
+iPhone stays resident with this shape has not yet been confirmed on a
+device: the tracker log's `heartbeat` lines over a parked hour are the
+check.
 A parked iPhone used to run no session at all and was suspended within
 seconds: the arrival fix went with it, there was no heartbeat, and the fence,
 which iOS reports minutes late and not at all with Background App Refresh
