@@ -6,6 +6,8 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-14
+
 Why the family's phones went silent, taken apart and put back. Servers must
 update before phones: the app reads `pushed` and `lastHeardAt` off the watch
 reply, and the batch route now records every upload.
