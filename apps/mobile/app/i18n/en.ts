@@ -118,6 +118,60 @@ const en = {
     stateTodo: "Needed",
     stateBlocked: "Off",
     stateInfo: "Check",
+    keepAliveTitle: "Keep Hearth running in the background",
+    keepAliveBody:
+      "Phones from this maker close background apps unless you tell them not to. A few settings keep Hearth alive when the screen is off.",
+    restrictedBody:
+      "Background use is set to Restricted for Hearth, so the phone stops it as soon as the screen goes off and nobody can see where you are.",
+    keepAliveOpen: "Show me how",
+    batterySaverTitle: "Battery Saver is on",
+    batterySaverBody:
+      "Battery Saver stops apps from using location in the background. Your position will not update until it is off, or Hearth is exempted from it.",
+    lowPowerTitle: "Low Power Mode is on",
+    lowPowerBody:
+      "Low Power Mode switches off Background App Refresh, so iOS cannot wake Hearth when you move. Your family sees where you were, not where you are.",
+    openBatterySettings: "Open battery settings",
+  },
+  keepAlive: {
+    title: "Keep Hearth running",
+    intro:
+      "Hearth has to keep running while the screen is off, so it can send your location as you move. Android treats an app that does that as one to close, and some makers go much further than Android itself. None of them ask first. The app just stops, and your family sees where you were an hour ago.",
+    status: "On this phone right now",
+    restrictedNow:
+      "Background use is Restricted. Hearth cannot run while the screen is off until this is set to Unrestricted.",
+    restrictedClear: "Background use is not restricted.",
+    optimisedNow: "Battery optimisation still applies to Hearth.",
+    exemptDone: "Hearth is exempt from battery optimisation.",
+    exempt: "Exempt Hearth",
+    openAppSettings: "Open Hearth's app settings",
+    openVendor: "Open the phone's settings for this",
+    stepsHint: "The wording changes between versions of the software. Look for the closest match.",
+    reverts:
+      "These settings can switch themselves back after a system update. If Hearth goes quiet again, check them again.",
+    genericTitle: "On this phone",
+    genericSteps:
+      "Settings > Apps > Hearth > Battery: choose Unrestricted.\nSettings > Battery > Battery Saver: keep it off, or add Hearth to the apps it leaves alone.\nDo not tap Stop on Hearth in the notification shade or under Active apps. That closes it until you open it again.",
+    xiaomiTitle: "On Xiaomi, Redmi and POCO",
+    xiaomiSteps:
+      "Settings > Apps > Manage apps > Hearth > Autostart: turn it on.\nSettings > Apps > Manage apps > Hearth > Battery saver: choose No restrictions.\nOpen Recents, hold Hearth's card and tap the lock so it is never cleared.\nSettings > Battery: keep Battery saver off, or exempt Hearth in its app list.",
+    huaweiTitle: "On Huawei and Honor",
+    huaweiSteps:
+      "Settings > Apps > Apps > Hearth > Battery > App launch: turn off Manage automatically, then turn on Auto-launch, Secondary launch and Run in background.\nSettings > Battery > More battery settings: turn off Power-intensive prompt. On older phones open Phone Manager > Protected apps and add Hearth.\nOpen Recents and lock Hearth's card.",
+    oppoTitle: "On OPPO, realme and OnePlus",
+    oppoSteps:
+      "Settings > Apps > App management > Hearth > Battery usage: allow background activity and auto-launch.\nSettings > Battery > Battery optimisation > Hearth: Don't optimise.\nSettings > Battery > More settings: turn off Sleep standby optimisation. On OnePlus this is called Advanced optimisation.\nOpen Recents, tap the menu on Hearth's card and choose Lock.",
+    vivoTitle: "On vivo and iQOO",
+    vivoSteps:
+      "Settings > Battery > Background power consumption management > Hearth: allow.\ni Manager > App manager > Autostart manager: turn Hearth on. On some versions it is under Settings > More settings > Applications > Autostart.\nOpen Recents, pull Hearth's card down and tap the lock.",
+    samsungTitle: "On Samsung",
+    samsungSteps:
+      "Settings > Apps > Hearth > Battery: choose Unrestricted.\nSettings > Battery and device care > Battery > Background usage limits: turn off Put unused apps to sleep, and add Hearth to Never sleeping apps.\nOn the same page check Sleeping apps and Deep sleeping apps, and remove Hearth if it is there.\nSettings > Battery > More battery settings: turn off Adaptive battery if Hearth still stops.",
+    transsionTitle: "On Infinix, Tecno and itel",
+    transsionSteps:
+      "Phone Master > Auto-start management: turn Hearth on. Older phones call it Phone Manager.\nPhone Master > Power saving > App battery management: allow Hearth in the background.\nSettings > Apps > Hearth > Battery: choose Unrestricted.\nOpen Recents and tap the lock on Hearth's card.",
+    asusTitle: "On ASUS",
+    asusSteps:
+      "Mobile Manager > PowerMaster > Auto-start manager: allow Hearth.\nMobile Manager > PowerMaster > Battery-saving options: turn off Clean up in suspend and Auto-deny apps from auto starting.\nSettings > Apps > Hearth > Battery: choose Unrestricted.",
   },
   circles: {
     empty: "You're not in a circle yet",

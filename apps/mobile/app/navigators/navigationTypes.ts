@@ -20,6 +20,7 @@ export type AppStackParamList = {
   Login: undefined
   Register: { inviteCode?: string } | undefined
   Permissions: undefined
+  KeepAlive: undefined
   // Main
   Main: NavigatorScreenParams<MainTabParamList> | undefined
   CreateCircle: undefined

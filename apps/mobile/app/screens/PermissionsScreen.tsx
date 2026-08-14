@@ -15,9 +15,11 @@ import { ensureMotionPermission, motionPermission } from "@/services/location/mo
 import {
   getPermissionSnapshot,
   openAppSettings,
+  openBatterySaverSettings,
   openLocationSettings,
   requestBatteryExemption,
   requestNotifications,
+  vendorFor,
   type PermissionSnapshot,
 } from "@/services/permissions"
 import { useSettingsStore } from "@/stores/settings"
@@ -274,6 +276,54 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
                     : { label: translate("permissions:openSettings"), onPress: openAppSettings },
               },
             ]) as Item[]),
+        // The vendor's own kill switch, which nothing can read back, so it is
+        // a Check like Wi-Fi. The one part the OS does read back, background
+        // usage set to Restricted, turns the same row into an Off.
+        ...((Platform.OS === "android" &&
+        (snapshot.backgroundRestricted || vendorFor(snapshot.manufacturer) !== null)
+          ? [
+              {
+                key: "keepAlive",
+                icon: "power" as IoniconName,
+                title: translate("permissions:keepAliveTitle"),
+                body: translate(
+                  snapshot.backgroundRestricted
+                    ? "permissions:restrictedBody"
+                    : "permissions:keepAliveBody",
+                ),
+                state: (snapshot.backgroundRestricted ? "blocked" : "info") as ItemState,
+                action: {
+                  label: translate("permissions:keepAliveOpen"),
+                  onPress: () => navigation.navigate("KeepAlive"),
+                },
+              },
+            ]
+          : []) as Item[]),
+        // Only while it is on. A row that said "off, good" would be one more
+        // thing to read on a list that is already long.
+        ...((snapshot.lowPowerMode
+          ? [
+              {
+                key: "power",
+                icon: "flash-off" as IoniconName,
+                title: translate(
+                  Platform.OS === "android"
+                    ? "permissions:batterySaverTitle"
+                    : "permissions:lowPowerTitle",
+                ),
+                body: translate(
+                  Platform.OS === "android"
+                    ? "permissions:batterySaverBody"
+                    : "permissions:lowPowerBody",
+                ),
+                state: "blocked" as ItemState,
+                action: {
+                  label: translate("permissions:openBatterySettings"),
+                  onPress: openBatterySaverSettings,
+                },
+              },
+            ]
+          : []) as Item[]),
       ]
     : []
 

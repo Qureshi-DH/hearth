@@ -1,12 +1,16 @@
 package expo.modules.hearthmotion
 
 import android.Manifest
+import android.app.ActivityManager
 import android.app.PendingIntent
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -15,7 +19,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.google.android.gms.common.ConnectionResult
@@ -123,6 +129,7 @@ class HearthMotionModule : Module() {
   private var receiver: BroadcastReceiver? = null
   private var pendingIntent: PendingIntent? = null
   private var transitionIntent: PendingIntent? = null
+  private var powerReceiver: BroadcastReceiver? = null
 
   private var sensors: SensorManager? = null
   /** Read by the flush on the main looper, cleared by whichever thread stops us. */
@@ -150,9 +157,21 @@ class HearthMotionModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("HearthMotion")
 
-    Events("onMotionChange", "onSensorBatch")
+    Events("onMotionChange", "onSensorBatch", "onPowerStateChange")
 
     AsyncFunction("isAvailableAsync") { playServicesReady() }
+
+    AsyncFunction("getBackgroundRestrictedAsync") { backgroundRestricted() }
+
+    AsyncFunction("isPowerSaveModeAsync") { powerSaveMode() }
+
+    AsyncFunction("requestIgnoreBatteryOptimizationsAsync") { requestIgnoreBatteryOptimizations() }
+
+    AsyncFunction("openVendorPowerManagerAsync") { openVendorPowerManager() }
+
+    OnStartObserving { startObservingPower() }
+
+    OnStopObserving { stopObservingPower() }
 
     AsyncFunction("getPermissionAsync") { permissionState() }
 
@@ -169,6 +188,100 @@ class HearthMotionModule : Module() {
     OnDestroy {
       stopUpdates()
       stopSensors()
+      stopObservingPower()
+    }
+  }
+
+  private fun backgroundRestricted(): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
+    val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+    return manager?.isBackgroundRestricted ?: false
+  }
+
+  private fun powerSaveMode(): Boolean {
+    val manager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    return manager?.isPowerSaveMode ?: false
+  }
+
+  private fun startObservingPower() {
+    if (powerReceiver != null) return
+    val listener =
+      object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+          if (intent?.action != PowerManager.ACTION_POWER_SAVE_MODE_CHANGED) return
+          sendEvent("onPowerStateChange", mapOf("lowPowerMode" to powerSaveMode()))
+        }
+      }
+    // Exported, because the sender is the system and not this app. The action
+    // is a protected broadcast, so nothing else can send it anyway.
+    ContextCompat.registerReceiver(
+      context,
+      listener,
+      IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED),
+      ContextCompat.RECEIVER_EXPORTED,
+    )
+    powerReceiver = listener
+  }
+
+  private fun stopObservingPower() {
+    powerReceiver?.let { registered -> runCatching { context.unregisterReceiver(registered) } }
+    powerReceiver = null
+  }
+
+  /**
+   * The system's own exemption dialog, which Play allows a family safety app
+   * to raise directly. Whether it opened is all this can say; the person's
+   * answer is read back from PowerManager by the checklist.
+   */
+  private fun requestIgnoreBatteryOptimizations(): Boolean {
+    val intent =
+      Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+        .setData(Uri.parse("package:${context.packageName}"))
+    return launch(intent)
+  }
+
+  /**
+   * Tries each screen the vendor is known to keep its kill switch on, in the
+   * order the newer ones come first, and falls back to Hearth's own app
+   * settings page, which on every Android has the Battery > Unrestricted
+   * toggle. Returns what opened so the log can say which one this phone has.
+   */
+  private fun openVendorPowerManager(): String? {
+    val make = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
+    for (target in VENDOR_TARGETS) {
+      if (target.makes.none { make.contains(it) }) continue
+      val intent = Intent().setComponent(ComponentName(target.pkg, target.cls))
+      target.extras(intent, context)
+      if (launch(intent)) return "${target.pkg}/${target.cls}"
+    }
+    val details =
+      Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+        .setData(Uri.parse("package:${context.packageName}"))
+    return if (launch(details)) "app_settings" else null
+  }
+
+  /**
+   * Started from the Activity where there is one, as a new task otherwise.
+   * Nothing is resolved first: on Android 11 and later resolveActivity only
+   * sees packages declared in <queries>, and starting an activity needs no
+   * such declaration. A vendor screen that is not there throws, and a ROM
+   * that has locked its screen away throws SecurityException, so both read
+   * as "try the next one".
+   */
+  private fun launch(intent: Intent): Boolean {
+    val activity = appContext.currentActivity
+    return try {
+      if (activity != null) {
+        activity.startActivity(intent)
+      } else {
+        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+      }
+      true
+    } catch (e: ActivityNotFoundException) {
+      false
+    } catch (e: SecurityException) {
+      Log.i(TAG, "not allowed to open ${intent.component ?: intent.action}: ${e.message}")
+      false
     }
   }
 
@@ -481,6 +594,159 @@ class HearthMotionModule : Module() {
     return sqrt(x * x + y * y + z * z)
   }
 }
+
+/**
+ * One screen where a vendor keeps its background kill switch. `makes` are
+ * matched against Build.MANUFACTURER and Build.BRAND, lowercased, because
+ * Redmi and POCO report Xiaomi as the manufacturer and only the brand says
+ * which they are.
+ */
+private class VendorTarget(
+  val makes: List<String>,
+  val pkg: String,
+  val cls: String,
+  val extras: (Intent, Context) -> Unit = { _, _ -> },
+)
+
+private val XIAOMI = listOf("xiaomi", "redmi", "poco")
+private val HUAWEI = listOf("huawei", "honor")
+private val OPPO = listOf("oppo", "realme", "oneplus")
+private val VIVO = listOf("vivo", "iqoo")
+private val SAMSUNG = listOf("samsung")
+private val TRANSSION = listOf("infinix", "tecno", "itel", "transsion")
+private val ASUS = listOf("asus")
+
+/**
+ * The component names transistorsoft's DeviceSettings and the AutoStarter
+ * library open, current as of 2025. They cannot be verified without each
+ * handset in hand, which is why every one is tried in turn and the app's own
+ * settings page is the floor.
+ */
+private val VENDOR_TARGETS =
+  listOf(
+    VendorTarget(
+      XIAOMI,
+      "com.miui.securitycenter",
+      "com.miui.permcenter.autostart.AutoStartManagementActivity",
+    ),
+    VendorTarget(
+      XIAOMI,
+      "com.miui.powerkeeper",
+      "com.miui.powerkeeper.ui.HiddenAppsConfigActivity",
+    ) { intent, context ->
+      // PowerKeeper opens on this app's own page only when told which app.
+      intent.putExtra("package_name", context.packageName)
+      intent.putExtra(
+        "package_label",
+        context.applicationInfo.loadLabel(context.packageManager).toString(),
+      )
+    },
+    VendorTarget(
+      HUAWEI,
+      "com.huawei.systemmanager",
+      "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+    ),
+    VendorTarget(
+      HUAWEI,
+      "com.huawei.systemmanager",
+      "com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity",
+    ),
+    VendorTarget(
+      HUAWEI,
+      "com.huawei.systemmanager",
+      "com.huawei.systemmanager.optimize.process.ProtectActivity",
+    ),
+    VendorTarget(
+      HUAWEI,
+      "com.hihonor.systemmanager",
+      "com.hihonor.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+    ),
+    VendorTarget(
+      HUAWEI,
+      "com.hihonor.systemmanager",
+      "com.hihonor.systemmanager.appcontrol.activity.StartupAppControlActivity",
+    ),
+    VendorTarget(
+      OPPO,
+      "com.coloros.safecenter",
+      "com.coloros.safecenter.permission.startup.StartupAppListActivity",
+    ),
+    VendorTarget(
+      OPPO,
+      "com.coloros.safecenter",
+      "com.coloros.safecenter.startupapp.StartupAppListActivity",
+    ),
+    VendorTarget(OPPO, "com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"),
+    VendorTarget(
+      OPPO,
+      "com.coloros.oppoguardelf",
+      "com.coloros.powermanager.fuelgaue.PowerUsageModelActivity",
+    ),
+    VendorTarget(
+      OPPO,
+      "com.coloros.oppoguardelf",
+      "com.coloros.powermanager.fuelgaue.PowerConsumptionActivity",
+    ),
+    VendorTarget(
+      OPPO,
+      "com.oneplus.security",
+      "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity",
+    ),
+    VendorTarget(
+      VIVO,
+      "com.vivo.permissionmanager",
+      "com.vivo.permissionmanager.activity.BgStartUpManagerActivity",
+    ),
+    VendorTarget(VIVO, "com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager"),
+    VendorTarget(VIVO, "com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"),
+    VendorTarget(
+      VIVO,
+      "com.vivo.abe",
+      "com.vivo.applicationbehaviorengine.ui.ExcessivePowerManagerActivity",
+    ),
+    VendorTarget(
+      SAMSUNG,
+      "com.samsung.android.lool",
+      "com.samsung.android.sm.battery.ui.usage.CheckableAppListActivity",
+    ),
+    VendorTarget(
+      SAMSUNG,
+      "com.samsung.android.lool",
+      "com.samsung.android.sm.battery.ui.BatteryActivity",
+    ),
+    VendorTarget(
+      SAMSUNG,
+      "com.samsung.android.lool",
+      "com.samsung.android.sm.ui.battery.BatteryActivity",
+    ),
+    VendorTarget(
+      SAMSUNG,
+      "com.samsung.android.sm_cn",
+      "com.samsung.android.sm.ui.battery.BatteryActivity",
+    ),
+    VendorTarget(
+      SAMSUNG,
+      "com.samsung.android.sm",
+      "com.samsung.android.sm.ui.battery.BatteryActivity",
+    ),
+    VendorTarget(
+      TRANSSION,
+      "com.transsion.phonemanager",
+      "com.itel.autobootmanager.activity.AutoBootMgrActivity",
+    ),
+    VendorTarget(
+      TRANSSION,
+      "com.transsion.phonemaster",
+      "com.cyin.himgr.autostart.AutoStartActivity",
+    ),
+    VendorTarget(ASUS, "com.asus.mobilemanager", "com.asus.mobilemanager.powersaver.PowerSaverSettings"),
+    VendorTarget(ASUS, "com.asus.mobilemanager", "com.asus.mobilemanager.autostart.AutoStartActivity"),
+    VendorTarget(ASUS, "com.asus.mobilemanager", "com.asus.mobilemanager.entry.FunctionActivity") {
+      intent,
+      _ ->
+      intent.putExtra("showNotice", true)
+    },
+  )
 
 /**
  * How long the hub may sit on a sensor's readings before handing them over.

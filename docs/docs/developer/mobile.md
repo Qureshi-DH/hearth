@@ -108,6 +108,42 @@ of any kind. The photo library is reached through the system picker, which hands
 back the one file you chose rather than access to the album. Motion is there to
 let the GPS sleep, never to collect a fitness feed.
 
+### The keep-alive checklist
+
+Android closes apps that run in the background, and Xiaomi, Huawei, OPPO,
+vivo, Samsung, Transsion (Infinix, Tecno, itel) and ASUS each ship a power
+manager of their own that closes them sooner and without asking. Nothing in
+the platform can read those switches back, so the checklist works from the
+make. `vendorFor()` in `services/permissions.ts` maps `Build.MANUFACTURER`
+onto those seven groups, and on any of them the checklist shows a row, _Keep
+Hearth running in the background_, as a Check. The one thing the OS does read
+back is the person setting Hearth's background usage to Restricted
+(`ActivityManager.isBackgroundRestricted`), and that turns the same row into
+an Off on any Android, Pixel included.
+
+The row opens `KeepAliveScreen`. It says in plain words what the phone does
+to an app like this, lists that maker's steps as dontkillmyapp.com gives
+them, reads back the Restricted setting and the battery optimiser so the
+person can see whether what they changed took, and has one button that calls
+`openVendorPowerManagerAsync()` in `hearth-motion`. That walks the component
+names transistorsoft's `DeviceSettings` and the AutoStarter library use for
+each vendor's autostart or power screen, newest first, and falls back to
+Hearth's own app settings page, where every Android keeps the Battery >
+Unrestricted toggle. The battery optimisation row raises
+`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` from native code first, which
+Play allows a family safety app to do, and only then falls back to the intent
+launcher and the settings list.
+
+Battery Saver on Android and Low Power Mode on iOS get a row of their own for
+as long as they are on. Both stop background location, and both flip without
+the app being opened. The checklist re-reads everything on focus and on every
+return to the foreground, because these settings revert after system updates
+on several of those makes.
+
+None of the vendor component names can be checked without the handset in
+hand. That is why every candidate is tried in turn and the app's own page is
+the floor.
+
 ### Plain-HTTP servers on a LAN
 
 The two platforms differ here, and you tend to find out at release time.
@@ -363,16 +399,20 @@ an auth problem drops that batch so one bad fix cannot wedge the pipeline.
 
 ### What the phone says about itself
 
-`services/health.ts` sends `PATCH /me/health` with the checklist's reading of
-the phone: the location permission level, Location Services, Background App
-Refresh on iOS, battery optimisation on Android, and whether the Android
-service has died under the app. It goes when the app comes to the front and
-after the checklist changes anything, and again only when something changes
-or a day has passed. The server keeps it on `user_presence.health`, projects
-it as `issues` on presence, and the rows put the first issue under the
-member's name once the phone is stale. The offline sweep reads it too: a
-quiet phone that has said why it cannot report is reported as that, not as
-offline.
+`services/health.ts` sends `PATCH /me/health` with the checklist's reading
+of the phone: the location permission level, Location Services, Background
+App Refresh on iOS, battery optimisation and the Restricted background
+setting on Android, Low Power Mode or Battery Saver on either, the
+manufacturer in lowercase, and on Android whether the location service died
+without the tracker asking. It goes when the app comes to the front, after
+the checklist changes anything, and the moment Low Power Mode or Battery
+Saver flips, which the native module reports as an `onPowerStateChange`
+event. Otherwise it goes again only when something changes or a day has
+passed. The server keeps it on
+`user_presence.health`, projects it as `issues` on presence, and the rows put
+the first issue under the member's name once the phone is stale. The offline
+sweep reads it too: a quiet phone that has said why it cannot report is
+reported as that, not as offline.
 
 Every fix carries `activity` from the tracker's own tiers, `still` while
 parked and on the arrival fix, `driving` on the GPS tier, the classifier's

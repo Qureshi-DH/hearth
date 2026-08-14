@@ -174,6 +174,10 @@ const AppStack = () => {
             getComponent={() => require("@/screens/PermissionsScreen").PermissionsScreen}
           />
           <Stack.Screen
+            name="KeepAlive"
+            getComponent={() => require("@/screens/KeepAliveScreen").KeepAliveScreen}
+          />
+          <Stack.Screen
             name="CreateCircle"
             getComponent={() => require("@/screens/CreateCircleScreen").CreateCircleScreen}
             options={sheet}
