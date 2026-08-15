@@ -237,42 +237,42 @@ afterEach(async () => {
 })
 
 describe("the Android foreground service", () => {
-  it("stays up in every tier, parked included, with one plain notification", async () => {
+  it("runs while moving and goes with the stop, so no notification stays", async () => {
     await enterMoving()
+    expect(lastOptions().foregroundService).toEqual({
+      notificationTitle: "Hearth",
+      notificationBody: "Updating your location",
+      killServiceOnDestroy: false,
+    })
     await enterStationary(HOME.lat, HOME.lon)
     expect(useTrackingStore.getState().mode).toBe("stationary")
-    expect(stop).not.toHaveBeenCalled()
-    for (const [, options] of start.mock.calls as [string, Location.LocationTaskOptions][]) {
-      expect(options.foregroundService).toEqual({
-        notificationTitle: "Hearth",
-        notificationBody: "Sharing your location with your family",
-        killServiceOnDestroy: false,
-      })
-    }
-    // The parked request itself is still the cheap one.
+    expect(lastOptions().foregroundService).toBeUndefined()
     expect(lastOptions().accuracy).toBe(Location.Accuracy.Balanced)
     expect(lastOptions().timeInterval).toBe(RESTING_HEARTBEAT_MS)
   })
 
-  it("answers a wake with one fix and leaves the service where it is", async () => {
+  it("answers a wake on a parked phone with one fix under a service that goes with it", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     start.mockClear()
     getPosition.mockClear()
     await wakeFix()
     expect(getPosition).toHaveBeenCalledTimes(1)
-    expect(start).not.toHaveBeenCalled()
+    // Up for the fix, down with it: the notification shows for the second
+    // the fix takes, which is the one the family accepts.
+    const registrations = start.mock.calls as [string, Location.LocationTaskOptions][]
+    expect(registrations.length).toBe(2)
+    expect(registrations[0]![1].foregroundService).toBeDefined()
+    expect(registrations[1]![1].foregroundService).toBeUndefined()
     expect(uploaded().map((fix) => fix.source)).toContain("nudge")
     expect(useTrackingStore.getState().mode).toBe("stationary")
   })
 
-  it("re-asserts a refused service on a parked phone too, since every tier wants it", async () => {
+  it("leaves a parked phone alone, since it wants no service", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     mockServiceStatus = "refused"
     start.mockClear()
     await reassertService()
-    expect(start).toHaveBeenCalledTimes(1)
-    expect(lastOptions().timeInterval).toBe(RESTING_HEARTBEAT_MS)
-    expect(lastOptions().foregroundService).toBeDefined()
+    expect(start).not.toHaveBeenCalled()
   })
 
   it("tries once per ten minutes on deliveries while refused, since a re-register re-delivers", async () => {
@@ -292,8 +292,14 @@ describe("the Android foreground service", () => {
     await deliver()
     await deliver()
     expect(reasserts()).toBe(1)
-    await jest.advanceTimersByTimeAsync(10 * 60_000 + 1)
-    await deliver()
+    // Ten minutes on and a kilometre away, so the phone is still on the
+    // move rather than parking, which would take the service question
+    // with it.
+    jest.setSystemTime(Date.now() + 10 * 60_000 + 1)
+    await taskBodies.get(BACKGROUND_LOCATION_TASK)!({
+      data: { locations: [at(HOME.lat + 0.01, HOME.lon, Date.now())] },
+      error: null,
+    })
     expect(reasserts()).toBe(2)
     mockServiceStatus = "running"
     await deliver()
@@ -735,36 +741,27 @@ describe("a traffic stop", () => {
 })
 
 describe("being watched", () => {
-  it("puts a parked phone on live updates at Wi-Fi grade, every fix uploaded, then rests again", async () => {
+  it("answers a watch on a parked phone with one fix and stays parked, so no notification stays", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     start.mockClear()
+    getPosition.mockClear()
     mockUpload.mockClear()
     await enterWatched(600)
-    expect(lastOptions()).toMatchObject({
-      accuracy: Location.Accuracy.Balanced,
-      timeInterval: 5_000,
-    })
-    expect(useTrackingStore.getState().mode).toBe("stationary")
-
-    // Deliveries seconds apart are all news while somebody is watching.
-    mockUpload.mockClear()
-    const t0 = Date.now()
-    await ingest([at(HOME.lat, HOME.lon, t0 + 5_000)], "background")
-    await ingest([at(HOME.lat + 0.0001, HOME.lon, t0 + 10_000)], "background")
-    expect(uploaded()).toHaveLength(2)
-
-    // The window ends, and the resting request is back.
-    start.mockClear()
-    jest.setSystemTime(t0 + 601_000)
-    await ingest([at(HOME.lat, HOME.lon, Date.now())], "background")
-    expect(useTrackingStore.getState().watchedUntil).toBeNull()
+    expect(getPosition).toHaveBeenCalledTimes(1)
+    expect(uploaded()).toHaveLength(1)
+    expect(lastOptions().foregroundService).toBeUndefined()
     expect(lastOptions().timeInterval).toBe(RESTING_HEARTBEAT_MS)
     expect(useTrackingStore.getState().mode).toBe("stationary")
+    // The window is held, so a departure inside it goes straight to live.
+    expect(useTrackingStore.getState().watchedUntil).not.toBeNull()
+    start.mockClear()
+    await enterMoving()
+    expect(lastOptions()).toMatchObject({ accuracy: Location.Accuracy.High, timeInterval: 5_000 })
   })
 
   it("does so from the upload reply as well as the push", async () => {
     await enterStationary(HOME.lat, HOME.lon)
-    start.mockClear()
+    getPosition.mockClear()
     mockUpload.mockResolvedValueOnce(reply(1, new Date(Date.now() + 600_000).toISOString()))
     useTrackingStore
       .getState()
@@ -773,7 +770,8 @@ describe("being watched", () => {
       ])
     await flush()
     await jest.advanceTimersByTimeAsync(0)
-    expect(lastOptions().timeInterval).toBe(5_000)
+    expect(getPosition).toHaveBeenCalledTimes(1)
+    expect(lastOptions().foregroundService).toBeUndefined()
     expect(readTrackerLog().some((entry) => entry.what === "watch adopted")).toBe(true)
   })
 

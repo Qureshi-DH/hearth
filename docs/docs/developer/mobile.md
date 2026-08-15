@@ -195,8 +195,9 @@ All of this lives in `app/services/location/tracker.ts`.
 2. `Location.startLocationUpdatesAsync` with the options of whatever tier the
    tracker is in, see below. `currentOptions()` is the one place the OS
    request is derived from what the tracker believes, so a re-registration
-   from a wake or a watch cannot disagree with the tier. On Android every
-   tier carries the foreground service.
+   from a wake or a watch cannot disagree with the tier. On Android the
+   moving, driving and live tiers carry the foreground service; a parked
+   phone runs without it, and a wake carries it for the length of one fix.
 3. Each delivery → `toFix()` (adds battery and the tracker's own `activity`)
    → `thin()` (drops near-duplicates, and on Android applies the circle's
    distance filter to what is uploaded) → MMKV-persisted queue → `flush()`
@@ -269,7 +270,7 @@ moving, so without this the server never heard the stop and applied its hour
 rule to a phone sitting at home.
 
 On Android the parked request is `Balanced` with one fix wanted a quarter
-hour, under the same foreground service as every other tier. On iOS it is a
+hour and no foreground service, so nothing stays in the shade. On iOS it is a
 cell-only session (`Accuracy.Lowest`) with no distance filter, because a low
 accuracy session with one is the shape iOS 16.4 and later suspend once
 significant-change monitoring is on, and expo-location always adds that. It
@@ -294,20 +295,27 @@ Android hands out continuous location only to a foreground service, and
 without one the phone is an ordinary background app: a few fixes an hour,
 none in Doze, no network until a maintenance window, a process reclaimed
 within minutes on most OEM builds, and a service start refused later except
-at a handful of moments. The tracker used to drop the service while parked to
-take the notification away, and every path back (the park fix, the resting
-request, the fence exit, the sync, the server's wake) then ran under those
-limits. That is how a family member sitting at home with the app open came to
-be "not reporting" an hour after arriving.
-
-So the service is up for as long as sharing is on, in every tier, the way
-family safety apps do it. The notification is one plain line, "Hearth, sharing your
-location with your family", on a channel the app creates at minimum
+at a handful of moments. The family will not have a notification that stays,
+so the service runs while the phone is on the move (moving, driving, live)
+and goes with the stop. A parked phone runs the cheap resting request with
+no service, and a wake or a watch brings the service up for the length of
+one fix and drops it with the fix (`briefService`), which is the second-long
+"Updating your location" a messaging app shows when it checks for messages.
+The notification is one plain line on a channel the app creates at minimum
 importance before the service ever starts (`services/notifications.ts`; the
 id has to match the one expo-location derives from the package and the
-task). It sits collapsed in the silent part of the shade rather than in the
-status bar, and the patched service creates the channel at the same
-importance if it is ever first.
+task), and the patched service creates the channel at the same importance if
+it is ever first.
+
+What makes the parked phone reliable without a service is the battery
+optimisation exemption: an exempt app may start its service from the
+background at any moment and keeps its network in Doze, so the brief service
+for a wake, the resting request and the upload all work. The checklist asks
+for it directly (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, allowed for
+family safety apps) and, on the vendors that kill background apps, walks the
+person through the vendor's own settings. A parked phone that is not exempt
+gets what Android gives a background app, and the server's twelve-hour rule
+for a parked phone is what covers it.
 
 Android 12 still refuses a service start from the background except at a
 geofence exit, an activity transition, a high priority push, an app exempt
@@ -317,8 +325,11 @@ refused the whole registration unless the app was in the foreground;
 Android's own `ForegroundServiceStartNotAllowedException`, records the
 outcome where the app can read it (`getForegroundServiceStatusAsync`), and
 registers the location request either way. `reassertService` answers a
-refusal at every allowed moment: every delivery, an activity transition, a
-wake or watch push, the sync task and the app opening. A status of `none`
+refusal for a moving phone at every allowed moment: an activity transition,
+a fence exit, a wake or watch push and the app opening at once, and a
+delivery or the sync task once per ten minutes, since re-registering hands
+back the fix the OS already had and that is another delivery. A parked phone
+wants no service and is left alone. A status of `none`
 while a tier wants the service means it went down without the app asking,
 an OEM battery manager most often; the tracker brings it back, remembers the
 moment for a day, and `serviceDiedUnexpectedly()` is what the health report

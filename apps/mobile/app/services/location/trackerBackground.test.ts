@@ -271,20 +271,20 @@ describe("the resting watch", () => {
     expect(options.accuracy).toBe(Location.Accuracy.Balanced)
     expect(options.timeInterval).toBe(RESTING_HEARTBEAT_MS)
     expect(options.pausesUpdatesAutomatically).toBe(false)
-    // Under the same service as every other tier. Without it Android treats
-    // the phone as a background app and throttles every way it has to report.
-    expect(options.foregroundService).toBeDefined()
+    // No service while parked, so no notification stays in the shade. The
+    // family accepts one that shows for the second a wake's fix takes.
+    expect(options.foregroundService).toBeUndefined()
     expect(useTrackingStore.getState().mode).toBe("stationary")
   })
 
-  it("shows one plain notification in every tier, and never colours it", async () => {
+  it("shows one plain notification while moving, and never colours it", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     start.mockClear()
     await ingest([sample(HOME.lat + 0.005, HOME.lon, Date.now())], "background")
     const [, options] = start.mock.calls[0] as [string, Location.LocationTaskOptions]
     expect(options.foregroundService).toMatchObject({
       notificationTitle: "Hearth",
-      notificationBody: "Sharing your location with your family",
+      notificationBody: "Updating your location",
     })
     expect(options.foregroundService?.notificationColor).toBeUndefined()
   })

@@ -1050,9 +1050,21 @@ export function drivingDistanceMeters(speedMps: number | null): number {
  */
 const SERVICE_NOTIFICATION = {
   notificationTitle: "Hearth",
-  notificationBody: "Sharing your location with your family",
+  notificationBody: "Updating your location",
   killServiceOnDestroy: false,
 }
+
+/**
+ * A parked Android phone runs no service, so no notification stays in the
+ * shade: the family accepts one that shows for the second a fix takes and
+ * goes with it, the way a messaging app checks for messages. While this is
+ * true the resting request carries the service for the length of one fix.
+ * Starting it from the background is allowed for an app exempt from battery
+ * optimisation, which the checklist asks for, and at the moments Android
+ * allows anyway; otherwise the start is refused and the fix is taken on the
+ * throttled request.
+ */
+let briefService = false
 
 function drivingOptions(distanceMeters: number): Location.LocationTaskOptions {
   return {
@@ -1208,7 +1220,6 @@ function restingOptions(): Location.LocationTaskOptions {
       pausesUpdatesAutomatically: false,
       activityType: Location.ActivityType.Other,
       showsBackgroundLocationIndicator: false,
-      foregroundService: SERVICE_NOTIFICATION,
     }
   }
   return {
@@ -1218,7 +1229,6 @@ function restingOptions(): Location.LocationTaskOptions {
     pausesUpdatesAutomatically: false,
     activityType: Location.ActivityType.Other,
     showsBackgroundLocationIndicator: false,
-    foregroundService: SERVICE_NOTIFICATION,
   }
 }
 
@@ -1232,19 +1242,20 @@ function currentOptions(): Location.LocationTaskOptions | null {
   // Off is derived like every other tier, so a transition that was queued
   // behind the stop lands on nothing rather than re-registering the service.
   if (!enabled || mode === "off") return null
-  // Somebody is looking, whatever the phone was doing. A parked phone goes
-  // live at Wi-Fi grade: it is not going anywhere, and the point is that
-  // the page hears from it every few seconds rather than once.
-  if (watchedNow()) {
-    // Wi-Fi grade on Android only. On iOS a low accuracy session with the
-    // live distance filter is the shape the OS suspends, see restingOptions.
-    return liveOptions(
-      mode === "stationary" && Platform.OS === "android"
-        ? Location.Accuracy.Balanced
-        : Location.Accuracy.High,
-    )
+  if (mode === "stationary") {
+    // A parked Android phone answers a watch with one fix, not a live
+    // request, because a live request carries the service and its
+    // notification for the whole window. A parked iPhone has no such cost
+    // and goes live.
+    if (Platform.OS === "android") {
+      return briefService
+        ? { ...restingOptions(), foregroundService: SERVICE_NOTIFICATION }
+        : restingOptions()
+    }
+    return watchedNow() ? liveOptions(Location.Accuracy.High) : restingOptions()
   }
-  if (mode === "stationary") return restingOptions()
+  // Somebody is looking. Full accuracy every few seconds for the window.
+  if (watchedNow()) return liveOptions(Location.Accuracy.High)
   if (driving) return drivingOptions(driving.distance)
   return updateOptions(policy)
 }
@@ -1362,7 +1373,8 @@ export async function reassertService({
 }: { exempt?: boolean } = {}): Promise<void> {
   if (Platform.OS !== "android") return
   const { enabled, mode } = useTrackingStore.getState()
-  if (!enabled || mode === "off") return
+  // A parked phone wants no service; see briefService.
+  if (!enabled || mode !== "moving") return
   const before = await foregroundServiceStatus()
   if (before !== "refused" && before !== "none") return
   if (before === "none") noteServiceDied()
@@ -1403,6 +1415,13 @@ export async function enterWatched(seconds: number): Promise<void> {
   logTracker("watched", { seconds, mode: store.mode })
   store.setWatchedUntil(new Date(Date.now() + seconds * 1000).toISOString())
   armWatchTimer()
+  // The window is held either way, so a departure inside it goes straight
+  // to live. A parked Android phone answers with one fix under the brief
+  // service, and the server asks again while the page stays open.
+  if (Platform.OS === "android" && store.mode === "stationary") {
+    await wakeFix()
+    return
+  }
   await applyRegistration()
   await reportNow(
     "nudge",
@@ -1477,9 +1496,22 @@ async function endWatchIfOver(): Promise<void> {
 export async function wakeFix(): Promise<LocationFixInput | null> {
   const { enabled, mode } = useTrackingStore.getState()
   if (!enabled || mode === "off") return null
-  logTracker("wake", { mode })
-  await reassertService({ exempt: true })
-  return reportNow("nudge", Location.Accuracy.Balanced)
+  const brief = Platform.OS === "android" && mode === "stationary"
+  logTracker("wake", { mode, brief })
+  if (!brief) {
+    await reassertService({ exempt: true })
+    return reportNow("nudge", Location.Accuracy.Balanced)
+  }
+  // The service carries this one fix and goes with it. reportNow has its
+  // own deadline, so a fix that never settles cannot leave the service up.
+  briefService = true
+  await applyRegistration().catch(() => undefined)
+  try {
+    return await reportNow("nudge", Location.Accuracy.Balanced)
+  } finally {
+    briefService = false
+    await applyRegistration().catch(() => undefined)
+  }
 }
 
 let motionSubscription: { remove: () => void } | null = null

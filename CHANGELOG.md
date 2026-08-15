@@ -70,17 +70,23 @@ reply, and the batch route now records every upload.
 - The speed alert is gated on the device's own history rather than the
   member row, so a tablet landing a fix a moment after the phone's batch
   cannot swallow the phone's fast run.
-- The tracker no longer goes quiet at home. On Android the location
-  foreground service stays up for as long as sharing is on, in every tier,
-  with one silent notification in the shade; without it Android treated the
-  phone as a background app and throttled or refused every way it had to
-  report, which is how a family member sitting at home came to be "not
-  reporting" an hour after arriving. On iOS a parked phone keeps a cell-only
+- The tracker no longer goes quiet at home. On Android the location service
+  runs while the phone is on the move and goes with the stop, so nothing
+  stays in the shade; a parked phone brings it up for the second a wake's or
+  a watch's fix takes and drops it with the fix, the way a messaging app
+  checks for messages. Starting it from the background at any moment is what
+  the battery optimisation exemption buys, so the checklist's exemption and
+  keep-alive steps are what keep a parked Android phone reporting: without
+  them Android hands a background app a few fixes an hour and none in Doze,
+  which is how a family member sitting at home came to be "not reporting"
+  an hour after arriving. On iOS a parked phone keeps a cell-only
   location session instead of none, so it stays alive to say "still here"
   every quarter hour and to notice leaving. Both platforms send the arrival
   fix, stamped still, before the request steps down, and make one up from
   the parking spot if the OS does not answer in time. A phone being watched
-  goes live whatever it was doing and answers straight away. Every one-shot
+  on the move goes live; a parked one answers each ask with one fix and the
+  window stays held, so a departure inside it goes straight to live. Every
+  one-shot
   fix has a deadline, failed uploads retry on their own, a red light no
   longer parks a car, Android's network fixes stop reading as a stopped car,
   the drive survives a background relaunch, and the diagnostics log records

@@ -166,20 +166,19 @@ describe("a journey starting in the background on Android", () => {
     expect(isDriving()).toBe(true)
   })
 
-  it("leaves a running service and iOS alone, and brings a refused one back in any tier", async () => {
+  it("leaves a running service, a parked phone and iOS alone", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     await enterMoving()
     start.mockClear()
     await reassertService()
     expect(start).not.toHaveBeenCalled()
 
-    // Parked too: the service is wanted in every tier.
+    // A parked phone runs no service, so there is nothing to bring back.
     mockServiceStatus = "refused"
     await enterStationary(HOME.lat, HOME.lon)
     start.mockClear()
     await reassertService()
-    expect(start).toHaveBeenCalledTimes(1)
-    expect(optionsOf(0).timeInterval).toBe(RESTING_HEARTBEAT_MS)
+    expect(start).not.toHaveBeenCalled()
 
     Platform.OS = "ios"
     await enterMoving()
@@ -188,14 +187,16 @@ describe("a journey starting in the background on Android", () => {
     expect(start).not.toHaveBeenCalled()
   })
 
-  it("answers a wake with one fix under the service it already has", async () => {
+  it("answers a wake with one fix under a service that comes and goes with it", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     // Forget the arrival fix.
     useTrackingStore.setState({ queue: [] })
     start.mockClear()
     getPosition.mockClear()
     await wakeFix()
-    expect(start).not.toHaveBeenCalled()
+    expect(start).toHaveBeenCalledTimes(2)
+    expect(optionsOf(0).foregroundService).toBeDefined()
+    expect(optionsOf(1).foregroundService).toBeUndefined()
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(useTrackingStore.getState().queue.map((fix) => fix.source)).toContain("nudge")
     expect(useTrackingStore.getState().mode).toBe("stationary")
@@ -216,7 +217,8 @@ describe("a journey starting in the background on Android", () => {
     const fix = wakeFix()
     await jest.advanceTimersByTimeAsync(30_000 + 10)
     expect(await fix).toBeNull()
-    expect(start).not.toHaveBeenCalled()
+    // And the brief service does not outlive the fix it was for.
+    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeUndefined()
   })
 })
 
@@ -262,15 +264,15 @@ describe("being watched", () => {
     expect(useTrackingStore.getState().watchedUntil).toBeNull()
   })
 
-  it("goes live at Wi-Fi grade when parked, and answers straight away", async () => {
+  it("answers a watch on a parked phone with one fix and stays on the resting request", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     getPosition.mockClear()
     start.mockClear()
     await enterWatched(600)
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(useTrackingStore.getState().mode).toBe("stationary")
-    expect(optionsOf(0).accuracy).toBe(Location.Accuracy.Balanced)
-    expect(optionsOf(0).timeInterval).toBe(5_000)
+    expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(RESTING_HEARTBEAT_MS)
+    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeUndefined()
   })
 
   it("stays live in the driving tier's place until the window ends", async () => {
@@ -350,7 +352,7 @@ describe("one request for the tier the tracker is in", () => {
     const last = optionsOf(start.mock.calls.length - 1)
     expect(useTrackingStore.getState().mode).toBe("stationary")
     expect(last.timeInterval).toBe(RESTING_HEARTBEAT_MS)
-    expect(last.foregroundService).toBeDefined()
+    expect(last.foregroundService).toBeUndefined()
   })
 })
 
@@ -502,7 +504,7 @@ describe("calling the stop on Android without the classifier", () => {
     expect(useTrackingStore.getState().mode).toBe("stationary")
     // The request steps down to the resting one, under the same service.
     expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(RESTING_HEARTBEAT_MS)
-    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeDefined()
+    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeUndefined()
   })
 
   it("does not let a loose Wi-Fi fix reset the clock, and does not let one call the phone gone", async () => {
