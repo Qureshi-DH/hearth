@@ -255,7 +255,7 @@ export type { PresenceIssue } from "./constants"
 export interface WatchResponse {
   watching: boolean
   seconds: number
-  pushed: "sent" | "held" | "no_device" | "unsupported"
+  pushed: "socket" | "sent" | "held" | "no_device" | "unsupported"
   lastFixAt: string | null
   lastHeardAt: string | null
   activity: ActivityType | null
@@ -475,10 +475,29 @@ export type WsServerMessage =
   | { type: "event"; circleId: string; event: FeedEvent }
   | { type: "sos"; circleId: string; alert: SosAlert }
   | { type: "nudge"; circleId: string; nudge: Nudge }
+  /**
+   * Down the phone's control channel: `ready` once it is registered, then
+   * `watch` (go live for `seconds`) and `wake` (one fix now) as they are asked.
+   */
+  | { type: "control"; command: "ready" | "watch" | "wake"; seconds?: number }
   | { type: "pong"; serverTime: string }
   | { type: "error"; message: string }
 
-export type WsClientMessage = { type: "subscribe"; circleIds: string[] } | { type: "ping" }
+export type WsClientMessage =
+  | { type: "subscribe"; circleIds: string[] }
+  | { type: "ping" }
+  /** The phone's tracker declaring this socket its control channel. */
+  | { type: "control" }
+
+/**
+ * What POST /circles/:id/members/:userId/refresh did: the phone was asked
+ * over its control channel, or by a silent push, or was heard from within
+ * the last half minute and left alone, or was pushed moments ago, or cannot
+ * be reached at all.
+ */
+export interface RefreshMemberResponse {
+  asked: "socket" | "pushed" | "held" | "fresh" | "no_device" | "unsupported"
+}
 
 export type { WsMessageType }
 

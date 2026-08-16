@@ -281,6 +281,11 @@ export const userPresence = pgTable("user_presence", {
    * fix whether or not the silent push got through.
    */
   watchedUntil: timestamp("watched_until", { withTimezone: true }),
+  /**
+   * When the phone's control channel last said it was open. An ask goes
+   * down the channel while this is fresh, and by push otherwise.
+   */
+  controlSeenAt: timestamp("control_seen_at", { withTimezone: true }),
   /** The phone's own account of what stands between it and reporting, see PATCH /me/health. */
   health: jsonb("health").$type<DeviceHealth>(),
   /** Watermark for the trip detector, so it never re-scans old breadcrumbs. */

@@ -3,6 +3,7 @@ import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from "
 import type { FastifyBaseLogger } from "fastify"
 
 import { getSql, type Database } from "../db/client"
+import { CONTROL_FRESH_MS, controlOpenSql, sendControl } from "../services/control"
 import {
   circleMembers,
   events,
@@ -191,9 +192,10 @@ const parked = sql`(
  * is counted, and the count is what the offline sweep reads. Only the expo
  * provider can send one.
  */
-async function wakeQuietPhones(db: Database, driver: PushDriver | null): Promise<number> {
-  if (driver?.provider !== "expo") return 0
+export async function wakeQuietPhones(db: Database, driver: PushDriver | null): Promise<number> {
+  const canPush = driver?.provider === "expo"
   const now = new Date()
+  const channelOpen = controlOpenSql(new Date(now.getTime() - CONTROL_FRESH_MS))
   const shortestGap = Math.min(...WAKE_GAPS_MOVING_MS, ...WAKE_GAPS_PARKED_MS)
   const candidates = await db
     .select({
@@ -211,7 +213,8 @@ async function wakeQuietPhones(db: Database, driver: PushDriver | null): Promise
       and(
         eq(users.isActive, true),
         isNotNull(userPresence.recordedAt),
-        wakeable,
+        // Over the channel when it has one open, by push when it can be pushed.
+        canPush ? or(wakeable, channelOpen) : channelOpen,
         lt(userPresence.wakeCount, WAKE_GAPS_MOVING_MS.length),
         sql`${heardAt} < ${new Date(now.getTime() - shortestGap).toISOString()}::timestamptz`,
       ),
@@ -237,6 +240,11 @@ async function wakeQuietPhones(db: Database, driver: PushDriver | null): Promise
         .where(and(eq(userPresence.userId, row.userId), eq(userPresence.wakeCount, row.wakeCount)))
         .returning({ userId: userPresence.userId })
       if (claimed.length === 0) return
+      if (await sendControl(tx as unknown as Database, row.userId, { command: "wake" }, now)) {
+        woken += 1
+        return
+      }
+      if (!canPush) return
       await enqueuePush(tx as unknown as Database, [
         { userId: row.userId, title: "", body: "", silent: true, data: { type: "wake" } },
       ])

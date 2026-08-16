@@ -57,6 +57,13 @@
       "when": 1789672617041,
       "tag": "0007_last_heard",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789742711166,
+      "tag": "0008_control_channel",
+      "breakpoints": true
     }
   ]
 }

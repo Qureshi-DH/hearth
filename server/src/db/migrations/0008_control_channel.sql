@@ -1,0 +1,1 @@
+ALTER TABLE "user_presence" ADD COLUMN "control_seen_at" timestamp with time zone;

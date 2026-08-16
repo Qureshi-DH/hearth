@@ -3,6 +3,7 @@ import {
   DEFAULTS,
   LOCATION_SOURCES,
   PRESENCE_ISSUES,
+  type RefreshMemberResponse,
   type WatchResponse,
 } from "@hearth/shared"
 import { and, asc, eq, gte, isNotNull, isNull, lte, ne, sql } from "drizzle-orm"
@@ -16,6 +17,7 @@ import { requireAuth, requireMembership } from "../plugins/auth"
 import { getPushDriver } from "../runtime"
 import { ingestPoints, markHeard } from "../services/locations"
 import { effectiveSharingState, getCirclePresence, presenceIssues } from "../services/presence"
+import { sendControl } from "../services/control"
 import { enqueuePush, recentSilentPushes } from "../services/push"
 
 // Accuracy fields are deliberately not constrained here. A platform sentinel
@@ -62,6 +64,12 @@ const REFRESH_INTERVAL_MS = 10 * 60 * 1000
 /** A phone heard from this recently has nothing new to say. */
 const FRESH_ENOUGH_MS = 2 * 60 * 1000
 /**
+ * A page opened on one person asks their phone at once, and again on the
+ * next open, but not twice in the same half minute: the fix takes a few
+ * seconds and the channel or the push has already carried the ask.
+ */
+const MEMBER_REFRESH_FRESH_MS = 30 * 1000
+/**
  * Watching is spent more freely: a page open on one person is worth more
  * than a glance at everyone. The page calls every minute to hold the window,
  * so a phone that has not uploaded since the first push is asked again on
@@ -96,6 +104,8 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
     heardAt: Date | null,
     seconds: number,
   ): Promise<WatchResponse["pushed"]> {
+    // A phone with its channel open has the ask already; nothing is pushed.
+    if (await sendControl(db, userId, { command: "watch", seconds }, now)) return "socket"
     if (getPushDriver()?.provider !== "expo") return "unsupported"
     const [device] = await db
       .select({ id: sessions.id })
@@ -232,7 +242,7 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
     async (request) => {
       const auth = requireAuth(request)
       const membership = await requireMembership(request, request.params.circleId)
-      if (getPushDriver()?.provider !== "expo") return { asked: 0 }
+      const canPush = getPushDriver()?.provider === "expo"
 
       const now = new Date()
       const rows = await db
@@ -264,6 +274,11 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         if (state === "paused") continue
         const heardAt = Math.max(row.recordedAt?.getTime() ?? 0, row.lastHeardAt?.getTime() ?? 0)
         if (now.getTime() - heardAt < FRESH_ENOUGH_MS) continue
+        if (await sendControl(db, row.userId, { command: "wake" }, now)) {
+          asked += 1
+          continue
+        }
+        if (!canPush) continue
         const askedLately = await recentSilentPushes(
           db,
           row.userId,
@@ -281,6 +296,105 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
   )
 
   app.post(
+    "/circles/:circleId/members/:userId/refresh",
+    {
+      preHandler: app.authenticate,
+      config: { rateLimit: { max: 60, timeWindow: "10 minutes" } },
+      schema: {
+        tags: ["locations"],
+        summary: "Ask one person's phone for a fresh fix now",
+        description:
+          "Called when someone opens a member's page. The phone is asked over its control " +
+          "channel when it has one open, and by silent push otherwise, at most once per half " +
+          "minute per phone whoever is looking. A phone heard from in the last half minute is " +
+          "left alone (`fresh`). Only members sharing precisely are asked.",
+        params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
+        response: {
+          200: z.object({
+            asked: z.enum(["socket", "pushed", "held", "fresh", "no_device", "unsupported"]),
+          }),
+        },
+      },
+    },
+    async (request) => {
+      const auth = requireAuth(request)
+      const membership = await requireMembership(request, request.params.circleId)
+      if (request.params.userId === auth.userId) {
+        throw badRequest("You do not need to ask yourself.")
+      }
+      const [target] = await db
+        .select({
+          sharingState: circleMembers.sharingState,
+          pausedUntil: circleMembers.pausedUntil,
+          resumeToState: circleMembers.resumeToState,
+          recordedAt: userPresence.recordedAt,
+          lastHeardAt: userPresence.lastHeardAt,
+        })
+        .from(circleMembers)
+        .leftJoin(userPresence, eq(userPresence.userId, circleMembers.userId))
+        .where(
+          and(
+            eq(circleMembers.circleId, membership.circleId),
+            eq(circleMembers.userId, request.params.userId),
+          ),
+        )
+        .limit(1)
+      if (!target) throw notFound("That person is not in this circle.")
+      const now = new Date()
+      const state = effectiveSharingState(
+        target.sharingState,
+        target.pausedUntil,
+        now,
+        target.resumeToState,
+      )
+      if (state !== "precise") return { asked: "unsupported" } satisfies RefreshMemberResponse
+      const heardAt = Math.max(
+        target.recordedAt?.getTime() ?? 0,
+        target.lastHeardAt?.getTime() ?? 0,
+      )
+      if (now.getTime() - heardAt < MEMBER_REFRESH_FRESH_MS) {
+        return { asked: "fresh" } satisfies RefreshMemberResponse
+      }
+      if (await sendControl(db, request.params.userId, { command: "wake" }, now)) {
+        return { asked: "socket" } satisfies RefreshMemberResponse
+      }
+      if (getPushDriver()?.provider !== "expo") {
+        return { asked: "unsupported" } satisfies RefreshMemberResponse
+      }
+      const [device] = await db
+        .select({ id: sessions.id })
+        .from(sessions)
+        .where(
+          and(
+            eq(sessions.userId, request.params.userId),
+            isNull(sessions.revokedAt),
+            eq(sessions.pushProvider, "expo"),
+            isNotNull(sessions.pushToken),
+          ),
+        )
+        .limit(1)
+      if (!device) return { asked: "no_device" } satisfies RefreshMemberResponse
+      const askedLately = await recentSilentPushes(
+        db,
+        request.params.userId,
+        "wake",
+        new Date(now.getTime() - MEMBER_REFRESH_FRESH_MS),
+      )
+      if (askedLately.length > 0) return { asked: "held" } satisfies RefreshMemberResponse
+      await enqueuePush(db, [
+        {
+          userId: request.params.userId,
+          title: "",
+          body: "",
+          silent: true,
+          data: { type: "wake" },
+        },
+      ])
+      return { asked: "pushed" } satisfies RefreshMemberResponse
+    },
+  )
+
+  app.post(
     "/circles/:circleId/members/:userId/watch",
     {
       preHandler: app.authenticate,
@@ -290,10 +404,11 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "Follow one person live for a while",
         description:
           "Called while someone has a member's page open. The member's phone is asked to " +
-          "report at full accuracy every few seconds for the watch window, by silent push " +
-          "and by its next upload reply, and the page keeps calling to hold it. A phone that " +
-          "has stopped reports once instead. Only members sharing precisely can be watched. " +
-          "The reply says what became of the push: `sent` when one was queued by this call, " +
+          "report at full accuracy every few seconds for the watch window, over its control " +
+          "channel when it has one open, by silent push otherwise, and by its next upload " +
+          "reply, and the page keeps calling to hold it. A phone that has stopped reports " +
+          "once instead. Only members sharing precisely can be watched. The reply says what " +
+          "became of the ask: `socket` when the channel carried it, `sent` when a push was queued by this call, " +
           "`held` when the phone was pushed moments ago or has uploaded since, `no_device` " +
           "when the member has no push token, `unsupported` when the push provider cannot " +
           "carry a silent push. A phone that has not uploaded since the first push is asked " +
@@ -305,7 +420,7 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           200: z.object({
             watching: z.boolean(),
             seconds: z.number().int(),
-            pushed: z.enum(["sent", "held", "no_device", "unsupported"]),
+            pushed: z.enum(["socket", "sent", "held", "no_device", "unsupported"]),
             lastFixAt: z.string().nullable(),
             lastHeardAt: z.string().nullable(),
             activity: z.enum(ACTIVITY_TYPES).nullable(),

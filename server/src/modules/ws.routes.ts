@@ -10,6 +10,7 @@ import { circleTopic, userTopic, type BusEnvelope } from "../lib/bus"
 import { toPublicUser } from "../lib/serialize"
 import { extractToken, resolveSession, type AccessTokenClaims } from "../plugins/auth"
 import { getBus } from "../runtime"
+import { clearControlSeen, markControlSeen } from "../services/control"
 import {
   getCirclePresence,
   projectCirclePresence,
@@ -42,7 +43,16 @@ const alertMember = alias(circleMembers, "alert_member")
 const clientMessage: z.ZodType<WsClientMessage> = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ping") }),
   z.object({ type: z.literal("subscribe"), circleIds: z.array(z.string()) }),
+  z.object({ type: z.literal("control") }),
 ])
+
+/**
+ * The sockets that phones have declared their control channel, per user and
+ * for this process. The stamp on the presence row is what the routes read;
+ * this is for knowing whether a close leaves the user with none, so the
+ * stamp can be cleared at once rather than aging out.
+ */
+const controlSocketsByUser = new Map<string, Set<TrackedSocket>>()
 
 /** Only close() and identity are needed, and typing it this way keeps the ws types out of the module. */
 interface TrackedSocket {
@@ -85,6 +95,8 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
     // attached afterwards would never fire, leaving the timers and the bus
     // subscription running for the life of the process.
     let closed = false
+    // Whether this socket is the phone's control channel; see services/control.
+    let isControl = false
     const disposers: Array<() => void> = []
     const onClose = (dispose: () => void) => {
       if (closed) dispose()
@@ -344,6 +356,20 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
             })
             break
           }
+          case "control": {
+            // Addressed to the user, meant for the phone: only the socket
+            // that declared itself the channel gets it, not the app open on
+            // the same account elsewhere.
+            if (!isControl) break
+            const command = payload.command
+            if (command !== "watch" && command !== "wake") break
+            send({
+              type: "control",
+              command,
+              ...(typeof payload.seconds === "number" ? { seconds: payload.seconds } : {}),
+            })
+            break
+          }
           case "nudge": {
             // Published to this user's own topic, so it is already addressed
             // and needs no filtering here.
@@ -365,6 +391,8 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
     let alive = true
     socket.on("pong", () => {
       alive = true
+      // Each answered heartbeat renews the stamp the routes read as "open".
+      if (isControl) void markControlSeen(db, userId).catch(() => undefined)
     })
 
     const heartbeat = setInterval(() => {
@@ -401,6 +429,26 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
 
         if (message.type === "ping") {
           send({ type: "pong", serverTime: new Date().toISOString() })
+          return
+        }
+
+        if (message.type === "control") {
+          if (!isControl) {
+            isControl = true
+            const mine = controlSocketsByUser.get(userId) ?? new Set<TrackedSocket>()
+            mine.add(socket)
+            controlSocketsByUser.set(userId, mine)
+            onClose(() => {
+              mine.delete(socket)
+              if (mine.size === 0) {
+                controlSocketsByUser.delete(userId)
+                void clearControlSeen(db, userId).catch(() => undefined)
+              }
+            })
+          }
+          void markControlSeen(db, userId)
+            .then(() => send({ type: "control", command: "ready" }))
+            .catch((error) => request.log.warn({ err: error }, "control channel stamp failed"))
           return
         }
 
