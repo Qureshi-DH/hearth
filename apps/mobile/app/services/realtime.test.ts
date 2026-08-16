@@ -167,6 +167,25 @@ describe("a location over the socket", () => {
   })
 })
 
+describe("someone joining or leaving the circle", () => {
+  it("refreshes who is on the map, not just the member list", () => {
+    realtime.connect()
+    sockets[0]!.accept()
+    ;(queryClient.invalidateQueries as jest.Mock).mockClear()
+    sockets[0]!.receive({
+      type: "event",
+      circleId: "c1",
+      event: { ...event("40", 0), type: "member_joined" },
+    })
+    expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.members("c1"),
+    })
+    expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.presence("c1"),
+    })
+  })
+})
+
 describe("a feed event over the socket", () => {
   beforeEach(() => {
     queryClient.setQueryData(queryKeys.events("c1"), {

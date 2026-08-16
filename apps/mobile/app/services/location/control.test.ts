@@ -1,0 +1,138 @@
+import { control, setControlHandler } from "./control"
+
+jest.mock("@/services/api", () => ({
+  api: { websocketUrl: () => mockUrl },
+}))
+
+let mockUrl: string | null = "wss://hearth.test/api/v1/ws?access_token=t"
+
+/** Every socket the channel opened, in order. */
+const sockets: FakeSocket[] = []
+
+class FakeSocket {
+  static CONNECTING = 0
+  static OPEN = 1
+  static CLOSING = 2
+  static CLOSED = 3
+  readyState = FakeSocket.CONNECTING
+  onopen: (() => void) | null = null
+  onmessage: ((event: { data: string }) => void) | null = null
+  onclose: ((event: { code: number }) => void) | null = null
+  onerror: (() => void) | null = null
+  sent: string[] = []
+  constructor(public url: string) {
+    sockets.push(this)
+  }
+  send(data: string) {
+    this.sent.push(data)
+  }
+  close() {
+    this.readyState = FakeSocket.CLOSED
+    this.onclose?.({ code: 1000 })
+  }
+  accept() {
+    this.readyState = FakeSocket.OPEN
+    this.onopen?.()
+  }
+  drop() {
+    this.readyState = FakeSocket.CLOSED
+    this.onclose?.({ code: 1006 })
+  }
+  receive(message: unknown) {
+    this.onmessage?.({ data: JSON.stringify(message) })
+  }
+}
+
+const handler = { watch: jest.fn(async () => {}), wake: jest.fn(async () => {}) }
+
+beforeEach(() => {
+  jest.useFakeTimers()
+  sockets.length = 0
+  ;(globalThis as { WebSocket: unknown }).WebSocket = FakeSocket
+  mockUrl = "wss://hearth.test/api/v1/ws?access_token=t"
+  handler.watch.mockClear()
+  handler.wake.mockClear()
+  setControlHandler(handler)
+})
+
+afterEach(() => {
+  control.setWanted(false)
+  jest.useRealTimers()
+})
+
+describe("the control channel", () => {
+  it("opens when wanted and declares itself the phone's channel", () => {
+    control.setWanted(true)
+    expect(sockets).toHaveLength(1)
+    sockets[0]!.accept()
+    expect(sockets[0]!.sent.map((frame) => JSON.parse(frame))).toEqual([{ type: "control" }])
+  })
+
+  it("does nothing until it is wanted, and closes when it is not", () => {
+    expect(sockets).toHaveLength(0)
+    control.setWanted(true)
+    sockets[0]!.accept()
+    control.setWanted(false)
+    expect(sockets[0]!.readyState).toBe(FakeSocket.CLOSED)
+    jest.advanceTimersByTime(60_000)
+    expect(sockets).toHaveLength(1)
+  })
+
+  it("hands a watch and a wake to the tracker", async () => {
+    control.setWanted(true)
+    sockets[0]!.accept()
+    sockets[0]!.receive({ type: "control", command: "watch", seconds: 600 })
+    sockets[0]!.receive({ type: "control", command: "wake" })
+    await Promise.resolve()
+    expect(handler.watch).toHaveBeenCalledWith(600)
+    expect(handler.wake).toHaveBeenCalledTimes(1)
+  })
+
+  it("comes back on its own after the connection drops", () => {
+    control.setWanted(true)
+    sockets[0]!.accept()
+    sockets[0]!.drop()
+    jest.advanceTimersByTime(1_000)
+    expect(sockets).toHaveLength(2)
+    sockets[1]!.drop()
+    // Backing off, so a server that is down is not hammered.
+    jest.advanceTimersByTime(1_000)
+    expect(sockets).toHaveLength(2)
+    jest.advanceTimersByTime(1_000)
+    expect(sockets).toHaveLength(3)
+  })
+
+  it("keeps the connection alive with a ping every couple of minutes", () => {
+    control.setWanted(true)
+    sockets[0]!.accept()
+    jest.advanceTimersByTime(2 * 60_000)
+    expect(sockets[0]!.sent.map((frame) => JSON.parse(frame))).toContainEqual({ type: "ping" })
+  })
+
+  it("reconnects with the new token when asked", () => {
+    control.setWanted(true)
+    sockets[0]!.accept()
+    mockUrl = "wss://hearth.test/api/v1/ws?access_token=t2"
+    control.refresh()
+    jest.advanceTimersByTime(1_000)
+    expect(sockets).toHaveLength(2)
+    expect(sockets[1]!.url).toContain("access_token=t2")
+  })
+
+  it("waits for a new token after being refused, rather than retrying", () => {
+    control.setWanted(true)
+    sockets[0]!.readyState = FakeSocket.CLOSED
+    sockets[0]!.onclose?.({ code: 4401 })
+    jest.advanceTimersByTime(60_000)
+    expect(sockets).toHaveLength(1)
+    control.refresh()
+    jest.advanceTimersByTime(1_000)
+    expect(sockets).toHaveLength(2)
+  })
+
+  it("does not open without a server or a token", () => {
+    mockUrl = null
+    control.setWanted(true)
+    expect(sockets).toHaveLength(0)
+  })
+})

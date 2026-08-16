@@ -31,6 +31,7 @@ import type {
   SharingState,
   SosAlert,
   Trip,
+  RefreshMemberResponse,
   WatchResponse,
 } from "@hearth/shared"
 
@@ -167,6 +168,8 @@ export function createEndpoints(api: ApiClient) {
         api.post<{ asked: number }>(`/circles/${circleId}/locations/refresh`, {}),
       watch: (circleId: string, userId: string) =>
         api.post<WatchResponse>(`/circles/${circleId}/members/${userId}/watch`, {}),
+      refreshMember: (circleId: string, userId: string) =>
+        api.post<RefreshMemberResponse>(`/circles/${circleId}/members/${userId}/refresh`, {}),
       history: (
         circleId: string,
         userId: string,

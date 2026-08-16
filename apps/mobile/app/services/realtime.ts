@@ -162,6 +162,9 @@ class RealtimeClient {
         }
         if (message.event.type.startsWith("member_") || message.event.type === "role_changed") {
           void queryClient.invalidateQueries({ queryKey: queryKeys.members(message.circleId) })
+          // A new member is a new dot, and one who left is a dot to take
+          // away; the presence list is what the map draws from.
+          void queryClient.invalidateQueries({ queryKey: queryKeys.presence(message.circleId) })
         }
         break
 
