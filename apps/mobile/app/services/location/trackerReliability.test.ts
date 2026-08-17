@@ -4,6 +4,7 @@ import * as Location from "expo-location"
 
 import { ApiError } from "@/services/api"
 import { useAuthStore } from "@/stores/auth"
+import { usePlacesStore } from "@/stores/places"
 import { useTrackingStore } from "@/stores/tracking"
 
 import { clearTrackerLog, formatTrackerLog, logTracker, readTrackerLog } from "./log"
@@ -131,6 +132,18 @@ jest.mock("./motion", () => ({
 }))
 // eslint-disable-next-line import/first
 import { startMotion } from "./motion"
+
+const mockControlWanted = jest.fn()
+jest.mock("./control", () => ({
+  control: { setWanted: (wanted: boolean) => mockControlWanted(wanted), refresh: jest.fn() },
+  // The first tracker instance to load hands over its handler and keeps
+  // the slot: the relaunch tests load fresh instances with their own stores,
+  // and the test below drives the one this file imported.
+  setControlHandler: (handler: { watch(s: number): Promise<void>; wake(): Promise<void> }) => {
+    const slot = globalThis as { __hearthControlHandler?: typeof handler }
+    slot.__hearthControlHandler ??= handler
+  },
+}))
 
 jest.mock("./driveSensors", () => ({
   startDriveSensors: jest.fn(async () => true),
@@ -737,6 +750,85 @@ describe("a traffic stop", () => {
     classifier()("still", 100)
     await jest.advanceTimersByTimeAsync(0)
     expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+})
+
+describe("the control channel", () => {
+  const lastWanted = () =>
+    mockControlWanted.mock.calls[mockControlWanted.mock.calls.length - 1]?.[0]
+
+  it("is open while an Android phone is on the move and closed while it is parked", async () => {
+    Platform.OS = "android"
+    await enterMoving()
+    expect(lastWanted()).toBe(true)
+    await enterStationary(HOME.lat, HOME.lon)
+    expect(lastWanted()).toBe(false)
+    await enterMoving()
+    expect(lastWanted()).toBe(true)
+    await stopTracking()
+    expect(lastWanted()).toBe(false)
+  })
+
+  it("is open in every tier on iOS, whose parked session keeps the app alive", async () => {
+    Platform.OS = "ios"
+    await enterMoving()
+    expect(lastWanted()).toBe(true)
+    await enterStationary(HOME.lat, HOME.lon)
+    expect(lastWanted()).toBe(true)
+    await stopTracking()
+    expect(lastWanted()).toBe(false)
+  })
+
+  it("answers a watch and a wake that arrive over it", async () => {
+    const handler = (
+      globalThis as {
+        __hearthControlHandler?: { watch(s: number): Promise<void>; wake(): Promise<void> }
+      }
+    ).__hearthControlHandler!
+    expect(handler).toBeDefined()
+    await enterMoving()
+    // An earlier test may have left a one-shot fix hanging; its deadline is
+    // in module state and the clock here restarts from the same instant.
+    await jest.advanceTimersByTimeAsync(31_000)
+    getPosition.mockClear()
+    await handler.wake()
+    expect(getPosition).toHaveBeenCalledTimes(1)
+    await handler.watch(600)
+    expect(useTrackingStore.getState().watchedUntil).not.toBeNull()
+  })
+})
+
+describe("crossing a place", () => {
+  it("uploads the crossing fix at once, whatever the distance gate says", async () => {
+    Platform.OS = "android"
+    usePlacesStore
+      .getState()
+      .setPlaces("c1", [{ id: "home", lat: HOME.lat, lon: HOME.lon, radiusMeters: 100 }])
+    await enterMoving()
+    await enterDriving(20)
+    mockUpload.mockClear()
+    // Last kept fix 190 m out, next one 55 m out, inside the circle: a
+    // 135 m step, under the 200 m driving gate at this speed.
+    const t0 = Date.now()
+    await ingest([at(HOME.lat + 0.0017, HOME.lon, t0, 20)], "background")
+    mockUpload.mockClear()
+    await ingest([at(HOME.lat + 0.0005, HOME.lon, t0 + 10_000, 4)], "background")
+    expect(uploaded()).toHaveLength(1)
+    expect(uploaded()[0]!.lat).toBeCloseTo(HOME.lat + 0.0005, 5)
+  })
+
+  it("leaves a step of the same length alone away from any place", async () => {
+    Platform.OS = "android"
+    usePlacesStore
+      .getState()
+      .setPlaces("c1", [{ id: "home", lat: HOME.lat, lon: HOME.lon, radiusMeters: 100 }])
+    await enterMoving()
+    await enterDriving(20)
+    const t0 = Date.now()
+    await ingest([at(HOME.lat + 0.02, HOME.lon, t0, 20)], "background")
+    mockUpload.mockClear()
+    await ingest([at(HOME.lat + 0.02 + 0.0012, HOME.lon, t0 + 10_000, 20)], "background")
+    expect(uploaded()).toHaveLength(0)
   })
 })
 

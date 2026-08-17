@@ -1,6 +1,8 @@
 import { AppState } from "react-native"
 import { focusManager, QueryClient } from "@tanstack/react-query"
 
+import { usePlacesStore, type PlaceLite } from "@/stores/places"
+
 /**
  * React Native has no document to read a visibility state from, so without this
  * the library considers the app focused forever and every refetch interval
@@ -32,4 +34,16 @@ export const queryClient = new QueryClient({
     },
     mutations: { retry: 0 },
   },
+})
+
+// The tracker needs the circles' places to upload an arrival at once, and
+// the map already fetches them; every places query that lands is copied to
+// the store the tracker reads, so the two never disagree.
+queryClient.getQueryCache().subscribe((event) => {
+  if (event.type !== "updated" && event.type !== "added") return
+  const key = event.query.queryKey
+  if (key[0] !== "places" || typeof key[1] !== "string" || !key[1]) return
+  const data = event.query.state.data
+  if (!Array.isArray(data)) return
+  usePlacesStore.getState().setPlaces(key[1], data as PlaceLite[])
 })

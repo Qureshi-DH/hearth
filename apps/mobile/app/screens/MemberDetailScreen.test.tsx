@@ -42,6 +42,7 @@ let mockPresence: MemberPresence[] = []
 let mockHistory: Array<{ lat: number; lon: number; recordedAt: string }> | null = null
 const mockTrailProps: unknown[] = []
 const mockWatch = jest.fn(async () => ({ watching: true, seconds: 600 }))
+const mockRefreshMember = jest.fn(async () => ({ asked: "socket" }))
 const mockNavigation = { navigate: jest.fn(), goBack: jest.fn() }
 
 jest.mock("../hooks/queries", () => ({
@@ -57,7 +58,12 @@ jest.mock("../hooks/queries", () => ({
 }))
 jest.mock("../hooks/useNearby", () => ({ useNearby: () => null }))
 jest.mock("../services/api", () => ({
-  endpoints: { locations: { watch: (...args: unknown[]) => mockWatch(...(args as [])) } },
+  endpoints: {
+    locations: {
+      watch: (...args: unknown[]) => mockWatch(...(args as [])),
+      refreshMember: (...args: unknown[]) => mockRefreshMember(...(args as [])),
+    },
+  },
 }))
 jest.mock("../stores/auth", () => ({
   useAuthStore: (selector: (state: unknown) => unknown) => selector({ user: { id: "ana" } }),
@@ -167,9 +173,15 @@ describe("Live on a member's profile", () => {
     })
   })
 
-  it("leaves their phone alone until the live view is opened", async () => {
+  it("does not put their phone on live updates just for being opened", async () => {
     await renderProfile()
     expect(mockWatch).not.toHaveBeenCalled()
+  })
+
+  it("asks their phone for one fresh fix the moment it opens", async () => {
+    await renderProfile()
+    expect(mockRefreshMember).toHaveBeenCalledTimes(1)
+    expect(mockRefreshMember).toHaveBeenCalledWith("c1", "omar")
   })
 })
 

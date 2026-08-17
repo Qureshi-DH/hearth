@@ -887,6 +887,8 @@ describe("what a fix says the phone is doing", () => {
 const mockUpload = jest.fn()
 jest.mock("@/services/api", () => ({
   ApiError: jest.requireActual("@/services/api/client").ApiError,
+  // No server in these tests, so the control channel has nowhere to open.
+  api: { websocketUrl: () => null },
   endpoints: { locations: { upload: (...args: unknown[]) => mockUpload(...args) } },
 }))
 jest.mock("@/stores/tokenVault", () => ({

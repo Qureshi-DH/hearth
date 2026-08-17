@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type FC } from "react"
+import { useCallback, useEffect, useRef, useState, type FC } from "react"
 import { View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { QUICK_MESSAGES, type QuickMessageKey } from "@hearth/shared"
+import { useFocusEffect } from "@react-navigation/native"
 
 import { Avatar } from "@/components/Avatar"
 import { BatteryPill } from "@/components/BatteryPill"
@@ -30,6 +31,7 @@ import {
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { TripCard } from "@/screens/TripsScreen"
+import { endpoints } from "@/services/api"
 import { alert } from "@/stores/alert"
 import { useAuthStore } from "@/stores/auth"
 import { useSettingsStore } from "@/stores/settings"
@@ -67,6 +69,15 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   // Live is the one thing that asks their phone for more than it would
   // send anyway, and it is only offered while they are going somewhere.
   const liveAvailable = !isSelf && !entry?.approximate && onTheMove(entry)
+  // Opening the page asks their phone for one fresh fix, the way opening the
+  // map asks everyone's. The server holds it to one ask per half minute.
+  const askable = !isSelf && entry?.sharingState === "precise" && !entry.approximate
+  useFocusEffect(
+    useCallback(() => {
+      if (!askable) return
+      endpoints.locations.refreshMember(circleId, userId).catch(() => undefined)
+    }, [askable, circleId, userId]),
+  )
   const canSeeHistory =
     entry?.sharingState === "precise" &&
     !entry.approximate &&

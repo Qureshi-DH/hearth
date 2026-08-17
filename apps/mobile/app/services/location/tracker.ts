@@ -26,7 +26,9 @@ import { startDriveSensors, stopDriveSensors } from "@/services/location/driveSe
 import { useIncidentStore } from "@/stores/incident"
 import { useSettingsStore } from "@/stores/settings"
 import { tokenVault } from "@/stores/tokenVault"
+import { control, setControlHandler } from "@/services/location/control"
 import { logTracker, setTrackerLogHeader } from "@/services/location/log"
+import { crossesPlace, knownPlaces, usePlacesStore } from "@/stores/places"
 import { useTrackingStore, type PermissionLevel, type TrackingPolicy } from "@/stores/tracking"
 
 export const BACKGROUND_LOCATION_TASK = "hearth-background-location"
@@ -451,7 +453,16 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
   if (source === "background" && state.mode === "stationary") {
     fixes = await restingFixes(fixes.length > 0 ? fixes : [newest], live)
   }
+  // Arriving somewhere the family named is the moment they want to hear
+  // about, and the fix that crosses the circle used to sit behind the gate
+  // until the park fix minutes later. It goes at once, whatever the gate.
+  const crossed = !fixes.includes(newest) && crossesPlace(state.lastFix, newest, knownPlaces())
+  if (crossed) fixes = [...fixes, newest]
   if (fixes.length > 0) state.enqueue(fixes)
+  if (crossed) {
+    logTracker("place crossed", { acc: Math.round(newest.accuracyMeters ?? -1) })
+    void flush()
+  }
   if (source === "background") {
     logTracker("fixes", {
       got: all.length,
@@ -839,6 +850,15 @@ function syntheticFix(
   }
 }
 
+// The channel does not import the tracker, so the tracker hands it what to
+// call. At module scope for the same reason as the tasks below.
+setControlHandler({
+  watch: (seconds) => enterWatched(seconds),
+  wake: async () => {
+    await wakeFix()
+  },
+})
+
 // defineTask has to run at module scope. The OS can hand us a background event
 // before any React code has mounted.
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
@@ -917,6 +937,7 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
     // WorkManager running is not one of Android's allowed moments, but some
     // OEMs let the start through, and asking costs nothing when it is up.
     await reassertService()
+    await refreshPlacesIfStale()
 
     // Android forgets geofences when the app process is killed, and expo's
     // geofencing does not restart a terminated app the way iOS does. Rather
@@ -1325,6 +1346,41 @@ export function serviceDiedUnexpectedly(): boolean {
 }
 
 /**
+ * The control channel is open whenever this process is alive with a location
+ * session: on Android while the phone is on the move, on iOS in every tier.
+ * A parked Android phone runs no service and may be reclaimed at any time,
+ * so an ask reaches it by push instead.
+ */
+function syncControl(): void {
+  const { enabled, mode } = useTrackingStore.getState()
+  const alive = enabled && mode !== "off" && (Platform.OS === "ios" || mode === "moving")
+  control.setWanted(alive)
+}
+
+/** A day is long enough: places change rarely, and the map refreshes them whenever it is opened. */
+const PLACES_REFRESH_MS = 24 * 60 * 60 * 1000
+
+/**
+ * The tracker fetches the places itself when the phone has not opened the
+ * map in a day, so a family member's phone that is never opened still knows
+ * where home is and uploads the fix that arrives there.
+ */
+async function refreshPlacesIfStale(): Promise<void> {
+  const { refreshedAt } = usePlacesStore.getState()
+  if (refreshedAt && Date.now() - Date.parse(refreshedAt) < PLACES_REFRESH_MS) return
+  if (!useAuthStore.getState().serverUrl) return
+  try {
+    const circles = await endpoints.circles.list()
+    for (const circle of circles) {
+      usePlacesStore.getState().setPlaces(circle.id, await endpoints.places.list(circle.id))
+    }
+    usePlacesStore.getState().setRefreshedAt(new Date().toISOString())
+  } catch {
+    // Offline, or signed out. Next time.
+  }
+}
+
+/**
  * Registrations are serialised and each derives its options as it runs, so
  * two callers a tick apart cannot leave the OS holding the earlier one's
  * request over the later one's state.
@@ -1713,6 +1769,7 @@ export async function enterMoving(): Promise<void> {
   // and anchor are then the newer truth.
   if (useTrackingStore.getState().mode !== "moving") return
   logTracker("moving", { from: previous, service })
+  syncControl()
   // The request is registered either way. What the fence does next depends
   // on whether Android let the service start: with it up, the fence has done
   // its job; refused, the fence stays, because its exit is a moment Android
@@ -1808,6 +1865,7 @@ async function settle(lat: number, lon: number, parkFix: ParkFix): Promise<void>
     lat: Number(lat.toFixed(5)),
     lon: Number(lon.toFixed(5)),
   })
+  syncControl()
   // Sampling the accelerometer that hard is only worth its battery inside a
   // moving vehicle. A verdict already scheduled survives this, see
   // stopDriveSensors.
@@ -2014,6 +2072,8 @@ export async function startTracking(): Promise<boolean> {
 
   await startMotionWatch()
   await registerBackgroundSync()
+  syncControl()
+  void refreshPlacesIfStale()
   // Somebody opening the app is looking at their own dot, and a parked phone
   // has a fix from a quarter hour ago at best. One Balanced fix is cheap.
   const lastFix = useTrackingStore.getState().lastFix
@@ -2041,6 +2101,7 @@ export async function stopTracking(): Promise<void> {
   // and registers nothing rather than bringing the service back after this.
   store.setMode("off")
   store.setWatchedUntil(null)
+  syncControl()
   await applyRegistration().catch(() => undefined)
   await dropFence()
   await stopMotionWatch()

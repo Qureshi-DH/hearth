@@ -9,6 +9,10 @@ import { ThemeProvider } from "../theme/context"
 
 const mockResolveMutate = jest.fn()
 
+// The note field scrolls above the keyboard; the library needs its own double here.
+jest.mock("react-native-keyboard-controller", () =>
+  require("react-native-keyboard-controller/jest"),
+)
 jest.mock("../hooks/queries", () => ({
   useActiveSos: () => ({
     data: [{ id: "alert-1", user: { id: "me" }, startedAt: new Date().toISOString(), note: null }],

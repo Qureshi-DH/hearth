@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FC } from "react"
 import { Pressable, View, type ViewStyle } from "react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import { Ionicons } from "@expo/vector-icons"
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { DEFAULTS } from "@hearth/shared"
 
@@ -86,65 +87,74 @@ export const SosScreen: FC<AppStackScreenProps<"Sos">> = ({ navigation, route })
           ? ["#3A0F14", theme.colors.background]
           : [theme.colors.background, theme.colors.background]
       }
-      style={[
-        themed($container),
-        {
-          paddingTop: insets.top + theme.spacing.sm,
-          paddingBottom: insets.bottom + theme.spacing.md,
-        },
-      ]}
+      style={[themed($container), { paddingTop: insets.top + theme.spacing.sm }]}
     >
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text preset="subheading" tx="sos:title" />
-        <Pressable onPress={() => navigation.goBack()} hitSlop={10} style={themed($close)}>
-          <Ionicons name="close" size={20} color={theme.colors.text} />
-        </Pressable>
-      </View>
-
-      <View
-        style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: theme.spacing.lg }}
+      {/* The note field sits at the bottom, where the keyboard lands. This
+          scrolls it into view above the keyboard instead of under it. */}
+      <KeyboardAwareScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{
+          flexGrow: 1,
+          paddingHorizontal: theme.spacing.lg,
+          paddingBottom: insets.bottom + theme.spacing.md,
+        }}
+        keyboardShouldPersistTaps="handled"
+        bottomOffset={theme.spacing.lg}
+        showsVerticalScrollIndicator={false}
       >
-        <SosHoldButton
-          active={Boolean(mine)}
-          onActivate={activate}
-          label={translate("sos:holdToSend")}
-          hint={mine ? translate("sos:sentBody") : translate("sos:cancelCountdown")}
-        />
-        {mine ? (
-          <View style={{ alignItems: "center", gap: 4 }}>
-            <Text weight="semiBold" tx="sos:sent" />
-            <Text size="xs" style={{ color: theme.colors.textDim }}>
-              {relativeTime(mine.startedAt)}
-              {mine.note ? ` · “${mine.note}”` : ""}
-            </Text>
-          </View>
-        ) : null}
-      </View>
+        <View
+          style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}
+        >
+          <Text preset="subheading" tx="sos:title" />
+          <Pressable onPress={() => navigation.goBack()} hitSlop={10} style={themed($close)}>
+            <Ionicons name="close" size={20} color={theme.colors.text} />
+          </Pressable>
+        </View>
 
-      {mine ? (
-        <PrimaryButton
-          tx="sos:resolve"
-          variant="soft"
-          onPress={finish}
-          loading={resolve.isPending}
-        />
-      ) : (
-        <TextField
-          value={note}
-          onChangeText={setNote}
-          labelTx="sos:note"
-          placeholderTx="sos:notePlaceholder"
-          maxLength={200}
-          inputWrapperStyle={themed($input)}
-        />
-      )}
+        <View
+          style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: theme.spacing.lg }}
+        >
+          <SosHoldButton
+            active={Boolean(mine)}
+            onActivate={activate}
+            label={translate("sos:holdToSend")}
+            hint={mine ? translate("sos:sentBody") : translate("sos:cancelCountdown")}
+          />
+          {mine ? (
+            <View style={{ alignItems: "center", gap: 4 }}>
+              <Text weight="semiBold" tx="sos:sent" />
+              <Text size="xs" style={{ color: theme.colors.textDim }}>
+                {relativeTime(mine.startedAt)}
+                {mine.note ? ` · “${mine.note}”` : ""}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        {mine ? (
+          <PrimaryButton
+            tx="sos:resolve"
+            variant="soft"
+            onPress={finish}
+            loading={resolve.isPending}
+          />
+        ) : (
+          <TextField
+            value={note}
+            onChangeText={setNote}
+            labelTx="sos:note"
+            placeholderTx="sos:notePlaceholder"
+            maxLength={200}
+            inputWrapperStyle={themed($input)}
+          />
+        )}
+      </KeyboardAwareScrollView>
     </LinearGradient>
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+const $container: ThemedStyle<ViewStyle> = () => ({
   flex: 1,
-  paddingHorizontal: spacing.lg,
 })
 const $close: ThemedStyle<ViewStyle> = ({ colors }) => ({
   width: 36,
