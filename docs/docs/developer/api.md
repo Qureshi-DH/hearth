@@ -148,8 +148,9 @@ POST /api/v1/circles/:id/members/:userId/watch
 
 Called while someone has a member's Live page open, and every minute after to
 hold the window. The member's phone is asked to report at full accuracy every
-few seconds for `DEFAULTS.watchWindowSeconds`, by a silent push and by its
-next upload reply. The reply is a `WatchResponse`:
+few seconds for `DEFAULTS.watchWindowSeconds`: over its control channel when
+it has one open (see the websocket section), by a silent push otherwise, and
+by its next upload reply either way. The reply is a `WatchResponse`:
 
 ```json
 {
@@ -163,8 +164,9 @@ next upload reply. The reply is a `WatchResponse`:
 }
 ```
 
-`pushed` says what became of the silent push: `sent` when this call queued
-one, `held` when the phone was pushed moments ago or has uploaded since,
+`pushed` says what became of the ask: `socket` when the phone's control
+channel carried it, `sent` when this call queued a silent push, `held` when
+the phone was pushed moments ago or has uploaded since,
 `no_device` when the member has no push token, and `unsupported` when the
 push provider cannot carry a silent push. A phone that has not uploaded since
 the first push is pushed again after 90 s, three times per window at most.
@@ -173,6 +175,20 @@ the first push is pushed again after 90 s, three times per window at most.
 itself reported stands between it and reporting (`PRESENCE_ISSUES` in the
 shared package). A member sharing approximately or paused cannot be watched:
 `watching` is false and every other field is empty.
+
+## Asking one phone for a fix
+
+```http
+POST /api/v1/circles/:id/members/:userId/refresh
+```
+
+Called when someone opens a member's page. The phone is asked for one fix
+now, over its control channel when it has one open and by silent push
+otherwise, at most once per half minute per phone whoever is looking. The
+reply is `{ asked }`: `socket`, `pushed`, `held` (pushed moments ago),
+`fresh` (heard from in the last half minute, left alone), `no_device` or
+`unsupported`. `POST /circles/:id/locations/refresh` does the same for
+every quiet member of a circle when the map opens.
 
 ## Websocket
 
@@ -191,12 +207,19 @@ Server → client messages (`WsServerMessage` in the shared package):
 | `event`      | `{ circleId, event }`, new activity-feed entry               |
 | `sos`        | `{ circleId, alert }`                                        |
 | `nudge`      | `{ circleId, nudge }`, on the recipient's own topic          |
+| `control`    | `{ command, seconds? }`, to the phone's control channel only |
 | `pong`       | `{ serverTime }`                                             |
 | `error`      | `{ message }`, the socket could not honour what you sent     |
 
-Client → server: `{ type: "ping" }` and `{ type: "subscribe", circleIds }`,
-which may only narrow to circles the user belongs to. The server pings every
-30 s and drops sockets that don't answer.
+Client → server: `{ type: "ping" }`, `{ type: "subscribe", circleIds }`,
+which may only narrow to circles the user belongs to, and
+`{ type: "control" }`, which the phone's tracker sends to declare the socket
+its control channel. The server answers `{ type: "control", command: "ready" }`
+and from then on delivers `watch` (go live for `seconds`) and `wake` (one fix
+now) down that socket and no other, the moment a viewer or the sweep asks.
+The server pings every 30 s and drops sockets that don't answer; each
+answered ping renews the channel's stamp on the presence row, which is what
+the routes read to choose the channel over a push.
 
 ## Roles
 

@@ -6,6 +6,38 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-17
+
+An ask now reaches a phone that is awake within a second. Servers must
+update before phones: the app opens a control channel on the websocket and
+calls `POST /circles/:id/members/:userId/refresh`.
+
+### Added
+
+- The phone's control channel. The tracker keeps its own websocket to the
+  server whenever its process is alive with a location session (Android on
+  the move, iOS always) and declares it with `{ type: "control" }`. A watch,
+  a page opened, the map opened and the sweep's wake go down it and are
+  answered at once; the silent push is kept for a parked Android phone,
+  which has nothing open. Server: `user_presence.control_seen_at`
+  (migration 0008), `control` frames on `/ws`.
+- `POST /circles/:id/members/:userId/refresh`: opening a member's page asks
+  their phone for one fix now, at most once per half minute per phone.
+- The tracker keeps the circles' places and uploads the fix that crosses
+  into or out of one at once, whatever the distance gate says, so an
+  arrival is announced on the crossing fix rather than minutes later on
+  the park fix. The map's places queries feed it, and the tracker fetches
+  them itself once a day for a phone that is never opened.
+
+### Changed
+
+- The watch reply's `pushed` gains `socket`. The sweep's wake goes over the
+  channel first and by push second, and no longer needs a push provider for
+  a phone with a channel open.
+- The SOS note scrolls above the keyboard instead of under it.
+- Someone joining or leaving a circle refreshes the map's dots, not only the
+  member list.
+
 ## [0.8.0] - 2026-08-14
 
 Why the family's phones went silent, taken apart and put back. Servers must

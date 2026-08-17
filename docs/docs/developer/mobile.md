@@ -451,14 +451,40 @@ and service status. When a family member says "the notification stayed" or
 "it went quiet at home", this is the page to ask for; a stop that was called
 and a park fix that never left used to look identical.
 
+### The control channel
+
+The tracker keeps its own websocket to the server whenever its process is
+alive with a location session: on Android while the phone is on the move
+(the service is up anyway), on iOS in every tier (the parked session keeps
+the app alive). It sends `{ type: "control" }` on open, pings every two
+minutes, reconnects with backoff, and takes a new token from the API client
+when one is rotated (`services/location/control.ts`). An ask from the family
+(a page opened, Live, the map opened, the sweep's wake) comes down it and is
+answered within a second: `wake` takes one fix, `watch` goes live. The UI's
+socket in `services/realtime.ts` is a different thing: it lives with the
+screen and closes when the app goes to the background, which is exactly when
+this one matters. A parked Android phone runs no service and may be
+reclaimed, so it has no channel; an ask reaches it by silent push, which the
+brief service answers.
+
+Opening a member's page calls `POST /circles/:id/members/:userId/refresh`
+for one fix now, the way opening the map calls
+`POST /circles/:id/locations/refresh` for everyone quiet. The tracker also
+keeps the circles' places (`stores/places.ts`, filled by every places query
+and refreshed by the tracker itself once a day) and uploads the fix that
+crosses into or out of one at once, whatever the distance gate says, so an
+arrival is announced on the crossing fix rather than on the park fix minutes
+later.
+
 ### Watching
 
 The Live page is the one time the family wants to see a car move along a
 road. The page calls `POST /circles/:id/members/:userId/watch` on focus and
 every minute after. The server records the window on the member and sends
-the phone a silent `watch` push, again after ninety seconds if the phone has
+the ask down the phone's control channel when it has one open, or a silent
+`watch` push otherwise, again after ninety seconds if the phone has
 not uploaded since, three times per window at most, and the reply says
-whether one went (`pushed`), when the phone was last heard and what it said
+which (`pushed`), when the phone was last heard and what it said
 stands in its way; every upload reply also carries `watchedUntil`, so a phone that is already reporting picks the watch up on
 its next batch whether or not the push arrived. Either way the phone puts
 `watchedUntil` in its store and `currentOptions()` returns the live tier
