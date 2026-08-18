@@ -6,6 +6,14 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Fixed
+
+- Every Android phone said "their phone stopped Hearth in the background"
+  the moment it parked. A parked phone runs no service on purpose, and the
+  check that read a missing service as a death was written for a design
+  that kept one in every tier. A death is now only what the moving tier's
+  re-assert finds, and a phone that parks forgets one.
+
 ## [0.9.0] - 2026-08-17
 
 An ask now reaches a phone that is awake within a second. Servers must

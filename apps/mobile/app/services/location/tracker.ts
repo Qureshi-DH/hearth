@@ -1404,7 +1404,9 @@ function applyRegistration(): Promise<ForegroundServiceStatus> {
         accuracy: options.accuracy,
         interval: options.timeInterval,
       })
-      if (status === "none") noteServiceDied()
+      // No death is read here: a parked phone registers without a service
+      // and a brief start may not have reached the foreground yet. A service
+      // that was up and went away is what reassertService finds.
     }
     return status
   })
@@ -1866,6 +1868,9 @@ async function settle(lat: number, lon: number, parkFix: ParkFix): Promise<void>
     lon: Number(lon.toFixed(5)),
   })
   syncControl()
+  // A parked phone wants no service, so a death remembered from the drive
+  // is no longer what stands between it and reporting.
+  store.setServiceStoppedAt(null)
   // Sampling the accelerometer that hard is only worth its battery inside a
   // moving vehicle. A verdict already scheduled survives this, see
   // stopDriveSensors.

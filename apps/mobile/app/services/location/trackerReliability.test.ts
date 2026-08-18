@@ -352,6 +352,25 @@ describe("the Android foreground service", () => {
     expect(start).toHaveBeenCalled()
   })
 
+  it("does not read a parked phone's missing service as a death", async () => {
+    await enterMoving()
+    mockServiceStatus = "none"
+    await enterStationary(HOME.lat, HOME.lon)
+    expect(serviceDiedUnexpectedly()).toBe(false)
+    // Nor a wake's brief service going down with its fix.
+    await wakeFix()
+    expect(serviceDiedUnexpectedly()).toBe(false)
+  })
+
+  it("forgets a death once the phone parks, since a parked phone wants no service", async () => {
+    await enterMoving()
+    mockServiceStatus = "none"
+    await reassertService()
+    expect(serviceDiedUnexpectedly()).toBe(true)
+    await enterStationary(HOME.lat, HOME.lon)
+    expect(serviceDiedUnexpectedly()).toBe(false)
+  })
+
   it("remembers a service that died without being asked, for the health report", async () => {
     await enterMoving()
     expect(serviceDiedUnexpectedly()).toBe(false)
