@@ -135,7 +135,8 @@ import { startMotion } from "./motion"
 
 const mockControlWanted = jest.fn()
 jest.mock("./control", () => ({
-  control: { setWanted: (wanted: boolean) => mockControlWanted(wanted), refresh: jest.fn() },
+  // The tracker syncs the channel at import, before this file's consts exist.
+  control: { setWanted: (wanted: boolean) => mockControlWanted?.(wanted), refresh: jest.fn() },
   // The first tracker instance to load hands over its handler and keeps
   // the slot: the relaunch tests load fresh instances with their own stores,
   // and the test below drives the one this file imported.
@@ -660,6 +661,22 @@ describe("what survives a relaunch", () => {
     classifier()("still", 90)
     await jest.advanceTimersByTimeAsync(0)
     expect(useTrackingStore.getState().motionStillSince).toBe(Date.now())
+  })
+
+  it("opens the control channel at boot when the phone is on the move", () => {
+    Platform.OS = "android"
+    useTrackingStore.setState({ enabled: true, mode: "moving" })
+    mockControlWanted.mockClear()
+    relaunch()
+    expect(mockControlWanted).toHaveBeenLastCalledWith(true)
+  })
+
+  it("opens the control channel at boot on a parked iPhone, whose session keeps it alive", () => {
+    Platform.OS = "ios"
+    useTrackingStore.setState({ enabled: true, mode: "stationary" })
+    mockControlWanted.mockClear()
+    relaunch()
+    expect(mockControlWanted).toHaveBeenLastCalledWith(true)
   })
 
   it("logs a boot line saying whether the process is headless", () => {

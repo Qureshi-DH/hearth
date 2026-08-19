@@ -183,6 +183,12 @@ describe("Live on a member's profile", () => {
     expect(mockRefreshMember).toHaveBeenCalledTimes(1)
     expect(mockRefreshMember).toHaveBeenCalledWith("c1", "omar")
   })
+
+  it("asks even before any presence has arrived for them", async () => {
+    mockPresence = []
+    await renderProfile()
+    expect(mockRefreshMember).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("what a quiet phone says about itself", () => {

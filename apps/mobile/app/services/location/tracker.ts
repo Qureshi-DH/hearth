@@ -2204,4 +2204,7 @@ setTrackerLogHeader(headerForTrackerLog)
     queued: queue.length,
   })
   if (enabled && mode !== "off") void startMotionWatch()
+  // And the channel: a process the OS restarted for a delivery has to be
+  // reachable again before anyone opens a page on it.
+  syncControl()
 }

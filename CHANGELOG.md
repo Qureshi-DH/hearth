@@ -13,6 +13,11 @@ Notable changes to Hearth. The format is loosely
   check that read a missing service as a death was written for a design
   that kept one in every tier. A death is now only what the moving tier's
   re-assert finds, and a phone that parks forgets one.
+- The control channel opens at boot. A process the OS restarted in the
+  background, an iPhone relaunched by a location event or an Android phone
+  relaunched for a delivery mid-drive, ran without it until the next tier
+  change, so a page opened on that phone fell back to push. A page opened
+  before a member's presence has loaded asks their phone too.
 
 ## [0.9.0] - 2026-08-17
 

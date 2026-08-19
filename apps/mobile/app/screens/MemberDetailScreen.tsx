@@ -71,7 +71,8 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   const liveAvailable = !isSelf && !entry?.approximate && onTheMove(entry)
   // Opening the page asks their phone for one fresh fix, the way opening the
   // map asks everyone's. The server holds it to one ask per half minute.
-  const askable = !isSelf && entry?.sharingState === "precise" && !entry.approximate
+  // The server decides for a member whose presence has not arrived yet.
+  const askable = !isSelf && (!entry || (entry.sharingState === "precise" && !entry.approximate))
   useFocusEffect(
     useCallback(() => {
       if (!askable) return
