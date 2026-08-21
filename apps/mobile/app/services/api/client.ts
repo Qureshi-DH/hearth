@@ -191,7 +191,13 @@ export class ApiClient {
     }
   }
 
-  private refreshTokens(): Promise<TokenPair | null> {
+  /**
+   * Rotates the tokens now. The tracker's control channel calls this when
+   * the server refuses its socket: a parked phone may make no REST call for
+   * a quarter hour, so it cannot wait for one to do the rotating. Single
+   * flight, and a refusal still ends the session as it does on any call.
+   */
+  refreshTokens(): Promise<TokenPair | null> {
     if (!this.refreshing) {
       this.refreshing = this.doRefresh().finally(() => {
         this.refreshing = null

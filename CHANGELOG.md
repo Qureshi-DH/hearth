@@ -19,6 +19,11 @@ Notable changes to Hearth. The format is loosely
   network and its process for hours, and while it does an ask reaches it in
   a second and the brief service answers with one fix; if the OS takes the
   process, the socket drops and push takes over.
+- The control channel renews its own token. A parked phone may make no
+  REST call for a quarter hour, and a socket refused after the token
+  expired used to wait for one; the channel now rotates the token itself
+  and reconnects, and a refusal from before sharing was switched off no
+  longer stops it opening when sharing comes back.
 - The control channel opens at boot. A process the OS restarted in the
   background, an iPhone relaunched by a location event or an Android phone
   relaunched for a delivery mid-drive, ran without it until the next tier

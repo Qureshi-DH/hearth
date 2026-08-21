@@ -26,11 +26,11 @@ export function setControlHandler(next: ControlHandler): void {
 }
 
 /**
- * The phone's own line to the server, open whenever the tracker's process
- * is alive with a location session: on Android while the phone is on the
- * move (the service is up anyway), on iOS in every tier (the parked session
- * keeps the app alive). An ask from the family (a page opened, Live, the
- * sweep's wake) comes down it and is answered within a second. The UI's own
+ * The phone's own line to the server, open for as long as sharing is on:
+ * an iPhone's parked session keeps its process alive, and a parked Android
+ * phone exempt from battery optimisation keeps its network and its process
+ * for hours. An ask from the family (a page opened, Live, the sweep's
+ * wake) comes down it and is answered within a second. The UI's own
  * socket is a different thing: it lives with the screen and closes when the
  * app goes to the background, which is exactly when this one matters.
  */
@@ -104,10 +104,12 @@ class ControlChannel {
       this.socket = null
       this.clearTimers()
       if (!this.wanted) return
-      // 4401 is the server refusing the token; the next refresh brings a new one.
+      // 4401 is the server refusing the token. A parked phone may make no
+      // REST call for a quarter hour, so the channel rotates it itself.
       if (event.code === 4401) {
         this.refused = true
         logTracker("control", { open: false, refused: true })
+        void this.renew()
         return
       }
       this.reconnectTimer = setTimeout(() => this.open(), this.backoff)
@@ -119,11 +121,33 @@ class ControlChannel {
     }
   }
 
+  /**
+   * The rotation lands in the API client's token hook, which calls refresh()
+   * here as it does for every rotation; the call after is for a hook that
+   * has nothing to say. A rotation that fails for want of a network is tried
+   * again on the longest backoff; one the server refuses ends the session,
+   * and the tracker is stopped by the same hook.
+   */
+  private async renew(): Promise<void> {
+    if (!this.wanted) return
+    const next = await api.refreshTokens().catch(() => null)
+    if (!this.wanted) return
+    if (next) {
+      this.refresh()
+      return
+    }
+    this.clearTimers()
+    this.reconnectTimer = setTimeout(() => void this.renew(), MAX_BACKOFF_MS)
+  }
+
   private close(): void {
     this.clearTimers()
     this.socket?.close()
     this.socket = null
     this.backoff = MIN_BACKOFF_MS
+    // A channel wanted again later starts afresh; a refusal from before
+    // sharing was switched off says nothing about the token it has now.
+    this.refused = false
   }
 
   private clearTimers(): void {

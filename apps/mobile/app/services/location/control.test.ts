@@ -1,10 +1,11 @@
 import { control, setControlHandler } from "./control"
 
 jest.mock("@/services/api", () => ({
-  api: { websocketUrl: () => mockUrl },
+  api: { websocketUrl: () => mockUrl, refreshTokens: () => mockRefreshTokens() },
 }))
 
 let mockUrl: string | null = "wss://hearth.test/api/v1/ws?access_token=t"
+const mockRefreshTokens = jest.fn(async (): Promise<{ accessToken: string } | null> => null)
 
 /** Every socket the channel opened, in order. */
 const sockets: FakeSocket[] = []
@@ -52,6 +53,8 @@ beforeEach(() => {
   mockUrl = "wss://hearth.test/api/v1/ws?access_token=t"
   handler.watch.mockClear()
   handler.wake.mockClear()
+  mockRefreshTokens.mockReset()
+  mockRefreshTokens.mockImplementation(async () => null)
   setControlHandler(handler)
 })
 
@@ -119,15 +122,45 @@ describe("the control channel", () => {
     expect(sockets[1]!.url).toContain("access_token=t2")
   })
 
-  it("waits for a new token after being refused, rather than retrying", () => {
+  it("renews its token itself after being refused, and reconnects with it", async () => {
+    // A parked phone may make no REST call for a quarter hour, so the
+    // channel cannot wait for one to rotate the token.
+    mockRefreshTokens.mockImplementationOnce(async () => {
+      mockUrl = "wss://hearth.test/api/v1/ws?access_token=t2"
+      return { accessToken: "t2" }
+    })
     control.setWanted(true)
     sockets[0]!.readyState = FakeSocket.CLOSED
     sockets[0]!.onclose?.({ code: 4401 })
-    jest.advanceTimersByTime(60_000)
-    expect(sockets).toHaveLength(1)
-    control.refresh()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mockRefreshTokens).toHaveBeenCalledTimes(1)
     jest.advanceTimersByTime(1_000)
     expect(sockets).toHaveLength(2)
+    expect(sockets[1]!.url).toContain("access_token=t2")
+  })
+
+  it("tries the renewal again later when it fails for want of a network", async () => {
+    control.setWanted(true)
+    sockets[0]!.readyState = FakeSocket.CLOSED
+    sockets[0]!.onclose?.({ code: 4401 })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mockRefreshTokens).toHaveBeenCalledTimes(1)
+    expect(sockets).toHaveLength(1)
+    jest.advanceTimersByTime(30_000)
+    await Promise.resolve()
+    expect(mockRefreshTokens).toHaveBeenCalledTimes(2)
+  })
+
+  it("stops trying once it is no longer wanted", async () => {
+    control.setWanted(true)
+    sockets[0]!.readyState = FakeSocket.CLOSED
+    sockets[0]!.onclose?.({ code: 4401 })
+    await Promise.resolve()
+    control.setWanted(false)
+    jest.advanceTimersByTime(120_000)
+    expect(mockRefreshTokens).toHaveBeenCalledTimes(1)
   })
 
   it("does not open without a server or a token", () => {
