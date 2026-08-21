@@ -13,6 +13,12 @@ Notable changes to Hearth. The format is loosely
   check that read a missing service as a death was written for a design
   that kept one in every tier. A death is now only what the moving tier's
   re-assert finds, and a phone that parks forgets one.
+- A parked Android phone keeps its control channel open too. An ask used to
+  go to it by push, the old slow path, while iPhones answered over the
+  channel in seconds. A phone exempt from battery optimisation keeps its
+  network and its process for hours, and while it does an ask reaches it in
+  a second and the brief service answers with one fix; if the OS takes the
+  process, the socket drops and push takes over.
 - The control channel opens at boot. A process the OS restarted in the
   background, an iPhone relaunched by a location event or an Android phone
   relaunched for a delivery mid-drive, ran without it until the next tier

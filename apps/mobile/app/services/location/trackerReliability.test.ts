@@ -663,9 +663,9 @@ describe("what survives a relaunch", () => {
     expect(useTrackingStore.getState().motionStillSince).toBe(Date.now())
   })
 
-  it("opens the control channel at boot when the phone is on the move", () => {
+  it("opens the control channel at boot on a parked Android phone", () => {
     Platform.OS = "android"
-    useTrackingStore.setState({ enabled: true, mode: "moving" })
+    useTrackingStore.setState({ enabled: true, mode: "stationary" })
     mockControlWanted.mockClear()
     relaunch()
     expect(mockControlWanted).toHaveBeenLastCalledWith(true)
@@ -793,16 +793,34 @@ describe("the control channel", () => {
   const lastWanted = () =>
     mockControlWanted.mock.calls[mockControlWanted.mock.calls.length - 1]?.[0]
 
-  it("is open while an Android phone is on the move and closed while it is parked", async () => {
+  it("stays open on Android in every tier, so an ask reaches a parked phone too", async () => {
     Platform.OS = "android"
     await enterMoving()
     expect(lastWanted()).toBe(true)
     await enterStationary(HOME.lat, HOME.lon)
-    expect(lastWanted()).toBe(false)
+    expect(lastWanted()).toBe(true)
     await enterMoving()
     expect(lastWanted()).toBe(true)
     await stopTracking()
     expect(lastWanted()).toBe(false)
+  })
+
+  it("answers a wake over the channel on a parked Android phone with one brief fix", async () => {
+    Platform.OS = "android"
+    const handler = (
+      globalThis as {
+        __hearthControlHandler?: { watch(s: number): Promise<void>; wake(): Promise<void> }
+      }
+    ).__hearthControlHandler!
+    await enterStationary(HOME.lat, HOME.lon)
+    await jest.advanceTimersByTimeAsync(31_000)
+    start.mockClear()
+    getPosition.mockClear()
+    await handler.wake()
+    expect(getPosition).toHaveBeenCalledTimes(1)
+    expect(optionsOf(0).foregroundService).toBeDefined()
+    expect(lastOptions().foregroundService).toBeUndefined()
+    expect(useTrackingStore.getState().mode).toBe("stationary")
   })
 
   it("is open in every tier on iOS, whose parked session keeps the app alive", async () => {

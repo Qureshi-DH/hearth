@@ -1346,15 +1346,18 @@ export function serviceDiedUnexpectedly(): boolean {
 }
 
 /**
- * The control channel is open whenever this process is alive with a location
- * session: on Android while the phone is on the move, on iOS in every tier.
- * A parked Android phone runs no service and may be reclaimed at any time,
- * so an ask reaches it by push instead.
+ * The control channel is open for as long as sharing is on, in every tier
+ * on both platforms. A parked iPhone's session keeps its process alive. A
+ * parked Android phone runs no service, so the process may be reclaimed,
+ * but a phone exempt from battery optimisation keeps its network and stays
+ * up for hours, and while it does an ask reaches it in a second; if the OS
+ * does take the process the socket drops, the server sees the stamp age
+ * out, and the ask goes by push instead. Either way a wake on a parked
+ * phone runs the brief service for one fix.
  */
 function syncControl(): void {
   const { enabled, mode } = useTrackingStore.getState()
-  const alive = enabled && mode !== "off" && (Platform.OS === "ios" || mode === "moving")
-  control.setWanted(alive)
+  control.setWanted(enabled && mode !== "off")
 }
 
 /** A day is long enough: places change rarely, and the map refreshes them whenever it is opened. */
