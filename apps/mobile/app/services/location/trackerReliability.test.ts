@@ -146,6 +146,13 @@ jest.mock("./control", () => ({
   },
 }))
 
+const mockWakeStart = jest.fn(async () => true)
+const mockWakeStop = jest.fn(async () => {})
+jest.mock("./wakeService", () => ({
+  startWakeService: () => mockWakeStart(),
+  stopWakeService: () => mockWakeStop(),
+}))
+
 jest.mock("./driveSensors", () => ({
   startDriveSensors: jest.fn(async () => true),
   stopDriveSensors: jest.fn(),
@@ -265,20 +272,31 @@ describe("the Android foreground service", () => {
     expect(lastOptions().timeInterval).toBe(RESTING_HEARTBEAT_MS)
   })
 
-  it("answers a wake on a parked phone with one fix under a service that goes with it", async () => {
+  it("answers a wake on a parked phone with one fix under the wake service, which goes with it", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     start.mockClear()
     getPosition.mockClear()
+    mockWakeStart.mockClear()
+    mockWakeStop.mockClear()
     await wakeFix()
+    // The native service carries the fix and its notification; the resting
+    // request is left exactly as it was.
+    expect(mockWakeStart).toHaveBeenCalledTimes(1)
     expect(getPosition).toHaveBeenCalledTimes(1)
-    // Up for the fix, down with it: the notification shows for the second
-    // the fix takes, which is the one the family accepts.
-    const registrations = start.mock.calls as [string, Location.LocationTaskOptions][]
-    expect(registrations.length).toBe(2)
-    expect(registrations[0]![1].foregroundService).toBeDefined()
-    expect(registrations[1]![1].foregroundService).toBeUndefined()
+    expect(mockWakeStop).toHaveBeenCalledTimes(1)
+    expect(start).not.toHaveBeenCalled()
     expect(uploaded().map((fix) => fix.source)).toContain("nudge")
     expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+
+  it("takes the wake service down even when the fix never comes", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    getPosition.mockImplementationOnce(() => new Promise(() => {}))
+    mockWakeStop.mockClear()
+    const fix = wakeFix()
+    await jest.advanceTimersByTimeAsync(30_000 + 10)
+    expect(await fix).toBeNull()
+    expect(mockWakeStop).toHaveBeenCalledTimes(1)
   })
 
   it("leaves a parked phone alone, since it wants no service", async () => {
@@ -663,9 +681,9 @@ describe("what survives a relaunch", () => {
     expect(useTrackingStore.getState().motionStillSince).toBe(Date.now())
   })
 
-  it("opens the control channel at boot on a parked Android phone", () => {
+  it("opens the control channel at boot when an Android phone is on the move", () => {
     Platform.OS = "android"
-    useTrackingStore.setState({ enabled: true, mode: "stationary" })
+    useTrackingStore.setState({ enabled: true, mode: "moving" })
     mockControlWanted.mockClear()
     relaunch()
     expect(mockControlWanted).toHaveBeenLastCalledWith(true)
@@ -793,41 +811,16 @@ describe("the control channel", () => {
   const lastWanted = () =>
     mockControlWanted.mock.calls[mockControlWanted.mock.calls.length - 1]?.[0]
 
-  it("stays open on Android in every tier, so an ask reaches a parked phone too", async () => {
+  it("is open while an Android phone is on the move and closed while it is parked", async () => {
+    // A parked Android phone holds nothing open; a high priority push
+    // starts the wake service natively, the way a messaging app checks for
+    // messages.
     Platform.OS = "android"
     await enterMoving()
     expect(lastWanted()).toBe(true)
     await enterStationary(HOME.lat, HOME.lon)
-    expect(lastWanted()).toBe(true)
-    await enterMoving()
-    expect(lastWanted()).toBe(true)
-    await stopTracking()
     expect(lastWanted()).toBe(false)
-  })
-
-  it("answers a wake over the channel on a parked Android phone with one brief fix", async () => {
-    Platform.OS = "android"
-    const handler = (
-      globalThis as {
-        __hearthControlHandler?: { watch(s: number): Promise<void>; wake(): Promise<void> }
-      }
-    ).__hearthControlHandler!
-    await enterStationary(HOME.lat, HOME.lon)
-    await jest.advanceTimersByTimeAsync(31_000)
-    start.mockClear()
-    getPosition.mockClear()
-    await handler.wake()
-    expect(getPosition).toHaveBeenCalledTimes(1)
-    expect(optionsOf(0).foregroundService).toBeDefined()
-    expect(lastOptions().foregroundService).toBeUndefined()
-    expect(useTrackingStore.getState().mode).toBe("stationary")
-  })
-
-  it("is open in every tier on iOS, whose parked session keeps the app alive", async () => {
-    Platform.OS = "ios"
     await enterMoving()
-    expect(lastWanted()).toBe(true)
-    await enterStationary(HOME.lat, HOME.lon)
     expect(lastWanted()).toBe(true)
     await stopTracking()
     expect(lastWanted()).toBe(false)
@@ -895,8 +888,8 @@ describe("being watched", () => {
     await enterWatched(600)
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(uploaded()).toHaveLength(1)
-    expect(lastOptions().foregroundService).toBeUndefined()
-    expect(lastOptions().timeInterval).toBe(RESTING_HEARTBEAT_MS)
+    // The resting request is not touched; the wake service carried the fix.
+    expect(start).not.toHaveBeenCalled()
     expect(useTrackingStore.getState().mode).toBe("stationary")
     // The window is held, so a departure inside it goes straight to live.
     expect(useTrackingStore.getState().watchedUntil).not.toBeNull()
@@ -917,7 +910,6 @@ describe("being watched", () => {
     await flush()
     await jest.advanceTimersByTimeAsync(0)
     expect(getPosition).toHaveBeenCalledTimes(1)
-    expect(lastOptions().foregroundService).toBeUndefined()
     expect(readTrackerLog().some((entry) => entry.what === "watch adopted")).toBe(true)
   })
 

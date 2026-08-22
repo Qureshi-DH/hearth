@@ -88,6 +88,14 @@ declare class HearthMotionModule extends NativeModule<{
    * "app_settings" for the fallback, or null when nothing would open.
    */
   openVendorPowerManagerAsync(): Promise<string | null>
+  /**
+   * Android only. Brings up the wake service, a foreground service that
+   * carries one fix and its "Updating your location" notification, then
+   * goes. True when Android accepted the start.
+   */
+  startWakeServiceAsync(): Promise<boolean>
+  /** Android only. Takes the wake service down with the fix it carried. */
+  stopWakeServiceAsync(): Promise<void>
 }
 
 export default requireNativeModule<HearthMotionModule>("HearthMotion")

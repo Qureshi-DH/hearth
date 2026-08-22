@@ -169,6 +169,10 @@ class HearthMotionModule : Module() {
 
     AsyncFunction("openVendorPowerManagerAsync") { openVendorPowerManager() }
 
+    AsyncFunction("startWakeServiceAsync") { HearthWakeService.start(context) }
+
+    AsyncFunction("stopWakeServiceAsync") { HearthWakeService.stop(context) }
+
     OnStartObserving { startObservingPower() }
 
     OnStopObserving { stopObservingPower() }

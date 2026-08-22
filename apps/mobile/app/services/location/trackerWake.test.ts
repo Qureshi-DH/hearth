@@ -83,6 +83,13 @@ jest.mock("./motion", () => ({
 // eslint-disable-next-line import/first
 import { startMotion } from "./motion"
 
+const mockWakeStart = jest.fn(async () => true)
+const mockWakeStop = jest.fn(async () => {})
+jest.mock("./wakeService", () => ({
+  startWakeService: () => mockWakeStart(),
+  stopWakeService: () => mockWakeStop(),
+}))
+
 jest.mock("./driveSensors", () => ({
   startDriveSensors: jest.fn(async () => true),
   stopDriveSensors: jest.fn(),
@@ -187,16 +194,18 @@ describe("a journey starting in the background on Android", () => {
     expect(start).not.toHaveBeenCalled()
   })
 
-  it("answers a wake with one fix under a service that comes and goes with it", async () => {
+  it("answers a wake with one fix under the wake service, which comes and goes with it", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     // Forget the arrival fix.
     useTrackingStore.setState({ queue: [] })
     start.mockClear()
     getPosition.mockClear()
+    mockWakeStart.mockClear()
+    mockWakeStop.mockClear()
     await wakeFix()
-    expect(start).toHaveBeenCalledTimes(2)
-    expect(optionsOf(0).foregroundService).toBeDefined()
-    expect(optionsOf(1).foregroundService).toBeUndefined()
+    expect(start).not.toHaveBeenCalled()
+    expect(mockWakeStart).toHaveBeenCalledTimes(1)
+    expect(mockWakeStop).toHaveBeenCalledTimes(1)
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(useTrackingStore.getState().queue.map((fix) => fix.source)).toContain("nudge")
     expect(useTrackingStore.getState().mode).toBe("stationary")
@@ -214,11 +223,12 @@ describe("a journey starting in the background on Android", () => {
     await enterStationary(HOME.lat, HOME.lon)
     getPosition.mockImplementationOnce(() => new Promise(() => {}))
     start.mockClear()
+    mockWakeStop.mockClear()
     const fix = wakeFix()
     await jest.advanceTimersByTimeAsync(30_000 + 10)
     expect(await fix).toBeNull()
-    // And the brief service does not outlive the fix it was for.
-    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeUndefined()
+    // And the wake service does not outlive the fix it was for.
+    expect(mockWakeStop).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -271,8 +281,8 @@ describe("being watched", () => {
     await enterWatched(600)
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(useTrackingStore.getState().mode).toBe("stationary")
-    expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(RESTING_HEARTBEAT_MS)
-    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeUndefined()
+    // The resting request is not touched; the wake service carried the fix.
+    expect(start).not.toHaveBeenCalled()
   })
 
   it("stays live in the driving tier's place until the window ends", async () => {

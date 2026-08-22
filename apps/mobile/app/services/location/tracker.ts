@@ -28,6 +28,7 @@ import { useSettingsStore } from "@/stores/settings"
 import { tokenVault } from "@/stores/tokenVault"
 import { control, setControlHandler } from "@/services/location/control"
 import { logTracker, setTrackerLogHeader } from "@/services/location/log"
+import { startWakeService, stopWakeService } from "@/services/location/wakeService"
 import { crossesPlace, knownPlaces, usePlacesStore } from "@/stores/places"
 import { useTrackingStore, type PermissionLevel, type TrackingPolicy } from "@/stores/tracking"
 
@@ -1076,16 +1077,11 @@ const SERVICE_NOTIFICATION = {
 }
 
 /**
- * A parked Android phone runs no service, so no notification stays in the
- * shade: the family accepts one that shows for the second a fix takes and
- * goes with it, the way a messaging app checks for messages. While this is
- * true the resting request carries the service for the length of one fix.
- * Starting it from the background is allowed for an app exempt from battery
- * optimisation, which the checklist asks for, and at the moments Android
- * allows anyway; otherwise the start is refused and the fix is taken on the
- * throttled request.
+ * A parked Android phone runs no location service, so no notification
+ * stays in the shade. A wake on it runs the native wake service for the
+ * length of one fix, "Updating your location" shown and gone, the way a
+ * messaging app checks for messages; see services/location/wakeService.
  */
-let briefService = false
 
 function drivingOptions(distanceMeters: number): Location.LocationTaskOptions {
   return {
@@ -1268,11 +1264,7 @@ function currentOptions(): Location.LocationTaskOptions | null {
     // request, because a live request carries the service and its
     // notification for the whole window. A parked iPhone has no such cost
     // and goes live.
-    if (Platform.OS === "android") {
-      return briefService
-        ? { ...restingOptions(), foregroundService: SERVICE_NOTIFICATION }
-        : restingOptions()
-    }
+    if (Platform.OS === "android") return restingOptions()
     return watchedNow() ? liveOptions(Location.Accuracy.High) : restingOptions()
   }
   // Somebody is looking. Full accuracy every few seconds for the window.
@@ -1346,18 +1338,17 @@ export function serviceDiedUnexpectedly(): boolean {
 }
 
 /**
- * The control channel is open for as long as sharing is on, in every tier
- * on both platforms. A parked iPhone's session keeps its process alive. A
- * parked Android phone runs no service, so the process may be reclaimed,
- * but a phone exempt from battery optimisation keeps its network and stays
- * up for hours, and while it does an ask reaches it in a second; if the OS
- * does take the process the socket drops, the server sees the stamp age
- * out, and the ask goes by push instead. Either way a wake on a parked
- * phone runs the brief service for one fix.
+ * The control channel is open while the phone's process is alive with a
+ * location session: on iOS in every tier, since the parked session keeps
+ * the app alive, and on Android while the phone is on the move, since the
+ * service is up then anyway. A parked Android phone holds nothing open: an
+ * ask reaches it by high priority push, and the push handler starts the
+ * wake service natively, which is how a messaging app checks for messages.
  */
 function syncControl(): void {
   const { enabled, mode } = useTrackingStore.getState()
-  control.setWanted(enabled && mode !== "off")
+  const alive = enabled && mode !== "off" && (Platform.OS === "ios" || mode === "moving")
+  control.setWanted(alive)
 }
 
 /** A day is long enough: places change rarely, and the map refreshes them whenever it is opened. */
@@ -1434,7 +1425,7 @@ export async function reassertService({
 }: { exempt?: boolean } = {}): Promise<void> {
   if (Platform.OS !== "android") return
   const { enabled, mode } = useTrackingStore.getState()
-  // A parked phone wants no service; see briefService.
+  // A parked phone wants no location service; a wake runs the wake service.
   if (!enabled || mode !== "moving") return
   const before = await foregroundServiceStatus()
   if (before !== "refused" && before !== "none") return
@@ -1563,15 +1554,16 @@ export async function wakeFix(): Promise<LocationFixInput | null> {
     await reassertService({ exempt: true })
     return reportNow("nudge", Location.Accuracy.Balanced)
   }
-  // The service carries this one fix and goes with it. reportNow has its
-  // own deadline, so a fix that never settles cannot leave the service up.
-  briefService = true
-  await applyRegistration().catch(() => undefined)
+  // The wake service carries this one fix and goes with it; the resting
+  // request is left as it is. A push starts the service natively before
+  // this runs, and starting it again is a no-op. reportNow has its own
+  // deadline, so a fix that never settles cannot leave the service up, and
+  // the service stops itself after the same deadline regardless.
+  await startWakeService()
   try {
     return await reportNow("nudge", Location.Accuracy.Balanced)
   } finally {
-    briefService = false
-    await applyRegistration().catch(() => undefined)
+    await stopWakeService()
   }
 }
 

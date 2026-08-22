@@ -29,4 +29,9 @@ dependencies {
   // Already present transitively through expo-location, pinned here so the
   // module builds on its own too.
   implementation 'com.google.android.gms:play-services-location:21.3.0'
+  // The messaging service sits in front of expo-notifications' own, so the
+  // wake service can start inside the message handler.
+  implementation project(':expo-notifications')
+  implementation 'com.google.firebase:firebase-messaging:25.0.1'
+  implementation 'androidx.core:core-ktx:1.13.1'
 }

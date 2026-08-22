@@ -13,12 +13,14 @@ Notable changes to Hearth. The format is loosely
   check that read a missing service as a death was written for a design
   that kept one in every tier. A death is now only what the moving tier's
   re-assert finds, and a phone that parks forgets one.
-- A parked Android phone keeps its control channel open too. An ask used to
-  go to it by push, the old slow path, while iPhones answered over the
-  channel in seconds. A phone exempt from battery optimisation keeps its
-  network and its process for hours, and while it does an ask reaches it in
-  a second and the brief service answers with one fix; if the OS takes the
-  process, the socket drops and push takes over.
+- A parked Android phone answers an ask the way a messaging app checks for
+  messages. A high priority push now starts a native wake service inside
+  the message handler, the one moment Android lets a background app start
+  a service, with "Updating your location" shown for the second the fix
+  takes and gone with it; the fix is taken and uploaded under that service.
+  The start used to come from JavaScript after a headless boot, seconds
+  late and outside that moment, and a silent push that posted nothing was
+  the kind FCM demotes. No connection is held open by a parked phone.
 - The control channel renews its own token. A parked phone may make no
   REST call for a quarter hour, and a socket refused after the token
   expired used to wait for one; the channel now rotates the token itself

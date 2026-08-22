@@ -453,20 +453,26 @@ and a park fix that never left used to look identical.
 
 ### The control channel
 
-The tracker keeps its own websocket to the server for as long as sharing is
-on, in every tier on both platforms. A parked iPhone's session keeps the app
-alive. A parked Android phone runs no service, so the OS may reclaim its
-process, but a phone exempt from battery optimisation keeps its network and
-stays up for hours, and while it does an ask reaches it in a second. It sends `{ type: "control" }` on open, pings every two
+The tracker keeps its own websocket to the server whenever its process is
+alive with a location session: on iOS in every tier, since the parked
+session keeps the app alive, and on Android while the phone is on the move,
+since the service is up then anyway. A parked Android phone holds nothing
+open. It sends `{ type: "control" }` on open, pings every two
 minutes, reconnects with backoff, and takes a new token from the API client
 when one is rotated (`services/location/control.ts`). An ask from the family
 (a page opened, Live, the map opened, the sweep's wake) comes down it and is
 answered within a second: `wake` takes one fix, `watch` goes live. The UI's
 socket in `services/realtime.ts` is a different thing: it lives with the
 screen and closes when the app goes to the background, which is exactly when
-this one matters. When the OS does take a parked Android phone's process
-the socket drops, the server sees the stamp age out, and the ask goes by
-silent push instead; either way the brief service answers with one fix.
+this one matters. An ask for a parked Android phone goes by high priority
+push, and `HearthMessagingService` in the motion module, which sits in
+front of expo-notifications' own service, starts `HearthWakeService` inside
+the message handler: a foreground service with "Updating your location"
+that carries the one fix and goes with it, stopping itself after the fix's
+deadline if nothing else does. That is the moment Android allows a service
+to start from the background, and the notification it posts is what keeps
+the app's pushes at high priority. The JavaScript task then takes the fix
+under it (`wakeFix`, `services/location/wakeService.ts`).
 
 Opening a member's page calls `POST /circles/:id/members/:userId/refresh`
 for one fix now, the way opening the map calls
