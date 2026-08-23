@@ -105,11 +105,13 @@ describe("the control channel", () => {
     expect(sockets).toHaveLength(3)
   })
 
-  it("keeps the connection alive with a ping every couple of minutes", () => {
+  it("sends nothing of its own once declared; the OS answers the server's pings", () => {
+    // Every frame from the phone wakes its radio. The server pings, and the
+    // socket layer answers those without the app.
     control.setWanted(true)
     sockets[0]!.accept()
-    jest.advanceTimersByTime(2 * 60_000)
-    expect(sockets[0]!.sent.map((frame) => JSON.parse(frame))).toContainEqual({ type: "ping" })
+    jest.advanceTimersByTime(30 * 60_000)
+    expect(sockets[0]!.sent.map((frame) => JSON.parse(frame))).toEqual([{ type: "control" }])
   })
 
   it("reconnects with the new token when asked", () => {

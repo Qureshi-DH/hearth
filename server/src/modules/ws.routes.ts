@@ -10,7 +10,7 @@ import { circleTopic, userTopic, type BusEnvelope } from "../lib/bus"
 import { toPublicUser } from "../lib/serialize"
 import { extractToken, resolveSession, type AccessTokenClaims } from "../plugins/auth"
 import { getBus } from "../runtime"
-import { clearControlSeen, markControlSeen } from "../services/control"
+import { CONTROL_HEARTBEAT_MS, clearControlSeen, markControlSeen } from "../services/control"
 import {
   getCirclePresence,
   projectCirclePresence,
@@ -395,7 +395,7 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
       if (isControl) void markControlSeen(db, userId).catch(() => undefined)
     })
 
-    const heartbeat = setInterval(() => {
+    const beat = () => {
       if (!alive) {
         socket.terminate()
         return
@@ -406,7 +406,14 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
       } catch {
         socket.terminate()
       }
-    }, HEARTBEAT_MS)
+    }
+    let heartbeat = setInterval(beat, HEARTBEAT_MS)
+    // A phone's control socket is answered from a pocket, and every answer
+    // wakes its radio, so a declared one is pinged at the slower pace.
+    const slowHeartbeat = () => {
+      clearInterval(heartbeat)
+      heartbeat = setInterval(beat, CONTROL_HEARTBEAT_MS)
+    }
 
     const reauth = setInterval(() => void reauthorise(), REAUTH_MS)
 
@@ -435,6 +442,7 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
         if (message.type === "control") {
           if (!isControl) {
             isControl = true
+            slowHeartbeat()
             const mine = controlSocketsByUser.get(userId) ?? new Set<TrackedSocket>()
             mine.add(socket)
             controlSocketsByUser.set(userId, mine)

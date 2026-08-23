@@ -217,9 +217,11 @@ which may only narrow to circles the user belongs to, and
 its control channel. The server answers `{ type: "control", command: "ready" }`
 and from then on delivers `watch` (go live for `seconds`) and `wake` (one fix
 now) down that socket and no other, the moment a viewer or the sweep asks.
-The server pings every 30 s and drops sockets that don't answer; each
-answered ping renews the channel's stamp on the presence row, which is what
-the routes read to choose the channel over a push.
+The server pings on-screen sockets every 30 s and a declared control socket
+every 2 minutes, since a phone in a pocket wakes its radio for every answer,
+and drops sockets that miss two; each answered ping renews the channel's
+stamp on the presence row, valid for 5 minutes, which is what the routes
+read to choose the channel over a push.
 
 ## Roles
 

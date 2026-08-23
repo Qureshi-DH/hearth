@@ -457,9 +457,10 @@ The tracker keeps its own websocket to the server whenever its process is
 alive with a location session: on iOS in every tier, since the parked
 session keeps the app alive, and on Android while the phone is on the move,
 since the service is up then anyway. A parked Android phone holds nothing
-open. It sends `{ type: "control" }` on open, pings every two
-minutes, reconnects with backoff, and takes a new token from the API client
-when one is rotated (`services/location/control.ts`). An ask from the family
+open. It sends `{ type: "control" }` on open and nothing more of its own (the
+server pings it every two minutes and the socket layer answers), reconnects
+with backoff, and rotates its token itself when the server refuses it
+(`services/location/control.ts`). An ask from the family
 (a page opened, Live, the map opened, the sweep's wake) comes down it and is
 answered within a second: `wake` takes one fix, `watch` goes live. The UI's
 socket in `services/realtime.ts` is a different thing: it lives with the

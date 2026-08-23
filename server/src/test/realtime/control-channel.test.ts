@@ -7,6 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 
 import { getDb } from "../../db/client"
 import { wakeQuietPhones } from "../../jobs/scheduler"
+import { CONTROL_FRESH_MS, CONTROL_HEARTBEAT_MS } from "../../services/control"
 import { registerUser, startTestApp, type TestContext } from "../helpers"
 
 /**
@@ -143,6 +144,15 @@ async function family() {
   await join(driver.headers, circle.invite.code)
   return { viewer, driver, circle }
 }
+
+describe("the channel's heartbeat", () => {
+  it("is slow enough to spare a backgrounded phone's radio, and the stamp outlasts two of them", () => {
+    // A phone answers each ping with a radio wake. Thirty a second would be
+    // the on-screen socket's pace; a phone in a pocket gets a slower one.
+    expect(CONTROL_HEARTBEAT_MS).toBeGreaterThanOrEqual(2 * 60 * 1000)
+    expect(CONTROL_FRESH_MS).toBeGreaterThan(2 * CONTROL_HEARTBEAT_MS)
+  })
+})
 
 describe("a watch over the control channel", () => {
   it("reaches the phone at once and says so, with no push spent", async () => {

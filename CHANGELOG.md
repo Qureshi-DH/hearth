@@ -6,6 +6,21 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-23
+
+Servers must update before phones: the app opens no pings of its own and
+relies on the server's slower heartbeat for its control socket, and a
+parked Android phone is reached by a push that starts a native service.
+
+### Changed
+
+- A phone's control socket is pinged every two minutes instead of every
+  thirty seconds, and the phone sends no pings of its own: a phone in a
+  pocket wakes its radio for every frame, and the on-screen socket's pace
+  was a hundred and twenty wakes an hour. The channel's stamp is valid for
+  five minutes, and a socket that misses two pings is dropped, which clears
+  it at once.
+
 ### Fixed
 
 - Every Android phone said "their phone stopped Hearth in the background"

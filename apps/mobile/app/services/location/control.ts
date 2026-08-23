@@ -6,12 +6,6 @@ import { logTracker } from "./log"
 
 const MIN_BACKOFF_MS = 1_000
 const MAX_BACKOFF_MS = 30_000
-/**
- * Far apart, since a phone on cellular pays for every radio wake. The server
- * pings on its own every half minute and the OS answers those for us; this
- * is the app-level frame that keeps a proxy from timing the socket out.
- */
-const PING_INTERVAL_MS = 2 * 60 * 1000
 
 export interface ControlHandler {
   watch(seconds: number): Promise<void>
@@ -39,7 +33,6 @@ class ControlChannel {
   private wanted = false
   private backoff = MIN_BACKOFF_MS
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private pingTimer: ReturnType<typeof setInterval> | null = null
   /** Refused by the server: no retry until a new token arrives through refresh(). */
   private refused = false
 
@@ -76,9 +69,9 @@ class ControlChannel {
     socket.onopen = () => {
       this.backoff = MIN_BACKOFF_MS
       socket.send(JSON.stringify({ type: "control" }))
-      this.pingTimer = setInterval(() => {
-        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }))
-      }, PING_INTERVAL_MS)
+      // Nothing more is sent from here. The server pings a declared socket
+      // every couple of minutes and the socket layer answers without the
+      // app; every frame of the phone's own would be a radio wake.
       logTracker("control", { open: true })
     }
 
@@ -152,9 +145,7 @@ class ControlChannel {
 
   private clearTimers(): void {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
-    if (this.pingTimer) clearInterval(this.pingTimer)
     this.reconnectTimer = null
-    this.pingTimer = null
   }
 }
 
