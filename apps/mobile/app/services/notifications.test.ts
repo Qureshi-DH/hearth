@@ -3,10 +3,12 @@ import { Platform } from "react-native"
 import { NOTIFICATION_WAKE_TASK, pushType, setupChannels } from "./notifications"
 
 const mockSetChannel = jest.fn()
+const mockDeleteChannel = jest.fn(async (..._args: unknown[]) => {})
 
 jest.mock("expo-notifications", () => ({
   setNotificationHandler: jest.fn(),
   setNotificationChannelAsync: (...args: unknown[]) => mockSetChannel(...args),
+  deleteNotificationChannelAsync: (...args: unknown[]) => mockDeleteChannel(...args),
   AndroidImportance: { MIN: 3, LOW: 4, DEFAULT: 5, HIGH: 6, MAX: 7 },
 }))
 jest.mock("expo-application", () => ({ applicationId: "com.binary.rewind.hearth" }))
@@ -38,15 +40,17 @@ describe("setupChannels", () => {
     Platform.OS = "android"
   })
 
-  // expo-location derives the channel from the package and the task name and
-  // only creates it when it does not exist. If either half drifts, the service
-  // makes its own channel at low importance and the notification is back in
-  // the status bar with nothing failing.
-  it("claims the foreground service channel at minimum importance", async () => {
+  // The native tracking service creates its own channel at minimum
+  // importance the first time it runs. The one expo-location's service used
+  // is deleted, or an install that had it keeps showing it in settings.
+  it("retires the channel expo-location's service used, and creates none for the native one", async () => {
     await setupChannels()
-    expect(mockSetChannel).toHaveBeenCalledWith(
+    expect(mockDeleteChannel).toHaveBeenCalledWith(
       "com.binary.rewind.hearth:hearth-background-location",
-      expect.objectContaining({ importance: 3 }),
+    )
+    expect(mockSetChannel).not.toHaveBeenCalledWith(
+      "com.binary.rewind.hearth:hearth-background-location",
+      expect.anything(),
     )
   })
 

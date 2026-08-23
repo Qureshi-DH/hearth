@@ -83,12 +83,14 @@ jest.mock("./motion", () => ({
 // eslint-disable-next-line import/first
 import { startMotion } from "./motion"
 
-const mockWakeStart = jest.fn(async () => true)
-const mockWakeStop = jest.fn(async () => {})
-jest.mock("./wakeService", () => ({
-  startWakeService: () => mockWakeStart(),
-  stopWakeService: () => mockWakeStop(),
-}))
+jest.mock("./nativeTracker")
+// eslint-disable-next-line import/first
+import * as nativeTracker from "./nativeTracker"
+
+/** The native transport's test double, reached through the module the tracker sees. */
+const { fake } = nativeTracker as unknown as typeof import("./__mocks__/nativeTracker")
+const requestOf = (call: number) => fake.startService.mock.calls[call]![0]
+const lastRequest = () => requestOf(fake.startService.mock.calls.length - 1)
 
 jest.mock("./driveSensors", () => ({
   startDriveSensors: jest.fn(async () => true),
@@ -110,6 +112,7 @@ beforeEach(async () => {
   mockHere = { ...HOME }
   mockSpeed = 0
   jest.clearAllMocks()
+  fake.reset()
 })
 
 afterEach(async () => {
@@ -119,73 +122,65 @@ afterEach(async () => {
   jest.useRealTimers()
 })
 
-let mockServiceStatus = "running"
-jest.mock("expo-modules-core", () => ({
-  ...jest.requireActual("expo-modules-core"),
-  requireOptionalNativeModule: () => ({
-    getForegroundServiceStatusAsync: async () => mockServiceStatus,
-  }),
-}))
-
 describe("a journey starting in the background on Android", () => {
   beforeEach(() => {
     Platform.OS = "android"
-    mockServiceStatus = "running"
   })
 
   it("stops the fence once the service is up", async () => {
     await enterStationary(HOME.lat, HOME.lon)
-    ;(Location.stopGeofencingAsync as unknown as jest.Mock).mockClear()
+    fake.disarmFence.mockClear()
     await enterMoving()
     expect(useTrackingStore.getState().mode).toBe("moving")
-    expect(Location.stopGeofencingAsync).toHaveBeenCalled()
-    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toMatchObject({
-      notificationTitle: "Hearth",
-    })
+    expect(fake.disarmFence).toHaveBeenCalled()
+    expect(fake.status).toBe("running")
   })
 
   it("keeps the fence armed when Android refused the service, and is still moving", async () => {
     // A stop that ends on the classifier's sampled verdict is not one of the
     // moments Android allows a start. The fence exit is, so it stays.
     await enterStationary(HOME.lat, HOME.lon)
-    ;(Location.stopGeofencingAsync as unknown as jest.Mock).mockClear()
-    mockServiceStatus = "refused"
+    fake.disarmFence.mockClear()
+    fake.refuse = true
     await enterMoving()
     expect(useTrackingStore.getState().mode).toBe("moving")
     // The anchor is kept: a departure that turns out false settles on it.
     expect(useTrackingStore.getState().stillAnchor).toMatchObject(HOME)
-    expect(Location.stopGeofencingAsync).not.toHaveBeenCalled()
-    // The request itself stands, so the phone is on throttled fixes, not none.
-    expect(optionsOf(start.mock.calls.length - 1).accuracy).toBe(Location.Accuracy.Balanced)
+    expect(fake.disarmFence).not.toHaveBeenCalled()
+    expect(fake.fence).not.toBeNull()
+    // The request was asked for, and native answers with the resting one's
+    // fixes until Android lets the service start.
+    expect(lastRequest().priority).toBe("balanced")
   })
 
   it("re-asserts the request when a push lands and the service was refused, in the tier it is in", async () => {
     await enterStationary(HOME.lat, HOME.lon)
-    mockServiceStatus = "refused"
+    fake.refuse = true
     await enterMoving()
     await enterDriving(30)
-    start.mockClear()
+    fake.refuse = false
+    fake.startService.mockClear()
 
     await reassertService()
-    expect(start).toHaveBeenCalledTimes(1)
-    expect(optionsOf(0).accuracy).toBe(Location.Accuracy.High)
-    expect(optionsOf(0).foregroundService).toMatchObject({ notificationTitle: "Hearth" })
+    expect(fake.startService).toHaveBeenCalledTimes(1)
+    expect(requestOf(0).priority).toBe("high")
+    expect(fake.status).toBe("running")
     expect(isDriving()).toBe(true)
   })
 
   it("leaves a running service, a parked phone and iOS alone", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     await enterMoving()
-    start.mockClear()
+    fake.startService.mockClear()
     await reassertService()
-    expect(start).not.toHaveBeenCalled()
+    expect(fake.startService).not.toHaveBeenCalled()
 
     // A parked phone runs no service, so there is nothing to bring back.
-    mockServiceStatus = "refused"
     await enterStationary(HOME.lat, HOME.lon)
-    start.mockClear()
+    fake.status = "refused"
+    fake.startService.mockClear()
     await reassertService()
-    expect(start).not.toHaveBeenCalled()
+    expect(fake.startService).not.toHaveBeenCalled()
 
     Platform.OS = "ios"
     await enterMoving()
@@ -200,12 +195,10 @@ describe("a journey starting in the background on Android", () => {
     useTrackingStore.setState({ queue: [] })
     start.mockClear()
     getPosition.mockClear()
-    mockWakeStart.mockClear()
-    mockWakeStop.mockClear()
     await wakeFix()
     expect(start).not.toHaveBeenCalled()
-    expect(mockWakeStart).toHaveBeenCalledTimes(1)
-    expect(mockWakeStop).toHaveBeenCalledTimes(1)
+    expect(fake.startBrief).toHaveBeenCalledTimes(1)
+    expect(fake.stopBrief).toHaveBeenCalledTimes(1)
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(useTrackingStore.getState().queue.map((fix) => fix.source)).toContain("nudge")
     expect(useTrackingStore.getState().mode).toBe("stationary")
@@ -213,22 +206,21 @@ describe("a journey starting in the background on Android", () => {
 
   it("does not bring the service in for a moving phone's wake, which already has it", async () => {
     await enterMoving()
-    start.mockClear()
+    fake.startService.mockClear()
     await wakeFix()
-    expect(start).not.toHaveBeenCalled()
+    expect(fake.startService).not.toHaveBeenCalled()
+    expect(fake.startBrief).not.toHaveBeenCalled()
     expect(useTrackingStore.getState().queue).toHaveLength(1)
   })
 
   it("gives up on a wake fix the OS never answers", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     getPosition.mockImplementationOnce(() => new Promise(() => {}))
-    start.mockClear()
-    mockWakeStop.mockClear()
     const fix = wakeFix()
     await jest.advanceTimersByTimeAsync(30_000 + 10)
     expect(await fix).toBeNull()
-    // And the wake service does not outlive the fix it was for.
-    expect(mockWakeStop).toHaveBeenCalledTimes(1)
+    // And the brief service does not outlive the fix it was for.
+    expect(fake.stopBrief).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -248,29 +240,26 @@ describe("being watched", () => {
 
   beforeEach(() => {
     Platform.OS = "android"
-    mockServiceStatus = "running"
   })
 
   it("goes live for the window while moving, and steps down on the first fix past it", async () => {
     await enterMoving()
-    start.mockClear()
+    fake.startService.mockClear()
     await enterWatched(600)
-    expect(optionsOf(0).accuracy).toBe(Location.Accuracy.High)
-    expect(optionsOf(0).timeInterval).toBe(5_000)
-    // On the interval, so the window's end is always seen.
-    expect(optionsOf(0).distanceInterval).toBe(0)
+    expect(requestOf(0)).toEqual({ priority: "high", intervalMs: 5_000, distanceMeters: 0 })
 
     // Still inside the window: a fix changes nothing.
-    start.mockClear()
+    fake.startService.mockClear()
     await ingest([sample(Date.now())], "background")
-    expect(start).not.toHaveBeenCalled()
+    expect(fake.startService).not.toHaveBeenCalled()
 
     // Past it: the next fix steps the request back down. Ten minutes at one
-    // spot is also a stop, so the request it lands on is the parked one.
+    // spot is also a stop, so the request it lands on is the parked one,
+    // with the service gone.
     jest.setSystemTime(Date.now() + 601_000)
     await ingest([sample(Date.now())], "background")
-    expect(start).toHaveBeenCalled()
-    expect(optionsOf(0).accuracy).not.toBe(Location.Accuracy.High)
+    expect(fake.status).toBe("none")
+    expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(RESTING_HEARTBEAT_MS)
     expect(useTrackingStore.getState().watchedUntil).toBeNull()
   })
 
@@ -289,19 +278,20 @@ describe("being watched", () => {
     await enterMoving()
     await enterDriving(30)
     await enterWatched(600)
-    start.mockClear()
+    fake.startService.mockClear()
     // A re-assertion mid window keeps the live request, not the drive's.
-    mockServiceStatus = "refused"
+    fake.status = "refused"
     await reassertService()
-    expect(optionsOf(0).timeInterval).toBe(5_000)
+    expect(requestOf(0).intervalMs).toBe(5_000)
     expect(isDriving()).toBe(true)
   })
 
   it("does nothing when sharing is off", async () => {
     await stopTracking()
-    start.mockClear()
+    fake.startService.mockClear()
     await enterWatched(600)
-    expect(start).not.toHaveBeenCalled()
+    expect(fake.startService).not.toHaveBeenCalled()
+    expect(fake.startBrief).not.toHaveBeenCalled()
     expect(useTrackingStore.getState().watchedUntil).toBeNull()
   })
 })
@@ -342,7 +332,7 @@ describe("a parked iPhone", () => {
 
 describe("one request for the tier the tracker is in", () => {
   it("never carries deferred delivery, which held the end of every journey", async () => {
-    Platform.OS = "android"
+    Platform.OS = "ios"
     await enterMoving()
     expect(optionsOf(0).deferredUpdatesInterval).toBeUndefined()
     await enterDriving(30)
@@ -350,7 +340,7 @@ describe("one request for the tier the tracker is in", () => {
   })
 
   it("serialises registrations so the last one reflects the last state", async () => {
-    Platform.OS = "android"
+    Platform.OS = "ios"
     let release: (() => void) | null = null
     start.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)))
     const moving = enterMoving()
@@ -361,8 +351,7 @@ describe("one request for the tier the tracker is in", () => {
     await Promise.all([moving, parked])
     const last = optionsOf(start.mock.calls.length - 1)
     expect(useTrackingStore.getState().mode).toBe("stationary")
-    expect(last.timeInterval).toBe(RESTING_HEARTBEAT_MS)
-    expect(last.foregroundService).toBeUndefined()
+    expect(last.accuracy).toBe(Location.Accuracy.Lowest)
   })
 })
 
@@ -485,16 +474,15 @@ describe("calling the stop on Android without the classifier", () => {
 
   beforeEach(() => {
     Platform.OS = "android"
-    mockServiceStatus = "running"
   })
 
   it("asks Android for a fix on the interval whether or not the phone moved", async () => {
     await enterMoving()
-    expect(optionsOf(0).distanceInterval).toBe(0)
-    expect(optionsOf(0).timeInterval).toBe(30_000)
+    expect(requestOf(0).distanceMeters).toBe(0)
+    expect(requestOf(0).intervalMs).toBe(30_000)
     Platform.OS = "ios"
     await enterMoving()
-    expect(optionsOf(1).distanceInterval).toBe(60)
+    expect(optionsOf(0).distanceInterval).toBe(60)
   })
 
   it("judges the stop from the fixes a still phone delivers, without uploading them", async () => {
@@ -512,9 +500,10 @@ describe("calling the stop on Android without the classifier", () => {
     start.mockClear()
     await ingest([still(t0 + 5 * 60_000 + 1000)], "background")
     expect(useTrackingStore.getState().mode).toBe("stationary")
-    // The request steps down to the resting one, under the same service.
+    // The request steps down to the resting one, and the service goes.
     expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(RESTING_HEARTBEAT_MS)
     expect(optionsOf(start.mock.calls.length - 1).foregroundService).toBeUndefined()
+    expect(fake.status).toBe("none")
   })
 
   it("does not let a loose Wi-Fi fix reset the clock, and does not let one call the phone gone", async () => {
@@ -553,7 +542,6 @@ describe("the classifier on a parked phone", () => {
 
   beforeEach(async () => {
     Platform.OS = "android"
-    mockServiceStatus = "running"
     // The classifier's subscription lives in module scope; only a stop
     // releases it, and startTracking is what hands it its callback. So does
     // the time of the last confirming fix, which the clock walks past.
@@ -566,6 +554,7 @@ describe("the classifier on a parked phone", () => {
     await enterStationary(HOME.lat, HOME.lon)
     await jest.advanceTimersByTimeAsync(0)
     start.mockClear()
+    fake.startService.mockClear()
     getPosition.mockClear()
   })
 
@@ -576,7 +565,7 @@ describe("the classifier on a parked phone", () => {
     await jest.advanceTimersByTimeAsync(0)
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(useTrackingStore.getState().mode).toBe("stationary")
-    expect(start).not.toHaveBeenCalled()
+    expect(fake.startService).not.toHaveBeenCalled()
   })
 
   it("brings it back once a fix shows the phone has actually walked off", async () => {
@@ -584,9 +573,7 @@ describe("the classifier on a parked phone", () => {
     classifier()!("walking", 60)
     await jest.advanceTimersByTimeAsync(0)
     expect(useTrackingStore.getState().mode).toBe("moving")
-    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toMatchObject({
-      notificationTitle: "Hearth",
-    })
+    expect(fake.status).toBe("running")
   })
 
   it("asks for the confirming fix at most every two minutes", async () => {
@@ -609,10 +596,8 @@ describe("the classifier on a parked phone", () => {
     expect(useTrackingStore.getState().mode).toBe("moving")
     expect(isDriving()).toBe(true)
     // One walking registration on the way up, one driving. Not a third.
-    const accuracies = start.mock.calls.map(
-      ([, options]) => (options as Location.LocationTaskOptions).accuracy,
-    )
-    expect(accuracies).toEqual([Location.Accuracy.Balanced, Location.Accuracy.High])
+    const priorities = fake.startService.mock.calls.map(([request]) => request.priority)
+    expect(priorities).toEqual(["balanced", "high"])
   })
 
   it("confirms a doubtful vehicle sample the way it confirms a walk", async () => {
@@ -639,35 +624,37 @@ describe("the other ways a parked phone was made to leave", () => {
 
   beforeEach(async () => {
     Platform.OS = "android"
-    mockServiceStatus = "running"
     await enterMoving()
     await enterStationary(HOME.lat, HOME.lon)
     await jest.advanceTimersByTimeAsync(0)
     start.mockClear()
+    fake.startService.mockClear()
   })
 
   it("re-arms the fence on a false exit, when a sharp fix is still at home", async () => {
     mockHere = { ...HOME }
-    ;(Location.startGeofencingAsync as unknown as jest.Mock).mockClear()
+    fake.armFence.mockClear()
     await exit()
     // The full tier came up inside the allowed moment, and stepped straight
     // back down once the fix showed the phone had not left.
     expect(useTrackingStore.getState().mode).toBe("stationary")
-    expect(Location.startGeofencingAsync).toHaveBeenCalledTimes(1)
-    expect(optionsOf(0).timeInterval).not.toBe(RESTING_HEARTBEAT_MS)
+    expect(fake.armFence).toHaveBeenCalledTimes(1)
+    expect(fake.startService).toHaveBeenCalled()
+    expect(fake.status).toBe("none")
     expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(RESTING_HEARTBEAT_MS)
   })
 
   it("does nothing to a phone already moving but re-assert the service", async () => {
-    mockServiceStatus = "refused"
+    fake.refuse = true
     await enterMoving()
     getPosition.mockClear()
-    start.mockClear()
-    mockServiceStatus = "running"
+    fake.refuse = false
+    fake.disarmFence.mockClear()
     await exit()
     expect(useTrackingStore.getState().mode).toBe("moving")
     expect(getPosition).not.toHaveBeenCalled()
-    expect(Location.stopGeofencingAsync).toHaveBeenCalled()
+    expect(fake.status).toBe("running")
+    expect(fake.disarmFence).toHaveBeenCalled()
   })
 
   it("takes a real exit, and a loose fix's word for one", async () => {
@@ -700,9 +687,7 @@ describe("the other ways a parked phone was made to leave", () => {
     await wakeFix()
     expect(useTrackingStore.getState().mode).toBe("moving")
     // And the service is kept, not taken down with the wake's.
-    expect(optionsOf(start.mock.calls.length - 1).foregroundService).toMatchObject({
-      notificationTitle: "Hearth",
-    })
+    expect(fake.status).toBe("running")
   })
 
   it("parks at the first fix when sharing is switched on, rather than running the full tier to learn it is still", async () => {
@@ -739,7 +724,6 @@ describe("what the review found", () => {
 
   beforeEach(() => {
     Platform.OS = "android"
-    mockServiceStatus = "running"
   })
 
   it("does not let a still streak from before a departure park the phone on its first sample after", async () => {
@@ -876,7 +860,6 @@ const at = (lat: number, lon: number, when: number, speed: number | null = 0, ac
 describe("what a fix says the phone is doing", () => {
   beforeEach(() => {
     Platform.OS = "android"
-    mockServiceStatus = "running"
   })
 
   it("says still when parked, driving on the GPS tier, and nothing it does not know", async () => {
@@ -923,7 +906,6 @@ describe("a watched phone learns so from its own upload", () => {
 
   beforeEach(() => {
     Platform.OS = "android"
-    mockServiceStatus = "running"
     useAuthStore.getState().setServer("https://hearth.test", null as never)
   })
 
@@ -935,10 +917,11 @@ describe("a watched phone learns so from its own upload", () => {
     queued()
 
     await flush()
+    // The reply's window is adopted off the upload's own path.
+    await jest.advanceTimersByTimeAsync(0)
 
     expect(useTrackingStore.getState().watchedUntil).toBe(until)
-    expect(start).toHaveBeenCalled()
-    expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(5_000)
+    expect(lastRequest().intervalMs).toBe(5_000)
   })
 
   it("stays as it was on a reply that names nobody", async () => {

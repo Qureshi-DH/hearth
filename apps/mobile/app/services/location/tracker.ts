@@ -1,6 +1,5 @@
 import { AppState, Platform } from "react-native"
 import * as BackgroundTask from "expo-background-task"
-import { requireOptionalNativeModule } from "expo-modules-core"
 import * as Battery from "expo-battery"
 import * as Location from "expo-location"
 import * as TaskManager from "expo-task-manager"
@@ -28,7 +27,7 @@ import { useSettingsStore } from "@/stores/settings"
 import { tokenVault } from "@/stores/tokenVault"
 import { control, setControlHandler } from "@/services/location/control"
 import { logTracker, setTrackerLogHeader } from "@/services/location/log"
-import { startWakeService, stopWakeService } from "@/services/location/wakeService"
+import * as native from "@/services/location/nativeTracker"
 import { crossesPlace, knownPlaces, usePlacesStore } from "@/stores/places"
 import { useTrackingStore, type PermissionLevel, type TrackingPolicy } from "@/stores/tracking"
 
@@ -37,6 +36,10 @@ export const BACKGROUND_LOCATION_TASK = "hearth-background-location"
 export const BACKGROUND_SYNC_TASK = "com.binary.rewind.hearth.sync"
 /** Armed around wherever the phone stopped, so leaving wakes us back up. */
 export const STATIONARY_GEOFENCE_TASK = "hearth-stationary-geofence"
+/** The same fence on Android, where the native side arms it and names it. */
+export const STATIONARY_FENCE_ID = "stationary"
+/** The React Native headless task Android runs to drain the native queue; registered in index.tsx. */
+export const HEADLESS_TASK = "HearthTracker"
 
 const MAX_BATCH = 200
 const STALE_FIX_MS = 15 * 60 * 1000
@@ -887,6 +890,10 @@ TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
   }
   const event = data as { eventType?: Location.GeofencingEventType } | undefined
   if (event?.eventType !== Location.GeofencingEventType.Exit) return
+  await onFenceExit()
+})
+
+async function onFenceExit(): Promise<void> {
   const { enabled, mode, stillAnchor, policy } = useTrackingStore.getState()
   if (!enabled) return
   logTracker("fence exit", { mode })
@@ -921,7 +928,80 @@ TaskManager.defineTask(STATIONARY_GEOFENCE_TASK, async ({ data, error }) => {
     // The fix just uploaded is from this spot; the anchor says still for it.
     await enterStationary(stillAnchor.lat, stillAnchor.lon, "synthesize")
   }
-})
+}
+
+/**
+ * What the native side saw while this side was down, or has just seen: the
+ * fixes its service buffered and the events its receivers took. Fixes
+ * first, since they are the evidence a departure is judged from, then the
+ * events, each through the same handler as the live delivery. One pass at
+ * a time, and a poke landing mid pass asks for one more.
+ */
+let draining: Promise<void> | null = null
+let drainAgain = false
+
+export function processNativeQueue(): Promise<void> {
+  if (!native.nativeTrackerAvailable) return Promise.resolve()
+  if (draining) {
+    drainAgain = true
+    return draining
+  }
+  draining = (async () => {
+    do {
+      drainAgain = false
+      await drainNativeQueue()
+    } while (drainAgain)
+  })().finally(() => {
+    draining = null
+  })
+  return draining
+}
+
+async function drainNativeQueue(): Promise<void> {
+  const fixes = await native.drainFixes().catch(() => [])
+  if (fixes.length > 0) {
+    fixes.sort((a, b) => a.timestamp - b.timestamp)
+    await ingest(fixes, "background")
+  }
+  const events = await native.drainEvents().catch(() => [])
+  for (const event of events) {
+    try {
+      await onNativeEvent(event)
+    } catch (error) {
+      logTracker("native event failed", { type: event.type, error: (error as Error).message })
+    }
+  }
+  // A service the native side could not start, or one an OEM took down,
+  // is brought back here at the next moment Android allows it.
+  await reassertService()
+}
+
+async function onNativeEvent(event: native.NativeEvent): Promise<void> {
+  switch (event.type) {
+    case "transition":
+      await onMotion(event.activity, 100, "transition")
+      return
+    case "fence":
+      if (event.id === STATIONARY_FENCE_ID && event.transition === "exit") await onFenceExit()
+      return
+    case "service":
+      logTracker("native service", { status: event.status, reason: event.reason })
+      return
+    case "boot":
+      logTracker("native boot")
+      return
+  }
+}
+
+/**
+ * Android starts this in a process it woke for the native queue, with no
+ * screen and no React tree. Everything it needs is in module scope, and
+ * the queue is the whole job.
+ */
+export async function runHeadlessTask(data: { reason?: string } = {}): Promise<void> {
+  logTracker("headless", { reason: data.reason ?? "unknown" })
+  await processNativeQueue()
+}
 
 /** Waking the location stack is the one thing "stationary" exists to avoid. */
 const DRIFT_CHECK_MS = 60 * 60 * 1000
@@ -1064,24 +1144,19 @@ export function drivingDistanceMeters(speedMps: number | null): number {
  * without one the phone is an ordinary background app: a few fixes an hour,
  * none in Doze, no network until a maintenance window, a process reclaimed
  * within minutes on most OEM builds, and a service start refused later
- * except at a handful of moments. So the service is up for as long as
- * sharing is on, in every tier, the way family safety apps do it. The notification
- * is one plain line on a channel the app created at minimum importance, so
- * it sits collapsed in the silent part of the shade rather than in the
- * status bar. iOS ignores the key.
+ * except at a handful of moments. So the moving tiers carry the service and
+ * a parked phone runs without it, so no notification stays. The key marks
+ * the tiers that want it: on Android they run under the native tracking
+ * service in modules/hearth-motion, which owns the request and posts its
+ * own "Updating your location"; iOS ignores the key. A wake on a parked
+ * phone runs that service brief, for the length of one fix, the way a
+ * messaging app checks for messages.
  */
 const SERVICE_NOTIFICATION = {
   notificationTitle: "Hearth",
   notificationBody: "Updating your location",
   killServiceOnDestroy: false,
 }
-
-/**
- * A parked Android phone runs no location service, so no notification
- * stays in the shade. A wake on it runs the native wake service for the
- * length of one fix, "Updating your location" shown and gone, the way a
- * messaging app checks for messages; see services/location/wakeService.
- */
 
 function drivingOptions(distanceMeters: number): Location.LocationTaskOptions {
   return {
@@ -1293,28 +1368,25 @@ function liveOptions(accuracy: Location.Accuracy): Location.LocationTaskOptions 
   }
 }
 
-export type ForegroundServiceStatus = "none" | "starting" | "running" | "refused" | "unknown"
+export type ForegroundServiceStatus = native.ServiceStatus | "unknown"
 
 /** What the last read of the service said, for the log header. */
 let lastServiceStatus: ForegroundServiceStatus = "unknown"
 
+/** Whether the native side has Android's transport: the receivers, the service and the queue. */
+function androidNative(): boolean {
+  return Platform.OS === "android" && native.nativeTrackerAvailable
+}
+
 /**
- * Whether the service behind the request is up. expo-location does not say,
- * so the patch in patches/ records it and this reads it back. "unknown" is
- * iOS, where there is no service to be up, and a build without the patch;
- * "none" is the patched build saying the service is down.
+ * Whether the service behind the request is up, as the native side reports
+ * it. "unknown" is iOS, where there is no service to be up. "brief" is the
+ * service up for one fix, under a wake or a walk being confirmed.
  */
 export async function foregroundServiceStatus(): Promise<ForegroundServiceStatus> {
-  if (Platform.OS !== "android") return "unknown"
+  if (!androidNative()) return "unknown"
   try {
-    const module = requireOptionalNativeModule<{
-      getForegroundServiceStatusAsync?: () => Promise<string>
-    }>("ExpoLocation")
-    const status = await module?.getForegroundServiceStatusAsync?.()
-    lastServiceStatus =
-      status === "none" || status === "starting" || status === "running" || status === "refused"
-        ? status
-        : "unknown"
+    lastServiceStatus = await native.serviceStatus()
   } catch {
     lastServiceStatus = "unknown"
   }
@@ -1384,6 +1456,7 @@ let registration: Promise<unknown> = Promise.resolve()
 function applyRegistration(): Promise<ForegroundServiceStatus> {
   const next = registration.then(async () => {
     const options = currentOptions()
+    if (androidNative()) return applyAndroid(options)
     if (!options) {
       if (await locationUpdatesRunning()) {
         await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
@@ -1391,21 +1464,89 @@ function applyRegistration(): Promise<ForegroundServiceStatus> {
       return "none" as const
     }
     await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, options)
-    const status = await foregroundServiceStatus()
-    if (Platform.OS === "android") {
-      logTracker("service", {
-        status,
-        accuracy: options.accuracy,
-        interval: options.timeInterval,
-      })
-      // No death is read here: a parked phone registers without a service
-      // and a brief start may not have reached the foreground yet. A service
-      // that was up and went away is what reassertService finds.
-    }
-    return status
+    return "unknown" as const
   })
   registration = next.catch(() => undefined)
   return next
+}
+
+/**
+ * The tier's request, in the native service's terms. The tracker keeps
+ * deriving expo-shaped options for every tier, since iOS runs on them, and
+ * the moving tiers on Android are the same options handed to the service.
+ */
+function toServiceRequest(options: Location.LocationTaskOptions): native.ServiceRequest {
+  const accuracy = options.accuracy ?? Location.Accuracy.Balanced
+  const priority: native.ServiceRequest["priority"] =
+    accuracy >= Location.Accuracy.High
+      ? "high"
+      : accuracy <= Location.Accuracy.Lowest
+        ? "low"
+        : "balanced"
+  return {
+    priority,
+    intervalMs: options.timeInterval ?? RESTING_HEARTBEAT_MS,
+    distanceMeters: options.distanceInterval ?? 0,
+  }
+}
+
+/**
+ * On Android the moving tiers run under the native service, which owns the
+ * location request and buffers what it sees, and the parked tier runs on
+ * expo's Wi-Fi grade request with no service at all. Native is told which
+ * it is in, and what to run when it starts the service on its own at a
+ * departure, so nothing here has to be alive for a journey to begin.
+ */
+async function applyAndroid(
+  options: Location.LocationTaskOptions | null,
+): Promise<ForegroundServiceStatus> {
+  // Native is told the tier before anything is stopped or started: a
+  // transition landing in between would otherwise read the old tier and
+  // bring back a service the stop had just taken down.
+  await syncNativeState()
+  if (!options) {
+    if (await locationUpdatesRunning()) {
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
+    }
+    await native.stopService()
+    lastServiceStatus = "none"
+    return "none"
+  }
+  if (options.foregroundService) {
+    if (await locationUpdatesRunning()) {
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
+    }
+    const request = toServiceRequest(options)
+    const status = await native.startService(request)
+    lastServiceStatus = status
+    logTracker("service", { status, priority: request.priority, interval: request.intervalMs })
+    // No death is read here: a start refused is a start refused, and a
+    // service that was up and went away is what reassertService finds.
+    return status
+  }
+  await native.stopService()
+  await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, options)
+  lastServiceStatus = "none"
+  return "none"
+}
+
+/**
+ * What the native receivers act on without this side: sharing on, the tier,
+ * and the request to run at a departure. Written at every registration and
+ * at every boot, so an install upgraded under a parked phone has it before
+ * the phone next moves.
+ */
+async function syncNativeState(): Promise<void> {
+  if (!androidNative()) return
+  const { enabled, mode, policy } = useTrackingStore.getState()
+  const on = enabled && mode !== "off"
+  await native
+    .setTrackerState({
+      enabled: on,
+      mode: on ? mode : "off",
+      movingRequest: toServiceRequest(updateOptions(policy)),
+    })
+    .catch(() => undefined)
 }
 
 /**
@@ -1428,7 +1569,9 @@ export async function reassertService({
   // A parked phone wants no location service; a wake runs the wake service.
   if (!enabled || mode !== "moving") return
   const before = await foregroundServiceStatus()
-  if (before !== "refused" && before !== "none") return
+  if (before !== "refused" && before !== "none" && before !== "brief") return
+  // Brief is the wake's service, up for one fix under a phone that wants
+  // the full one: it is upgraded in place, and nothing died.
   if (before === "none") noteServiceDied()
   // Re-registering the request hands back the fix the OS already had, which
   // is another delivery, and a delivery is not a moment Android allows the
@@ -1554,16 +1697,16 @@ export async function wakeFix(): Promise<LocationFixInput | null> {
     await reassertService({ exempt: true })
     return reportNow("nudge", Location.Accuracy.Balanced)
   }
-  // The wake service carries this one fix and goes with it; the resting
+  // The brief service carries this one fix and goes with it; the resting
   // request is left as it is. A push starts the service natively before
   // this runs, and starting it again is a no-op. reportNow has its own
   // deadline, so a fix that never settles cannot leave the service up, and
   // the service stops itself after the same deadline regardless.
-  await startWakeService()
+  await native.startBrief()
   try {
     return await reportNow("nudge", Location.Accuracy.Balanced)
   } finally {
-    await stopWakeService()
+    await native.stopBrief()
   }
 }
 
@@ -1713,12 +1856,20 @@ function heldStill(): boolean {
 async function confirmedLeft(policy: TrackingPolicy): Promise<boolean> {
   if (Date.now() - lastMotionCheck < MOTION_CHECK_INTERVAL_MS) return false
   lastMotionCheck = Date.now()
+  // On Android the fix is taken under the brief service, which the native
+  // side has often brought up already for the transition that led here; a
+  // background app without it is held to a few fixes an hour.
+  if (androidNative()) await native.startBrief()
   const fix = await reportNow("significant", Location.Accuracy.Balanced, {
     judge: false,
     lastKnown: false,
   })
   const anchor = useTrackingStore.getState().stillAnchor
-  return fix != null && anchor != null && clearOf(anchor, fix, stationaryRadiusMeters(policy))
+  const left = fix != null && anchor != null && clearOf(anchor, fix, stationaryRadiusMeters(policy))
+  // A walk that came to nothing takes the brief service down with it; a
+  // departure upgrades it to the full one on its way.
+  if (!left && androidNative()) await native.stopBrief()
+  return left
 }
 
 /** A fix costs something, and a fidgeting phone says "walking" every sample. */
@@ -1730,14 +1881,33 @@ async function locationUpdatesRunning(): Promise<boolean> {
 }
 
 async function geofenceRunning(): Promise<boolean> {
+  if (androidNative()) return native.fenceArmed().catch(() => false)
   return Location.hasStartedGeofencingAsync(STATIONARY_GEOFENCE_TASK).catch(() => false)
 }
 
 /** The fence has done its job once the service is up and the phone is moving. */
 async function dropFence(): Promise<void> {
-  if (await geofenceRunning()) {
+  if (androidNative()) await native.disarmFence().catch(() => {})
+  // On Android too: an install upgraded from a build whose fence was expo's
+  // still has that one registered, and it would answer the next exit twice.
+  if (await Location.hasStartedGeofencingAsync(STATIONARY_GEOFENCE_TASK).catch(() => false)) {
     await Location.stopGeofencingAsync(STATIONARY_GEOFENCE_TASK).catch(() => {})
   }
+}
+
+/**
+ * The fence around the parking spot. On Android the native side arms it
+ * with Play Services and answers its exit itself, service first; on iOS it
+ * is expo's region, and the task below answers it.
+ */
+async function armFence(lat: number, lon: number, radius: number): Promise<void> {
+  if (androidNative()) {
+    if (!(await native.armFence(lat, lon, radius))) throw new Error("Fence refused")
+    return
+  }
+  await Location.startGeofencingAsync(STATIONARY_GEOFENCE_TASK, [
+    { latitude: lat, longitude: lon, radius, notifyOnEnter: false, notifyOnExit: true },
+  ])
 }
 
 /** Continuous updates on, in the walking tier until a drive is judged. */
@@ -1826,15 +1996,7 @@ async function settle(lat: number, lon: number, parkFix: ParkFix): Promise<void>
     }
   }
   try {
-    await Location.startGeofencingAsync(STATIONARY_GEOFENCE_TASK, [
-      {
-        latitude: lat,
-        longitude: lon,
-        radius: stationaryRadiusMeters(store.policy),
-        notifyOnEnter: false,
-        notifyOnExit: true,
-      },
-    ])
+    await armFence(lat, lon, stationaryRadiusMeters(store.policy))
   } catch {
     // With nothing armed to wake us there would be no way back, so it is safer
     // to keep the full tier than to go silent. The anchor is re-dated so the
@@ -2202,4 +2364,10 @@ setTrackerLogHeader(headerForTrackerLog)
   // And the channel: a process the OS restarted for a delivery has to be
   // reachable again before anyone opens a page on it.
   syncControl()
+  // Whatever the native side saw while this process was down is the first
+  // thing this one deals with, and every poke after is dealt with the same way.
+  native.onNativeQueue(() => void processNativeQueue())
+  if (enabled && mode !== "off") {
+    void syncNativeState().then(() => processNativeQueue())
+  }
 }

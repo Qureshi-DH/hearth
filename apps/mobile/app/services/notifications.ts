@@ -65,23 +65,13 @@ export async function setupChannels(): Promise<void> {
     // default. A string names a sound file bundled with the app, so "default"
     // was looked up as a file, logged as missing, and left the channel silent.
   })
-  // Android will not run the location foreground service without a
-  // notification, and the service is up for as long as sharing is on, so the
-  // one expo-location posts is permanent. It can be kept out of the status
-  // bar. expo-location names the channel after the package and the task and
-  // only creates it when nothing by that name exists, so creating it first at
-  // the lowest importance leaves the notification collapsed in the shade's
-  // silent section instead. The patched service creates it at the same
-  // importance if it ever gets there first.
-  await Notifications.setNotificationChannelAsync(
+  // The location service's own channel is created by the native service in
+  // modules/hearth-motion, at the lowest importance, the first time it
+  // runs. The channel expo-location's service used is gone with it; an
+  // install that had one would otherwise keep showing it in settings.
+  await Notifications.deleteNotificationChannelAsync(
     `${Application.applicationId}:${BACKGROUND_LOCATION_TASK}`,
-    {
-      name: "Location sharing",
-      description: "Shown while Hearth shares your location with your family.",
-      importance: Notifications.AndroidImportance.MIN,
-      showBadge: false,
-    },
-  )
+  ).catch(() => {})
 }
 
 /** Safe to call on every launch. Registration is idempotent on the server. */

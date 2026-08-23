@@ -146,24 +146,17 @@ jest.mock("./control", () => ({
   },
 }))
 
-const mockWakeStart = jest.fn(async () => true)
-const mockWakeStop = jest.fn(async () => {})
-jest.mock("./wakeService", () => ({
-  startWakeService: () => mockWakeStart(),
-  stopWakeService: () => mockWakeStop(),
-}))
+jest.mock("./nativeTracker")
+// eslint-disable-next-line import/first
+import * as nativeTracker from "./nativeTracker"
+
+/** The native transport's test double, reached through the module the tracker sees. */
+const { fake } = nativeTracker as unknown as typeof import("./__mocks__/nativeTracker")
+const lastRequest = () => fake.startService.mock.calls[fake.startService.mock.calls.length - 1]![0]
 
 jest.mock("./driveSensors", () => ({
   startDriveSensors: jest.fn(async () => true),
   stopDriveSensors: jest.fn(),
-}))
-
-let mockServiceStatus: string | undefined = "running"
-jest.mock("expo-modules-core", () => ({
-  ...jest.requireActual("expo-modules-core"),
-  requireOptionalNativeModule: () => ({
-    getForegroundServiceStatusAsync: async () => mockServiceStatus,
-  }),
 }))
 
 const mockUpload = jest.fn()
@@ -238,8 +231,8 @@ beforeEach(async () => {
   mockHere = { ...HOME }
   mockSpeed = 0
   mockAccuracy = 20
-  mockServiceStatus = "running"
   jest.clearAllMocks()
+  fake.reset()
   // clearAllMocks keeps implementations, and a test that leaves a fix
   // hanging must not hang the ones after it.
   getPosition.mockImplementation(mockPositionNow)
@@ -260,13 +253,11 @@ afterEach(async () => {
 describe("the Android foreground service", () => {
   it("runs while moving and goes with the stop, so no notification stays", async () => {
     await enterMoving()
-    expect(lastOptions().foregroundService).toEqual({
-      notificationTitle: "Hearth",
-      notificationBody: "Updating your location",
-      killServiceOnDestroy: false,
-    })
+    expect(fake.status).toBe("running")
+    expect(lastRequest()).toEqual({ priority: "balanced", intervalMs: 30_000, distanceMeters: 0 })
     await enterStationary(HOME.lat, HOME.lon)
     expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(fake.status).toBe("none")
     expect(lastOptions().foregroundService).toBeUndefined()
     expect(lastOptions().accuracy).toBe(Location.Accuracy.Balanced)
     expect(lastOptions().timeInterval).toBe(RESTING_HEARTBEAT_MS)
@@ -276,14 +267,12 @@ describe("the Android foreground service", () => {
     await enterStationary(HOME.lat, HOME.lon)
     start.mockClear()
     getPosition.mockClear()
-    mockWakeStart.mockClear()
-    mockWakeStop.mockClear()
     await wakeFix()
     // The native service carries the fix and its notification; the resting
     // request is left exactly as it was.
-    expect(mockWakeStart).toHaveBeenCalledTimes(1)
+    expect(fake.startBrief).toHaveBeenCalledTimes(1)
     expect(getPosition).toHaveBeenCalledTimes(1)
-    expect(mockWakeStop).toHaveBeenCalledTimes(1)
+    expect(fake.stopBrief).toHaveBeenCalledTimes(1)
     expect(start).not.toHaveBeenCalled()
     expect(uploaded().map((fix) => fix.source)).toContain("nudge")
     expect(useTrackingStore.getState().mode).toBe("stationary")
@@ -292,24 +281,23 @@ describe("the Android foreground service", () => {
   it("takes the wake service down even when the fix never comes", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     getPosition.mockImplementationOnce(() => new Promise(() => {}))
-    mockWakeStop.mockClear()
     const fix = wakeFix()
     await jest.advanceTimersByTimeAsync(30_000 + 10)
     expect(await fix).toBeNull()
-    expect(mockWakeStop).toHaveBeenCalledTimes(1)
+    expect(fake.stopBrief).toHaveBeenCalledTimes(1)
   })
 
   it("leaves a parked phone alone, since it wants no service", async () => {
     await enterStationary(HOME.lat, HOME.lon)
-    mockServiceStatus = "refused"
-    start.mockClear()
+    fake.status = "refused"
     await reassertService()
-    expect(start).not.toHaveBeenCalled()
+    expect(fake.startService).not.toHaveBeenCalled()
   })
 
   it("tries once per ten minutes on deliveries while refused, since a re-register re-delivers", async () => {
     await enterMoving()
-    mockServiceStatus = "refused"
+    fake.refuse = true
+    fake.status = "refused"
     clearTrackerLog()
     const deliver = () =>
       taskBodies.get(BACKGROUND_LOCATION_TASK)!({
@@ -333,7 +321,8 @@ describe("the Android foreground service", () => {
       error: null,
     })
     expect(reasserts()).toBe(2)
-    mockServiceStatus = "running"
+    fake.refuse = false
+    fake.status = "running"
     await deliver()
     expect(reasserts()).toBe(2)
   })
@@ -341,39 +330,40 @@ describe("the Android foreground service", () => {
   it("tries at once on a transition even inside the backoff, since Android allows that start", async () => {
     await startTracking()
     await enterMoving()
-    mockServiceStatus = "refused"
-    start.mockClear()
+    fake.refuse = true
+    fake.status = "refused"
+    fake.startService.mockClear()
     await taskBodies.get(BACKGROUND_LOCATION_TASK)!({
       data: { locations: [at(HOME.lat, HOME.lon, Date.now())] },
       error: null,
     })
-    expect(start).toHaveBeenCalledTimes(1)
+    expect(fake.startService).toHaveBeenCalledTimes(1)
     classifier()("walking", 90, "transition")
     await jest.advanceTimersByTimeAsync(0)
-    expect(start).toHaveBeenCalledTimes(2)
+    expect(fake.startService).toHaveBeenCalledTimes(2)
   })
 
   it("tries again on an activity transition, which is a moment Android allows the start", async () => {
     await startTracking()
     await enterMoving()
-    mockServiceStatus = "refused"
-    start.mockClear()
+    fake.status = "refused"
+    fake.startService.mockClear()
     classifier()("walking", 90, "transition")
     await jest.advanceTimersByTimeAsync(0)
-    expect(start).toHaveBeenCalled()
+    expect(fake.startService).toHaveBeenCalled()
   })
 
   it("tries again from the sync task", async () => {
     await enterMoving()
-    mockServiceStatus = "refused"
-    start.mockClear()
+    fake.status = "refused"
+    fake.startService.mockClear()
     await taskBodies.get(BACKGROUND_SYNC_TASK)!({ data: null, error: null })
-    expect(start).toHaveBeenCalled()
+    expect(fake.startService).toHaveBeenCalled()
   })
 
   it("does not read a parked phone's missing service as a death", async () => {
     await enterMoving()
-    mockServiceStatus = "none"
+    fake.status = "none"
     await enterStationary(HOME.lat, HOME.lon)
     expect(serviceDiedUnexpectedly()).toBe(false)
     // Nor a wake's brief service going down with its fix.
@@ -383,7 +373,7 @@ describe("the Android foreground service", () => {
 
   it("forgets a death once the phone parks, since a parked phone wants no service", async () => {
     await enterMoving()
-    mockServiceStatus = "none"
+    fake.status = "none"
     await reassertService()
     expect(serviceDiedUnexpectedly()).toBe(true)
     await enterStationary(HOME.lat, HOME.lon)
@@ -393,30 +383,20 @@ describe("the Android foreground service", () => {
   it("remembers a service that died without being asked, for the health report", async () => {
     await enterMoving()
     expect(serviceDiedUnexpectedly()).toBe(false)
-    mockServiceStatus = "none"
-    start.mockClear()
+    fake.status = "none"
+    fake.startService.mockClear()
     await reassertService()
     expect(serviceDiedUnexpectedly()).toBe(true)
     expect(useTrackingStore.getState().serviceStoppedAt).not.toBeNull()
     // And it is brought back.
-    expect(start).toHaveBeenCalledTimes(1)
-  })
-
-  it("leaves alone a build that cannot say whether the service is up", async () => {
-    await enterMoving()
-    mockServiceStatus = undefined
-    start.mockClear()
-    await reassertService()
-    expect(start).not.toHaveBeenCalled()
-    expect(serviceDiedUnexpectedly()).toBe(false)
+    expect(fake.startService).toHaveBeenCalledTimes(1)
   })
 })
 
 describe("a stop the phone cannot arm", () => {
   it("is not tried again on the next delivery when the fence cannot be set", async () => {
     await enterMoving()
-    const fence = Location.startGeofencingAsync as unknown as jest.Mock
-    fence.mockRejectedValueOnce(new Error("background location not granted"))
+    fake.refuseFence = true
     const before = Date.now()
     await enterStationary(HOME.lat, HOME.lon)
     expect(useTrackingStore.getState().mode).toBe("moving")
@@ -425,12 +405,12 @@ describe("a stop the phone cannot arm", () => {
     const anchor = useTrackingStore.getState().stillAnchor
     expect(anchor).not.toBeNull()
     expect(Date.parse(anchor!.since)).toBeGreaterThanOrEqual(before)
-    fence.mockClear()
+    fake.armFence.mockClear()
     await taskBodies.get(BACKGROUND_LOCATION_TASK)!({
       data: { locations: [at(HOME.lat, HOME.lon, Date.now())] },
       error: null,
     })
-    expect(fence).not.toHaveBeenCalled()
+    expect(fake.armFence).not.toHaveBeenCalled()
   })
 
   it("stops the background tiers when the permission drops to while-using", async () => {
@@ -491,7 +471,7 @@ describe("the park fix", () => {
       at(HOME.lat, HOME.lon, Date.now()),
     )
     await Promise.all([first, second])
-    expect(Location.startGeofencingAsync).toHaveBeenCalledTimes(1)
+    expect(fake.armFence).toHaveBeenCalledTimes(1)
     expect(uploaded().filter((fix) => fix.activity === "still")).toHaveLength(1)
   })
 
@@ -689,6 +669,25 @@ describe("what survives a relaunch", () => {
     expect(mockControlWanted).toHaveBeenLastCalledWith(true)
   })
 
+  it("tells native the tier it woke in on Android, then drains what native kept", async () => {
+    Platform.OS = "android"
+    useTrackingStore.setState({ enabled: true, mode: "stationary" })
+    let fresh: typeof import("./__mocks__/nativeTracker") | null = null
+    jest.isolateModules(() => {
+      // Everything is fresh in here, the platform included.
+      ;(require("react-native") as { Platform: { OS: string } }).Platform.OS = "android"
+      // The fresh process's own copy of the transport, seeded as a receiver
+      // would have left it before this side came up.
+      fresh = require("./nativeTracker")
+      fresh!.fake.events = [{ type: "boot", at: Date.now() }]
+      require("./tracker")
+    })
+    await jest.advanceTimersByTimeAsync(0)
+    expect(fresh!.fake.state).toMatchObject({ enabled: true, mode: "stationary" })
+    expect(fresh!.fake.state?.movingRequest).toMatchObject({ priority: "balanced" })
+    expect(fresh!.fake.events).toHaveLength(0)
+  })
+
   it("opens the control channel at boot on a parked iPhone, whose session keeps it alive", () => {
     Platform.OS = "ios"
     useTrackingStore.setState({ enabled: true, mode: "stationary" })
@@ -753,7 +752,7 @@ describe("a traffic stop", () => {
     await enterMoving()
     getPosition.mockClear()
     start.mockClear()
-    ;(Location.startGeofencingAsync as unknown as jest.Mock).mockClear()
+    fake.armFence.mockClear()
   })
 
   it("does not park a phone that travelled in the last ten minutes on the classifier's word alone", async () => {
@@ -768,7 +767,7 @@ describe("a traffic stop", () => {
     classifier()("still", 100)
     await jest.advanceTimersByTimeAsync(0)
     expect(useTrackingStore.getState().mode).toBe("moving")
-    expect(Location.startGeofencingAsync).not.toHaveBeenCalled()
+    expect(fake.armFence).not.toHaveBeenCalled()
   })
 
   it("nor one that was doing walking pace or better three minutes ago", async () => {
@@ -893,9 +892,8 @@ describe("being watched", () => {
     expect(useTrackingStore.getState().mode).toBe("stationary")
     // The window is held, so a departure inside it goes straight to live.
     expect(useTrackingStore.getState().watchedUntil).not.toBeNull()
-    start.mockClear()
     await enterMoving()
-    expect(lastOptions()).toMatchObject({ accuracy: Location.Accuracy.High, timeInterval: 5_000 })
+    expect(lastRequest()).toMatchObject({ priority: "high", intervalMs: 5_000 })
   })
 
   it("does so from the upload reply as well as the push", async () => {
@@ -916,9 +914,8 @@ describe("being watched", () => {
   it("keeps the GPS tier's accuracy for a moving phone", async () => {
     await enterMoving()
     await enterDriving(30)
-    start.mockClear()
     await enterWatched(600)
-    expect(lastOptions()).toMatchObject({ accuracy: Location.Accuracy.High, timeInterval: 5_000 })
+    expect(lastRequest()).toMatchObject({ priority: "high", intervalMs: 5_000 })
   })
 })
 
@@ -1022,7 +1019,7 @@ describe("diagnostics", () => {
 
   it("notes the sync task's run and a re-asserted service", async () => {
     await enterMoving()
-    mockServiceStatus = "refused"
+    fake.status = "refused"
     await taskBodies.get(BACKGROUND_SYNC_TASK)!({ data: null, error: null })
     const names = readTrackerLog().map((entry) => entry.what)
     expect(names).toContain("sync")
@@ -1036,7 +1033,7 @@ describe("diagnostics", () => {
     expect(header).toContain("mode stationary")
     expect(header).toContain("anchor 51.4545")
     expect(header).toContain("queue 0")
-    expect(header).toContain("service running")
+    expect(header).toContain("service none")
     expect(header).toContain("permission")
     expect(formatTrackerLog().startsWith(header)).toBe(true)
   })
