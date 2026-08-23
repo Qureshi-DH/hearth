@@ -6,16 +6,16 @@ import org.json.JSONObject
 
 /**
  * Sits in front of expo-notifications' own service (the manifest gives it
- * the higher priority) so a wake or a watch can start the wake service
- * inside the message handler, the one moment a background app is allowed to
- * start a service on Android 12 and later. Everything else about the message
- * goes on to expo-notifications as before, including the JavaScript task
- * that takes the fix under the service just started. Expo packs the push's
- * data as a JSON string under "body".
+ * the higher priority) so a wake or a watch can bring the brief service up
+ * inside the message handler, the one moment a background app is allowed
+ * to start a service on Android 12 and later. Everything else about the
+ * message goes on to expo-notifications as before, including the
+ * JavaScript task that takes the fix under the service just started. Expo
+ * packs the push's data as a JSON string under "body".
  */
 class HearthMessagingService : ExpoFirebaseMessagingService() {
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
-    if (wantsWake(remoteMessage)) HearthWakeService.start(this)
+    if (wantsWake(remoteMessage)) HearthTrackingService.brief(this)
     super.onMessageReceived(remoteMessage)
   }
 

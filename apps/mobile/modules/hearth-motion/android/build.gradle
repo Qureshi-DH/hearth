@@ -34,4 +34,7 @@ dependencies {
   implementation project(':expo-notifications')
   implementation 'com.google.firebase:firebase-messaging:25.0.1'
   implementation 'androidx.core:core-ktx:1.13.1'
+  // The headless task service, which runs the JavaScript tracker in a
+  // process the OS woke with no screen. The version comes from the app.
+  compileOnly 'com.facebook.react:react-android'
 }

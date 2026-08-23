@@ -48,6 +48,8 @@ declare class HearthMotionModule extends NativeModule<{
   onMotionChange: (event: MotionChangeEvent) => void
   onSensorBatch: (event: SensorBatchEvent) => void
   onPowerStateChange: (event: PowerStateEvent) => void
+  /** Android only: the native queue has fixes or events in it. */
+  onNativeQueue: () => void
 }> {
   /** False on a simulator, an old device, or where Play Services is missing. */
   isAvailableAsync(): Promise<boolean>
@@ -88,14 +90,70 @@ declare class HearthMotionModule extends NativeModule<{
    * "app_settings" for the fallback, or null when nothing would open.
    */
   openVendorPowerManagerAsync(): Promise<string | null>
+
+  // The tracking transport, Android only. iOS rejects every one of these:
+  // its tracker runs on expo-location, which Core Location relaunches.
+
   /**
-   * Android only. Brings up the wake service, a foreground service that
-   * carries one fix and its "Updating your location" notification, then
-   * goes. True when Android accepted the start.
+   * Runs the tracking service with this request, or swaps the request on a
+   * running one. "refused" is Android declining a start from the
+   * background outside its allowed moments.
    */
-  startWakeServiceAsync(): Promise<boolean>
-  /** Android only. Takes the wake service down with the fix it carried. */
-  stopWakeServiceAsync(): Promise<void>
+  startServiceAsync(request: ServiceRequest): Promise<ServiceStatus>
+  stopServiceAsync(): Promise<void>
+  /**
+   * The brief service: foreground for one fix and its "Updating your
+   * location", then gone on its own. True when Android accepted the start.
+   */
+  startBriefAsync(): Promise<boolean>
+  /** Takes the brief service down with the fix it carried; a tracking service stays. */
+  stopBriefAsync(): Promise<void>
+  getServiceStatusAsync(): Promise<ServiceStatus>
+  /** The fence around the parking spot, armed with Play Services. True when it took. */
+  armFenceAsync(lat: number, lon: number, radius: number): Promise<boolean>
+  disarmFenceAsync(): Promise<void>
+  isFenceArmedAsync(): Promise<boolean>
+  /** What the receivers need to know to act alone: whether sharing is on, the tier, the request to run. */
+  setTrackerStateAsync(state: TrackerState): Promise<void>
+  /** The fixes the service buffered, oldest first, and no longer held once read. */
+  drainFixesAsync(): Promise<NativeFix[]>
+  /** The events the receivers took, oldest first, and no longer held once read. */
+  drainEventsAsync(): Promise<NativeEvent[]>
 }
+
+export type ServiceStatus = "none" | "brief" | "starting" | "running" | "refused"
+
+export interface ServiceRequest {
+  priority: "high" | "balanced" | "low"
+  intervalMs: number
+  distanceMeters: number
+}
+
+export interface TrackerState {
+  enabled: boolean
+  mode: "off" | "moving" | "stationary"
+  movingRequest?: ServiceRequest
+}
+
+/** The shape expo-location gives a fix, so the tracker reads both alike. */
+export interface NativeFix {
+  timestamp: number
+  mocked?: boolean
+  coords: {
+    latitude: number
+    longitude: number
+    accuracy: number | null
+    altitude: number | null
+    altitudeAccuracy: number | null
+    speed: number | null
+    heading: number | null
+  }
+}
+
+export type NativeEvent =
+  | { type: "transition"; activity: MotionActivity; at: number }
+  | { type: "fence"; id: string; transition: "enter" | "exit"; at: number }
+  | { type: "service"; status: "started" | "refused" | "stopped"; reason: string; at: number }
+  | { type: "boot"; at: number }
 
 export default requireNativeModule<HearthMotionModule>("HearthMotion")

@@ -2,7 +2,6 @@ package expo.modules.hearthmotion
 
 import android.Manifest
 import android.app.ActivityManager
-import android.app.PendingIntent
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.ComponentName
@@ -26,23 +25,12 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
-import com.google.android.gms.location.ActivityRecognition
-import com.google.android.gms.location.ActivityRecognitionResult
-import com.google.android.gms.location.ActivityTransition
-import com.google.android.gms.location.ActivityTransitionRequest
-import com.google.android.gms.location.ActivityTransitionResult
-import com.google.android.gms.location.DetectedActivity
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import kotlin.math.sqrt
 
-private const val ACTION = "expo.modules.hearthmotion.ACTIVITY"
-private const val TRANSITION_ACTION = "expo.modules.hearthmotion.TRANSITION"
-private const val REQUEST_CODE = 8021
-private const val TRANSITION_REQUEST_CODE = 8022
-private const val DETECTION_INTERVAL_MS = 30_000L
 private const val PREFS = "expo.modules.hearthmotion"
 private const val KEY_ASKED = "activityRecognitionAsked"
 private const val SENSOR_THREAD = "hearth-motion-sensors"
@@ -126,9 +114,6 @@ private const val MAX_PENDING_SAMPLES = 2_000
  * return inside one a compile error that is easy to write and hard to read.
  */
 class HearthMotionModule : Module() {
-  private var receiver: BroadcastReceiver? = null
-  private var pendingIntent: PendingIntent? = null
-  private var transitionIntent: PendingIntent? = null
   private var powerReceiver: BroadcastReceiver? = null
 
   private var sensors: SensorManager? = null
@@ -157,7 +142,7 @@ class HearthMotionModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("HearthMotion")
 
-    Events("onMotionChange", "onSensorBatch", "onPowerStateChange")
+    Events("onMotionChange", "onSensorBatch", "onPowerStateChange", "onNativeQueue")
 
     AsyncFunction("isAvailableAsync") { playServicesReady() }
 
@@ -169,13 +154,47 @@ class HearthMotionModule : Module() {
 
     AsyncFunction("openVendorPowerManagerAsync") { openVendorPowerManager() }
 
-    AsyncFunction("startWakeServiceAsync") { HearthWakeService.start(context) }
+    // The tracking transport. The receivers and the service do their work
+    // without this module; these are JavaScript's way of steering them.
 
-    AsyncFunction("stopWakeServiceAsync") { HearthWakeService.stop(context) }
+    AsyncFunction("startServiceAsync") { request: Map<String, Any?> ->
+      HearthTrackingService.start(context, ServiceRequest.fromMap(request), "js")
+    }
+
+    AsyncFunction("stopServiceAsync") { HearthTrackingService.stop(context) }
+
+    AsyncFunction("startBriefAsync") { HearthTrackingService.brief(context) }
+
+    AsyncFunction("stopBriefAsync") { HearthTrackingService.stopBrief(context) }
+
+    AsyncFunction("getServiceStatusAsync") { HearthTrackingService.status }
+
+    AsyncFunction("armFenceAsync") { lat: Double, lon: Double, radius: Double ->
+      Fences.arm(context, TrackerPrefs.Fence(lat, lon, radius.toFloat()), await = true)
+    }
+
+    AsyncFunction("disarmFenceAsync") { Fences.disarm(context) }
+
+    AsyncFunction("isFenceArmedAsync") { Fences.armed(context) }
+
+    AsyncFunction("setTrackerStateAsync") { state: Map<String, Any?> -> setTrackerState(state) }
+
+    AsyncFunction("drainFixesAsync") { TrackerQueue.drainFixes(context) }
+
+    AsyncFunction("drainEventsAsync") { TrackerQueue.drainEvents(context) }
 
     OnStartObserving { startObservingPower() }
 
     OnStopObserving { stopObservingPower() }
+
+    // The tracker listens for the queue from the moment it loads until the
+    // process ends, so this is "JavaScript is up": the receivers and the
+    // service reach it directly, and the queue holds what they saw before.
+    // Named, because the hooks fire per event, and the classifier's
+    // listener comes and goes with tracking.
+    OnStartObserving("onNativeQueue") { HearthEvents.sink = { name, body -> sendEvent(name, body) } }
+
+    OnStopObserving("onNativeQueue") { HearthEvents.sink = null }
 
     AsyncFunction("getPermissionAsync") { permissionState() }
 
@@ -190,10 +209,21 @@ class HearthMotionModule : Module() {
     AsyncFunction("stopSensorsAsync") { stopSensors() }
 
     OnDestroy {
-      stopUpdates()
+      // The classifier's requests outlive the module on purpose: they
+      // are aimed at the manifest receiver, and a departure has to wake
+      // a process that has no module.
       stopSensors()
       stopObservingPower()
+      HearthEvents.sink = null
     }
+  }
+
+  @Suppress("UNCHECKED_CAST")
+  private fun setTrackerState(state: Map<String, Any?>) {
+    val prefs = TrackerPrefs(context)
+    prefs.enabled = state["enabled"] as? Boolean ?: false
+    prefs.mode = state["mode"] as? String ?: "off"
+    (state["movingRequest"] as? Map<String, Any?>)?.let { prefs.movingRequest = ServiceRequest.fromMap(it) }
   }
 
   private fun backgroundRestricted(): Boolean {
@@ -340,119 +370,15 @@ class HearthMotionModule : Module() {
     if (permissionState() != "granted") {
       throw SecurityException("Activity recognition permission not granted")
     }
-    // Starting twice would leave the first receiver registered with nothing to
-    // unregister it.
-    if (receiver != null) return
-
-    val listener =
-      object : BroadcastReceiver() {
-        override fun onReceive(ctx: Context?, intent: Intent?) {
-          intent ?: return
-          // A transition is Play Services saying the activity changed, and
-          // delivering it is one of the moments Android lets the app start a
-          // foreground service from the background. The sampled result is
-          // the same verdict on a schedule, which is what the ninety second
-          // stillness check counts.
-          if (ActivityTransitionResult.hasResult(intent)) {
-            val last = ActivityTransitionResult.extractResult(intent)?.transitionEvents?.lastOrNull() ?: return
-            sendEvent(
-              "onMotionChange",
-              mapOf(
-                "activity" to activityName(last.activityType),
-                "confidence" to 100,
-                "source" to "transition",
-              ),
-            )
-            return
-          }
-          val result = ActivityRecognitionResult.extractResult(intent) ?: return
-          val best = result.mostProbableActivity
-          sendEvent(
-            "onMotionChange",
-            mapOf(
-              "activity" to activityName(best.type),
-              "confidence" to best.confidence,
-              "source" to "sample",
-            ),
-          )
-        }
-      }
-    ContextCompat.registerReceiver(
-      context,
-      listener,
-      IntentFilter().apply {
-        addAction(ACTION)
-        addAction(TRANSITION_ACTION)
-      },
-      ContextCompat.RECEIVER_NOT_EXPORTED,
-    )
-    receiver = listener
-
-    // Play Services fills the intent with the result, so it has to stay mutable.
-    val flags =
-      PendingIntent.FLAG_UPDATE_CURRENT or
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
-    val pending =
-      PendingIntent.getBroadcast(
-        context,
-        REQUEST_CODE,
-        Intent(ACTION).setPackage(context.packageName),
-        flags,
-      )
-    pendingIntent = pending
-    val client = ActivityRecognition.getClient(context)
-    client.requestActivityUpdates(DETECTION_INTERVAL_MS, pending)
-
-    val transitions =
-      PendingIntent.getBroadcast(
-        context,
-        TRANSITION_REQUEST_CODE,
-        Intent(TRANSITION_ACTION).setPackage(context.packageName),
-        flags,
-      )
-    transitionIntent = transitions
-    val entering =
-      listOf(
-        DetectedActivity.IN_VEHICLE,
-        DetectedActivity.ON_BICYCLE,
-        DetectedActivity.RUNNING,
-        DetectedActivity.WALKING,
-        DetectedActivity.STILL,
-      ).map { type ->
-        ActivityTransition.Builder()
-          .setActivityType(type)
-          .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
-          .build()
-      }
-    client.requestActivityTransitionUpdates(ActivityTransitionRequest(entering), transitions)
+    if (!MotionUpdates.register(context)) {
+      throw SecurityException("Activity recognition refused")
+    }
   }
 
   /** Safe to call when nothing is running, which is the state it wants anyway. */
   private fun stopUpdates() {
-    val client = ActivityRecognition.getClient(context)
-    pendingIntent?.let { intent ->
-      runCatching { client.removeActivityUpdates(intent) }
-      intent.cancel()
-    }
-    pendingIntent = null
-    transitionIntent?.let { intent ->
-      runCatching { client.removeActivityTransitionUpdates(intent) }
-      intent.cancel()
-    }
-    transitionIntent = null
-    receiver?.let { registered -> runCatching { context.unregisterReceiver(registered) } }
-    receiver = null
+    MotionUpdates.unregister(context)
   }
-
-  private fun activityName(type: Int): String =
-    when (type) {
-      DetectedActivity.STILL -> "still"
-      DetectedActivity.WALKING, DetectedActivity.ON_FOOT -> "walking"
-      DetectedActivity.RUNNING -> "running"
-      DetectedActivity.ON_BICYCLE -> "cycling"
-      DetectedActivity.IN_VEHICLE -> "automotive"
-      else -> "unknown"
-    }
 
   /**
    * False where the device cannot help. That is the caller's cue to fall back
