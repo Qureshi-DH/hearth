@@ -6,6 +6,45 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-08-24
+
+The Android tracker's transport is native. No server change; the image is
+republished so the version reads the same everywhere.
+
+### Changed
+
+- On Android, everything that has to survive the app's process being
+  killed now lives in Kotlin, in `modules/hearth-motion`: the receivers
+  the OS wakes on a geofence exit or an activity transition, the
+  foreground service they start inside the moment Android allows a start
+  from the background, the location request that service owns, and a
+  queue of the fixes and events it saw while JavaScript was down. The
+  JavaScript tracker keeps the policy (tiers, the stop, the drive, place
+  crossings, uploads) and drains the queue, woken headless when it has to
+  be. Before this, both departure triggers reached a JavaScript handler
+  and the service was started from there, seconds after the moment Android
+  had granted for it: with a warm process that fit, with a cold one the
+  start was often refused and the phone spent the first hour of a journey
+  on a background app's few fixes an hour. The activity transition could
+  not wake a dead process at all, since its receiver was registered at
+  runtime. A phone exempt from battery optimisation was never refused,
+  which is why it worked for some and not for others.
+- The moving tiers on Android run under that service, which owns the
+  request; the parked tier keeps expo's Wi-Fi grade request with no
+  service, so no notification stays. The notification while moving is not
+  ongoing: from Android 13 it can be swiped away and the service runs on.
+  A reboot or an update puts the classifier's requests and the fence back
+  and restarts the service for a phone that was on the move.
+- A walk from a parked phone is confirmed under the brief service, which
+  the native side brings up for the transition, so the confirming fix is
+  no longer one a background app is held to a few of an hour.
+
+### Fixed
+
+- The channel expo-location's service used is deleted, so an upgraded
+  install does not keep showing "Location sharing" in its notification
+  settings next to the native service's "Location updates".
+
 ## [0.9.1] - 2026-08-23
 
 Servers must update before phones: the app opens no pings of its own and

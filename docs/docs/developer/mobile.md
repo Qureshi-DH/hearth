@@ -192,12 +192,15 @@ All of this lives in `app/services/location/tracker.ts`.
    process is headless, and re-attaches the motion classifier if sharing is
    on, because a process the OS cold-starts for a fix runs this before any
    React code and used to run the whole journey without a classifier.
-2. `Location.startLocationUpdatesAsync` with the options of whatever tier the
-   tracker is in, see below. `currentOptions()` is the one place the OS
-   request is derived from what the tracker believes, so a re-registration
-   from a wake or a watch cannot disagree with the tier. On Android the
-   moving, driving and live tiers carry the foreground service; a parked
-   phone runs without it, and a wake carries it for the length of one fix.
+2. The OS request for whatever tier the tracker is in, see below.
+   `currentOptions()` is the one place it is derived from what the tracker
+   believes, so a re-registration from a wake or a watch cannot disagree
+   with the tier. On iOS every tier is `Location.startLocationUpdatesAsync`
+   with those options. On Android the moving, driving and live tiers are
+   the native tracking service in `modules/hearth-motion`, handed the same
+   options as a request (`applyAndroid`, `services/location/nativeTracker.ts`);
+   the parked tier is expo's resting request with no service, and a wake
+   brings the service up for the length of one fix.
 3. Each delivery → `toFix()` (adds battery and the tracker's own `activity`)
    → `thin()` (drops near-duplicates, and on Android applies the circle's
    distance filter to what is uploaded) → MMKV-persisted queue → `flush()`
@@ -289,7 +292,7 @@ off, was the only way back.
 **Live** is the tier for as long as somebody has the member's page open, see
 Watching below.
 
-### The Android service
+### The Android transport
 
 Android hands out continuous location only to a foreground service, and
 without one the phone is an ordinary background app: a few fixes an hour,
@@ -297,59 +300,86 @@ none in Doze, no network until a maintenance window, a process reclaimed
 within minutes on most OEM builds, and a service start refused later except
 at a handful of moments. The family will not have a notification that stays,
 so the service runs while the phone is on the move (moving, driving, live)
-and goes with the stop. A parked phone runs the cheap resting request with
-no service, and a wake or a watch brings the service up for the length of
-one fix and drops it with the fix (`briefService`), which is the second-long
-"Updating your location" a messaging app shows when it checks for messages.
-The notification is one plain line on a channel the app creates at minimum
-importance before the service ever starts (`services/notifications.ts`; the
-id has to match the one expo-location derives from the package and the
-task), and the patched service creates the channel at the same importance if
-it is ever first.
+and goes with the stop. A parked phone runs expo's cheap resting request
+with no service, and a wake or a watch brings the service up for the length
+of one fix and drops it with the fix, which is the second-long "Updating
+your location" a messaging app shows when it checks for messages. The
+notification is one plain line on a channel the service creates at minimum
+importance, not ongoing, so from Android 13 the person can swipe it away
+and the service runs on without it.
 
-What makes the parked phone reliable without a service is the battery
-optimisation exemption: an exempt app may start its service from the
-background at any moment and keeps its network in Doze, so the brief service
-for a wake, the resting request and the upload all work. The checklist asks
-for it directly (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, allowed for
-family safety apps) and, on the vendors that kill background apps, walks the
-person through the vendor's own settings. A parked phone that is not exempt
-gets what Android gives a background app, and the server's twelve-hour rule
-for a parked phone is what covers it.
+Everything that has to survive the JavaScript process being killed is
+native Kotlin in `modules/hearth-motion/android`:
 
-Android 12 still refuses a service start from the background except at a
-geofence exit, an activity transition, a high priority push, an app exempt
-from battery optimisation, or the app being opened. Stock expo-location
-refused the whole registration unless the app was in the foreground;
-`patches/expo-location@55.1.14.patch` makes the attempt, catches only
-Android's own `ForegroundServiceStartNotAllowedException`, records the
-outcome where the app can read it (`getForegroundServiceStatusAsync`), and
-registers the location request either way. `reassertService` answers a
-refusal for a moving phone at every allowed moment: an activity transition,
-a fence exit, a wake or watch push and the app opening at once, and a
-delivery or the sync task once per ten minutes, since re-registering hands
-back the fix the OS already had and that is another delivery. A parked phone
-wants no service and is left alone. A status of `none`
-while a tier wants the service means it went down without the app asking,
-an OEM battery manager most often; the tracker brings it back, remembers the
-moment for a day, and `serviceDiedUnexpectedly()` is what the health report
-sends as `serviceStopped`.
+- `HearthTransitionReceiver` and `HearthFenceReceiver` are declared in the
+  manifest and are the targets of the activity transition request and the
+  geofence around the parking spot (`PlayServicesRequests.kt`). Play
+  Services starts the process to deliver to them, so a departure wakes a
+  phone whose process is long gone. A geofence exit or an activity
+  transition is a moment Android lets a background app start a foreground
+  service, and the receivers start it right there, inside that moment,
+  from what the tracker last told them (`Departure.kt`, `TrackerPrefs`):
+  a vehicle transition or a fence exit on a parked phone brings the
+  tracking service up with the moving request; on foot is confirmed first
+  under the brief service, at most every two minutes; a transition on a
+  moving phone whose service has gone brings it back.
+- `HearthTrackingService` is the foreground service and owns the location
+  request through a `LocationCallback`, so the fixes of a journey are
+  taken whether or not JavaScript is up. Each fix is appended to a native
+  queue (`TrackerQueue`, one JSON document per line under `filesDir`), as
+  is every event the receivers take. It is sticky: killed under a journey,
+  it restarts with the request it persisted. `startForegroundService`
+  throws at the call on Android 12 and later when the start is not
+  allowed, and that is the `refused` the module answers with.
+- `HearthHeadlessService` runs the JavaScript tracker's headless task
+  (`HearthTracker`, registered in `index.tsx`) once the service holds the
+  foreground, which is what lets the process start another service. The
+  task drains the queue (`processNativeQueue`): fixes first, through
+  `ingest` like any delivery, then events, through the same handlers as
+  the live ones (`onMotion` for a transition, `onFenceExit` for the
+  fence). While JavaScript is up and listening the service and the
+  receivers poke it directly (`onNativeQueue`) and it drains the same way.
+- `HearthBootReceiver` puts the requests back after a reboot or an update,
+  which drop everything Play Services held, and restarts the service for
+  a phone that was on the move. expo-task-manager restores the resting
+  request on its own.
+- `HearthMessagingService` sits in front of expo-notifications' own and
+  brings the brief service up inside the message handler for a wake or a
+  watch push, the one other moment a background app may start a service.
 
-The patch also has the service promote itself to the foreground in
-`onStartCommand` from options it persisted, so when the OS kills the process
-and restarts the service with a redelivered intent, nobody has to bind to it
-first; a service started without a `startForeground` is killed a few seconds
-later with an exception that takes the process with it.
+`reassertService` answers a refusal for a moving phone at every allowed
+moment: an activity transition, a fence exit, a wake or watch push and the
+app opening at once, and a delivery or the sync task once per ten minutes,
+since re-registering hands back the fix the OS already had and that is
+another delivery. A parked phone wants no service and is left alone. A
+brief service found under a moving phone is upgraded in place. A status of
+`none` while a tier wants the service means it went down without the app
+asking, an OEM battery manager most often; the tracker brings it back,
+remembers the moment for a day, and `serviceDiedUnexpectedly()` is what the
+health report sends as `serviceStopped`.
 
-Expo ships its modules to Android as prebuilt AARs, and a patch to Kotlin
-source does nothing to one of those, so `apps/mobile/package.json` lists
-expo-location under `expo.autolinking.android.buildFromSource`. Check the
-build log: the module must appear without the package icon that marks a
-prebuilt. The patch is applied by `scripts/apply-patches.mjs` from the root
-`postinstall`, not by pnpm's `patchedDependencies`: with
-`node-linker=hoisted`, which Metro needs, pnpm applies a patch again on every
-install, and `expo prebuild` runs one, which left the Kotlin declared twice.
-The script applies each patch once and leaves one already in place alone.
+The battery optimisation exemption still matters: an exempt app may start
+its service from the background at any moment and keeps its network in
+Doze, so the resting request and the upload work on a parked phone that is
+not being woken. The checklist asks for it directly
+(`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, allowed for family safety
+apps) and, on the vendors that kill background apps, walks the person
+through the vendor's own settings.
+
+The rules the receivers act on and the queue's store have plain checks in
+`modules/hearth-motion/test/DepartureTest.kt`, run the way the file says.
+
+`patches/expo-location@55.1.14.patch` remains for iOS (the one-shot
+manager's `allowsBackgroundLocationUpdates`) and for the resting request's
+service state on Android, which the tracker no longer reads. Expo ships its
+modules to Android as prebuilt AARs, so `apps/mobile/package.json` lists
+expo-location and expo-notifications under
+`expo.autolinking.android.buildFromSource`. The patch is applied by
+`scripts/apply-patches.mjs` from the root `postinstall`, not by pnpm's
+`patchedDependencies`: with `node-linker=hoisted`, which Metro needs, pnpm
+applies a patch again on every install, and `expo prebuild` runs one, which
+left the Kotlin declared twice. The script applies each patch once and
+leaves one already in place alone.
 
 ### One-shot fixes
 
@@ -467,13 +497,13 @@ socket in `services/realtime.ts` is a different thing: it lives with the
 screen and closes when the app goes to the background, which is exactly when
 this one matters. An ask for a parked Android phone goes by high priority
 push, and `HearthMessagingService` in the motion module, which sits in
-front of expo-notifications' own service, starts `HearthWakeService` inside
-the message handler: a foreground service with "Updating your location"
-that carries the one fix and goes with it, stopping itself after the fix's
-deadline if nothing else does. That is the moment Android allows a service
-to start from the background, and the notification it posts is what keeps
-the app's pushes at high priority. The JavaScript task then takes the fix
-under it (`wakeFix`, `services/location/wakeService.ts`).
+front of expo-notifications' own service, brings the tracking service up
+brief inside the message handler: "Updating your location" for the one
+fix, gone with it, and stopping itself after the fix's deadline if nothing
+else does. That is the moment Android allows a service to start from the
+background, and the notification it posts is what keeps the app's pushes
+at high priority. The JavaScript task then takes the fix under it
+(`wakeFix`, `startBrief` in `services/location/nativeTracker.ts`).
 
 Opening a member's page calls `POST /circles/:id/members/:userId/refresh`
 for one fix now, the way opening the map calls
