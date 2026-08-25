@@ -104,6 +104,14 @@ const WAKE_FIX_TIMEOUT_MS = 30_000
 const SYNC_FIX_TIMEOUT_MS = 15_000
 /** The OS's last fix may stand in for one that never came while it is this fresh. */
 const LAST_KNOWN_MAX_AGE_MS = 2 * 60 * 1000
+/**
+ * A fresh request answered with a fix older than this was answered from the
+ * OS's cache, and is asked again. An app opened after hours away used to
+ * upload the fix iOS still held from where the phone had been, and since
+ * the server never moves presence back in time, the row went on saying
+ * "two hours ago, at home".
+ */
+const FRESH_FIX_MAX_AGE_MS = 60 * 1000
 /** Bigger than the still radius so GPS jitter at a standstill cannot trip it. */
 const STATIONARY_GEOFENCE_RADIUS_METERS = 150
 /**
@@ -565,12 +573,26 @@ async function acquireFix(
   timeoutMs: number,
   lastKnown: boolean,
 ): Promise<{ location: Location.LocationObject; cached: boolean }> {
+  const started = Date.now()
   try {
-    const location = await withDeadline(
+    let location = await withDeadline(
       Location.getCurrentPositionAsync({ accuracy }),
       timeoutMs,
       "Location request",
     )
+    const age = Date.now() - location.timestamp
+    if (age > FRESH_FIX_MAX_AGE_MS) {
+      // The cache answered. One more ask, inside the same deadline, is
+      // what gets the OS to actually look; a second cached answer is all
+      // it has, and is taken as it is.
+      logTracker("report stale", { age: Math.round(age / 1000) })
+      const remaining = Math.max(1_000, timeoutMs - (Date.now() - started))
+      location = await withDeadline(
+        Location.getCurrentPositionAsync({ accuracy }),
+        remaining,
+        "Location request",
+      )
+    }
     return { location, cached: false }
   } catch (error) {
     if (!lastKnown) throw error
@@ -611,6 +633,7 @@ export async function reportNow(
       source,
       acc: Math.round(fix.accuracyMeters ?? -1),
       ms: Date.now() - started,
+      age: Math.max(0, Math.round((Date.now() - location.timestamp) / 1000)),
       ...(cached ? { cached } : {}),
     })
     // A wake, a nudge or the app opening can be the first word from a phone

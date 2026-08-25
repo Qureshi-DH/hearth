@@ -41,6 +41,13 @@ republished so the version reads the same everywhere.
 
 ### Fixed
 
+- A one-shot fix the OS answers from its cache is asked for again. An
+  iPhone opened after hours away asked for a fix and iOS handed back the
+  one it still held from where the phone had been; uploaded with its own
+  timestamp, the server never moved presence back to it, and the row went
+  on saying "two hours ago, at home" until a later open got a fresh one.
+  A fresh request answered with a fix over a minute old now asks once more
+  inside the same deadline, and every report logs the fix's age.
 - The channel expo-location's service used is deleted, so an upgraded
   install does not keep showing "Location sharing" in its notification
   settings next to the native service's "Location updates".

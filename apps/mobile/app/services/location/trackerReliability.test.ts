@@ -604,6 +604,40 @@ describe("one-shot fixes", () => {
     expect(lastKnown).toHaveBeenCalledWith({ maxAge: 2 * 60_000 })
   })
 
+  it("ask again when the OS answers a fresh request with a fix it had cached", async () => {
+    // An app opened after hours away asks for a fix, and iOS can answer
+    // with the one it already holds, from where the phone was hours ago.
+    // Uploaded as it is, the server never moves presence back to it, and
+    // the row keeps saying "two hours ago, at home".
+    Platform.OS = "ios"
+    await enterMoving()
+    getPosition.mockClear()
+    mockUpload.mockClear()
+    getPosition.mockImplementationOnce(async () =>
+      at(HOME.lat, HOME.lon, Date.now() - 2 * 60 * 60_000, 0, 30),
+    )
+    mockHere = { lat: HOME.lat + 0.01, lon: HOME.lon }
+    const fix = await reportNow("foreground", Location.Accuracy.Balanced)
+    expect(getPosition).toHaveBeenCalledTimes(2)
+    expect(fix?.lat).toBeCloseTo(HOME.lat + 0.01)
+    expect(Date.now() - Date.parse(fix!.recordedAt)).toBeLessThan(60_000)
+    const stale = readTrackerLog().find((entry) => entry.what === "report stale")
+    expect(stale?.detail).toMatchObject({ age: 7200 })
+  })
+
+  it("take the second answer whatever its age, since two cached fixes are all the OS has", async () => {
+    Platform.OS = "ios"
+    await enterMoving()
+    getPosition.mockClear()
+    getPosition.mockImplementation(async () =>
+      at(HOME.lat, HOME.lon, Date.now() - 2 * 60 * 60_000, 0, 30),
+    )
+    const fix = await reportNow("foreground", Location.Accuracy.Balanced)
+    expect(getPosition).toHaveBeenCalledTimes(2)
+    expect(fix).not.toBeNull()
+    getPosition.mockImplementation(mockPositionNow)
+  })
+
   it("are bounded inside the sync task, which iOS gives half a minute", async () => {
     await enterMoving()
     getPosition.mockImplementation(() => new Promise(() => {}))
