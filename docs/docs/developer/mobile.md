@@ -393,6 +393,14 @@ not where it would lie (a fence check, where a stale fix inside the circle
 would re-park a phone that has just left; the park fix, which is made up from
 the anchor instead).
 
+A fresh request the OS answers from its cache, with a fix over a minute
+old, is asked once more inside the same deadline. An iPhone opened after
+hours away was handed the fix iOS still held from where the phone had
+been; uploaded with its own timestamp, the server never moved presence
+back to it, and the row kept saying "two hours ago, at home". A second
+cached answer is all the OS has and is taken as it is. Every `report done`
+line in the diagnostics log carries the fix's age in seconds.
+
 On iOS, expo-location's one-shot manager had `allowsBackgroundLocationUpdates`
 off, which Apple documents as a manager Core Location need not keep the app
 running to serve. The patch sets it when the app is authorised Always and
