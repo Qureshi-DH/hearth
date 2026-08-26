@@ -29,15 +29,16 @@ export interface RotateOptions {
  * How soon after a rotation a superseded token is still explained by the
  * client rather than by a thief. An app that fires its refresh twice, or
  * retries one whose response never arrived, presents the spent token within
- * seconds. Both are refused, but ending the family's session over a double
- * submit would be its own outage.
+ * seconds. Ending the family's session over that would be its own outage,
+ * so the session is kept; a device that cannot name itself is refused.
  *
- * The same device gets longer. An Android phone can run two JavaScript
- * runtimes, the app's and the headless one a background task starts, each
- * holding its own copy of the pair, and whichever refreshes second presents
- * a token its twin spent minutes ago. That can happen once per access token,
- * so a replay from the device the token was issued to is a race for as long
- * as one lives, and a theft after that.
+ * The device the token was issued to gets longer, and gets an answer. A
+ * phone on the road refreshes, the server rotates, and the response is lost
+ * to the network: the phone still holds the spent token and presents it
+ * again at its next upload, minutes later. Refused, it would sign itself
+ * out and stop reporting until somebody opened it. Within the life of one
+ * access token that presentation is the retry it looks like, and it is
+ * given a fresh pair; after that it is a theft.
  */
 const REFRESH_RETRY_GRACE_MS = 30_000
 
@@ -122,7 +123,6 @@ export async function rotateSession(
   refreshToken: string,
   origin: RotateOptions,
 ): Promise<AuthResponse> {
-  const config = getConfig()
   const hash = sha256(refreshToken)
 
   const [row] = await db
@@ -133,14 +133,33 @@ export async function rotateSession(
     .limit(1)
 
   if (!row) {
-    await containReuse(db, hash, origin)
-    throw unauthorized("Refresh token is not valid.")
+    const retried = await retriedRotation(db, hash, origin)
+    if (!retried) {
+      await containReuse(db, hash, origin)
+      throw unauthorized("Refresh token is not valid.")
+    }
+    return rotate(app, db, retried.session, retried.user, hash, origin, { retry: true })
   }
 
-  if (row.session.expiresAt.getTime() <= Date.now()) {
+  return rotate(app, db, row.session, row.user, hash, origin, { retry: false })
+}
+
+type SessionRow = typeof sessions.$inferSelect
+
+async function rotate(
+  app: FastifyInstance,
+  db: Database,
+  session: SessionRow,
+  user: User,
+  hash: string,
+  origin: RotateOptions,
+  { retry }: { retry: boolean },
+): Promise<AuthResponse> {
+  const config = getConfig()
+  if (session.expiresAt.getTime() <= Date.now()) {
     throw unauthorized("Session expired; sign in again.")
   }
-  if (!row.user.isActive) throw unauthorized("This account has been deactivated.")
+  if (!user.isActive) throw unauthorized("This account has been deactivated.")
 
   const nextRefresh = randomToken()
   const expiresAt = new Date(Date.now() + config.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)
@@ -154,24 +173,50 @@ export async function rotateSession(
     .set({
       refreshTokenHash: sha256(nextRefresh),
       // Kept so the next request can tell a token that was spent here from a
-      // string that was never a token at all.
+      // string that was never a token at all. A retry keeps the rotation it
+      // missed as the one it is measured from, so the grace a spent token
+      // gets is counted once and not from every retry.
       previousRefreshTokenHash: hash,
-      previousRotatedAt: new Date(),
+      ...(retry ? {} : { previousRotatedAt: new Date() }),
       lastUsedAt: new Date(),
       expiresAt,
       ip: origin.ip ?? null,
       userAgent: origin.userAgent ?? null,
     })
-    .where(eq(sessions.id, row.session.id))
+    .where(eq(sessions.id, session.id))
 
-  const claims: AccessTokenClaims = { sub: row.user.id, sid: row.session.id }
+  const claims: AccessTokenClaims = { sub: user.id, sid: session.id }
 
   return {
     accessToken: app.jwt.sign(claims),
     refreshToken: nextRefresh,
     expiresIn: config.ACCESS_TOKEN_TTL_SECONDS,
-    user: toCurrentUser(row.user),
+    user: toCurrentUser(user),
   }
+}
+
+/**
+ * The session a spent token belongs to, when the device the token was
+ * issued to presents it within the life of the access token it went with:
+ * the retry of a rotation whose answer never arrived. Anything else is
+ * containReuse's business.
+ */
+async function retriedRotation(
+  db: Database,
+  hash: string,
+  origin: RotateOptions,
+): Promise<{ session: SessionRow; user: User } | null> {
+  if (origin.deviceId == null) return null
+  const [spent] = await db
+    .select({ session: sessions, user: users })
+    .from(sessions)
+    .innerJoin(users, eq(users.id, sessions.userId))
+    .where(and(eq(sessions.previousRefreshTokenHash, hash), isNull(sessions.revokedAt)))
+    .limit(1)
+  if (!spent || spent.session.deviceId !== origin.deviceId) return null
+  const rotatedAt = spent.session.previousRotatedAt?.getTime() ?? 0
+  if (Date.now() - rotatedAt > getConfig().ACCESS_TOKEN_TTL_SECONDS * 1000) return null
+  return spent
 }
 
 /**

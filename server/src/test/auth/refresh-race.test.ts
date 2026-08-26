@@ -52,19 +52,24 @@ async function rotatedMinutesAgo(userId: string, minutes: number) {
 }
 
 describe("a spent refresh token replayed by the same device", () => {
-  it("is refused without ending the session, for as long as an access token lives", async () => {
+  it("is answered with a fresh pair, for as long as an access token lives", async () => {
+    // The phone whose refresh answer never arrived presents the token it
+    // still has. Refusing it, even without ending the session, signed the
+    // phone out of an account the server still held open for it.
     const bob = await registerUser(ctx.app, { deviceId: "device-bob-pixel" })
     const rotated = await refresh(bob.refreshToken)
     expect(rotated.statusCode).toBe(200)
-    const live = (rotated.json() as { refreshToken: string }).refreshToken
+    const lost = (rotated.json() as { refreshToken: string }).refreshToken
 
     await rotatedMinutesAgo(bob.user.id, 5)
 
     const replay = await refresh(bob.refreshToken, "device-bob-pixel")
-    expect(replay.statusCode).toBe(401)
+    expect(replay.statusCode).toBe(200)
     expect(await liveSessions(bob.user.id)).toBe(1)
     expect(await reuseAudits()).toHaveLength(0)
-    expect((await refresh(live, "device-bob-pixel")).statusCode).toBe(200)
+    // The pair nobody received is spent by the one that replaced it.
+    expect((await refresh(lost, "device-bob-pixel")).statusCode).toBe(401)
+    expect(await liveSessions(bob.user.id)).toBe(1)
   })
 
   it("is still a theft when it comes from another device", async () => {

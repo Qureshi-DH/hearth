@@ -489,6 +489,72 @@ describe("refresh token reuse", () => {
     expect(me.statusCode).toBe(200)
   })
 
+  it("hands a same-device retry within the grace a fresh pair, since the answer it retried never arrived", async () => {
+    // A phone on the road refreshed, the server rotated, and the response
+    // was lost to the network. The phone still holds the spent token and
+    // presents it again minutes later. Refusing it signed the family out
+    // of a phone that had done nothing wrong, and the tracker with it.
+    const bob = await registerUser(ctx.app, { deviceId: "device-bob-phone" })
+    const withDevice = (refreshToken: string) =>
+      ctx.app.inject({
+        method: "POST",
+        url: "/api/v1/auth/refresh",
+        payload: { refreshToken, deviceId: "device-bob-phone" },
+      })
+
+    const first = await withDevice(bob.refreshToken)
+    expect(first.statusCode).toBe(200)
+    const lost = (first.json() as { refreshToken: string }).refreshToken
+
+    const retry = await withDevice(bob.refreshToken)
+    expect(retry.statusCode).toBe(200)
+    const fresh = (retry.json() as { refreshToken: string; accessToken: string }).refreshToken
+    expect(fresh).not.toBe(lost)
+    expect(await liveSessionCount(bob.user.id)).toBe(1)
+    expect(await reuseAudits()).toHaveLength(0)
+
+    // The pair it was handed is the live one now, and the lost one is spent.
+    expect((await withDevice(fresh)).statusCode).toBe(200)
+    expect((await withDevice(lost)).statusCode).toBe(401)
+    expect(await liveSessionCount(bob.user.id)).toBe(1)
+  })
+
+  it("does not let the same spent token be retried for ever", async () => {
+    const bob = await registerUser(ctx.app, { deviceId: "device-bob-phone" })
+    const withDevice = (refreshToken: string) =>
+      ctx.app.inject({
+        method: "POST",
+        url: "/api/v1/auth/refresh",
+        payload: { refreshToken, deviceId: "device-bob-phone" },
+      })
+    expect((await withDevice(bob.refreshToken)).statusCode).toBe(200)
+    expect((await withDevice(bob.refreshToken)).statusCode).toBe(200)
+
+    // The grace is measured from the rotation the phone missed, not from the
+    // retry, so a token that keeps being presented runs out of it once the
+    // access token it went with has lived its life.
+    await getDb()
+      .update(sessions)
+      .set({ previousRotatedAt: new Date(Date.now() - 20 * 60 * 1000) })
+      .where(eq(sessions.userId, bob.user.id))
+    expect((await withDevice(bob.refreshToken)).statusCode).toBe(401)
+    expect(await liveSessionCount(bob.user.id)).toBe(0)
+  })
+
+  it("refuses the same retry from another device", async () => {
+    const bob = await registerUser(ctx.app, { deviceId: "device-bob-phone" })
+    const from = (refreshToken: string, deviceId: string) =>
+      ctx.app.inject({
+        method: "POST",
+        url: "/api/v1/auth/refresh",
+        payload: { refreshToken, deviceId },
+      })
+    expect((await from(bob.refreshToken, "device-bob-phone")).statusCode).toBe(200)
+    expect((await from(bob.refreshToken, "device-somebody-else")).statusCode).toBe(401)
+    // Seconds after the rotation the session is kept, as before.
+    expect(await liveSessionCount(bob.user.id)).toBe(1)
+  })
+
   it("leaves the session alone when a token nobody issued is presented", async () => {
     const bob = await registerUser(ctx.app)
 
