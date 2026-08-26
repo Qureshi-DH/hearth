@@ -285,6 +285,10 @@ const en = {
     title: "Quick message",
     messageMember: "Send a quick message",
   },
+  session: {
+    signedOutTitle: "Signed out of Hearth",
+    signedOutBody: "Your location is no longer being shared. Open Hearth and sign in again.",
+  },
   incident: {
     title: "Are you okay?",
     body: "Your phone felt something that looked like a collision. If we don't hear from you, your circle will be alerted with your location.",

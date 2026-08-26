@@ -6,6 +6,28 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-08-26
+
+Servers must update before phones: a phone on an older server can still be
+signed out by a lost refresh answer, which is what this release stops.
+
+### Fixed
+
+- A phone no longer signs itself out when the answer to a token refresh is
+  lost on the road. The refresh reached the server, which rotated the
+  token; the phone never heard, kept the spent one, and presented it at
+  its next upload. The server recognised the retry and kept the session,
+  but still answered 401, and the app reads a 401 from `/auth/refresh` as
+  the end of its session: tokens cleared, tracker stopped, nothing said.
+  One family phone stopped reporting for two hours over one lost packet,
+  and read as "at home" the whole time. The server now answers a retry
+  from the device the token was issued to, within one access token's
+  lifetime, with a fresh pair; the grace is counted from the rotation the
+  phone missed, so a token cannot be retried for ever.
+- When the app does sign itself out with nobody looking at it, it says so
+  on the shade, "Signed out of Hearth", so a phone that has gone quiet for
+  that reason is never mistaken for one that is fine.
+
 ## [0.9.2] - 2026-08-24
 
 The Android tracker's transport is native. No server change; the image is

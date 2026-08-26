@@ -1,10 +1,8 @@
 import { control } from "@/services/location/control"
-import { stopTracking } from "@/services/location/tracker"
-import { queryClient } from "@/services/queryClient"
 import { realtime } from "@/services/realtime"
+import { sessionExpired } from "@/services/session"
 import { useAuthStore } from "@/stores/auth"
 import { tokenVault } from "@/stores/tokenVault"
-import { useTrackingStore } from "@/stores/tracking"
 
 import { ApiClient } from "./client"
 import { createEndpoints } from "./endpoints"
@@ -23,12 +21,7 @@ export const api = new ApiClient({
     }
   },
   onSessionExpired: () => {
-    // The next account to sign in on this phone must not upload the previous
-    // account's queued breadcrumbs.
-    void stopTracking()
-    useTrackingStore.getState().reset()
-    useAuthStore.getState().signedOut()
-    queryClient.clear()
+    void sessionExpired()
   },
 })
 

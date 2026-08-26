@@ -32,10 +32,15 @@ opened from curl or from Swagger's "Try it out" is one of those rows, so call
 
 A refresh token works once. Presenting a spent one again ends the session,
 because a token replayed minutes after it was rotated is in somebody else's
-hands. The exception is a replay from the device the session belongs to
-inside one access token's lifetime: an Android phone can run two JavaScript
-runtimes, and whichever refreshes second presents a token its twin already
-spent. Send `deviceId` with the refresh so the server can tell the two apart.
+hands. The exception is the device the session belongs to, inside one access
+token's lifetime: a phone on the road whose refresh reached the server but
+whose answer was lost to the network still holds the spent token, and
+presents it again at its next upload. That is a retry, and it is answered
+with a fresh pair; the pair nobody received is spent by it. The grace is
+counted from the rotation the phone missed, not from each retry. A spent
+token from any other device, or from a request that names no device, is
+refused, and ends the session once the grace has passed. Send `deviceId`
+with the refresh so the server can tell these apart.
 
 ## Endpoint map
 
