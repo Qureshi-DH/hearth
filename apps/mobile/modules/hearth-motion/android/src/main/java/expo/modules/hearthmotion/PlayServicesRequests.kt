@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Looper
 import android.util.Log
 import com.google.android.gms.location.ActivityRecognition
 import com.google.android.gms.location.ActivityTransition
@@ -142,7 +143,11 @@ internal object Fences {
       val task =
         LocationServices.getGeofencingClient(context)
           .addGeofences(request, broadcast(context, REQUEST_CODE, HearthFenceReceiver::class.java))
-      if (await) Tasks.await(task, AWAIT_SECONDS, TimeUnit.SECONDS)
+      // Tasks.await refuses the main thread outright, and a refusal here
+      // would read as a fence that could not be set.
+      if (await && Looper.myLooper() != Looper.getMainLooper()) {
+        Tasks.await(task, AWAIT_SECONDS, TimeUnit.SECONDS)
+      }
       prefs.fence = fence
       true
     } catch (error: Exception) {

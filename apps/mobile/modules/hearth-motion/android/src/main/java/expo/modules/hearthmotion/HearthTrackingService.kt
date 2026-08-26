@@ -159,11 +159,13 @@ class HearthTrackingService : Service() {
   /**
    * JavaScript is woken once the service is up, not before: a process
    * with a foreground service may start the headless task, and the poke
-   * for the queue does the same for every fix after.
+   * for the queue does the same for every fix after. Posted rather than
+   * done here, so the foreground the system was just told about has
+   * settled before the process leans on it.
    */
   private fun bootJavaScript(reason: String) {
     if (HearthEvents.emit("onNativeQueue", emptyMap())) return
-    HearthHeadlessService.start(this, reason)
+    handler.postDelayed({ HearthHeadlessService.start(this, reason) }, HEADLESS_START_DELAY_MS)
   }
 
   private fun stopSelfGracefully(reason: String) {
@@ -208,6 +210,7 @@ class HearthTrackingService : Service() {
     private const val NOTIFICATION_ID = 7421
     /** The fix's own deadline, so a brief service never outlives it. */
     private const val BRIEF_LIFETIME_MS = 30_000L
+    private const val HEADLESS_START_DELAY_MS = 300L
 
     /** "none", "brief", "starting", "running" or "refused", as JavaScript reads it. */
     @Volatile
