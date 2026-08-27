@@ -78,6 +78,14 @@ const MEMBER_REFRESH_FRESH_MS = 30 * 1000
  */
 const WATCH_REPUSH_AFTER_MS = 90 * 1000
 const WATCH_PUSHES_PER_WINDOW = 3
+/**
+ * How long a phone with its channel open is given to answer an ask down it
+ * before the next hold stops trusting the channel. An answer takes a second
+ * or two; a socket iOS let die without a close keeps its stamp for minutes,
+ * and the page would otherwise re-ask down the dead socket every minute for
+ * the whole window.
+ */
+const CONTROL_ANSWER_GRACE_MS = 20 * 1000
 
 const nothingToWatch: WatchResponse = {
   watching: false,
@@ -103,9 +111,20 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
     now: Date,
     heardAt: Date | null,
     seconds: number,
+    previousAskAt: Date | null,
   ): Promise<WatchResponse["pushed"]> {
     // A phone with its channel open has the ask already; nothing is pushed.
-    if (await sendControl(db, userId, { command: "watch", seconds }, now)) return "socket"
+    // Unless the last ask went down it and nothing has been heard since: a
+    // phone that took the ask uploads within seconds, so that silence is a
+    // channel that is not what its stamp says.
+    const unanswered =
+      previousAskAt != null &&
+      now.getTime() - previousAskAt.getTime() >= CONTROL_ANSWER_GRACE_MS &&
+      now.getTime() - previousAskAt.getTime() <= seconds * 1000 &&
+      (heardAt == null || heardAt.getTime() <= previousAskAt.getTime())
+    if (!unanswered && (await sendControl(db, userId, { command: "watch", seconds }, now))) {
+      return "socket"
+    }
     if (getPushDriver()?.provider !== "expo") return "unsupported"
     const [device] = await db
       .select({ id: sessions.id })
@@ -463,6 +482,17 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
 
       const seconds = DEFAULTS.watchWindowSeconds
       const now = new Date()
+      // When the last ask was made, from the window it opened. The page holds
+      // its window with an ask a minute, and whether the phone answered the
+      // last one decides how this one is sent.
+      const [before] = await db
+        .select({ watchedUntil: userPresence.watchedUntil })
+        .from(userPresence)
+        .where(eq(userPresence.userId, request.params.userId))
+        .limit(1)
+      const previousAskAt = before?.watchedUntil
+        ? new Date(before.watchedUntil.getTime() - seconds * 1000)
+        : null
       // The window is recorded whatever the push does. A phone in the middle
       // of a drive uploads every few seconds and reads it off the reply, so
       // the push is the fast path for a phone that has nothing to say yet.
@@ -480,7 +510,13 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
       const heardAt = [presence?.recordedAt, presence?.lastHeardAt]
         .filter((at): at is Date => at != null)
         .sort((a, b) => b.getTime() - a.getTime())[0]
-      const pushed = await pushForWatch(request.params.userId, now, heardAt ?? null, seconds)
+      const pushed = await pushForWatch(
+        request.params.userId,
+        now,
+        heardAt ?? null,
+        seconds,
+        previousAskAt,
+      )
 
       return {
         watching: true,

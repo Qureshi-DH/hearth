@@ -177,6 +177,59 @@ describe("a watch over the control channel", () => {
     phone.socket.close()
   })
 
+  it("falls back to the push on the next hold when the channel ask went unanswered", async () => {
+    // The stamp says the channel is open, but a socket iOS let die without a
+    // close keeps its stamp for minutes. An ask that got no answer in the
+    // time an answer takes is not sent down it again.
+    const { viewer, driver, circle } = await family()
+    const phone = await openControl(driver.accessToken)
+
+    const first = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/members/${driver.user.id}/watch`,
+      headers: viewer.headers,
+    })
+    expect(first.json().pushed).toBe("socket")
+    expect(await waitFor(() => controlCommands(phone.messages).length === 1)).toBe(true)
+
+    // A minute on, with nothing heard from the phone since.
+    await getDb().execute(
+      sql`update user_presence set watched_until = watched_until - interval '60 seconds'
+          where user_id = ${driver.user.id}::uuid`,
+    )
+    const hold = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/members/${driver.user.id}/watch`,
+      headers: viewer.headers,
+    })
+    // The test server has no push provider; what matters is that the channel
+    // was not trusted again.
+    expect(hold.json().pushed).toBe("unsupported")
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(controlCommands(phone.messages)).toHaveLength(1)
+    phone.socket.close()
+  })
+
+  it("keeps using the channel across holds while the phone is answering", async () => {
+    const { viewer, driver, circle } = await family()
+    const phone = await openControl(driver.accessToken)
+    const watch = () =>
+      ctx.app.inject({
+        method: "POST",
+        url: `/api/v1/circles/${circle.id}/members/${driver.user.id}/watch`,
+        headers: viewer.headers,
+      })
+    expect((await watch()).json().pushed).toBe("socket")
+    await getDb().execute(
+      sql`update user_presence set watched_until = watched_until - interval '60 seconds'
+          where user_id = ${driver.user.id}::uuid`,
+    )
+    // The phone answered: an upload since the ask.
+    await upload(driver.headers, 0)
+    expect((await watch()).json().pushed).toBe("socket")
+    phone.socket.close()
+  })
+
   it("is not delivered to the viewer's own sockets, nor to a plain one of the phone's", async () => {
     const { viewer, driver, circle } = await family()
     const viewerSocket = connect(viewer.accessToken)
