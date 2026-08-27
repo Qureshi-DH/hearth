@@ -6,6 +6,30 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-08-27
+
+Server only; no app change.
+
+### Fixed
+
+- A journey between two named places is a trip whatever its length. A
+  family member walked three hundred metres from home to the clinic next
+  door; the feed said "left Home" and "arrived at Clinic" and the trips
+  list said nothing, twice over: the silence between his last fix at home
+  and his first at the clinic was read as a stop rather than the journey,
+  because the phone had been parked before it, and the path was under the
+  400 m a trip needed. A silence of up to 45 minutes from one named place
+  to a different one is now the journey between them, beginning at the
+  last fix at the origin, and a trip from one named place to another is
+  exempt from the length rules. Its start and end places, and the feed,
+  now agree.
+
+### Changed
+
+- A journey to somewhere unnamed needs 250 m of path rather than 400 m.
+  Drift around a house is kept out by how far the phone got from where it
+  started, so the path rule only has to be more than a walk to the car.
+
 ## [0.9.3] - 2026-08-26
 
 Servers must update before phones: a phone on an older server can still be

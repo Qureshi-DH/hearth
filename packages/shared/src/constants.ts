@@ -191,7 +191,13 @@ export const DEFAULTS = {
   geofenceExitBufferMeters: 40,
   geofenceMaxAccuracyMeters: 250,
   tripIdleGapSeconds: 5 * 60,
-  tripMinDistanceMeters: 400,
+  /**
+   * A journey to somewhere unnamed has to cover this much road. Drift around
+   * a house is kept out by how far the phone got from its start, not by
+   * this, so it only has to be more than a walk to the car. A journey between
+   * two named places counts whatever its length.
+   */
+  tripMinDistanceMeters: 250,
   tripMinDurationSeconds: 120,
   /**
    * How long a phone stays on live updates after someone opens its owner's

@@ -177,12 +177,21 @@ the cap from the app stored a number that then swept nothing.
 ### Trip detection (`services/trips.ts`)
 
 Breadcrumbs newer than the per-user watermark and older than the idle gap
-(5 min) are split wherever the gap between fixes exceeds 5 min. Heartbeat fixes
-are skipped, since a parked phone with the app open sends them on a timer and
-they would keep a finished drive from closing. A segment with
-≥3 points, ≥2 min, ≥400 m and real displacement becomes a `trip`, and its points
-are tagged with the trip id. Start and end are matched to places for
-"Home → School".
+(5 min) are split wherever the gap between fixes exceeds 5 min, or wherever
+the phone stayed inside 100 m for longer than that. Heartbeat fixes are
+skipped, since a parked phone with the app open sends them on a timer and they
+would keep a finished drive from closing. A gap is not a split when the fix
+after it shows the phone travelled through it. A segment with ≥3 points,
+≥2 min, ≥250 m of path and real displacement (150 m from where it started)
+becomes a `trip`, and its points are tagged with the trip id. Start and end
+are matched to places for "Home → School".
+
+A journey between two named places is a trip whatever its length, because
+the feed has already announced "left" and "arrived" for it. The tracker
+cannot see a move shorter than its fence around the parking spot, so such a
+journey often reaches the server as one fix at the origin, a silence, and a
+fix inside the destination: that silence, up to 45 minutes, is read as the
+journey, and the trip starts at the last fix at the origin.
 
 ## Mobile app
 

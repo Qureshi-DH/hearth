@@ -77,6 +77,15 @@ const MIN_BRIDGED_DISTANCE_METERS = DEFAULTS.tripMinDistanceMeters
 const MAX_BRIDGED_SILENCE_MS = 30 * 60 * 1000
 
 /**
+ * The longest silence between a parked phone's last word at one named place
+ * and its first from another that still reads as the journey between them.
+ * The half hour above, which is how long the phone may have sat quietly
+ * before it left, plus the journey to a place near enough that the tracker
+ * saw none of it.
+ */
+const MAX_DEPARTURE_SILENCE_MS = 45 * 60 * 1000
+
+/**
  * A fix at one place and the next at another, hours apart, says nothing
  * about when the phone moved. Closer to walking pace across the silence, it
  * says the phone went straight there.
@@ -121,6 +130,15 @@ interface Candidate extends Fix {
  * a phone that had stopped and said so ends its journey at the stop.
  */
 type Bridges = (from: Candidate, to: Candidate, movingBefore: boolean) => boolean
+
+/**
+ * Whether a silence that began at a stop is a journey to somewhere the
+ * family named: the phone was parked at one place and next spoke from a
+ * different one, soon enough that it went straight there. The tracker
+ * cannot see a move shorter than its fence, so the first fix of such a
+ * journey is the arrival, and the journey is the silence before it.
+ */
+type Departs = (from: Candidate, to: Candidate) => boolean
 
 const candidateColumns = {
   id: locationPoints.id,
@@ -260,6 +278,19 @@ export async function detectTripsForUser(
     if (origin && destination) return origin !== destination
     return metres >= MIN_BRIDGED_DISTANCE_METERS
   }
+  // No pace rule here: a phone parked at home and next heard from at the
+  // clinic three hundred metres away, half an hour later, left at some
+  // point in that half hour, and nothing in the silence says when.
+  const departs: Departs = (from, to) => {
+    const ms = to.recordedAt.getTime() - from.recordedAt.getTime()
+    if (ms <= 0 || ms > MAX_DEPARTURE_SILENCE_MS) return false
+    if (haversineMeters(from, to) <= (from.accuracyMeters ?? 0) + (to.accuracyMeters ?? 0))
+      return false
+    if (filedBetween(filed.get(from.deviceId), from.recordedAt, to.recordedAt)) return false
+    const origin = placeContaining(places, from)
+    const destination = placeContaining(places, to)
+    return origin != null && destination != null && origin !== destination
+  }
 
   let audience: Promise<Audience> | null = null
   const pass: Pass = {
@@ -282,7 +313,7 @@ export async function detectTripsForUser(
   }
 
   for (const [deviceId, points] of groupByDevice(rows)) {
-    const runs = segmentByStops(points, gapMs, DEFAULTS.tripStopRadiusMeters, bridges)
+    const runs = segmentByStops(points, gapMs, DEFAULTS.tripStopRadiusMeters, bridges, departs)
     const last = runs[runs.length - 1]!
     const lastIsClosed =
       truncated ||
@@ -383,6 +414,12 @@ export function segmentByStops(
    * later, at a friend's door. The caller knows the places.
    */
   bridges: Bridges = () => false,
+  /**
+   * Whether a silence after a stop is a journey to another named place.
+   * That journey begins with the stop's last fix, the way a stop the phone
+   * reported through hands its last fix to the journey that leaves it.
+   */
+  departs: Departs = () => false,
 ): Run[] {
   const runs: Run[] = []
   let current: Candidate[] = []
@@ -396,8 +433,14 @@ export function segmentByStops(
       // travelling through it, which is the caller's call to make.
       const prior = current[current.length - 2]
       if (!bridges(previous, point, wasTravelling(prior, previous, stopRadiusMeters))) {
-        runs.push({ points: current, closedByStop: true })
-        current = []
+        if (departs(previous, point)) {
+          const stop = current.slice(0, -1)
+          if (stop.length > 0) runs.push({ points: stop, closedByStop: true })
+          current = [previous]
+        } else {
+          runs.push({ points: current, closedByStop: true })
+          current = []
+        }
       }
     }
     current.push(point)
@@ -571,13 +614,20 @@ async function persistSegment(
 
   const durationSeconds = (columns.endedAt.getTime() - columns.startedAt.getTime()) / 1000
   if (durationSeconds < DEFAULTS.tripMinDurationSeconds) return "refused"
-  if (columns.distanceMeters < DEFAULTS.tripMinDistanceMeters) return "refused"
 
-  // A loop back to its own start is still a trip, but a jittery stationary
-  // phone is not. Path length from noise grows with the number of samples, so
-  // a limit on it is really a limit on how densely the phone reported. How far
-  // the phone ever got from where it started does not grow with sampling.
-  if (excursionMeters(segment) < MIN_EXCURSION_METERS) return "refused"
+  // The length rules keep GPS drift around a house from becoming a trip. A
+  // journey from one place the family named to another is what they named
+  // them for, and the feed has already called it "left" and "arrived";
+  // the trips list agrees with it however short the road between them.
+  if (!placeToPlace) {
+    if (columns.distanceMeters < DEFAULTS.tripMinDistanceMeters) return "refused"
+    // A loop back to its own start is still a trip, but a jittery stationary
+    // phone is not. Path length from noise grows with the number of samples,
+    // so a limit on it is really a limit on how densely the phone reported.
+    // How far the phone ever got from where it started does not grow with
+    // sampling.
+    if (excursionMeters(segment) < MIN_EXCURSION_METERS) return "refused"
+  }
 
   // An afternoon pottering about a large garden clears everything above too:
   // the path grows with every wander and the excursion can pass 150 m inside
