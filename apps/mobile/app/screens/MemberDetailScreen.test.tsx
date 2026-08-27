@@ -101,8 +101,34 @@ jest.mock("../components/Screen", () => {
 })
 // The screen is not inside a navigator here, and its header is chrome.
 jest.mock("../utils/useHeader", () => ({ useHeader: () => {} }))
-// Sheets sit on reanimated, which has no native side here.
-jest.mock("../components/OptionSheet", () => ({ OptionSheet: () => null }))
+// Sheets sit on reanimated, which has no native side here. The options are
+// drawn as plain buttons so a test can pick one.
+jest.mock("../components/OptionSheet", () => {
+  const react = require("react")
+  const rn = require("react-native")
+  return {
+    OptionSheet: ({
+      visible,
+      options,
+    }: {
+      visible: boolean
+      options: Array<{ key: string; label?: string; onPress: () => void }>
+    }) =>
+      visible
+        ? react.createElement(
+            rn.View,
+            null,
+            options.map((option) =>
+              react.createElement(
+                rn.Pressable,
+                { key: option.key, testID: `option-${option.key}`, onPress: option.onPress },
+                react.createElement(rn.Text, null, option.label ?? option.key),
+              ),
+            ),
+          )
+        : null,
+  }
+})
 jest.mock("../components/PromptDialog", () => ({ PromptDialog: () => null }))
 jest.mock("../components/MemberMarker", () => ({
   MemberMarker: () => null,
@@ -217,5 +243,20 @@ describe("the profile map", () => {
     ]
     await renderProfile()
     expect(mockTrailProps).toHaveLength(0)
+  })
+})
+
+describe("a quick message", () => {
+  it("says which message went, not that a location was asked for", async () => {
+    const { useToastStore } = require("../stores/toast") as typeof import("../stores/toast")
+    const { getByText, getByTestId } = await renderProfile()
+    fireEvent.press(getByText(/messages:messageMember/))
+    fireEvent.press(getByTestId("option-slow_down"))
+    await act(async () => {})
+    const shown = useToastStore.getState().current
+    expect(shown?.tone).toBe("success")
+    // The translation layer is a stub here, so the key is what can be read.
+    expect(shown?.message).toContain("member:messageSent")
+    expect(shown?.message).not.toContain("nudged")
   })
 })

@@ -232,6 +232,7 @@ const en = {
   },
   member: {
     title: "Member",
+    messageSent: "Sent to {{name}}: “{{body}}”",
     trips: "Recent trips",
     noTrips: "No trips yet",
     lastUpdate: "Last update",

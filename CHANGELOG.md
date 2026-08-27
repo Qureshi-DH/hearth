@@ -6,6 +6,21 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-08-27
+
+Phones only; the server is unchanged from 0.9.4.
+
+### Fixed
+
+- Tapping a face on the map on iOS sometimes lit it up and put it straight
+  back. iOS's map recognises a single tap only once its double-tap
+  recogniser has given up, a third of a second after the face's own press,
+  and later still while the card is drawn and the camera flies; that late
+  report of the same tap was read as a tap on empty map, which clears the
+  selection. The map's report is now taken as the same tap for longer.
+- Sending a quick message said "Asked {name} to update their location".
+  It now says which message was sent.
+
 ## [0.9.4] - 2026-08-27
 
 Server only; no app change.

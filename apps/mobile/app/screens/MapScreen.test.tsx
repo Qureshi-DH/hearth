@@ -611,6 +611,19 @@ describe("tapping a member", () => {
     ;(Date.now as jest.Mock).mockRestore()
   })
 
+  // iOS's map recognises a single tap only once its double-tap recogniser has
+  // given up, a third of a second after the face's own Pressable fired, and
+  // later still while the JS thread draws the card and flies the camera.
+  it("keeps the selection when the map reports the tap most of a second later, as iOS does", async () => {
+    const { getByTestId, getAllByText } = await renderMap()
+    fireEvent.press(getByTestId("member-marker-ana"))
+    const withCard = getAllByText("ana").length
+    jest.spyOn(Date, "now").mockReturnValue(Date.now() + 800)
+    act(() => mockMapPress?.())
+    expect(getAllByText("ana").length).toBe(withCard)
+    ;(Date.now as jest.Mock).mockRestore()
+  })
+
   it("opens the page from the card and from a list row, which both promise it", async () => {
     const { getByTestId, getAllByText } = await renderMap()
     fireEvent.press(getByTestId("member-marker-ben"))

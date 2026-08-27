@@ -170,6 +170,13 @@ const SheetRow = memo(function SheetRow({
   )
 })
 
+/**
+ * How long after a marker tap the map's own report of a tap is taken to be
+ * the same tap. Nobody taps empty map to dismiss a card they chose a
+ * second ago; iOS reports the marker's tap to the map that late.
+ */
+const MAP_TAP_AFTER_MARKER_MS = 1_200
+
 export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   const { themed, theme } = useAppTheme()
   const insets = useSafeAreaInsets()
@@ -193,10 +200,12 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   // Read inside the marker callback, which must stay stable or every marker
   // re-renders on each selection.
   const selectedRef = useRef<string | null>(null)
-  // On Android a tap on a marker reaches the map as well, a moment later, and
-  // the map's press handler clears the selection. That undid every marker tap
-  // before the sheet had drawn the card, which is why tapping a face seemed
-  // to do nothing but move the camera.
+  // A tap on a marker reaches the map as well, later, and the map's press
+  // handler clears the selection. On Android it is a moment later. On iOS
+  // the map recognises a single tap only once its double-tap recogniser has
+  // given up, a third of a second after the face's own Pressable fired, and
+  // later still while the JS thread is drawing the card and flying the
+  // camera; a face tapped there used to light up and go dark again.
   const markerTapAt = useRef(0)
   const lastTap = useRef<{ userId: string; at: number } | null>(null)
 
@@ -515,7 +524,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
         onRegionDidChange={trackZoom}
         onPress={() => {
           setSwitcherOpen(false)
-          if (Date.now() - markerTapAt.current < 500) return
+          if (Date.now() - markerTapAt.current < MAP_TAP_AFTER_MARKER_MS) return
           clearSelection()
         }}
       >

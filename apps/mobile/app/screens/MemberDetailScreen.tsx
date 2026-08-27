@@ -123,7 +123,8 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   const sendQuick = async (quickKey: QuickMessageKey) => {
     try {
       await nudge.mutateAsync({ userId, quickKey })
-      toast.success(translate("map:nudged", { name }))
+      const body = QUICK_MESSAGES.find((quick) => quick.key === quickKey)?.body ?? ""
+      toast.success(translate("member:messageSent", { name, body }))
     } catch (error) {
       toast.error((error as Error).message)
     }
