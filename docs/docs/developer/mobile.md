@@ -532,16 +532,21 @@ the ask down the phone's control channel when it has one open, or a silent
 not uploaded since, three times per window at most, and the reply says
 which (`pushed`), when the phone was last heard and what it said
 stands in its way; every upload reply also carries `watchedUntil`, so a phone that is already reporting picks the watch up on
-its next batch whether or not the push arrived. Either way the phone puts
-`watchedUntil` in its store and `currentOptions()` returns the live tier
-whatever the phone was doing: `High` accuracy every five seconds on the move,
-`Balanced` at the same interval when parked, since a parked phone is not
-going anywhere and the point is that the page hears from it every few
-seconds rather than once. The phone also answers with one fix straight away,
-because iOS ignores the interval and delivers on distance, so a phone at rest
-would otherwise say nothing for the whole window. The window ends by a timer
-and by the first fix past it, whichever comes first, and the request steps
-back to the tier it was in.
+its next batch whether or not the push arrived. A channel ask that got no
+answer within twenty seconds is not repeated down the channel on the next
+hold: a socket iOS let die without a close keeps its stamp for minutes, and
+the hold goes by push instead. Either way the phone puts `watchedUntil` in
+its store and `currentOptions()` returns the live tier whatever the phone
+was doing: `High` accuracy, a fix a second, every one uploaded, on both
+platforms and moving or not. iOS has no time interval, so the live session
+has no distance filter either, which is the only session shape that
+delivers to a phone standing still; `ingest` thins the stream at the live
+tier's own pace rather than the circle's. The phone also answers with one
+fix straight away. The window ends by a timer and by the first fix past it,
+whichever comes first, and the request steps back to the tier it was in.
+The Live page calls the phone live on any fix from the last thirty seconds,
+counting one from up to thirty seconds before the ask, since the one fix an
+ask gets out of an iPhone is stamped before the ask reached it.
 
 The Live page draws the fixes that arrive while it is open and nothing else.
 A trip draws its own trail, and only where the phone reported it: a silence

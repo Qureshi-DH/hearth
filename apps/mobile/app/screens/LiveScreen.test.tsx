@@ -17,13 +17,15 @@ function presenceFor(
   at: { lat: number; lon: number },
   speedMps: number,
   issues: PresenceIssue[] = [],
+  /** How long ago the fix was taken. A page is opened on a fix from a while ago. */
+  ageMs = 0,
 ): MemberPresence {
   return {
     userId: "sam",
     lat: at.lat,
     lon: at.lon,
     accuracyMeters: 10,
-    recordedAt: new Date().toISOString(),
+    recordedAt: new Date(Date.now() - ageMs).toISOString(),
     batteryLevel: 0.6,
     isCharging: false,
     activity,
@@ -210,7 +212,8 @@ beforeEach(() => {
     activity: "driving",
     issues: [],
   }
-  mockPresence = [presenceFor("driving", START, 11.1)]
+  // What is on the map when the page opens: where they were a minute ago.
+  mockPresence = [presenceFor("driving", START, 11.1, [], 60_000)]
 })
 
 /** The points of the last drawn trail, whichever prop carried them. */
@@ -249,6 +252,8 @@ describe("asking the phone", () => {
     await move(presenceFor("driving", ON, 12))
     expect(screen.getByTestId("liveness-live")).toBeTruthy()
 
+    // Half a minute on, that fix is no longer where they are now.
+    await wait(31_000)
     await act(async () => {
       await screen.UNSAFE_getByType(RefreshControl).props.onRefresh()
     })
@@ -299,7 +304,7 @@ describe("what the page claims", () => {
   })
 
   it("does not call a phone stopped for a fix it had before asking", async () => {
-    mockPresence = [{ ...presenceFor("still", START, 0), stale: true }]
+    mockPresence = [{ ...presenceFor("still", START, 0, [], 20 * 60_000), stale: true }]
     const screen = await renderLive()
     expect(screen.queryByText(/live:stopped/)).toBeNull()
     expect(screen.getByText(/live:asking/)).toBeTruthy()

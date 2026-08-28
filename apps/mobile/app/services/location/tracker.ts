@@ -89,9 +89,12 @@ const STILL_AFTER_MS = 5 * 60 * 1000
 /** At or under this a fix came from GPS; above it, from Wi-Fi or a cell. */
 const GPS_CLASS_ACCURACY_METERS = 30
 
-/** The live tier, for as long as somebody is watching. */
-const LIVE_INTERVAL_MS = 5_000
-const LIVE_DISTANCE_METERS = 5
+/**
+ * The live tier, for as long as somebody is watching: a fix a second, every
+ * one uploaded, which is what a family looking at a moving dot expects of
+ * "live". The window is ten minutes, so the cost is bounded by the watching.
+ */
+const LIVE_INTERVAL_MS = 1_000
 /** A fix older than this is not "now" to somebody who has just opened the app. */
 const FOREGROUND_MAX_AGE_MS = 10_000
 /**
@@ -454,14 +457,19 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
   const live = watchedNow()
   // The tier's distance filter, applied to what is uploaded rather than by
   // the OS on Android, so the fixes keep coming while the phone is still
-  // and the stop can be judged from them. Live means every fix.
+  // and the stop can be judged from them. Live means every fix, at the live
+  // tier's own pace rather than the circle's, since the thinning below is
+  // measured against the interval it is handed.
   const gate =
     state.mode !== "moving" || live
       ? 0
       : state.driving
         ? state.driving.distance
         : state.policy.distanceFilterMeters
-  let fixes = thin(all, state.lastFix, state.policy, gate)
+  const pace = live
+    ? { ...state.policy, minUpdateIntervalSeconds: LIVE_INTERVAL_MS / 1000 }
+    : state.policy
+  let fixes = thin(all, state.lastFix, pace, gate)
   if (source === "background" && state.mode === "stationary") {
     fixes = await restingFixes(fixes.length > 0 ? fixes : [newest], live)
   }
@@ -1380,10 +1388,14 @@ function liveOptions(accuracy: Location.Accuracy): Location.LocationTaskOptions 
   return {
     accuracy,
     timeInterval: LIVE_INTERVAL_MS,
-    // Android: on the interval, so the first fix past the window is always
-    // delivered and steps the tier down. A car at the lights sends the same
-    // spot every five seconds, which is what live means.
-    distanceInterval: Platform.OS === "android" ? 0 : LIVE_DISTANCE_METERS,
+    // On the interval, whether or not the phone moved, so the first fix past
+    // the window is always delivered and steps the tier down, and a car at
+    // the lights sends the same spot every few seconds, which is what live
+    // means. iOS has no interval: only a session with no distance filter
+    // delivers to a phone standing still, and one with the old five metres
+    // left a phone in a corridor "asking" for the whole window. ingest thins
+    // the stream to what is worth uploading.
+    distanceInterval: 0,
     pausesUpdatesAutomatically: false,
     activityType: Location.ActivityType.AutomotiveNavigation,
     showsBackgroundLocationIndicator: false,

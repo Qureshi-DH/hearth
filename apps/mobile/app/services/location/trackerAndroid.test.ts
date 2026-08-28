@@ -10,6 +10,7 @@ import {
   BACKGROUND_LOCATION_TASK,
   enterMoving,
   enterStationary,
+  enterWatched,
   isDriving,
   processNativeQueue,
   reassertService,
@@ -339,6 +340,21 @@ describe("what the OS delivered while JavaScript was down", () => {
     fake.status = "none"
     await reassertService()
     expect(serviceDiedUnexpectedly()).toBe(true)
+  })
+})
+
+describe("live, while somebody is watching", () => {
+  it("asks for a fix every second and uploads every one of them, moving or not", async () => {
+    await enterMoving()
+    await enterWatched(600)
+    expect(lastRequest()).toEqual({ priority: "high", intervalMs: 1_000, distanceMeters: 0 })
+    mockUpload.mockClear()
+    // The ask's own fix went up; now the tier's, a second apart, from one spot.
+    const t = Date.now()
+    fake.fixes = [at(AWAY, t + 1000, 0), at(AWAY, t + 2000, 0), at(AWAY, t + 3000, 0)]
+    fake.status = "running"
+    await processNativeQueue()
+    expect(uploaded().filter((fix) => fix.source === "background")).toHaveLength(3)
   })
 })
 

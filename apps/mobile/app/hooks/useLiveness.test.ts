@@ -40,9 +40,21 @@ describe("judgeLiveness", () => {
     expect(judgeLiveness(fixAt(T0 - 1000), null, null, T0)).toBe("asking")
   })
 
-  it("is asking while the only fix is from before the ask, however fresh", () => {
-    expect(judgeLiveness(fixAt(T0 - 1000), askedAt, until, T0 + 5_000)).toBe("asking")
-    expect(judgeLiveness(fixAt(T0), askedAt, until, T0 + 5_000)).toBe("asking")
+  it("is asking while the only fix is from well before the ask", () => {
+    expect(judgeLiveness(fixAt(T0 - LIVE_FRESH_MS - 1), askedAt, until, T0 + 5_000)).toBe("asking")
+    expect(judgeLiveness(fixAt(T0 - 60_000), askedAt, until, T0 + 5_000)).toBe("asking")
+  })
+
+  it("is live on a fix from moments before the ask, which is where the phone is now", () => {
+    // The one fix an ask gets out of an iPhone is stamped a few seconds
+    // before the ask reached it, and a moving phone's last fix may be from
+    // seconds ago too. Either is the phone's position now, which is the
+    // claim, and it lapses on the same half minute as any other.
+    expect(judgeLiveness(fixAt(T0 - 1000), askedAt, until, T0 + 5_000)).toBe("live")
+    expect(judgeLiveness(fixAt(T0), askedAt, until, T0 + 5_000)).toBe("live")
+    expect(judgeLiveness(fixAt(T0 - 1000), askedAt, until, T0 - 1000 + LIVE_FRESH_MS + 1)).toBe(
+      "asking",
+    )
   })
 
   it("is asking when the phone has never reported", () => {

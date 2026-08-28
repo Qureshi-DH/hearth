@@ -246,7 +246,7 @@ describe("being watched", () => {
     await enterMoving()
     fake.startService.mockClear()
     await enterWatched(600)
-    expect(requestOf(0)).toEqual({ priority: "high", intervalMs: 5_000, distanceMeters: 0 })
+    expect(requestOf(0)).toEqual({ priority: "high", intervalMs: 1_000, distanceMeters: 0 })
 
     // Still inside the window: a fix changes nothing.
     fake.startService.mockClear()
@@ -282,7 +282,7 @@ describe("being watched", () => {
     // A re-assertion mid window keeps the live request, not the drive's.
     fake.status = "refused"
     await reassertService()
-    expect(requestOf(0).intervalMs).toBe(5_000)
+    expect(requestOf(0).intervalMs).toBe(1_000)
     expect(isDriving()).toBe(true)
   })
 
@@ -921,7 +921,7 @@ describe("a watched phone learns so from its own upload", () => {
     await jest.advanceTimersByTimeAsync(0)
 
     expect(useTrackingStore.getState().watchedUntil).toBe(until)
-    expect(lastRequest().intervalMs).toBe(5_000)
+    expect(lastRequest().intervalMs).toBe(1_000)
   })
 
   it("stays as it was on a reply that names nobody", async () => {

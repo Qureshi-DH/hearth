@@ -6,6 +6,33 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-08-28
+
+Servers must update before phones: a hold on the Live page falls back to
+the push when the phone's channel did not answer.
+
+### Fixed
+
+- Live never came on for an iPhone that had just arrived somewhere. Three
+  things, each enough on its own: the iOS live session delivered on
+  distance, so a phone standing still sent nothing at all and "live" (a
+  fix in the last half minute) could never be claimed; the one fix the ask
+  did produce was stamped a few seconds before the ask reached the phone,
+  and only a fix from after the ask counted; and an ask sent down a control
+  socket iOS had let die without a close was sent down it again on every
+  hold for the whole window, since the socket's stamp stayed fresh for
+  minutes. The live session now has no distance filter on iOS, a fix from
+  up to thirty seconds before the ask counts as the phone's position now,
+  and a channel ask nobody answered within twenty seconds is not trusted
+  again on the next hold, which goes by push.
+
+### Changed
+
+- Live is a fix a second, every one uploaded, on both platforms and
+  whether or not the phone is moving, for as long as somebody has the page
+  open. It was one every five seconds, thinned to one every fifteen for a
+  phone that was not moving.
+
 ## [0.9.5] - 2026-08-27
 
 Phones only; the server is unchanged from 0.9.4.

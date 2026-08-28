@@ -23,9 +23,11 @@ type Entry = Pick<MemberPresence, "recordedAt"> | null | undefined
  * What the Live page may honestly claim about a phone. `askedAt` is when
  * the viewer last asked for live updates, not counting the holds that keep
  * a window open, and `until` is when the granted window lapses, null while
- * the server has not answered. A fix counts as an answer only when it was
- * recorded after the ask: the one already on the map at open is what made
- * the viewer look, not a reply.
+ * the server has not answered. A fix counts as an answer when it was
+ * recorded after the ask, or within the half minute before it: the claim
+ * is where the phone is now, and a fix from seconds ago is that. The one
+ * fix an ask gets out of an iPhone is stamped before the ask reached it. A
+ * fix from longer ago is what made the viewer look, not a reply.
  */
 export function judgeLiveness(
   entry: Entry,
@@ -43,7 +45,9 @@ export function judgeLiveness(
 function answerOf(recordedAt: string | null | undefined, askedAt: number | null, now: number) {
   const asked = askedAt ?? now
   const recorded = recordedAt ? Date.parse(recordedAt) : null
-  return { asked, answered: recorded != null && recorded > asked ? recorded : null }
+  // Nothing counts before the viewer has asked at all.
+  const since = askedAt == null ? asked : asked - LIVE_FRESH_MS
+  return { asked, answered: recorded != null && recorded > since ? recorded : null }
 }
 
 /** The moments after `now` at which the verdict can change on the clock alone. */

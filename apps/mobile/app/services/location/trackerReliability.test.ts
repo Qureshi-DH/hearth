@@ -514,6 +514,18 @@ describe("a parked iPhone", () => {
     expect(lastOptions().accuracy).toBe(Location.Accuracy.High)
   })
 
+  it("reports on the clock while watched, not on distance, so a phone standing still is still live", async () => {
+    // iOS has no time interval; only a session with no distance filter
+    // delivers to a phone that is not moving, and "live" is a fix in the
+    // last half minute whatever the phone is doing.
+    await enterMoving()
+    await enterWatched(600)
+    expect(lastOptions().distanceInterval).toBe(0)
+    await enterStationary(HOME.lat, HOME.lon)
+    await enterWatched(600)
+    expect(lastOptions().distanceInterval).toBe(0)
+  })
+
   it("says it is still there every quarter hour from the fix the OS already has", async () => {
     await enterMoving()
     await enterStationary(HOME.lat, HOME.lon)
@@ -559,7 +571,7 @@ describe("a parked iPhone", () => {
     start.mockClear()
     await enterWatched(600)
     expect(lastOptions().accuracy).toBe(Location.Accuracy.High)
-    expect(lastOptions().timeInterval).toBe(5_000)
+    expect(lastOptions().timeInterval).toBe(1_000)
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(uploaded().some((fix) => fix.source === "nudge")).toBe(true)
 
@@ -569,7 +581,7 @@ describe("a parked iPhone", () => {
     await jest.advanceTimersByTimeAsync(601_000 + 1_000)
     expect(useTrackingStore.getState().watchedUntil).toBeNull()
     expect(start).toHaveBeenCalled()
-    expect(lastOptions().timeInterval).not.toBe(5_000)
+    expect(lastOptions().timeInterval).not.toBe(1_000)
     expect(lastOptions().accuracy).toBe(Location.Accuracy.Lowest)
   })
 })
@@ -927,7 +939,7 @@ describe("being watched", () => {
     // The window is held, so a departure inside it goes straight to live.
     expect(useTrackingStore.getState().watchedUntil).not.toBeNull()
     await enterMoving()
-    expect(lastRequest()).toMatchObject({ priority: "high", intervalMs: 5_000 })
+    expect(lastRequest()).toMatchObject({ priority: "high", intervalMs: 1_000 })
   })
 
   it("does so from the upload reply as well as the push", async () => {
@@ -949,7 +961,7 @@ describe("being watched", () => {
     await enterMoving()
     await enterDriving(30)
     await enterWatched(600)
-    expect(lastRequest()).toMatchObject({ priority: "high", intervalMs: 5_000 })
+    expect(lastRequest()).toMatchObject({ priority: "high", intervalMs: 1_000 })
   })
 })
 
