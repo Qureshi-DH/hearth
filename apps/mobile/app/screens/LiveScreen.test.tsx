@@ -163,6 +163,12 @@ jest.mock("@maplibre/maplibre-react-native", () => {
     Marker: ({ children }: { children?: unknown }) => react.createElement(rn.View, null, children),
   }
 })
+const mockActivateKeepAwake = jest.fn(async () => {})
+const mockDeactivateKeepAwake = jest.fn(async () => {})
+jest.mock("expo-keep-awake", () => ({
+  activateKeepAwakeAsync: (...args: unknown[]) => mockActivateKeepAwake(...(args as [])),
+  deactivateKeepAwake: (...args: unknown[]) => mockDeactivateKeepAwake(...(args as [])),
+}))
 jest.mock("@react-navigation/native", () => {
   const react = require("react")
   return {
@@ -259,6 +265,18 @@ describe("asking the phone", () => {
     })
     expect(mockWatch).toHaveBeenCalledTimes(2)
     expect(screen.getByText(/live:asking/)).toBeTruthy()
+  })
+})
+
+describe("the screen itself", () => {
+  it("holds the display on while it is open, and lets it sleep again when it closes", async () => {
+    // Following someone along a road is watching, not reading: a screen
+    // that dims after fifteen seconds is the page not working.
+    const screen = await renderLive()
+    expect(mockActivateKeepAwake).toHaveBeenCalledTimes(1)
+    expect(mockDeactivateKeepAwake).not.toHaveBeenCalled()
+    screen.unmount()
+    expect(mockDeactivateKeepAwake).toHaveBeenCalledTimes(1)
   })
 })
 

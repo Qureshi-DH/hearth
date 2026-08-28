@@ -546,7 +546,29 @@ fix straight away. The window ends by a timer and by the first fix past it,
 whichever comes first, and the request steps back to the tier it was in.
 The Live page calls the phone live on any fix from the last thirty seconds,
 counting one from up to thirty seconds before the ask, since the one fix an
-ask gets out of an iPhone is stamped before the ask reached it.
+ask gets out of an iPhone is stamped before the ask reached it. It holds the
+display on for as long as it is open (`expo-keep-awake`, its own tag), since
+following someone along a road is watching rather than reading.
+
+The button that opens it is a promise that it will work, so it is offered
+only for a phone that is travelling _and_ has spoken within the last three
+minutes (`onTheMove` in `utils/activity.ts`). A travelling phone uploads
+every half minute; one that has said nothing for longer is out of signal or
+asleep, and the page would sit on "asking" until the window lapsed.
+
+Where somebody is, in words, comes from the phone's own geocoder
+(`utils/geocode.ts`): no server, no account, and no coordinates sent to a
+third party. Answers are cached on a hundred metre grid. Android's geocoder
+falls back to an Open Location Code where it has no street ("8H+2W",
+"7JVW4XPP+2H"), which is a coordinate spelled differently and means nothing
+to a family, so plus codes, bare house numbers and postcodes are read as no
+answer and the district, town or region is used instead. All of the
+geocoder's answers are tried in turn, since the plus code is often the first
+and the street the second.
+
+A member settled somewhere no place covers gets a "Save this spot as a
+place" row on their profile, which opens the place editor on their position
+with the geocoder's name as a first draft.
 
 The Live page draws the fixes that arrive while it is open and nothing else.
 A trip draws its own trail, and only where the phone reported it: a silence

@@ -38,7 +38,7 @@ import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { activityIconName, onTheMove } from "@/utils/activity"
+import { activityIconName, atUnnamedSpot, onTheMove } from "@/utils/activity"
 import { availableDirectionsApps, openDirections, type DirectionsApp } from "@/utils/directions"
 import { formatSpeed } from "@/utils/format"
 import { relativeTime } from "@/utils/time"
@@ -73,6 +73,9 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   // map asks everyone's. The server holds it to one ask per half minute.
   // The server decides for a member whose presence has not arrived yet.
   const askable = !isSelf && (!entry || (entry.sharingState === "precise" && !entry.approximate))
+  // Settled somewhere nobody has named. Naming it turns every future
+  // arrival into "at the clinic" rather than a pin on a road.
+  const unnamedSpot = atUnnamedSpot(entry) ? entry : null
   useFocusEffect(
     useCallback(() => {
       if (!askable) return
@@ -330,6 +333,25 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
             ) : null}
           </View>
         </>
+      ) : null}
+
+      {unnamedSpot ? (
+        <ListGroup style={{ marginTop: theme.spacing.md }}>
+          <ListRow
+            tx="member:savePlace"
+            icon="add-circle-outline"
+            iconTone="tint"
+            onPress={() =>
+              navigation.navigate("PlaceEditor", {
+                circleId,
+                lat: unnamedSpot.lat,
+                lon: unnamedSpot.lon,
+                // What the geocoder called it, as a first draft of the name.
+                name: nearby ?? undefined,
+              })
+            }
+          />
+        </ListGroup>
       ) : null}
 
       <SectionHeader tx="circle:title" />

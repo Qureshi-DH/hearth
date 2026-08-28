@@ -27,7 +27,7 @@ export type AppStackParamList = {
   JoinCircle: { code?: string } | undefined
   MemberDetail: { circleId: string; userId: string }
   Live: { circleId: string; userId: string }
-  PlaceEditor: { circleId: string; placeId?: string; lat?: number; lon?: number }
+  PlaceEditor: { circleId: string; placeId?: string; lat?: number; lon?: number; name?: string }
   PlaceDetail: { circleId: string; placeId: string }
   Circle: { circleId: string }
   CircleSettings: { circleId: string }

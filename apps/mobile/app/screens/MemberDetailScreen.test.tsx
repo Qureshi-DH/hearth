@@ -5,13 +5,13 @@ import { act, fireEvent, render } from "@testing-library/react-native"
 import { MemberDetailScreen } from "./MemberDetailScreen"
 import { ThemeProvider } from "../theme/context"
 
-function presenceFor(activity: ActivityType): MemberPresence {
+function presenceFor(activity: ActivityType, ageMs = 0): MemberPresence {
   return {
     userId: "omar",
     lat: 33.7,
     lon: 73.05,
     accuracyMeters: 10,
-    recordedAt: new Date().toISOString(),
+    recordedAt: new Date(Date.now() - ageMs).toISOString(),
     batteryLevel: 0.6,
     isCharging: false,
     activity,
@@ -178,6 +178,40 @@ beforeEach(() => {
   mockPresence = [presenceFor("driving")]
 })
 
+describe("saving where they are as a place", () => {
+  it("is offered when they are settled somewhere the family has not named", async () => {
+    mockPresence = [presenceFor("still")]
+    const screen = await renderProfile()
+    fireEvent.press(screen.getByText(/member:savePlace/))
+    expect(mockNavigation.navigate).toHaveBeenCalledWith("PlaceEditor", {
+      circleId: "c1",
+      lat: 33.7,
+      lon: 73.05,
+      name: undefined,
+    })
+  })
+
+  it("is not offered where they already are somewhere named", async () => {
+    mockPresence = [
+      { ...presenceFor("still"), atPlace: { id: "p1", name: "Home", icon: "home", since: null } },
+    ]
+    const screen = await renderProfile()
+    expect(screen.queryByText(/member:savePlace/)).toBeNull()
+  })
+
+  it("is not offered while they are travelling, since they are not anywhere yet", async () => {
+    mockPresence = [presenceFor("driving")]
+    const screen = await renderProfile()
+    expect(screen.queryByText(/member:savePlace/)).toBeNull()
+  })
+
+  it("is not offered when nothing is known about where they are", async () => {
+    mockPresence = []
+    const screen = await renderProfile()
+    expect(screen.queryByText(/member:savePlace/)).toBeNull()
+  })
+})
+
 describe("Live on a member's profile", () => {
   it("is offered while the member is on the move", async () => {
     const screen = await renderProfile()
@@ -188,6 +222,21 @@ describe("Live on a member's profile", () => {
     mockPresence = [presenceFor("still")]
     const screen = await renderProfile()
     expect(screen.queryByText(/member:live/)).toBeNull()
+  })
+
+  // A phone that is travelling uploads every half minute. One that has said
+  // nothing for minutes is out of signal or asleep, and asking it to go live
+  // only spins on "asking". The button is a promise that it will work.
+  it("is not offered when their phone has said nothing for minutes, however it was last moving", async () => {
+    mockPresence = [presenceFor("driving", 5 * 60_000)]
+    const screen = await renderProfile()
+    expect(screen.queryByText(/member:live/)).toBeNull()
+  })
+
+  it("is offered on a fix from moments ago", async () => {
+    mockPresence = [presenceFor("driving", 20_000)]
+    const screen = await renderProfile()
+    expect(screen.getByText(/member:live/)).toBeTruthy()
   })
 
   it("opens the live view", async () => {

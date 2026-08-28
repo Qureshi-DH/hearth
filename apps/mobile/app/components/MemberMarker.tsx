@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { memo, useEffect } from "react"
 import { Pressable, View } from "react-native"
 import type { MemberPresence, PublicUser } from "@hearth/shared"
 import Animated, {
@@ -65,12 +65,37 @@ export function faceAtOffset(faces: number, dx: number): number {
 }
 
 /**
+ * Whether two sets of faces would draw the same marker. A watched phone
+ * hands its marker a new presence object every second, and almost none of
+ * them change the face: the map holds these views on its own surface, and
+ * redrawing one for every fix is churn it does not need.
+ */
+export function sameFaces(a: MarkerFace[], b: MarkerFace[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((face, index) => {
+    const other = b[index]!
+    return (
+      face.userId === other.userId &&
+      face.label === other.label &&
+      face.ring === other.ring &&
+      Boolean(face.selected) === Boolean(other.selected) &&
+      face.user.displayName === other.user.displayName &&
+      face.user.avatarUrl === other.user.avatarUrl &&
+      face.user.avatarColor === other.user.avatarColor &&
+      // The only two things the face reads from a fix.
+      face.presence.stale === other.presence.stale &&
+      face.presence.sosAlertId === other.presence.sosAlertId
+    )
+  })
+}
+
+/**
  * A circle can have a dozen of these moving at once, so the only animation is
  * the SOS pulse and it runs on the UI thread. Faces that share a marker
  * overlap like a stack of photos, later ones on top and the selected one on
  * top of all, so a family at home is plainly a family at home.
  */
-export function MemberMarker({ markerKey, faces, onPress, onMeasure }: MemberMarkerProps) {
+function MemberMarkerView({ markerKey, faces, onPress, onMeasure }: MemberMarkerProps) {
   const { theme } = useAppTheme()
   const grouped = faces.length > 1
   const anySelected = faces.some((face) => face.selected)
@@ -252,3 +277,12 @@ function Face({
     </Pressable>
   )
 }
+
+export const MemberMarker = memo(MemberMarkerView, (before, after) => {
+  return (
+    before.markerKey === after.markerKey &&
+    before.onPress === after.onPress &&
+    before.onMeasure === after.onMeasure &&
+    sameFaces(before.faces, after.faces)
+  )
+})

@@ -545,6 +545,10 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
               },
             ]
           })
+          // A group whose members have all just left the circle, or whose
+          // presence went with them, would draw a marker with no faces in
+          // it: an empty view the map holds over a coordinate.
+          if (faces.length === 0) return null
           return (
             <Marker
               key={group.key}

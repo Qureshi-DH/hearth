@@ -6,6 +6,40 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-28
+
+Phones only; the server is unchanged from 0.9.6.
+
+### Added
+
+- "Save this spot as a place" on the profile of anyone settled somewhere no
+  place covers. It opens the place editor on their position, with whatever
+  the geocoder calls the spot as a first draft of the name.
+
+### Changed
+
+- The Live page holds the display on while it is open. Following someone
+  along a road is watching, not reading, and the screen dimmed after
+  fifteen seconds.
+- Live is offered only for a phone that is travelling and has spoken in the
+  last three minutes. A phone last heard from five minutes ago is out of
+  signal or asleep, and the page sat on "asking your phone" until the
+  window lapsed; the button is a promise that pressing it works.
+
+### Fixed
+
+- Place names no longer read as "near 8H+2W". Android's geocoder answers
+  with an Open Location Code wherever it has no street, and that is a
+  coordinate spelled differently: plus codes, bare house numbers and
+  postcodes are now read as no answer, the district, town or region is used
+  instead, and every answer the geocoder gives is tried rather than only
+  the first, since the plus code is often first and the street second.
+  Cached plus codes from earlier builds are dropped.
+- A marker whose faces have all left the circle is no longer drawn as an
+  empty view on the map, and a marker is redrawn only when something it
+  draws has changed rather than on every fix, which on a watched phone is
+  every second.
+
 ## [0.9.6] - 2026-08-28
 
 Servers must update before phones: a hold on the Live page falls back to

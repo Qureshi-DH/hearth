@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react"
 import { AppState, RefreshControl, ScrollView, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 import { haversineMeters, type PresenceIssue, type WatchResponse } from "@hearth/shared"
 import { useFocusEffect } from "@react-navigation/native"
@@ -28,6 +29,7 @@ import { useHeader } from "@/utils/useHeader"
 
 /** The watch window is ten minutes; asking each minute holds it open. */
 const WATCH_HOLD_MS = 60_000
+const KEEP_AWAKE_TAG = "hearth-live"
 /** Anything closer than this to the last drawn point is the same spot. */
 const TRAIL_MIN_STEP_METERS = 5
 /** Four hours of five-second fixes. A longer watch drops its oldest point. */
@@ -81,6 +83,17 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
   useHeader({ titleTx: "live:title", leftIcon: "back", onLeftPress: () => navigation.goBack() }, [
     navigation,
   ])
+
+  // Following someone along a road is watching, not reading, and the phone
+  // dims after fifteen seconds of not being touched. Held only while this
+  // page is the one on screen, and only by it: every other screen still
+  // sleeps. The tag keeps it that way if another page ever holds it too.
+  useEffect(() => {
+    void activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => undefined)
+    return () => {
+      void deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined)
+    }
+  }, [])
 
   // When the viewer last asked, and until when the server said it would
   // keep the phone live. The holds that keep a window open do not move

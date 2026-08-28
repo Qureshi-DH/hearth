@@ -233,6 +233,7 @@ const en = {
   member: {
     title: "Member",
     messageSent: "Sent to {{name}}: “{{body}}”",
+    savePlace: "Save this spot as a place",
     trips: "Recent trips",
     noTrips: "No trips yet",
     lastUpdate: "Last update",

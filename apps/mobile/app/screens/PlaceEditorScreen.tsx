@@ -46,7 +46,9 @@ export const PlaceEditorScreen: FC<AppStackScreenProps<"PlaceEditor">> = ({
 
   const mapRef = useRef<MapRef>(null)
   const cameraRef = useRef<CameraRef>(null)
-  const [name, setName] = useState(existing?.name ?? "")
+  // A name the caller suggested, such as the street the geocoder gave for
+  // the spot somebody is standing on, is a draft the person edits.
+  const [name, setName] = useState(existing?.name ?? route.params.name ?? "")
   const [icon, setIcon] = useState<PlaceIcon>(existing?.icon ?? "home")
   const [radius, setRadius] = useState(existing?.radiusMeters ?? DEFAULTS.defaultPlaceRadiusMeters)
   const [center, setCenter] = useState<{ lat: number; lon: number }>(() => {
