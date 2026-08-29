@@ -1,0 +1,15 @@
+# Clears the save-password sheet and grants notifications from the checklist.
+appId: com.binary.rewind.hearth
+---
+- tapOn:
+    text: "Not Now"
+    optional: true
+- tapOn:
+    text: "Allow →"
+    index: 0
+    optional: true
+- tapOn:
+    text: "Allow"
+    optional: true
+- waitForAnimationToEnd:
+    timeout: 4000

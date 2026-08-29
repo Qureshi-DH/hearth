@@ -1,0 +1,6 @@
+appId: com.binary.rewind.hearth
+---
+- tapOn:
+    point: "6%,9%"
+- waitForAnimationToEnd:
+    timeout: 6000

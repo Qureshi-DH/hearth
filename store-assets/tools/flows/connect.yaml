@@ -1,0 +1,21 @@
+# Points the app at the local demo server and signs in as Sarah.
+appId: com.binary.rewind.hearth
+---
+- tapOn:
+    point: "50%,59%"
+- inputText: "http://127.0.0.1:4100"
+- tapOn: "Connect to your server"
+- tapOn: "Connect"
+- extendedWaitUntil:
+    visible: "Welcome back"
+    timeout: 15000
+- tapOn:
+    point: "50%,30%"
+- inputText: "sarah@hearth.demo"
+- tapOn:
+    point: "50%,41%"
+- inputText: "hearth-demo-2026"
+- tapOn: "Welcome back"
+- tapOn: "Sign in"
+- waitForAnimationToEnd:
+    timeout: 10000
