@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type FC } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react"
 import { View, type ViewStyle } from "react-native"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 
@@ -44,8 +44,13 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
   // "no data here" rather than as the route.
   const { drawn, gaps } = useMemo(() => splitTrail(trip?.path ?? []), [trip?.path])
 
+  // The route is framed once both the trip and the map are there. On iOS a
+  // camera command given before the map has loaded is dropped, and the map
+  // stayed zoomed on the start with the route running off its edge.
+  const [mapReady, setMapReady] = useState(false)
+  const onMapLoaded = useCallback(() => setMapReady(true), [])
   useEffect(() => {
-    if (!trip) return
+    if (!trip || !mapReady) return
     const bounds = fitBoundsFor(
       trip.path.map((point) => ({ lat: point.lat, lon: point.lon })),
       200,
@@ -56,7 +61,7 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
         duration: 600,
       })
     }
-  }, [trip?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [trip?.id, mapReady]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!trip) return <Screen preset="fixed" />
 
@@ -80,6 +85,7 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
           cameraRef={cameraRef}
           initialCenter={[trip.startLon, trip.startLat]}
           initialZoom={13}
+          onDidFinishLoadingMap={onMapLoaded}
         >
           <TrailLayer id="trip" segments={drawn} width={5} />
           <TrailGapLayer id="trip-gaps" gaps={gaps} />

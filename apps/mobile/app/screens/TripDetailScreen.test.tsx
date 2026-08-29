@@ -44,14 +44,33 @@ jest.mock("../hooks/useNearby", () => ({ useNearby: () => null }))
 jest.mock("../stores/settings", () => ({
   useSettingsStore: (selector: (state: unknown) => unknown) => selector({ units: "metric" }),
 }))
+const mockFitBounds = jest.fn()
+let mockMapLoaded = false
+let mockFinishLoading: () => void = () => {}
 jest.mock("../components/HearthMap", () => {
   const react = require("react")
   const rn = require("react-native")
   return {
     HearthMap: react.forwardRef(function HearthMap(
-      { children }: { children?: unknown },
+      {
+        children,
+        cameraRef,
+        onDidFinishLoadingMap,
+      }: {
+        children?: unknown
+        cameraRef?: { current: unknown }
+        onDidFinishLoadingMap?: () => void
+      },
       _ref: unknown,
     ) {
+      // The camera only exists once the map does, and on iOS a command given
+      // before the map has loaded is dropped, which is what this stands for.
+      if (cameraRef) cameraRef.current = mockMapLoaded ? { fitBounds: mockFitBounds } : null
+      mockFinishLoading = () => {
+        mockMapLoaded = true
+        if (cameraRef) cameraRef.current = { fitBounds: mockFitBounds }
+        onDidFinishLoadingMap?.()
+      }
       return react.createElement(rn.View, null, children)
     }),
     TrailLayer: (props: { segments?: unknown; points?: unknown }) => {
@@ -108,6 +127,21 @@ beforeEach(() => {
   jest.clearAllMocks()
   mockTrailProps.length = 0
   mockGapProps.length = 0
+  mockMapLoaded = false
+})
+
+describe("framing the trip", () => {
+  it("fits the route once the map has loaded, since a fit asked for sooner is dropped", async () => {
+    mockPath = [at(33.7, 0), at(33.71, 1), at(33.72, 2)]
+    await renderTrip()
+    expect(mockFitBounds).not.toHaveBeenCalled()
+    act(() => mockFinishLoading())
+    expect(mockFitBounds).toHaveBeenCalledTimes(1)
+    const [bounds] = mockFitBounds.mock.calls[0]! as [number[]]
+    // South-west to north-east, covering the whole route.
+    expect(bounds[1]).toBeLessThanOrEqual(33.7)
+    expect(bounds[3]).toBeGreaterThanOrEqual(33.72)
+  })
 })
 
 describe("a trip's trail", () => {
