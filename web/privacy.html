@@ -3,20 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hearth</title>
+    <title>Hearth privacy policy</title>
     <meta
       name="description"
-      content="Family location sharing you host yourself. An open-source family tracker where the map, the history and the alerts live on your server."
+      content="What the Hearth app collects, where it goes, and who is responsible for it. Hearth is self-hosted, so your data stays on your own server."
     />
     <meta name="theme-color" content="#F5643A" />
-
-    <meta property="og:title" content="Hearth: family location sharing you host yourself" />
-    <meta
-      property="og:description"
-      content="An open-source family tracker. The map, the history and the alerts live on your server, not somebody else's."
-    />
-    <meta property="og:type" content="website" />
-
     <style>
       /* Palette is the app's own, so the site and the product agree. The
          neutrals are pulled warm toward the ember rather than left grey. */
@@ -484,6 +476,63 @@
           transition-duration: 0.01ms !important;
         }
       }
+
+      /* ---------- policy pages ---------- */
+      .doc {
+        padding-block: 64px 96px;
+      }
+      .doc h1 {
+        font-size: clamp(34px, 5vw, 48px);
+        line-height: 1.1;
+        margin-bottom: 10px;
+      }
+      .doc .meta {
+        color: var(--ink-soft);
+        font-size: 16px;
+        margin: 0 0 40px;
+      }
+      .doc h2 {
+        font-size: 24px;
+        margin: 44px 0 10px;
+      }
+      .doc p,
+      .doc li {
+        max-width: 68ch;
+      }
+      .doc ul,
+      .doc ol {
+        padding-left: 1.2em;
+      }
+      .doc li {
+        margin: 6px 0;
+      }
+      .doc .summary {
+        background: var(--sunken);
+        border: 1px solid var(--rule);
+        border-radius: 16px;
+        padding: 22px 26px;
+        max-width: 68ch;
+      }
+      .doc .summary p {
+        margin: 0;
+      }
+      .doc table {
+        border-collapse: collapse;
+        width: 100%;
+        max-width: 68ch;
+        font-size: 16px;
+      }
+      .doc th,
+      .doc td {
+        text-align: left;
+        vertical-align: top;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--rule);
+      }
+      .doc th {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 600;
+      }
       .foot-links {
         display: flex;
         flex-wrap: wrap;
@@ -491,11 +540,10 @@
       }
     </style>
   </head>
-
   <body>
     <header>
       <nav class="wrap nav" aria-label="Main">
-        <a class="brand" href="#top">
+        <a class="brand" href="/">
           <span class="mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd">
               <path
@@ -505,9 +553,9 @@
           </span>
           Hearth
         </a>
-        <a class="link" href="#features">Features</a>
-        <a class="link" href="#privacy">Privacy</a>
-        <a class="link" href="#self-host">Self-host</a>
+        <a class="link" href="/#features">Features</a>
+        <a class="link" href="/#privacy">Privacy</a>
+        <a class="link" href="/#self-host">Self-host</a>
         <a class="btn btn-line" href="https://github.com/Qureshi-DH/hearth">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path
@@ -519,310 +567,191 @@
       </nav>
     </header>
 
-    <main id="top">
-      <!-- hero -->
-      <div class="hero wrap">
-        <span class="kicker"><span class="pip" aria-hidden="true"></span> Alpha · AGPL-3.0</span>
-        <h1>Know where your family is. <em>Nobody else does.</em></h1>
-        <p class="lede prose">
-          Every commercial family tracker keeps your positions on its own servers, under a privacy
-          policy you do not control and they can change. Hearth has no servers. It runs on yours,
-          and there is nobody on the other end to sell anything to.
-        </p>
-        <div class="actions">
-          <a class="btn btn-solid" href="#self-host">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              aria-hidden="true"
-            >
-              <rect x="3" y="5" width="18" height="12" rx="2" />
-              <path d="M8 21h8M12 17v4" stroke-linecap="round" />
-            </svg>
-            Self-host it
-          </a>
-          <a class="btn btn-line" href="https://github.com/Qureshi-DH/hearth#build-the-app">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              aria-hidden="true"
-            >
-              <path d="M12 3v11m0 0 4-4m-4 4-4-4" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
-            </svg>
-            Get the app
-          </a>
-        </div>
-        <p class="aside">
-          Not on the App Store or Play Store yet, so for now you build it yourself.
+    <main class="wrap doc">
+      <h1>Privacy policy</h1>
+      <p class="meta">For the Hearth app on iOS and Android. Effective 13 September 2026.</p>
+
+      <div class="summary">
+        <p>
+          <strong>The short version.</strong> Hearth is self-hosted. The app sends your account,
+          your location and your family's data to one place only: the Hearth server you choose to
+          sign in to. That server is run by you, your family, or someone you trust. It is not run by
+          the people who make Hearth, and we cannot see anything on it. There are no ads, no
+          analytics, no crash reporting and no tracking SDKs in the app.
         </p>
       </div>
 
-      <!-- features -->
-      <section id="features">
-        <div class="wrap">
-          <p class="eyebrow">What it does</p>
-          <h2>Everything a family tracker should do.</h2>
-          <p class="sub prose">
-            None of it phones home. Every feature below runs against the server you control.
-          </p>
+      <h2>Who this policy is from</h2>
+      <p>
+        Hearth is open-source software published by the Hearth project (<a
+          href="https://github.com/Qureshi-DH/hearth"
+          >github.com/Qureshi-DH/hearth</a
+        >). We publish the app and the server software. We do not run a Hearth service, and we do
+        not receive, store or process the data the app handles.
+      </p>
 
-          <div class="features">
-            <article class="feature">
-              <h3>
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  aria-hidden="true"
-                >
-                  <path d="M12 21s-7-5.5-7-11a7 7 0 1 1 14 0c0 5.5-7 11-7 11Z" />
-                  <circle cx="12" cy="10" r="2.6" />
-                </svg>
-                A live map
-              </h3>
-              <p>
-                Everyone's position with battery level, whether they're walking or driving, and how
-                long ago it arrived. Live over a websocket, by push when the app is closed.
-              </p>
-            </article>
+      <h2>Who is responsible for your data</h2>
+      <p>
+        Whoever operates the server you connect to. If you set up Hearth for your family, that is
+        you. If someone else did, that is them, and they decide how long history is kept, who can
+        sign up and where backups go. Questions about data held on a server, and requests to see,
+        correct or delete it, go to its operator. The app's own controls, described below, cover
+        most of them.
+      </p>
 
-            <article class="feature">
-              <h3>
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-                Places
-              </h3>
-              <p>
-                Draw a circle around home, school or work and everyone is told on arrival and
-                departure. Leaving needs more distance than arriving, so a phone sitting on the
-                boundary doesn't spam the family.
-              </p>
-            </article>
+      <h2>What the app sends to your server</h2>
+      <table>
+        <tr>
+          <th>Data</th>
+          <th>Why</th>
+        </tr>
+        <tr>
+          <td>Email address, display name and password</td>
+          <td>To create and sign in to your account. The server stores the password as a hash.</td>
+        </tr>
+        <tr>
+          <td>Profile photo, if you add one</td>
+          <td>
+            So your circle recognises you. The app re-encodes the photo before uploading, which
+            removes the location and camera details it may contain.
+          </td>
+        </tr>
+        <tr>
+          <td>
+            Location: position, accuracy, speed, heading, altitude, and whether you are still,
+            walking, cycling or driving
+          </td>
+          <td>
+            To show your circle where you are, notice when you arrive at or leave a place, record
+            trips, and raise SOS and crash alerts.
+          </td>
+        </tr>
+        <tr>
+          <td>Battery level and whether the phone is charging</td>
+          <td>So your circle can tell a flat battery from a phone that is simply quiet.</td>
+        </tr>
+        <tr>
+          <td>
+            Device name, platform, app and system version, a notification token, and the IP address
+            the device last connected from
+          </td>
+          <td>
+            To list your signed-in devices, deliver notifications to them, and help the operator
+            spot a sign-in that isn't yours.
+          </td>
+        </tr>
+        <tr>
+          <td>What you create: circles, places, check-ins, SOS alerts and quick messages</td>
+          <td>Because those are the features you are using.</td>
+        </tr>
+      </table>
+      <p>
+        By default a server keeps location history for 30 days per circle, and never more than 90,
+        though its operator can change both. Your current position is kept until the next one
+        replaces it.
+      </p>
 
-            <article class="feature">
-              <h3>
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  aria-hidden="true"
-                >
-                  <path d="M4 18c3 0 3-9 8-9s5 9 8 9" stroke-linecap="round" />
-                  <circle cx="4" cy="18" r="1.9" />
-                  <circle cx="20" cy="18" r="1.9" />
-                </svg>
-                Trips and history
-              </h3>
-              <p>
-                Journeys are detected and drawn as a trail with distance, duration and top speed.
-                You choose how many days the server keeps, or none at all.
-              </p>
-            </article>
+      <h2>Location in the background</h2>
+      <p>
+        While sharing is on, Hearth collects your location even when the app is closed or not in
+        use. That is what lets your family see you without you opening the app, and what makes
+        arrival alerts, trips, SOS and crash detection work. When you have stopped somewhere, the
+        app switches to a low-power mode and reports rarely. You can pause sharing, share only an
+        approximate area (about 750 metres), or turn sharing off at any time, separately for each
+        circle.
+      </p>
 
-            <article class="feature">
-              <h3>
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  aria-hidden="true"
-                >
-                  <path d="M12 3 3 7v6c0 5 3.8 8.4 9 9 5.2-.6 9-4 9-9V7Z" stroke-linejoin="round" />
-                  <path d="M12 8.5v4.5" stroke-linecap="round" />
-                  <circle cx="12" cy="16.2" r="1" fill="currentColor" stroke="none" />
-                </svg>
-                SOS and check-ins
-              </h3>
-              <p>
-                Hold to raise an alert that reaches everyone at full volume with your position. Or
-                send a quiet "I got here safely" when that is all it needs to be.
-              </p>
-            </article>
+      <h2>Services the app talks to besides your server</h2>
+      <ul>
+        <li>
+          <strong>Notifications.</strong> To receive notifications, the phone registers with Apple
+          Push Notification service or Firebase Cloud Messaging. Depending on how your server is set
+          up, notifications are relayed through Expo's push service or through an ntfy server your
+          operator runs. A notification carries names and a short line of text, such as "Maya
+          arrived at School". It never contains coordinates.
+        </li>
+        <li>
+          <strong>Maps.</strong> Map images are downloaded from the map provider your server is
+          configured with, OpenFreeMap by default. Like any map, the provider can see which area you
+          are looking at and your IP address.
+        </li>
+        <li>
+          <strong>Street names.</strong> To show "near Valencia St", the app asks the phone's own
+          geocoding service, Apple's on iPhone and Google's on Android, which receives the
+          coordinates being looked up.
+        </li>
+        <li>
+          <strong>App stores.</strong> Apple and Google collect data about downloads and purchases
+          under their own policies.
+        </li>
+      </ul>
+      <p>That is the complete list. Nothing else leaves your phone.</p>
 
-            <article class="feature">
-              <h3>
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M12 4v2M12 18v2M4 12h2M18 12h2M6.3 6.3l1.5 1.5M16.2 16.2l1.5 1.5M17.7 6.3l-1.5 1.5M7.8 16.2l-1.5 1.5"
-                    stroke-linecap="round"
-                  />
-                  <circle cx="12" cy="12" r="3.2" />
-                </svg>
-                Alerts you configure
-              </h3>
-              <p>
-                Speeding, low battery, and a crash the phone works out from its own accelerometer,
-                gyroscope and barometer. It asks you first, and only silence raises the alarm. Every
-                one is a family setting, and every one can be off.
-              </p>
-            </article>
+      <h2>What stays on your phone</h2>
+      <p>
+        Your settings, a short queue of locations waiting to upload if you are offline, and a
+        diagnostic log of what the tracker did. The log never leaves the phone unless you choose to
+        share it from You, Tracker diagnostics. Your sign-in tokens are kept in the phone's secure
+        keychain.
+      </p>
 
-            <article class="feature">
-              <h3>
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M20.5 11.6a7.5 7.5 0 0 1-10.8 6.7L4 20l1.8-5.5A7.5 7.5 0 1 1 20.5 11.6Z"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-                A word, not a group chat
-              </h3>
-              <p>
-                See that someone was driving at 95 and send them "slow down" in one tap. It goes to
-                that one person, shows on their map, and lands in the family feed.
-              </p>
-            </article>
-          </div>
-        </div>
-      </section>
+      <h2>Permissions</h2>
+      <p>
+        Location, including background location. Motion and fitness (iPhone) or physical activity
+        (Android), so the app knows when you are still and can save battery. Notifications. The
+        camera, only when you scan an invite QR code. Your photos, only through the system picker,
+        which hands the app the one image you choose. On Android, an exemption from battery
+        optimisation so the phone does not stop sharing in the background. Hearth never asks for
+        your contacts, microphone, Bluetooth or advertising identifier.
+      </p>
+      <p>
+        Crash detection reads the accelerometer, gyroscope and barometer during a drive. Those
+        readings are worked through on the phone and are not uploaded. Only the alert is, if a crash
+        is detected and you don't cancel it.
+      </p>
 
-      <!-- privacy -->
-      <section id="privacy">
-        <div class="wrap">
-          <p class="eyebrow">Why bother</p>
-          <h2>Untrackable by design.</h2>
-          <p class="sub prose">
-            A tracker is only as private as whoever runs it. There is no company running Hearth, no
-            account with us, and no analytics, ad network or crash reporter anywhere in the app.
-            When you stop running the server, the data is gone, because it was only ever yours.
-          </p>
+      <h2>Your choices</h2>
+      <ul>
+        <li>Pause, approximate or stop sharing in You, Location sharing.</li>
+        <li>
+          Download everything your server holds about you in You, Privacy &amp; data, Export my
+          data.
+        </li>
+        <li>Erase your location history in You, Privacy &amp; data, Erase my location history.</li>
+        <li>
+          Delete your account in You, Privacy &amp; data, Delete my account. See
+          <a href="/delete-account.html">deleting your account</a> for exactly what that removes.
+        </li>
+      </ul>
 
-          <ul class="promises">
-            <li>
-              <b>Three sharing modes</b>
-              Precise, approximate, or paused. Approximate snaps you to a 750 metre grid, chosen per
-              family rather than globally.
-            </li>
-            <li>
-              <b>No third parties in the path</b>
-              The app talks to your server and nothing else. No analytics, no ad network, no data
-              broker in the middle.
-            </li>
-            <li>
-              <b>It never asks for your contacts</b>
-              Invites are codes, not your address book. No microphone, no Bluetooth, no advertising
-              identifier.
-            </li>
-            <li>
-              <b>Delete means delete</b>
-              Export everything the server holds about you, or remove your account and its history
-              outright.
-            </li>
-            <li>
-              <b>The GPS sleeps when you do</b>
-              Tracking runs while you are moving and stops once you park, which is most of the
-              battery story on a phone.
-            </li>
-            <li>
-              <b>Read the code</b>
-              AGPL-3.0, so anyone who runs it as a service for other people has to keep their
-              changes open too.
-            </li>
-          </ul>
-        </div>
-      </section>
+      <h2>Children</h2>
+      <p>
+        Hearth is made for families, and families often use it to keep track of children. We do not
+        collect data from anyone, children included. Accounts for children are created on the
+        family's own server by the adults who run it. Anyone in a circle has the same controls as
+        everyone else, including pausing and leaving, unless a circle admin has turned pausing off,
+        which every member can see.
+      </p>
 
-      <!-- self-host -->
-      <section id="self-host">
-        <div class="wrap">
-          <p class="eyebrow">Self-host</p>
-          <h2>One compose file and a hostname.</h2>
-          <p class="sub prose">
-            Postgres and MinIO come with it, migrations run on first boot, and the bucket creates
-            itself. The server is a published image, so upgrading is a pull, not a rebuild. If you
-            already run anything behind a reverse proxy, this will feel familiar.
-          </p>
+      <h2>Security</h2>
+      <p>
+        The store versions of the app connect to servers on the internet only over HTTPS. Plain HTTP
+        is allowed only for a server on your own local network. How the server itself is secured and
+        backed up is up to its operator.
+      </p>
 
-          <div class="panel">
-            <ol class="steps">
-              <li>
-                <span
-                  >Make a folder, add <code>docker-compose.yml</code> and <code>.env</code>, and set
-                  <code>JWT_SECRET</code>, <code>ADMIN_EMAIL</code> and
-                  <code>ADMIN_PASSWORD</code>.</span
-                >
-              </li>
-              <li>
-                <span
-                  >Bring it up. Your administrator account is created on that first boot, and it is
-                  the only way in, so nobody can claim a server you have not signed into.</span
-                >
-              </li>
-              <li>
-                <span
-                  >Put TLS in front, open the app, type your server address and sign in. Everyone
-                  else joins with an invite code you send them.</span
-                >
-              </li>
-            </ol>
+      <h2>Changes</h2>
+      <p>
+        If this policy changes, the new version will be published here with a new effective date,
+        and the history of every change is public in the project's repository.
+      </p>
 
-            <pre><code>services:
-  api:
-    image: dhqureshi/hearth-api:latest
-    env_file: [.env]
-    ports: ["4000:4000"]
-    depends_on: [db, minio]</code></pre>
-          </div>
-
-          <div class="actions">
-            <a
-              class="btn btn-solid"
-              href="https://github.com/Qureshi-DH/hearth/blob/main/docs/docs/install/self-hosting.md"
-              >Self-hosting guide</a
-            >
-            <a class="btn btn-line" href="https://hub.docker.com/r/dhqureshi/hearth-api"
-              >Docker image</a
-            >
-          </div>
-
-          <div class="alpha prose">
-            <h3>The two places anything leaves your server</h3>
-            <p style="margin-bottom: 22px">
-              Map tiles are fetched from a public tile server by default, which sees roughly what
-              part of the world you are looking at. Point that setting at your own tiles and even
-              that stops. And if you turn on push through a hosted relay, notification payloads go
-              through it, which is why the default is no push at all rather than a convenient
-              default that quietly costs you something.
-            </p>
-            <h3>It is alpha, and that means something</h3>
-            <p>
-              The features above are built and tested, and it runs a real family. It has not been
-              through a security audit, Android has had less device testing than iOS, and there is
-              no store build yet. Read SECURITY.md before you point it at the internet.
-            </p>
-          </div>
-        </div>
-      </section>
+      <h2>Contact</h2>
+      <p>
+        For questions about this policy or the app, open an issue at
+        <a href="https://github.com/Qureshi-DH/hearth/issues">github.com/Qureshi-DH/hearth/issues</a
+        >. For questions about the data on a particular server, contact the person who runs it.
+      </p>
     </main>
 
     <footer>
