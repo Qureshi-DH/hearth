@@ -5,19 +5,19 @@ Everything Play Console asks for that isn't an image. The listing text is in
 
 ## Main store listing
 
-| Field             | Value                                       |
-| ----------------- | ------------------------------------------- |
-| App name          | `metadata/en-US/title.txt`                  |
-| Short description | `metadata/en-US/short_description.txt`      |
-| Full description  | `metadata/en-US/full_description.txt`       |
-| App icon          | `graphics/icon_512x512.png`                 |
-| Feature graphic   | `graphics/feature-graphic_1024x500.png`     |
-| Phone screenshots | `screenshots/phone-1080x1920/`, all eight   |
-| Category          | Maps & Navigation                           |
-| Tags              | Family, Location, Safety (pick the closest) |
-| Email             | a contact address you are happy to publish  |
-| Website           | `https://github.com/Qureshi-DH/hearth`      |
-| Privacy policy    | `<your website>/privacy.html`               |
+| Field             | Value                                      |
+| ----------------- | ------------------------------------------ |
+| App name          | `metadata/en-US/title.txt`                 |
+| Short description | `metadata/en-US/short_description.txt`     |
+| Full description  | `metadata/en-US/full_description.txt`      |
+| App icon          | `graphics/icon_512x512.png`                |
+| Feature graphic   | `graphics/feature-graphic_1024x500.png`    |
+| Phone screenshots | `screenshots/phone-1080x1920/`, all eight  |
+| Category          | Lifestyle                                  |
+| Tags              | Family safety, Location sharing, Privacy   |
+| Email             | a contact address you are happy to publish |
+| Website           | `https://github.com/Qureshi-DH/hearth`     |
+| Privacy policy    | `<your website>/privacy.html`              |
 
 Tablet screenshots are optional. Leave them out.
 

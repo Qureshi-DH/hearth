@@ -4,7 +4,7 @@ Everything the App Store and Google Play ask for, and the tools that make it.
 
 ```text
 app-store/
-  screenshots/iphone-6.9-1320x2868/   9 shots, upload in file order
+  screenshots/iphone-6.9-1320x2868/   10 shots, upload in file order
   graphics/icon_1024x1024.png         App Store icon, no alpha
   metadata/en-US/                     one file per listing field
   listing.md                          categories, age rating, App Privacy, review notes

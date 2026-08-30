@@ -11,8 +11,8 @@ itself is in `metadata/en-US/`, one file per field, in the layout fastlane
 | Name               | `metadata/en-US/name.txt`              |
 | Subtitle           | `metadata/en-US/subtitle.txt`          |
 | Bundle ID          | `com.binary.rewind.hearth`             |
-| Primary category   | Navigation                             |
-| Secondary category | Lifestyle                              |
+| Primary category   | Social Networking                      |
+| Secondary category | Navigation                             |
 | Content rights     | Does not contain third-party content   |
 | Privacy policy URL | `metadata/en-US/privacy_url.txt`       |
 | Support URL        | `metadata/en-US/support_url.txt`       |
@@ -21,8 +21,15 @@ itself is in `metadata/en-US/`, one file per field, in the layout fastlane
 | Price              | Free, no in-app purchases              |
 | Devices            | iPhone only. `supportsTablet` is false |
 
-"Hearth" alone is likely taken, which is why the name carries "Family
-Locator". If Apple rejects the name, "Hearth Family Map" is 17 characters.
+The biggest family safety apps list in Social Networking, and that is
+where parents browse for this kind of app, so Hearth sits beside it. The name
+leads with "Private Family Safety" because "family safety" is what people
+search for, and "private" is the difference. Listing copy never calls Hearth a
+tracker. "tracker" stays in the hidden keywords only, because people search
+for it.
+
+"Hearth" alone is likely taken, which is why the name carries more. If Apple
+rejects it, "Hearth Family Safety" is 20 characters.
 
 ## Age rating
 
@@ -93,7 +100,7 @@ repeats it.
 
 ## Screenshots
 
-`screenshots/iphone-6.9-1320x2868/`, all nine, in file order. Apple scales the
+`screenshots/iphone-6.9-1320x2868/`, all ten, in file order. Apple scales the
 6.9 inch set down for every smaller iPhone, so no other size is needed.
 
 ## Version release notes

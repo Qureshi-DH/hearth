@@ -21,78 +21,96 @@ const fonts = join(repo, "node_modules/@expo-google-fonts/space-grotesk")
 const icon = join(repo, "apps/mobile/assets/images/app-icon-ios.png")
 const work = join(here, ".build")
 
-/** In story order. App Store takes all of them, Play the first eight. */
+/** In story order. App Store takes all ten, Play the first eight. */
 export const SHOTS = [
   {
     slug: "01-map",
     raw: "map.png",
+    eyebrow: "Location sharing",
     title: ["Everyone you love,", "on one map."],
-    sub: "On your own server, where only your family can see it.",
+    sub: "See who is home, at school or on the way.",
   },
   {
-    slug: "02-zero-tracking",
+    slug: "02-stays-home",
     raw: "server.png",
+    eyebrow: "Private by design",
     // The one shot that argues rather than shows, so it sits second, where
     // both stores still have the reader's attention.
     compare: [
       ["Your location on their servers", "Your location on your server"],
-      ["Analytics and tracking built in", "Zero tracking"],
-      ["Ads, and data that can be sold", "No ads. Nothing to sell."],
+      ["Analytics and ad SDKs inside", "No analytics, no ads"],
+      ["Data that can be sold", "Nothing to sell"],
       ["The company can read it", "Only your family can"],
     ],
-    title: ["Other apps keep your data.", "We never see it."],
-    sub: "Hearth runs on a server you own. Nothing comes to us.",
+    title: ["Your family's data", "stays home."],
+    sub: "Hearth runs on a server you own. Nothing ever comes to us.",
   },
   {
-    slug: "03-live",
+    slug: "03-sos",
+    raw: "focus.png",
+    eyebrow: "SOS and crash alerts",
+    // The SOS button sits at the bottom of the screen, like Live's speed card.
+    whole: true,
+    title: ["Help is", "one tap away."],
+    sub: "One press alerts the whole family, and a crash raises the alarm for you.",
+  },
+  {
+    slug: "04-live",
     raw: "live.png",
+    eyebrow: "Live location",
     // The speed card is at the bottom of the screen, and it is the point.
     whole: true,
     title: ["Follow the drive", "as it happens."],
     sub: "A new position every second, only while you are watching.",
   },
   {
-    slug: "04-arrivals",
+    slug: "05-arrivals",
     raw: "profile.png",
+    eyebrow: "Arrival alerts",
     title: ["Know they", "got there."],
     sub: "Arrivals at school, work and home, without having to ask.",
   },
   {
-    slug: "05-activity",
-    raw: "activity.png",
-    title: ["The whole day,", "at a glance."],
-    sub: "Every arrival, departure and check-in in one calm feed.",
-  },
-  {
     slug: "06-trips",
     raw: "trip.png",
+    eyebrow: "Drive history",
     title: ["Every trip,", "remembered."],
-    sub: "Distance, time and top speed for every drive, kept on your server.",
+    sub: "Distance, time and top speed for every drive.",
   },
   {
     slug: "07-places",
     raw: "places.png",
+    eyebrow: "Places",
     title: ["Name the places", "that matter."],
     sub: "Home, school, work. Hearth tells you when they arrive.",
   },
   {
     slug: "08-sharing",
     raw: "sharing.png",
+    eyebrow: "You're in control",
     title: ["Share exactly", "what you want."],
     sub: "Precise, approximate or paused, separately for each circle.",
   },
   {
-    slug: "09-day-and-night",
+    slug: "09-activity",
+    raw: "activity.png",
+    eyebrow: "Family feed",
+    title: ["The whole day,", "at a glance."],
+    sub: "Every arrival, departure and check-in in one calm feed.",
+  },
+  {
+    slug: "10-day-and-night",
     raw: "map.png",
     pair: "map-dark.png",
+    eyebrow: "Light and dark",
     title: ["Easy on the eyes,", "day or night."],
-    sub: "Light and dark themes that follow your phone.",
+    sub: "Themes that follow your phone.",
   },
 ]
 
 /** Every canvas the stores take, and how the phone sits on each. */
 export const TARGETS = [
-  { dir: "app-store/screenshots/iphone-6.9-1320x2868", w: 1320, h: 2868, device: 0.87, count: 9 },
+  { dir: "app-store/screenshots/iphone-6.9-1320x2868", w: 1320, h: 2868, device: 0.87, count: 10 },
   { dir: "play/screenshots/phone-1080x1920", w: 1080, h: 1920, device: 0.8, count: 8 },
 ]
 
@@ -149,6 +167,7 @@ body{font-family:"Space Grotesk";background:#FBF4EC;position:relative;color:#1E1
 .g2{width:${Math.round(1000 * u)}px;height:${Math.round(1000 * u)}px;right:${Math.round(-420 * u)}px;top:${Math.round(420 * u)}px;background:#FF9BAE;opacity:.55}
 .g3{width:${Math.round(800 * u)}px;height:${Math.round(800 * u)}px;left:${Math.round(-200 * u)}px;bottom:${Math.round(-300 * u)}px;background:#FFD2B8;opacity:.6}
 header{position:absolute;left:0;right:0;top:${Math.round(150 * u * s)}px;text-align:center;padding:0 ${Math.round(80 * u)}px}
+.eyebrow{font-weight:700;font-size:${Math.round(34 * u * s)}px;letter-spacing:${(5 * u).toFixed(2)}px;text-transform:uppercase;color:#E8522F;margin-bottom:${Math.round(34 * u * s)}px}
 .brand{display:inline-flex;align-items:center;gap:${Math.round(18 * u)}px;margin-bottom:${Math.round(46 * u * s)}px}
 .brand img{width:${Math.round(66 * u)}px;height:${Math.round(66 * u)}px;border-radius:${Math.round(16 * u)}px}
 .brand span{font-weight:500;font-size:${Math.round(40 * u)}px;letter-spacing:${(0.2 * u).toFixed(2)}px;color:#3A2E28}
@@ -171,7 +190,7 @@ p{margin:${Math.round(34 * u * s)}px auto 0;max-width:${Math.round(1040 * u)}px;
 </style></head><body>
 <div class="glow g1"></div><div class="glow g2"></div><div class="glow g3"></div>
 <header>
-  <div class="brand"><img src="file://${icon}"><span>Hearth</span></div>
+  <div class="eyebrow">${shot.eyebrow}</div>
   <h1>${shot.title[0]}<br><span class="accent">${shot.title[1]}</span></h1>
   <p>${shot.sub}</p>
 </header>
@@ -204,8 +223,8 @@ p{margin-top:20px;font-size:23px;line-height:1.35;opacity:.92;max-width:470px}
 <div class="glow"></div>
 <div class="text">
   <div class="brand"><img src="file://${icon}"><span>Hearth</span></div>
-  <h1>Zero tracking.<br>Your server.</h1>
-  <p>Other family apps keep your location on their servers. Hearth keeps it on yours.</p>
+  <h1>Family safety<br>that stays home.</h1>
+  <p>Location sharing, arrival alerts and SOS, on a server you own. Nothing comes to us.</p>
   <div class="chips"><span>No ads</span><span>Nothing sold</span><span>Open source</span></div>
 </div>
 <div class="phone"><img src="file://${join(here, "raw", "map.png")}"></div>
