@@ -1,1 +1,1 @@
-First release. See your family on one map, follow a drive live, get arrival alerts, and keep every trip, all on a server you run.
+First release. Your family on one map, live drives, arrival alerts and trips, all on a server you own. Zero tracking, and nothing ever comes to us.
