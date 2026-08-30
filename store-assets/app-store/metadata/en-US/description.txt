@@ -1,0 +1,32 @@
+Hearth shows your family on one map, and keeps that map on a server you run. Not ours, not an ad network's. Yours.
+
+Most family locators work by collecting everyone's location on the company's servers. Hearth is open source and self-hosted. You, or someone in your family, runs a small Hearth server at home or on a rented machine, and every phone in the family reports only to it. The people who make Hearth never see a single position.
+
+EVERYONE ON ONE MAP
+See who is home, at school, at work or on the way, with their battery level and how recently they checked in. Tap anyone to see where they have been today.
+
+FOLLOW A DRIVE LIVE
+Open Live on someone who is driving and watch them move, with a new position every second and their speed on screen. Live only runs while somebody is watching, so it costs no battery the rest of the time.
+
+KNOW THEY GOT THERE
+Name the places that matter, like Home, School, Work or Grandma's. Hearth tells you when someone arrives or leaves, without anyone having to send a message.
+
+EVERY TRIP REMEMBERED
+Drives are recorded on their own, with the route, distance, time and top speed.
+
+WHEN SOMETHING GOES WRONG
+Send an SOS to your whole circle with one press. Crash detection watches for a hard impact during a drive and raises an alert if you don't cancel it in time. Check in with a tap, or send a quick message like "On my way".
+
+SHARE EXACTLY WHAT YOU WANT
+For each circle you choose precise location, an approximate area of about 750 metres, or paused. Pausing can be timed, so sharing comes back on its own.
+
+EASY ON THE BATTERY
+When you have stopped somewhere, Hearth lets the GPS sleep and wakes it only when you move again.
+
+PRIVATE BY DESIGN
+No ads. No analytics. No crash reporting. No third-party tracking SDKs. Beyond your server, the app only fetches map images, looks up street names through iOS, and receives notifications through Apple. Notifications never carry coordinates. Export everything the server holds about you, erase your history, or delete your account from inside the app.
+
+YOU NEED A HEARTH SERVER
+Hearth does not work on its own. Somebody in your family needs to run the free Hearth server, which takes a few minutes with Docker. The guide is at github.com/Qureshi-DH/hearth. Store versions of the app connect to internet servers over HTTPS only.
+
+Hearth is free and open source under the AGPL-3.0 licence.

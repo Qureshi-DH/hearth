@@ -1,0 +1,1 @@
+location,sharing,gps,tracker,finder,kids,sos,self-hosted,open source,geofence,trips,crash,privacy
