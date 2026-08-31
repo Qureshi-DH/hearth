@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 
 import { AVATAR_COLORS } from "@hearth/shared"
 
@@ -7,8 +7,6 @@ import { AVATAR_COLORS } from "@hearth/shared"
  * reads an invite code aloud, and cannot accidentally spell anything rude.
  */
 const CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-
-export const newId = (): string => randomUUID()
 
 /** Rejection sampling, so the code is uniform rather than modulo-biased. */
 export function inviteCode(length = 8): string {

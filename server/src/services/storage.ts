@@ -45,12 +45,6 @@ function getClient(): S3Client {
   return client
 }
 
-export function resetStorage(): void {
-  client?.destroy()
-  client = null
-  bucketReady = null
-}
-
 let bucketReady: Promise<void> | null = null
 
 /**

@@ -398,8 +398,7 @@ export interface Run {
  * Splits breadcrumbs into journeys. A gap longer than the idle gap is one
  * boundary; the other is a stop the phone kept reporting from. A phone that
  * arrives somewhere and goes on delivering a fix every few minutes from the
- * same spot used to hold the run open all day, so the morning's drive to work
- * and the evening's drive home came out as one trip. Now a stretch of fixes
+ * same spot would otherwise hold the run open all day. A stretch of fixes
  * inside the stop radius for longer than the idle gap ends the journey at its
  * first fix, the fixes inside the stop belong to no journey, and the next
  * journey starts with the first fix that leaves it.
@@ -469,11 +468,6 @@ export function segmentByStops(
   }
   if (current.length > 0) runs.push({ points: current, closedByStop: false })
   return runs
-}
-
-/** @deprecated kept for the tests that grew up on it; segmentByStops is the detector's. */
-export function segmentByIdleGap(points: Candidate[], gapMs: number): Candidate[][] {
-  return segmentByStops(points, gapMs, Infinity).map((run) => run.points)
 }
 
 /**

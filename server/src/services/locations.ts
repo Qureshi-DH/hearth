@@ -16,7 +16,6 @@ import {
   circleMembers,
   circles,
   locationPoints,
-  sosAlerts,
   userPresence,
   users,
   type CircleSettingsJson,
@@ -1018,11 +1017,4 @@ export async function resumeExpiredPauses(db: Database, userId: string, now: Dat
       summary: "Resumed sharing location",
     })
   }
-}
-
-export async function activeSosFor(db: Database, userId: string) {
-  return db
-    .select()
-    .from(sosAlerts)
-    .where(and(eq(sosAlerts.userId, userId), isNull(sosAlerts.resolvedAt)))
 }

@@ -388,13 +388,3 @@ export async function getCirclePresence(
 ): Promise<MemberPresence[]> {
   return projectCirclePresence(await loadRawCirclePresence(db, circleId), viewerId)
 }
-
-export async function getMemberPresence(
-  db: Database,
-  circleId: string,
-  userId: string,
-  viewerId: string,
-): Promise<MemberPresence | null> {
-  const all = await getCirclePresence(db, circleId, viewerId)
-  return all.find((entry) => entry.userId === userId) ?? null
-}

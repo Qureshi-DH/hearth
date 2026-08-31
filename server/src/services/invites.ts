@@ -14,11 +14,6 @@ export function inviteUrl(code: string): string {
   return `${config.PUBLIC_URL.replace(/\/+$/, "")}/join/${code}`
 }
 
-export function inviteDeepLink(code: string): string {
-  const config = getConfig()
-  return `${config.APP_SCHEME}://join/${code}`
-}
-
 export async function createInvite(
   db: Database,
   options: {

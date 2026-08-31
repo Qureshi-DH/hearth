@@ -29,6 +29,3 @@ export const conflict = (message: string, details?: unknown) =>
 
 export const tooManyRequests = (message = "Slow down.") =>
   new AppError(429, "too_many_requests", message)
-
-export const serverError = (message = "Something went wrong.") =>
-  new AppError(500, "internal_error", message)
