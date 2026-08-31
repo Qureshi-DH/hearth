@@ -205,7 +205,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   // the map recognises a single tap only once its double-tap recogniser has
   // given up, a third of a second after the face's own Pressable fired, and
   // later still while the JS thread is drawing the card and flying the
-  // camera; a face tapped there used to light up and go dark again.
+  // camera. Without the window a tapped face lights up and goes dark again.
   const markerTapAt = useRef(0)
   const lastTap = useRef<{ userId: string; at: number } | null>(null)
 
@@ -375,8 +375,8 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
 
   // One tap on a face is "show me where they are", so the map stays and the
   // sheet comes up just far enough to name them. A second tap on the same
-  // face is the answer to "and now tell me more". Collapsing the sheet all
-  // the way used to hide the only route to that page.
+  // face is the answer to "and now tell me more", so the sheet never
+  // collapses over the only route to that page.
   const focusMember = useCallback(
     (userId: string) => {
       // One tap can arrive twice, from the marker's own Pressable and from the

@@ -204,8 +204,8 @@ describe("the parked heartbeat", () => {
     await syncTask({ data: null, error: null })
     expect(getPosition).toHaveBeenCalledTimes(1)
 
-    // The throttle used to be a module-scoped timestamp, so it read as zero in
-    // every fresh runtime and the check ran on every wake instead of hourly.
+    // The throttle is persisted, so a fresh runtime does not read it as zero
+    // and run the check on every wake instead of hourly.
     const restarted = relaunch()
     expect(restarted.store.getState().lastDriftCheckAt).not.toBeNull()
     expect(restarted.store.getState().mode).toBe("stationary")

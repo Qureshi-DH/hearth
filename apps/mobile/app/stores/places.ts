@@ -5,13 +5,10 @@ import { createJSONStorage, persist } from "zustand/middleware"
 import { mmkvStorage } from "./mmkv"
 
 /**
- * The circles' places, kept on the phone for the tracker. Arriving somewhere
- * the family named is the moment they want to hear about, and the fix that
- * crosses into the circle used to sit behind the upload gate until the park
- * fix went out minutes later. With the places here the tracker uploads the
- * crossing fix at once. The map fills this whenever it loads places; the
- * tracker refreshes it on its own when it is a day old, so a phone that is
- * never opened still knows where home is.
+ * The circles' places, kept on the phone so the tracker can upload the fix
+ * that crosses into one at once instead of behind the upload gate. The map
+ * fills this whenever it loads places, and the tracker refreshes it when it
+ * is a day old, so a phone that is never opened still knows where home is.
  */
 export interface PlaceLite {
   id: string

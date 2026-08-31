@@ -20,9 +20,8 @@ import { formatClock } from "@/utils/time"
 import { useHeader } from "@/utils/useHeader"
 
 /**
- * What the tracker did and why, newest first. The answer to "the
- * notification stayed" and "it never noticed I left" used to be a guess;
- * this is the page to screenshot or share instead.
+ * What the tracker did and why, newest first, so a report like "it never
+ * noticed I left" comes with the page to screenshot or share.
  */
 export const TrackerLogScreen: FC<AppStackScreenProps<"TrackerLog">> = ({ navigation }) => {
   const { themed, theme } = useAppTheme()

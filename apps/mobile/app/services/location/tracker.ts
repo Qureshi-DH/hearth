@@ -109,10 +109,9 @@ const SYNC_FIX_TIMEOUT_MS = 15_000
 const LAST_KNOWN_MAX_AGE_MS = 2 * 60 * 1000
 /**
  * A fresh request answered with a fix older than this was answered from the
- * OS's cache, and is asked again. An app opened after hours away used to
- * upload the fix iOS still held from where the phone had been, and since
- * the server never moves presence back in time, the row went on saying
- * "two hours ago, at home".
+ * OS's cache, and is asked again. The server never moves presence back in
+ * time, so an app opened after hours away would otherwise leave the row
+ * saying "two hours ago, at home".
  */
 const FRESH_FIX_MAX_AGE_MS = 60 * 1000
 /** Bigger than the still radius so GPS jitter at a standstill cannot trip it. */
@@ -187,8 +186,8 @@ export function toFix(
 ): LocationFixInput {
   const c = location.coords
   // iOS reports a negative accuracy to mean "this component is invalid",
-  // which is routine for altitude on a Wi-Fi or cell derived fix. Sending it
-  // on is how a whole batch used to be rejected and then thrown away.
+  // which is routine for altitude on a Wi-Fi or cell derived fix. The server
+  // would reject the whole batch over it.
   const accuracy = c.accuracy != null && c.accuracy >= 0 ? c.accuracy : null
   return {
     recordedAt: new Date(location.timestamp).toISOString(),
@@ -377,11 +376,10 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null
 let retryAttempt = 0
 
 /**
- * A failed upload used to wait for the next delivery that kept a fix, which
- * on a parked phone is a quarter of an hour at best. A short ladder covers a
- * network that was only away for a moment. It is bounded, so a phone with no
- * coverage does not spend its battery hammering, and an upload that gets
- * through starts it over for the next failure.
+ * On a parked phone the next delivery is a quarter of an hour off at best, so
+ * a failed upload retries on a short ladder that covers a network away for a
+ * moment. It is bounded, so a phone with no coverage does not spend its
+ * battery hammering, and an upload that gets through starts it over.
  */
 function scheduleRetry(): void {
   if (retryTimer) return
@@ -474,8 +472,7 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
     fixes = await restingFixes(fixes.length > 0 ? fixes : [newest], live)
   }
   // Arriving somewhere the family named is the moment they want to hear
-  // about, and the fix that crosses the circle used to sit behind the gate
-  // until the park fix minutes later. It goes at once, whatever the gate.
+  // about, so the fix that crosses the circle goes at once, whatever the gate.
   const crossed = !fixes.includes(newest) && crossesPlace(state.lastFix, newest, knownPlaces())
   if (crossed) fixes = [...fixes, newest]
   if (fixes.length > 0) state.enqueue(fixes)
@@ -1113,9 +1110,8 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
     // the cost stationary mode exists to avoid.
     //
     // Signing out leaves `enabled` true, because it is the user's switch rather
-    // than the session's, so without the mode check a signed-out phone holding
-    // "Always" woke the receiver every half hour for good and queued fixes no
-    // session could ever upload.
+    // than the session's, so the mode check is what keeps a signed-out phone
+    // from queueing fixes no session can upload.
     const { mode: currentMode, lastFix: currentFix } = useTrackingStore.getState()
     const stale = !currentFix || Date.now() - Date.parse(currentFix.recordedAt) > STALE_FIX_MS
     if (enabled && currentMode !== "off" && stale && (await currentPermission()) === "always") {
@@ -1289,27 +1285,19 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
   return {
     // iOS 16.4 and later suspend a low accuracy session that has a distance
     // filter once significant-change monitoring is also on, and expo-location
-    // always adds that, so the moving iPhone sat silent until relaunched.
-    // GPS with the circle's filter is what stays alive.
+    // always adds that. GPS with the circle's filter is what stays alive.
     accuracy: Platform.OS === "ios" ? Location.Accuracy.High : Location.Accuracy.Balanced,
     timeInterval: policy.minUpdateIntervalSeconds * 1000,
     // Android delivers on the interval whether or not the phone moved, and
-    // ingest applies the circle's distance filter to what it uploads. With
-    // the filter at the OS a still phone delivered nothing, nothing judged
-    // the stop while the classifier read "tilting" in a hand, and the
-    // service and its notification stayed up. iOS keeps the OS filter; the
-    // background clock asks for the fix the stop is judged from.
+    // ingest applies the circle's distance filter to what it uploads, so a
+    // still phone keeps delivering the fixes its stop is judged from. iOS
+    // keeps the OS filter, and the background clock asks for that fix.
     distanceInterval: Platform.OS === "android" ? 0 : policy.distanceFilterMeters,
-    // No deferred delivery. It looked like the OS batching for battery and is
-    // not: both of expo's consumers hold the fixes in the process, which is
-    // alive either way, and the ones held are the last of every journey, the
-    // fixes that say where the phone stopped. They only surfaced on the next
-    // delivery, which a parked phone never makes.
-    // iOS offered to park the GPS itself when you stop. It also suspends the
-    // app when it does, and a suspended app never calls the stop, never arms
-    // the fence and never starts the resting watch, so a phone left on a desk
-    // went silent until it moved far enough for the significant change
-    // service to relaunch it. The stop is called here instead, by the clock.
+    // No deferred delivery: expo holds deferred fixes in the process, and the
+    // ones held are the last of every journey, which a parked phone would
+    // only deliver on its next delivery.
+    // Automatic pausing suspends the app with the GPS, and a suspended app
+    // never calls the stop or arms the fence. The clock calls the stop.
     pausesUpdatesAutomatically: false,
     activityType: Location.ActivityType.Other,
     showsBackgroundLocationIndicator: false,
@@ -1324,10 +1312,9 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
  * as its distance filter: it costs almost nothing, it keeps the process
  * alive so the quarter hour heartbeat and the classifier keep running, and
  * a departure is seen by the session's own filter rather than at the
- * fence's leisure. A parked iPhone used to run no session at all and was
- * suspended within seconds; the arrival fix went with it, and the fence,
- * which iOS reports minutes late and not at all with Background App Refresh
- * off, was the only way back.
+ * fence's leisure. Without a session iOS suspends the app within seconds,
+ * and the fence alone is reported minutes late, or never with Background App
+ * Refresh off.
  */
 function restingOptions(): Location.LocationTaskOptions {
   if (Platform.OS === "ios") {
@@ -1391,10 +1378,9 @@ function liveOptions(accuracy: Location.Accuracy): Location.LocationTaskOptions 
     // On the interval, whether or not the phone moved, so the first fix past
     // the window is always delivered and steps the tier down, and a car at
     // the lights sends the same spot every few seconds, which is what live
-    // means. iOS has no interval: only a session with no distance filter
-    // delivers to a phone standing still, and one with the old five metres
-    // left a phone in a corridor "asking" for the whole window. ingest thins
-    // the stream to what is worth uploading.
+    // means. iOS has no interval, and only a session with no distance filter
+    // delivers to a phone standing still. ingest thins the stream to what is
+    // worth uploading.
     distanceInterval: 0,
     pausesUpdatesAutomatically: false,
     activityType: Location.ActivityType.AutomotiveNavigation,
@@ -1868,11 +1854,9 @@ async function onMotion(
   if (store.mode !== "stationary") return
 
   // On foot is a different matter from a vehicle. A phone handled in bed
-  // reads as walking at fifty or sixty percent, and taking that alone
-  // brought the full tier back to a phone going nowhere. So the verdict has
-  // to be confirmed by a fix clear of where the phone parked, and until
-  // then the fence is the judge, as it would have been anyway a minute
-  // later.
+  // reads as walking at fifty or sixty percent, so the verdict has to be
+  // confirmed by a fix clear of where the phone parked, and until then the
+  // fence is the judge.
   if (await confirmedLeft(store.policy)) await enterMoving()
 }
 
@@ -1983,8 +1967,8 @@ export async function enterMoving(): Promise<void> {
   // A real one has every fix clear of it and re-anchors as it goes.
   store.setBackgroundActive(true)
   armBackgroundClock()
-  // A journey that begins in a fresh process, from a wake or a resting fix,
-  // used to run without the classifier until the app was next opened.
+  // A journey can begin in a fresh process, from a wake or a resting fix, and
+  // needs the classifier from its first minute.
   await startMotionWatch()
 }
 
@@ -2123,9 +2107,8 @@ export function stillnessDecision(
 ): StillnessDecision {
   // A fix is clear of the anchor only beyond its own error, so a loose one
   // that merely wanders does not reset the clock, while one clear even at
-  // its own looseness is movement. Indoors, a phone sat on a table used to
-  // have the clock reset by every Wi-Fi estimate that wandered, and a home
-  // with nothing but cell fixes could never park at all.
+  // its own looseness is movement. Otherwise every wandering Wi-Fi estimate
+  // indoors resets the clock, and a home with only cell fixes never parks.
   if (!anchor) return "reanchor"
   if (clearOf(anchor, fix, radiusMeters)) return "reanchor"
   return Date.parse(fix.recordedAt) - Date.parse(anchor.since) >= STILL_AFTER_MS ? "settle" : "wait"
@@ -2226,10 +2209,9 @@ export async function startTracking(): Promise<boolean> {
   const permission = await currentPermission()
   useTrackingStore.getState().setPermission(permission)
   // "While using" has no parked shape on Android: the resting request and
-  // the fence both need the background permission, so a phone with only
-  // the foreground one ran the service for good and tried to park every
-  // five minutes. Such a phone reports from the foreground heartbeat only,
-  // which is what the checklist says until Always is granted.
+  // the fence both need the background permission. Such a phone reports from
+  // the foreground heartbeat only, which is what the checklist says until
+  // Always is granted.
   if (permission !== "always") return false
 
   // mode and stillAnchor outlive the process, so a launch while parked picks the
@@ -2384,9 +2366,8 @@ export function headerForTrackerLog(): string {
 setTrackerLogHeader(headerForTrackerLog)
 
 // A process the OS started for a background event runs this module before
-// anything else, and the log used to have no way to tell that from a launch
-// by the user. The classifier goes on with it: a headless boot on Android
-// used to run every drive and stop from position alone.
+// anything else. The log records which kind of launch it was, and the
+// classifier starts with it so a headless boot is not judged on position alone.
 {
   const { enabled, mode, queue } = useTrackingStore.getState()
   logTracker("boot", {

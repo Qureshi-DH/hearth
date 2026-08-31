@@ -93,9 +93,8 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
     navigation,
   ])
 
-  // Where they are, and only that. The day's breadcrumbs used to be drawn
-  // here too, and a trail across the whole city read as noise next to the
-  // trips, which draw their own.
+  // Where they are, and only that. A day's trail across the city reads as
+  // noise next to the trips, which draw their own.
   useEffect(() => {
     if (entry?.lat == null || entry.lon == null) return
     cameraRef.current?.flyTo({ center: [entry.lon, entry.lat], zoom: 15, duration: 500 })

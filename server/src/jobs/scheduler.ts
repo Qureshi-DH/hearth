@@ -404,9 +404,9 @@ async function flagOfflineDevices(
     const pending = visible.filter((m) => !told.has(outageKey(row.userId, m.circleId)))
     if (pending.length === 0) continue
 
-    // One user at a time, under that user's own lock, and the circles are
-    // re-read inside it. The latch used to be a single conditional UPDATE, and
-    // two replicas ticking together still must not both announce one outage.
+    // One user at a time, under that user's own lock, with the circles re-read
+    // inside it, so two replicas ticking together cannot both announce one
+    // outage.
     const broadcasts: { circleId: string; event: FeedEvent }[] = []
     await db.transaction(async (tx) => {
       const [lock] = (await tx.execute(

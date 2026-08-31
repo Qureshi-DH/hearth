@@ -60,9 +60,9 @@ describe("agreedMaxSpeedMps", () => {
   })
 
   it("pairs across a fix that measured nothing, so an alert and a trip agree", () => {
-    // The incident: GPS at 85 km/h, a network fix with no speed, GPS at
-    // 92 km/h, then the crawl into the car park. Adjacent-only pairing
-    // filed this drive at 21 km/h while the alert said 92.
+    // GPS at 85 km/h, a network fix with no speed, GPS at 92 km/h, then the
+    // crawl into the car park. Pairing only adjacent fixes would file this
+    // drive at 21 km/h while the alert said 92.
     const fixes = run([23.6, null, 25.5, 5.8], { metresPerStep: 600 })
     expect(agreedMaxSpeedMps(fixes, GAP)).toBeCloseTo(25.5, 5)
   })

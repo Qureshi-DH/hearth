@@ -132,11 +132,7 @@ export async function getPermissionSnapshot(): Promise<PermissionSnapshot> {
   }
 }
 
-/**
- * The checklist used to show "On" after the exemption dialog had merely been
- * shown, with a Review link beside it because nothing could tell whether the
- * user had said yes. The OS does answer, so the row shows what it says.
- */
+/** What the OS says about the exemption, not whether its dialog was shown. */
 async function readBatteryOptimization(): Promise<PermissionSnapshot["batteryOptimization"]> {
   if (Platform.OS !== "android") return "n/a"
   try {

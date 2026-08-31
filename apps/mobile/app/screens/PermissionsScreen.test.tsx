@@ -198,8 +198,7 @@ describe("PermissionsScreen", () => {
     })
   })
 
-  // The row used to read "On" with a Review link beside it once the exemption
-  // dialog had merely been shown. Now it says what the OS says.
+  // The row says what the OS says, not whether the dialog was shown.
   it("shows the battery row as done, with nothing left to press, only once the OS agrees", async () => {
     const { Platform } = require("react-native")
     const os = Platform.OS

@@ -88,9 +88,9 @@ beforeEach(async () => {
 describe("background wakes", () => {
   it("watches motion after a geofence exit wakes a process that never mounted", async () => {
     // Parking stops the foreground service so Android can reclaim the process.
-    // Leaving relaunches it straight into this task, which used to bring the
-    // location pipeline back but not the classifier, so the journey that
-    // followed ran on the slow GPS heuristic with crash detection off.
+    // Leaving relaunches it straight into this task, which has to bring the
+    // classifier back with the location pipeline, or the journey runs on the
+    // slow GPS heuristic with crash detection off.
     const wake = taskBodies.get(STATIONARY_GEOFENCE_TASK)
     expect(wake).toBeDefined()
     // What the relaunched process reads back from disk: a parked phone.

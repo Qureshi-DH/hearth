@@ -475,7 +475,7 @@ describe("the park fix", () => {
     expect(uploaded().filter((fix) => fix.activity === "still")).toHaveLength(1)
   })
 
-  it("does the same on iOS, where the session used to be torn down first", async () => {
+  it("does the same on iOS, without tearing the session down first", async () => {
     Platform.OS = "ios"
     await enterMoving()
     start.mockClear()

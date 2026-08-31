@@ -56,11 +56,9 @@ interface TrackingState {
   watchedUntil: string | null
   /**
    * The drive as the tracker sees it, the classifier's last word and the
-   * start of its still streak. All three used to live in module scope, and a
-   * process the OS cold-starts for a background event throws its React host
-   * away after every task, so each delivery began a new drive, uploaded
-   * "unknown" and lost the crawl guard that keeps a traffic queue from
-   * parking the phone.
+   * start of its still streak. Persisted rather than held in module scope,
+   * because a process the OS cold-starts for a background event throws its
+   * React host away after every task.
    */
   driving: DriveState | null
   lastVerdict: MotionActivity | null
