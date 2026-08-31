@@ -242,18 +242,3 @@ export function attachNotificationListeners(
     responded.remove()
   }
 }
-
-/** Local alert used when the socket delivers an SOS while the app is open. */
-export async function presentLocalSos(name: string, note: string | null): Promise<void> {
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: `🚨 SOS from ${name}`,
-      body: note ?? "Tap to see their location.",
-      sound: "default",
-      data: { type: "sos_started" },
-      interruptionLevel: "timeSensitive",
-      ...(Platform.OS === "android" ? { channelId: "sos" } : {}),
-    },
-    trigger: null,
-  })
-}

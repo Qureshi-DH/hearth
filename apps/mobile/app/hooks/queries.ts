@@ -12,13 +12,7 @@ import type {
   QuickMessageKey,
   SharingState,
 } from "@hearth/shared"
-import {
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type UseQueryOptions,
-} from "@tanstack/react-query"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { endpoints } from "@/services/api"
 import { useAuthStore } from "@/stores/auth"
@@ -331,20 +325,6 @@ export function usePlaceEvents(circleId: string | null, placeId: string | null) 
     queryKey: queryKeys.placeEvents(circleId ?? "", placeId ?? ""),
     queryFn: () => endpoints.places.events(circleId!, placeId!),
     enabled: Boolean(circleId && placeId),
-  })
-}
-
-export function useHistory(
-  circleId: string | null,
-  userId: string | null,
-  range: { from: string; to: string } | null,
-  options: Partial<UseQueryOptions> = {},
-) {
-  return useQuery({
-    queryKey: queryKeys.history(circleId ?? "", userId ?? "", range?.from ?? "", range?.to ?? ""),
-    queryFn: () => endpoints.locations.history(circleId!, userId!, { ...range, limit: 3000 }),
-    enabled: Boolean(circleId && userId && range) && options.enabled !== false,
-    staleTime: 60_000,
   })
 }
 

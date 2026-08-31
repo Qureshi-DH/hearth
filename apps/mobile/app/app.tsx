@@ -42,7 +42,6 @@ import { registerWakeTask, setupChannels } from "./services/notifications"
 import { useAuthStore } from "./stores/auth"
 import { tokenVault } from "./stores/tokenVault"
 import { customFontsToLoad } from "./theme/typography"
-import { loadDateFnsLocale } from "./utils/formatDate"
 import * as storage from "./utils/storage"
 
 /**
@@ -95,9 +94,7 @@ export function App() {
   const [isSessionHydrated, setIsSessionHydrated] = useState(false)
 
   useEffect(() => {
-    initI18n()
-      .then(() => setIsI18nInitialized(true))
-      .then(() => loadDateFnsLocale())
+    initI18n().then(() => setIsI18nInitialized(true))
   }, [])
 
   // Invite links (hearth://join/CODE or https://<server>/join/CODE) can arrive

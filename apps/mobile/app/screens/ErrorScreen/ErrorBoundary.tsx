@@ -32,7 +32,6 @@ export class ErrorBoundary extends Component<Props, State> {
 
     // Deliberately not wired to a crash reporter. Hearth ships no third party
     // SDK, and a stack trace from a location app is not ours to collect.
-    // reportCrash(error)
   }
 
   resetError = () => {

@@ -14,8 +14,6 @@ export const queryKeys = {
   checkIns: (circleId: string) => ["check-ins", circleId] as const,
   invites: (circleId: string) => ["invites", circleId] as const,
   invitePreview: (code: string) => ["invite-preview", code] as const,
-  history: (circleId: string, userId: string, from: string, to: string) =>
-    ["history", circleId, userId, from, to] as const,
   trips: (circleId: string, userId: string) => ["trips", circleId, userId] as const,
   myTrips: ["my-trips"] as const,
   trip: (tripId: string) => ["trip", tripId] as const,

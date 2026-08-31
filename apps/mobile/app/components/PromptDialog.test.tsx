@@ -218,8 +218,8 @@ describe("PromptDialog", () => {
     await swipeAway()
     expect(onCancel).toHaveBeenCalled()
     expect(queryByText("settings:name")).toBeNull()
-    // The screen answers onCancel by hiding the dialog, which used to poison
-    // the modal for the next tap.
+    // The screen answers onCancel by hiding the dialog, and the next tap must
+    // still open it.
     await setVisible(false)
     await setVisible(true)
 

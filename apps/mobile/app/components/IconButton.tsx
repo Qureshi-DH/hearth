@@ -4,7 +4,6 @@ import { Ionicons } from "@expo/vector-icons"
 import { GlassPanel } from "@/components/GlassPanel"
 import { useAppTheme } from "@/theme/context"
 import type { IoniconName } from "@/utils/activity"
-import { withAlpha } from "@/utils/color"
 import { haptics } from "@/utils/haptics"
 
 export interface IconButtonProps {
@@ -93,17 +92,4 @@ export function IconButton({
   }
 
   return content
-}
-
-export function InlineIconButton(props: Omit<IconButtonProps, "tone" | "size">) {
-  const { theme } = useAppTheme()
-  return (
-    <IconButton
-      {...props}
-      size={36}
-      tone="plain"
-      color={props.color ?? theme.colors.textDim}
-      style={[{ backgroundColor: withAlpha(theme.colors.textDim, 0.08) }, props.style]}
-    />
-  )
 }

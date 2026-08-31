@@ -39,7 +39,6 @@ const mockMember: CircleMember = {
 }
 
 let mockPresence: MemberPresence[] = []
-let mockHistory: Array<{ lat: number; lon: number; recordedAt: string }> | null = null
 const mockTrailProps: unknown[] = []
 const mockWatch = jest.fn(async () => ({ watching: true, seconds: 600 }))
 const mockRefreshMember = jest.fn(async () => ({ asked: "socket" }))
@@ -51,7 +50,6 @@ jest.mock("../hooks/queries", () => ({
   usePresence: () => ({ data: mockPresence }),
   usePlaces: () => ({ data: [] }),
   useTrips: () => ({ data: [] }),
-  useHistory: () => ({ data: mockHistory }),
   useNudge: () => ({ mutateAsync: jest.fn(), isPending: false }),
   useUpdateMember: () => ({ mutate: jest.fn() }),
   useRemoveMember: () => ({ mutateAsync: jest.fn() }),
@@ -174,7 +172,6 @@ async function renderProfile() {
 beforeEach(() => {
   jest.clearAllMocks()
   mockTrailProps.length = 0
-  mockHistory = null
   mockPresence = [presenceFor("driving")]
 })
 
@@ -285,11 +282,6 @@ describe("what a quiet phone says about itself", () => {
 
 describe("the profile map", () => {
   it("does not draw the day's trail", async () => {
-    mockHistory = [
-      { lat: 33.7, lon: 73.05, recordedAt: new Date().toISOString() },
-      { lat: 33.71, lon: 73.05, recordedAt: new Date().toISOString() },
-      { lat: 33.72, lon: 73.05, recordedAt: new Date().toISOString() },
-    ]
     await renderProfile()
     expect(mockTrailProps).toHaveLength(0)
   })

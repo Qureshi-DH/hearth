@@ -233,7 +233,6 @@ jest.mock("../hooks/queries", () => {
       data: react.useSyncExternalStore(mockSubscribePresence, mockReadPresence),
     }),
     useActiveSos: () => ({ data: mockActiveSos }),
-    useHistory: () => ({ data: null }),
   }
 })
 jest.mock("../hooks/useActiveCircle", () => ({
