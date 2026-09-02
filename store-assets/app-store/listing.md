@@ -22,7 +22,7 @@ itself is in `metadata/en-US/`, one file per field, in the layout fastlane
 | Devices            | iPhone only. `supportsTablet` is false |
 
 The biggest family safety apps list in Social Networking, and that is
-where parents browse for this kind of app, so Hearth sits beside it. The name
+where parents browse for this kind of app, so Hearth sits beside them. The name
 leads with "Private Family Safety" because "family safety" is what people
 search for, and "private" is the difference. Listing copy never calls Hearth a
 tracker. "tracker" stays in the hidden keywords only, because people search

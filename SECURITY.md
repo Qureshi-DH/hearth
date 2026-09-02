@@ -37,8 +37,8 @@ The `main` branch and the latest tagged release.
 
 ## Known limitations
 
-These are deliberate, documented and unfixed as of 0.1.3. Each one
-was judged not worth the risk of a rushed change before the first release.
+These are known, deliberate and documented. Each is a trade-off rather than an
+oversight, and each is weighed below.
 
 **Avatar URLs are capabilities.** `GET /api/v1/media/*` takes no token. The 128
 random bits in the object name are the permission, which is what lets an ordinary

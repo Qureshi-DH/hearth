@@ -44,7 +44,8 @@ createdb hearth_test
 TEST_DATABASE_URL=postgres://localhost:5432/hearth_test pnpm test
 ```
 
-They run against real Postgres on purpose. A lot of the behaviour worth testing
+They live in `server/src/test`, one folder per feature (alerts, trips, places,
+sharing and so on), and run against real Postgres on purpose. A lot of the behaviour worth testing
 lives in SQL, in the geofence replay and the presence projection, and mocking
 the database would test the mock.
 
