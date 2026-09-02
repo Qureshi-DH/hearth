@@ -25,7 +25,9 @@ const git = (args, options = {}) =>
 try {
   git(["--version"])
 } catch {
-  console.log("apply-patches: git is not available here; native patches are not needed for this install")
+  console.log(
+    "apply-patches: git is not available here; native patches are not needed for this install",
+  )
   process.exit(0)
 }
 
@@ -40,7 +42,9 @@ for (const file of readdirSync(patchesDir).filter((name) => name.endsWith(".patc
 
   const installed = JSON.parse(readFileSync(join(target, "package.json"), "utf8")).version
   if (installed !== version) {
-    console.error(`patches/${file} is for ${name}@${version} but ${installed} is installed. Rebase the patch.`)
+    console.error(
+      `patches/${file} is for ${name}@${version} but ${installed} is installed. Rebase the patch.`,
+    )
     process.exit(1)
   }
 
@@ -56,7 +60,9 @@ for (const file of readdirSync(patchesDir).filter((name) => name.endsWith(".patc
   }
   if (applies(["--reverse"])) continue
   if (!applies([])) {
-    console.error(`patches/${file} neither applies to nor is already in ${directory}. The package changed underneath it.`)
+    console.error(
+      `patches/${file} neither applies to nor is already in ${directory}. The package changed underneath it.`,
+    )
     process.exit(1)
   }
   git(["apply", `--directory=${directory}`, patch])
