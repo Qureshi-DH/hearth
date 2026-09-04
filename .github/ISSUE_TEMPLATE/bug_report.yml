@@ -45,7 +45,7 @@ body:
     attributes:
       label: Versions
       description: Server version from the app's You tab, plus OS and app version.
-      placeholder: "server 0.1.0, iOS 18.2, app 0.1.0"
+      placeholder: "server 1.0.0, iOS 18.2, app 1.0.0"
     validations:
       required: true
 

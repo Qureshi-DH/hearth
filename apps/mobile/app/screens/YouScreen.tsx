@@ -169,7 +169,7 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
     ])
   }
 
-  const version = Constants.expoConfig?.version ?? "0.1.0"
+  const version = Constants.expoConfig?.version ?? "1.0.0"
 
   return (
     <Screen preset="scroll" safeAreaEdges={["top"]} contentContainerStyle={themed($container)}>

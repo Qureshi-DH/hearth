@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="#status"><img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-orange"></a>
+  <a href="CHANGELOG.md"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-F5643A"></a>
   <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
   <a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Qureshi-DH/hearth/ci.yml?branch=main"></a>
   <img alt="Expo SDK 55" src="https://img.shields.io/badge/Expo-SDK%2055-000020?logo=expo">
@@ -32,10 +32,11 @@ pictures, and an iOS and Android app that talks only to it.
 
 ## Status
 
-Alpha. The features below are built and tested, and I run it for my own family.
-It has not been through a security audit, the Android build has had less real
-device testing than iOS, and the app is not on either store yet, so you build it
-yourself. Read [SECURITY.md](SECURITY.md) before pointing it at the internet.
+1.0. The features below are built and tested, and I run it for my own family.
+It has not been through an independent security audit, and the Android build
+has had less real device testing than iOS. Until the store listings are live you
+build the app yourself. Read [SECURITY.md](SECURITY.md) before pointing the
+server at the internet.
 
 ## What it does
 

@@ -6,6 +6,39 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-04
+
+The first stable release, and the first with store listings. The app and the
+server now share one version number. No migration and no API change since
+0.10.0, so servers and phones can update in either order.
+
+### Added
+
+- A privacy policy and an account deletion page on the website, which both
+  stores ask for. Hearth holds no data itself, so the policy says who does,
+  what the app sends and where, and the deletion page gives the in-app path
+  and what a server keeps afterwards.
+- Store listing text, screenshots, graphics and submission notes for the App
+  Store and Google Play, with the tools that seed a demo family, capture the
+  Release build and composite the screenshots.
+
+### Changed
+
+- The server tests are grouped by feature under `server/src/test`, one folder
+  each for alerts, auth, devices, notifications, places, realtime, safety,
+  sharing and trips.
+
+### Removed
+
+- Components and helpers that came with the app's boilerplate and were never
+  used, and the three dependencies only they needed: date-fns,
+  react-native-drawer-layout and expo-network.
+
+### Fixed
+
+- A trip's map frames the route. A fit asked for before the map had loaded was
+  dropped, so the trip opened on the whole world.
+
 ## [0.10.0] - 2026-08-28
 
 Phones only; the server is unchanged from 0.9.6.
@@ -875,7 +908,24 @@ security audit and there are no store builds yet.
   trusting the token
 - Push payloads never carry coordinates
 
-[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/Qureshi-DH/hearth/compare/v0.10.0...v1.0.0
+[0.10.0]: https://github.com/Qureshi-DH/hearth/compare/v0.9.6...v0.10.0
+[0.9.6]: https://github.com/Qureshi-DH/hearth/compare/v0.9.5...v0.9.6
+[0.9.5]: https://github.com/Qureshi-DH/hearth/compare/v0.9.4...v0.9.5
+[0.9.4]: https://github.com/Qureshi-DH/hearth/compare/v0.9.3...v0.9.4
+[0.9.3]: https://github.com/Qureshi-DH/hearth/compare/v0.9.2...v0.9.3
+[0.9.2]: https://github.com/Qureshi-DH/hearth/compare/v0.9.1...v0.9.2
+[0.9.1]: https://github.com/Qureshi-DH/hearth/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/Qureshi-DH/hearth/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/Qureshi-DH/hearth/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/Qureshi-DH/hearth/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/Qureshi-DH/hearth/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/Qureshi-DH/hearth/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/Qureshi-DH/hearth/compare/v0.3.2...v0.4.0
+[0.3.2]: https://github.com/Qureshi-DH/hearth/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/Qureshi-DH/hearth/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/Qureshi-DH/hearth/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Qureshi-DH/hearth/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/Qureshi-DH/hearth/compare/v0.1.0...v0.1.3
 [0.1.0]: https://github.com/Qureshi-DH/hearth/releases/tag/v0.1.0
