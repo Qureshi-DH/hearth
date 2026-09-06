@@ -531,8 +531,9 @@ the ask down the phone's control channel when it has one open, or a silent
 `watch` push otherwise, again after ninety seconds if the phone has
 not uploaded since, three times per window at most, and the reply says
 which (`pushed`), when the phone was last heard and what it said
-stands in its way; every upload reply also carries `watchedUntil`, so a phone that is already reporting picks the watch up on
-its next batch whether or not the push arrived. A channel ask that got no
+stands in its way. Every upload reply also carries `watchedUntil`, so a
+phone that is already reporting picks the watch up on its next batch whether
+or not the push arrived. A channel ask that got no
 answer within twenty seconds is not repeated down the channel on the next
 hold: a socket iOS let die without a close keeps its stamp for minutes, and
 the hold goes by push instead. Either way the phone puts `watchedUntil` in
