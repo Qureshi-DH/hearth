@@ -1,9 +1,12 @@
+<p align="center">
+  <img src=".github/assets/logo.webp" width="112" height="112" alt="Hearth app icon">
+</p>
+
 <h1 align="center">Hearth</h1>
 
 <p align="center">
-  Family location sharing you host yourself.<br>
-  Know where your family is. Nobody else does.<br>
-  Family safety with no company on the other end.
+  <b>Family safety you host yourself.</b><br>
+  Know where your family is. Nobody else does.
 </p>
 
 <p align="center">
@@ -15,7 +18,24 @@
   <img alt="Postgres 14+" src="https://img.shields.io/badge/postgres-%E2%89%A514-336791?logo=postgresql&logoColor=white">
 </p>
 
----
+<p align="center">
+  <a href="docs/docs/overview/quick-start.md">Quick start</a> ·
+  <a href="docs/docs/install/self-hosting.md">Self-hosting</a> ·
+  <a href="docs/docs/developer/architecture.md">Architecture</a> ·
+  <a href="docs/docs/privacy.md">Privacy</a> ·
+  <a href="docs/docs/roadmap.md">Roadmap</a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/hero-dark.webp">
+    <img
+      src=".github/assets/hero-light.webp"
+      width="100%"
+      alt="Hearth on five phones: the activity feed, a profile, the map, a live drive and a trip"
+    >
+  </picture>
+</p>
 
 A family safety app is only as private as whoever runs it. Commercial ones keep
 every position, arrival and drive on their own servers, under a privacy policy
@@ -39,6 +59,26 @@ build the app yourself. Read [SECURITY.md](SECURITY.md) before pointing the
 server at the internet.
 
 ## What it does
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src=".github/assets/screen-places.webp" width="220" alt="Places screen"><br>
+      <b>Places</b><br>
+      Arrivals and departures, without asking
+    </td>
+    <td align="center" width="33%">
+      <img src=".github/assets/screen-sos.webp" width="220" alt="Map with the SOS button"><br>
+      <b>SOS and check-ins</b><br>
+      One press reaches the whole family
+    </td>
+    <td align="center" width="33%">
+      <img src=".github/assets/screen-sharing.webp" width="220" alt="Sharing settings"><br>
+      <b>Sharing</b><br>
+      Precise, approximate or paused, per circle
+    </td>
+  </tr>
+</table>
 
 **See where everyone is.** A live map of your circle with battery level, whether
 they're walking or driving, and how long ago each position came in. Updates

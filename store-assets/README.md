@@ -75,6 +75,9 @@ captures on its own canvas.
 change the words, edit them there and run step 7 again. No new captures
 needed.
 
+The pictures in the repository README come from the same captures:
+`node store-assets/tools/readme-images.mjs` writes them to `.github/assets/`.
+
 Compositing uses headless Google Chrome for the layout and Pillow to flatten to
 RGB. The font is Space Grotesk from the app's own dependencies, so run
 `pnpm install` at the repo root first.
