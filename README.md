@@ -37,18 +37,12 @@
   </picture>
 </p>
 
-A family safety app is only as private as whoever runs it. Commercial ones keep
-every position, arrival and drive on their own servers, under a privacy policy
-you do not control and they can change.
+Commercial family safety apps keep every position, arrival and drive on their
+own servers, under a privacy policy you don't control. Hearth runs on yours.
+No company account, no analytics, no ads, and nothing is sent to us.
 
-Hearth has no servers. There is no company account, no analytics, no ad network
-and no crash reporter anywhere in it. The only things that ever leave your box
-are map tiles, from a provider you choose and can self-host, and push payloads
-if you deliberately turn on a hosted relay.
-
-Hearth does the same job on hardware you control. It's two pieces: an API server
-that runs in Docker, next to Postgres and a small object store for profile
-pictures, and an iOS and Android app that talks only to it.
+It's two pieces: an API server that runs in Docker next to Postgres, and an iOS
+and Android app that talks only to it.
 
 ## Status
 
@@ -80,45 +74,17 @@ server at the internet.
   </tr>
 </table>
 
-**See where everyone is.** A live map of your circle with battery level, whether
-they're walking or driving, and how long ago each position came in. Updates
-arrive over a websocket while the app is open and by push when it isn't.
+- **Live map.** Everyone in your circle, with battery and how they're moving.
+- **Places.** Hear when someone arrives at or leaves home, school or work.
+- **Live drives.** Follow a drive as it happens, a fix a second while you watch.
+- **SOS and check-ins.** One press alerts the whole family, and pausing can't block it.
+- **Crash alerts.** Optional. The phone asks first, and silence raises the alarm.
+- **Trips.** Distance, time and top speed for every journey.
+- **Sharing your way.** Precise, approximate (750 m) or paused, per circle.
+- **Your data.** Export it, erase your history, or delete your account from the app.
 
-**Places.** Draw a circle around home, school or work and the whole family gets
-told when somebody arrives or leaves. Leaving needs a bit more distance than
-arriving, so a phone sitting on the boundary doesn't spam everyone.
-
-**Privacy that actually means something.** Per circle, you choose precise,
-approximate or paused. Approximate snaps you to a 750 metre grid and hides your
-trail, your trips and which place you're at. Paused shares nothing at all. The
-choice is yours, per circle, and everyone can see which mode you picked.
-
-**Safety.** Hold the SOS button for three seconds and everyone gets a
-high-priority alert with your live position, refreshed every twenty seconds
-while the SOS screen is open. SOS overrides a paused sharing state, because an emergency isn't
-the moment to respect ghost mode. There's also a one-tap check-in.
-
-**Nudges.** A one-way prod rather than a conversation. Ask somebody's phone for
-a fresh position, or attach one short canned line like "Please slow down" or "On
-my way". It shows on their screen for a few seconds, buzzes their phone and
-lands in the activity feed. There's no thread to read back. It's there so an
-alert has an obvious answer, not to replace your group chat.
-
-**Driving alerts, if you want them.** Off by default. Turn on a speed threshold
-and the circle hears about it. Turn on incident alerts and the phone watches its
-own accelerometer, gyroscope and barometer while you're in a vehicle, looking for
-the shape of a collision: travelling, a violent spike, then a car that has
-stopped. Those sensors need no permission on either platform. It asks you before
-it tells anyone, and silence is what raises the alarm. Even then it is a prompt
-to go and check on someone, never a claim to have detected a crash.
-
-**Trips and history.** Journeys are worked out from breadcrumbs on the server:
-distance, duration, top speed, and where they started and ended. History is kept
-for as long as each circle asks for and then deleted, with a server-wide ceiling
-on top that an admin can change from the app.
-
-**Your data stays yours.** Export everything as JSON, wipe your history, or
-delete your account and watch it cascade through every table.
+How each of these works: [safety](docs/docs/safety.md), [privacy](docs/docs/privacy.md),
+[architecture](docs/docs/developer/architecture.md).
 
 ## Try it
 
@@ -158,11 +124,9 @@ curl localhost:4000/readyz     # {"ok":true}
 open http://localhost:4000/docs
 ```
 
-The admin account has to be set before the first boot. It is created once,
-while the database has no users, and it is the only way in: registration never
-lets an account through without an invite, so a server you have not claimed yet
-cannot be claimed by whoever finds the URL. Set `ADMIN_NAME` too if you want
-something other than the part before the @.
+Set the admin before the first boot. It is created once, on an empty database,
+and everyone else needs an invite, so nobody who finds the URL can claim your
+server.
 
 Phones won't talk to a plain HTTP server in the background, so put a TLS proxy
 in front before you invite anyone. [docs/docs/install/self-hosting.md](docs/docs/install/self-hosting.md)
@@ -245,21 +209,19 @@ response shape changes, both fail to typecheck until they agree.
 
 ## Push notifications, briefly
 
-Waking a sleeping phone is the one part of this that a self-hoster can't fully
-own, because that last hop belongs to Apple and Google. Hearth gives you four
-options and defaults to the one that needs no configuration:
+Waking a sleeping phone needs Apple's or Google's push service, so that last hop
+is the one part a self-hoster can't fully own. Pick a provider:
 
-| Provider         | Third party?        | Works on                            | Effort |
-| ---------------- | ------------------- | ----------------------------------- | ------ |
-| `none` (default) | No                  | Both, while the app is open         | None   |
-| `ntfy`           | No, you host it     | Android fully, iOS via the ntfy app | Low    |
-| `expo`           | Yes, Expo relays it | Both                                | Low    |
-| `webpush`        | Browser vendor      | Browsers, UnifiedPush               | Medium |
+| Provider         | Third party?        | Works on                     | Effort |
+| ---------------- | ------------------- | ---------------------------- | ------ |
+| `none` (default) | No                  | Both, while the app is open  | None   |
+| `ntfy`           | No, you host it     | Both, through the ntfy app   | Low    |
+| `expo`           | Yes, Expo relays it | Both, including silent wakes | Low    |
+| `webpush`        | Browser vendor      | Browsers, UnifiedPush        | Medium |
 
-Notification payloads carry names and identifiers, never coordinates. The app
-fetches the position from your server when you tap.
-The [push notifications guide](docs/docs/install/push-notifications.md) goes through each one
-properly.
+Only `expo` delivers the silent wakes that keep a parked Android phone reporting.
+Payloads carry names and identifiers, never coordinates. The
+[push notifications guide](docs/docs/install/push-notifications.md) covers each one.
 
 ## Contributing
 

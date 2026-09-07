@@ -13,7 +13,7 @@ your options are, and which one to pick.
 | Provider (`PUSH_PROVIDER`) | Works on                                       | Needs a third party?            | Effort | Privacy                        | Reliability on a sleeping phone                                                            |
 | -------------------------- | ---------------------------------------------- | ------------------------------- | ------ | ------------------------------ | ------------------------------------------------------------------------------------------ |
 | `none` (default)           | iOS, Android                                   | No                              | Zero   | Best                           | None. Alerts appear when the app is opened, and the map still updates live while it's open |
-| `ntfy`                     | Android fully, iOS via the ntfy app            | No, you host ntfy too           | Low    | Best                           | Excellent on Android (UnifiedPush), good on iOS                                            |
+| `ntfy`                     | iOS, Android, through the ntfy app             | No, you host ntfy too           | Low    | Best                           | Good for alerts. No silent wakes, see below                                                |
 | `expo`                     | iOS, Android                                   | Yes, Expo's relay then APNs/FCM | Low    | Payload metadata transits Expo | Excellent                                                                                  |
 | `webpush`                  | Browsers, Android via UnifiedPush distributors | Browser vendor's push service   | Medium | Good                           | Good in browsers, not for the native app                                                   |
 | Direct APNs + FCM          | iOS, Android                                   | Yes, Apple + Google accounts    | High   | Payload transits Apple/Google  | Excellent                                                                                  |
@@ -22,6 +22,12 @@ Start with `none`, which needs no configuration at all. Move to `ntfy` when you
 want real background alerts without handing anything to a third party. Use
 `expo` if you'd rather have zero infrastructure and don't mind Expo relaying the
 notification text, which is short and not sensitive.
+
+Only `expo` wakes the Hearth app itself. A silent push is what brings a quiet
+phone back to reporting and answers a watch on a parked Android phone, and it
+has to arrive through FCM or APNs in the app's own process. With `ntfy` the
+alerts are shown by the ntfy app, so the family still hears about arrivals and
+SOS, but a quiet phone waits for its own heartbeat rather than being woken.
 
 All providers share the same server-side pipeline. Events are written to a
 durable `notification_outbox` table in the same transaction as the thing that
