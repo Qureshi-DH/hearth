@@ -311,7 +311,8 @@ describe("auth", () => {
       sessionIdOf(phone.accessToken),
     ])
 
-    // Signing in again from the same device reuses its row.
+    // Signing in again from the same device replaces its session, so the
+    // list still has one row for it and the old session stops working.
     const again = await ctx.app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
@@ -322,16 +323,23 @@ describe("auth", () => {
       },
     })
     expect(again.statusCode).toBe(200)
-    expect(await listSessions(phone.headers)).toHaveLength(2)
+    const signedIn = again.json() as { accessToken: string; refreshToken: string }
+    const headers = { authorization: `Bearer ${signedIn.accessToken}` }
+    expect(sessionIdOf(signedIn.accessToken)).not.toBe(sessionIdOf(phone.accessToken))
+    expect(
+      (await ctx.app.inject({ method: "GET", url: "/api/v1/auth/me", headers: phone.headers }))
+        .statusCode,
+    ).toBe(401)
+    expect(await listSessions(headers)).toHaveLength(2)
 
-    // And so does a refresh.
+    // A refresh keeps the row.
     const refreshed = await ctx.app.inject({
       method: "POST",
       url: "/api/v1/auth/refresh",
-      payload: { refreshToken: (again.json() as { refreshToken: string }).refreshToken },
+      payload: { refreshToken: signedIn.refreshToken },
     })
     expect(refreshed.statusCode).toBe(200)
-    expect(await listSessions(phone.headers)).toHaveLength(2)
+    expect(await listSessions(headers)).toHaveLength(2)
 
     // A row past its expiry can no longer refresh, so it is not signed in,
     // however long the prune job takes to get to it.
@@ -339,7 +347,7 @@ describe("auth", () => {
       update sessions set expires_at = now() - interval '1 minute'
       where user_id = ${phone.user.id}::uuid and device_id = 'device-b'
     `)
-    const remaining = await listSessions(phone.headers)
+    const remaining = await listSessions(headers)
     expect(remaining.map((row) => row.platform)).toEqual(["ios"])
   })
 })

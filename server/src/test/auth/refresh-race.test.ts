@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 
 import { getDb } from "../../db/client"
@@ -45,10 +45,14 @@ async function liveSessions(userId: string) {
 }
 
 async function rotatedMinutesAgo(userId: string, minutes: number) {
-  await getDb()
-    .update(sessions)
-    .set({ previousRotatedAt: new Date(Date.now() - minutes * 60 * 1000) })
-    .where(eq(sessions.userId, userId))
+  const ago = new Date(Date.now() - minutes * 60 * 1000).toISOString()
+  await getDb().execute(sql`
+      update sessions set spent_refresh = coalesce((
+        select jsonb_agg(jsonb_set(entry, '{at}', to_jsonb(${ago}::text)))
+        from jsonb_array_elements(spent_refresh) entry
+      ), '[]'::jsonb)
+      where user_id = ${userId}::uuid
+    `)
 }
 
 describe("a spent refresh token replayed by the same device", () => {

@@ -75,7 +75,7 @@ How Hearth uses it:
 
 1. `PUSH_PROVIDER=ntfy`, `NTFY_BASE_URL=https://ntfy.your-domain.example`.
 2. When a device registers, the server derives an unguessable per-device topic
-   (`hearth-<sha256(secret + sessionId)>`), so clients can't choose a topic
+   (`hearth-<sha256(secret + user + device)>`), so clients can't choose a topic
    someone else could subscribe to.
 3. The app shows the user the topic and a "Subscribe in ntfy" button. The ntfy
    app (F-Droid / Play / App Store) handles background delivery.

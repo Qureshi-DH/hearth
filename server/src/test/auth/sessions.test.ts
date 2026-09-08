@@ -429,11 +429,15 @@ describe("refresh token reuse", () => {
     getDb().select().from(auditLog).where(eq(auditLog.action, "session.refresh_reuse"))
 
   /** What the row would look like had the rotation happened before the grace window. */
-  async function ageRotation(userId: string): Promise<void> {
-    await getDb()
-      .update(sessions)
-      .set({ previousRotatedAt: new Date(Date.now() - 5 * 60 * 1000) })
-      .where(eq(sessions.userId, userId))
+  async function ageRotation(userId: string, minutes = 5): Promise<void> {
+    const ago = new Date(Date.now() - minutes * 60 * 1000).toISOString()
+    await getDb().execute(sql`
+      update sessions set spent_refresh = coalesce((
+        select jsonb_agg(jsonb_set(entry, '{at}', to_jsonb(${ago}::text)))
+        from jsonb_array_elements(spent_refresh) entry
+      ), '[]'::jsonb)
+      where user_id = ${userId}::uuid
+    `)
   }
 
   it("ends the session when a spent token is replayed later", async () => {
@@ -533,12 +537,45 @@ describe("refresh token reuse", () => {
     // The grace is measured from the rotation the phone missed, not from the
     // retry, so a token that keeps being presented runs out of it once the
     // access token it went with has lived its life.
-    await getDb()
-      .update(sessions)
-      .set({ previousRotatedAt: new Date(Date.now() - 20 * 60 * 1000) })
-      .where(eq(sessions.userId, bob.user.id))
+    await ageRotation(bob.user.id, 20)
     expect((await withDevice(bob.refreshToken)).statusCode).toBe(401)
     expect(await liveSessionCount(bob.user.id)).toBe(0)
+  })
+
+  it("ends the session when a thief has rotated twice before the phone refreshes", async () => {
+    const bob = await registerUser(ctx.app, { deviceId: "device-bob-phone" })
+    const withDevice = (refreshToken: string) =>
+      ctx.app.inject({
+        method: "POST",
+        url: "/api/v1/auth/refresh",
+        payload: { refreshToken, deviceId: "device-bob-phone" },
+      })
+
+    // A copy of the phone's token, turned over twice from somewhere else.
+    const first = await refresh(bob.refreshToken)
+    const second = await refresh((first.json() as { refreshToken: string }).refreshToken)
+    expect(second.statusCode).toBe(200)
+
+    // The phone's own refresh comes due once its access token has run out.
+    await ageRotation(bob.user.id, 20)
+    expect((await withDevice(bob.refreshToken)).statusCode).toBe(401)
+    expect(await liveSessionCount(bob.user.id)).toBe(0)
+    expect(await reuseAudits()).toHaveLength(1)
+  })
+
+  it("answers a same-device retry once and ends the session on the second", async () => {
+    const bob = await registerUser(ctx.app, { deviceId: "device-bob-phone" })
+    const withDevice = (refreshToken: string) =>
+      ctx.app.inject({
+        method: "POST",
+        url: "/api/v1/auth/refresh",
+        payload: { refreshToken, deviceId: "device-bob-phone" },
+      })
+    expect((await withDevice(bob.refreshToken)).statusCode).toBe(200)
+    expect((await withDevice(bob.refreshToken)).statusCode).toBe(200)
+    expect((await withDevice(bob.refreshToken)).statusCode).toBe(401)
+    expect(await liveSessionCount(bob.user.id)).toBe(0)
+    expect(await reuseAudits()).toHaveLength(1)
   })
 
   it("refuses the same retry from another device", async () => {

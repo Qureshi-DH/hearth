@@ -68,8 +68,16 @@ export const pushRoutes: FastifyPluginAsyncZod = async (app) => {
 
       if (config.PUSH_PROVIDER === "ntfy") {
         // Anyone who knows an ntfy topic can read it, and a client-chosen name
-        // would be guessable.
-        token = `${config.NTFY_TOPIC_PREFIX}-${sha256(`${config.jwtSecret}:${auth.sessionId}`).slice(0, 32)}`
+        // would be guessable. Keyed to the account and the phone rather than
+        // the session, so signing in again does not move the topic out from
+        // under the ntfy app that is subscribed to it.
+        const [session] = await db
+          .select({ deviceId: sessions.deviceId })
+          .from(sessions)
+          .where(eq(sessions.id, auth.sessionId))
+          .limit(1)
+        const device = session?.deviceId ?? auth.sessionId
+        token = `${config.NTFY_TOPIC_PREFIX}-${sha256(`${config.jwtSecret}:${auth.userId}:${device}`).slice(0, 32)}`
       } else if (!token) {
         throw badRequest("A push token is required for this provider.")
       } else if (config.PUSH_PROVIDER === "webpush") {

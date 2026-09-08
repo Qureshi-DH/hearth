@@ -64,6 +64,13 @@
       "when": 1789742711166,
       "tag": "0008_control_channel",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790609795507,
+      "tag": "0009_refresh_ring_precise_since_removals",
+      "breakpoints": true
     }
   ]
 }

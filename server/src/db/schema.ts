@@ -64,6 +64,21 @@ export const users = pgTable(
   (table) => [uniqueIndex("users_email_normalized_key").on(table.emailNormalized)],
 )
 
+/** A refresh token a session rotated away from, kept to tell a retry from a theft. */
+export interface SpentRefreshJson {
+  /** SHA-256 of the spent token. */
+  h: string
+  /** When it was spent, as an ISO timestamp. */
+  at: string
+  /** Whether it has already been answered once as a retry. */
+  retried: boolean
+  /**
+   * A live token a retry replaced. Its answer never reached the phone, so it
+   * is refused when presented, but it is no evidence of a theft.
+   */
+  displaced?: boolean
+}
+
 export const sessions = pgTable(
   "sessions",
   {
@@ -74,13 +89,14 @@ export const sessions = pgTable(
     /** SHA-256 of the refresh token. The plaintext never touches the database. */
     refreshTokenHash: text("refresh_token_hash").notNull(),
     /**
-     * The hash this session rotated away from. A presented token that matches
-     * it is either a phone retrying a response it never received, or a stolen
-     * token being replayed, and those are told apart by how long ago the
-     * rotation happened.
+     * The last few hashes this session rotated away from. A presented token
+     * that matches one is either a phone retrying a response it never
+     * received, or a stolen token being replayed, and those are told apart by
+     * the device, how long ago it was spent, and whether it was retried once
+     * already. Remembering more than one is what catches a thief who rotated
+     * twice before the phone next refreshed.
      */
-    previousRefreshTokenHash: text("previous_refresh_token_hash"),
-    previousRotatedAt: timestamp("previous_rotated_at", { withTimezone: true }),
+    spentRefresh: jsonb("spent_refresh").$type<SpentRefreshJson[]>().notNull().default([]),
     deviceId: text("device_id").notNull(),
     deviceName: text("device_name"),
     platform: text("platform").$type<Platform>(),
@@ -98,8 +114,12 @@ export const sessions = pgTable(
   (table) => [
     uniqueIndex("sessions_refresh_token_hash_key").on(table.refreshTokenHash),
     index("sessions_user_idx").on(table.userId),
-    index("sessions_previous_refresh_token_hash_idx").on(table.previousRefreshTokenHash),
-    uniqueIndex("sessions_user_device_key").on(table.userId, table.deviceId),
+    index("sessions_spent_refresh_idx").using("gin", table.spentRefresh),
+    // One live session per device. Signing in again revokes the old row and
+    // starts a new one, so nothing bound to the old session id survives it.
+    uniqueIndex("sessions_user_device_live_key")
+      .on(table.userId, table.deviceId)
+      .where(sql`revoked_at is null`),
   ],
 )
 
@@ -151,6 +171,14 @@ export const circleMembers = pgTable(
     /** When sharingState is "paused", sharing auto-resumes at this time. */
     pausedUntil: timestamp("paused_until", { withTimezone: true }),
     /**
+     * When the current stretch of precise sharing began, or null when the
+     * member has shared precisely ever since joining. The phone keeps
+     * uploading while paused or approximate, so history, trips and trip
+     * announcements are bounded by this: switching back to precise must not
+     * hand the circle the trail recorded while it was not allowed to see it.
+     */
+    preciseSince: timestamp("precise_since", { withTimezone: true }),
+    /**
      * What to restore when a pause ends. Without it a pause always resumed to
      * "precise", so someone who was deliberately sharing an approximate
      * location was silently upgraded to an exact one by waiting.
@@ -177,6 +205,26 @@ export const circleMembers = pgTable(
     primaryKey({ columns: [table.circleId, table.userId] }),
     index("circle_members_user_idx").on(table.userId),
   ],
+)
+
+/**
+ * Somebody an owner or admin removed from a circle. An invite created before
+ * the removal no longer admits them, so a link still sitting in the family
+ * chat cannot bring them straight back. A new invite, made on purpose after
+ * the removal, can.
+ */
+export const circleRemovals = pgTable(
+  "circle_removals",
+  {
+    circleId: uuid("circle_id")
+      .notNull()
+      .references(() => circles.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    removedAt: timestamp("removed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.circleId, table.userId] })],
 )
 
 export const invites = pgTable(
