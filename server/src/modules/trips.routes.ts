@@ -8,6 +8,7 @@ import { circleMembers, circles, locationPoints, places, trips } from "../db/sch
 import { forbidden, notFound } from "../lib/errors"
 import { toTrip } from "../lib/serialize"
 import { requireAuth, requireMembership } from "../plugins/auth"
+import { preciseStretch } from "../services/presence"
 
 // Postgres has no year zero, so "0000-01-01T00:00:00Z" satisfies zod's calendar
 // check and then aborts the query inside the driver, turning a query string
@@ -55,12 +56,19 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
 
       if (userId !== auth.userId) {
         const [target] = await db
-          .select({ sharingState: circleMembers.sharingState, joinedAt: circleMembers.joinedAt })
+          .select({
+            sharingState: circleMembers.sharingState,
+            pausedUntil: circleMembers.pausedUntil,
+            resumeToState: circleMembers.resumeToState,
+            preciseSince: circleMembers.preciseSince,
+            joinedAt: circleMembers.joinedAt,
+          })
           .from(circleMembers)
           .where(and(eq(circleMembers.circleId, circleId), eq(circleMembers.userId, userId)))
           .limit(1)
         if (!target) throw forbidden("That person is not in this circle.")
-        if (target.sharingState !== "precise") {
+        const stretch = preciseStretch(target, new Date())
+        if (!stretch) {
           throw forbidden("That member is not sharing precise location with this circle.")
         }
         const [circle] = await db
@@ -72,10 +80,15 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
           throw forbidden("This circle has location history turned off.")
         }
         // The same bound the breadcrumb history uses: nothing from before this
-        // person joined, and nothing older than the circle's own retention.
+        // person joined or last started sharing precisely, and nothing older
+        // than the circle's own retention.
         const retentionDays = circle?.settings.historyRetentionDays ?? DEFAULTS.historyRetentionDays
         earliestVisible = new Date(
-          Math.max(target.joinedAt.getTime(), Date.now() - retentionDays * 24 * 60 * 60 * 1000),
+          Math.max(
+            target.joinedAt.getTime(),
+            stretch.since?.getTime() ?? 0,
+            Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+          ),
         )
       }
 
@@ -155,6 +168,9 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
           .select({
             circleId: circleMembers.circleId,
             sharingState: circleMembers.sharingState,
+            pausedUntil: circleMembers.pausedUntil,
+            resumeToState: circleMembers.resumeToState,
+            preciseSince: circleMembers.preciseSince,
             joinedAt: circleMembers.joinedAt,
             settings: circles.settings,
           })
@@ -169,10 +185,13 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
               .where(eq(circleMembers.userId, auth.userId))
           ).map((row) => row.circleId),
         )
-        const qualifying = shared.filter(
-          (row) =>
-            mine.has(row.circleId) && row.sharingState === "precise" && row.settings.allowHistory,
-        )
+        const now = new Date()
+        const qualifying = shared.flatMap((row) => {
+          const stretch = preciseStretch(row, now)
+          return mine.has(row.circleId) && stretch && row.settings.allowHistory
+            ? [{ ...row, since: stretch.since?.getTime() ?? 0 }]
+            : []
+        })
         if (qualifying.length === 0) throw forbidden("You cannot view this trip.")
 
         // And the same lower bound, which the trips list and the breadcrumb
@@ -185,6 +204,7 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
             const retentionDays = row.settings.historyRetentionDays ?? DEFAULTS.historyRetentionDays
             return Math.max(
               row.joinedAt.getTime(),
+              row.since,
               Date.now() - retentionDays * 24 * 60 * 60 * 1000,
             )
           }),

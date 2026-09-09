@@ -28,6 +28,47 @@ export function effectiveSharingState(
 }
 
 /**
+ * Whether the member shares precisely with this circle right now, and since
+ * when: null when they do not, `since: null` when they have ever since
+ * joining, otherwise the start of the current stretch. A pause that has
+ * lapsed into precise began its stretch when it ran out.
+ */
+export function preciseStretch(
+  member: {
+    sharingState: SharingState
+    pausedUntil: Date | null
+    resumeToState: SharingState | null
+    preciseSince: Date | null
+  },
+  now: Date,
+): { since: Date | null } | null {
+  if (member.sharingState === "precise") return { since: member.preciseSince }
+  if (
+    effectiveSharingState(member.sharingState, member.pausedUntil, now, member.resumeToState) !==
+    "precise"
+  ) {
+    return null
+  }
+  return { since: member.pausedUntil }
+}
+
+/**
+ * The precise_since a row should carry once it moves to `next`, written
+ * against the row as it was before the update. Staying precise keeps the
+ * stretch; arriving at precise starts one; anything else ends it.
+ */
+export function preciseSinceAfter(next: SharingState): SQL {
+  if (next !== "precise") return sql`null`
+  return sql`case when ${circleMembers.sharingState} = 'precise'
+    then ${circleMembers.preciseSince} else now() end`
+}
+
+/** The same, for a pause that has run out and resumes to what it replaced. */
+export const preciseSinceOnLapse: SQL = sql`case
+  when coalesce(${circleMembers.resumeToState}, 'precise') = 'precise'
+  then ${circleMembers.pausedUntil} else null end`
+
+/**
  * The same rule in SQL, for read paths that have to drop rows in the database
  * rather than project them one at a time. Postgres decides "now", so no
  * JavaScript Date goes near the template.

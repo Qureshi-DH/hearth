@@ -18,7 +18,7 @@ import {
   users,
 } from "../db/schema"
 import { broadcastEvent, recordEvent } from "./feed"
-import { effectiveSharingState } from "./presence"
+import { preciseStretch } from "./presence"
 
 const MAX_POINTS_PER_PASS = 5000
 
@@ -180,7 +180,8 @@ export interface PendingBroadcast {
 /** Who may be told a journey finished, and the name to tell them. */
 interface Audience {
   name: string
-  circleIds: string[]
+  /** Each circle that may hear about trips, and since when, if not since joining. */
+  circles: { circleId: string; since: Date | null }[]
 }
 
 /** What one detection pass needs beyond the breadcrumbs themselves. */
@@ -812,20 +813,26 @@ async function claimPoints(db: Database, tripId: string, segment: Candidate[]): 
  * Tells the circles that may hear it that a journey finished.
  *
  * A distance, a top speed and "Home to School" are all things derived from
- * where somebody was, so this goes only to circles they currently share
- * precisely with, and only where the circle keeps history at all. The places
+ * where somebody was, so this goes only to circles they shared precisely with
+ * for the whole journey, and only where the circle keeps history at all. The places
  * are resolved against that circle's own, or the line would name somewhere
  * defined in a circle these members cannot see.
  */
 async function announceTrip(db: Database, pass: Pass, columns: TripColumns): Promise<void> {
   const audience = await pass.audience()
-  if (audience.circleIds.length === 0) return
+  // A circle hears about a journey only if it was allowed to watch all of it.
+  // One that was paused or approximate when the trip began would otherwise be
+  // told where it started and how far it went.
+  const circleIds = audience.circles
+    .filter((circle) => !circle.since || circle.since.getTime() <= columns.startedAt.getTime())
+    .map((circle) => circle.circleId)
+  if (circleIds.length === 0) return
 
   // Pushing a drive that finished hours ago would announce a backlog as if it
   // were happening now. The feed still gets the line, dated when it happened.
   const fresh = pass.now.getTime() - columns.endedAt.getTime() < TRIP_PUSH_FRESHNESS_MS
 
-  for (const circleId of audience.circleIds) {
+  for (const circleId of circleIds) {
     const from = placeNameIn(pass.places, circleId, {
       lat: columns.startLat,
       lon: columns.startLon,
@@ -883,6 +890,7 @@ async function loadAudience(db: Database, userId: string, now: Date): Promise<Au
       sharingState: circleMembers.sharingState,
       pausedUntil: circleMembers.pausedUntil,
       resumeToState: circleMembers.resumeToState,
+      preciseSince: circleMembers.preciseSince,
       settings: circles.settings,
     })
     .from(circleMembers)
@@ -891,14 +899,10 @@ async function loadAudience(db: Database, userId: string, now: Date): Promise<Au
 
   return {
     name: actor?.displayName ?? "Someone",
-    circleIds: rows
-      .filter(
-        (row) =>
-          row.settings.allowHistory &&
-          effectiveSharingState(row.sharingState, row.pausedUntil, now, row.resumeToState) ===
-            "precise",
-      )
-      .map((row) => row.circleId),
+    circles: rows.flatMap((row) => {
+      const stretch = row.settings.allowHistory ? preciseStretch(row, now) : null
+      return stretch ? [{ circleId: row.circleId, since: stretch.since }] : []
+    }),
   }
 }
 

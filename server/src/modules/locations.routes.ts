@@ -16,7 +16,12 @@ import { badRequest, forbidden, notFound } from "../lib/errors"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { getPushDriver } from "../runtime"
 import { ingestPoints, markHeard } from "../services/locations"
-import { effectiveSharingState, getCirclePresence, presenceIssues } from "../services/presence"
+import {
+  effectiveSharingState,
+  getCirclePresence,
+  preciseStretch,
+  presenceIssues,
+} from "../services/presence"
 import { sendControl } from "../services/control"
 import { enqueuePush, recentSilentPushes } from "../services/push"
 
@@ -587,20 +592,32 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         }
 
         const [target] = await db
-          .select({ sharingState: circleMembers.sharingState, joinedAt: circleMembers.joinedAt })
+          .select({
+            sharingState: circleMembers.sharingState,
+            pausedUntil: circleMembers.pausedUntil,
+            resumeToState: circleMembers.resumeToState,
+            preciseSince: circleMembers.preciseSince,
+            joinedAt: circleMembers.joinedAt,
+          })
           .from(circleMembers)
           .where(and(eq(circleMembers.circleId, circleId), eq(circleMembers.userId, userId)))
           .limit(1)
         if (!target) throw forbidden("That person is not in this circle.")
-        if (target.sharingState !== "precise") {
+        const stretch = preciseStretch(target, new Date())
+        if (!stretch) {
           throw forbidden("That member is not sharing precise location with this circle.")
         }
         // Accepting an invite does not hand the circle everything from before
-        // you joined, and a circle never sees further back than its own
-        // retention even when another circle's setting kept the points alive.
+        // you joined, a pause does not become visible once it is over, and a
+        // circle never sees further back than its own retention even when
+        // another circle's setting kept the points alive.
         const retentionDays = circle?.settings.historyRetentionDays ?? DEFAULTS.historyRetentionDays
         earliestVisible = new Date(
-          Math.max(target.joinedAt.getTime(), Date.now() - retentionDays * 24 * 60 * 60 * 1000),
+          Math.max(
+            target.joinedAt.getTime(),
+            stretch.since?.getTime() ?? 0,
+            Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+          ),
         )
       }
 

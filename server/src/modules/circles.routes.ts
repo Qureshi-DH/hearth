@@ -28,7 +28,11 @@ import { toPublicUser } from "../lib/serialize"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { recordEvent } from "../services/feed"
 import { acceptInvite, createInvite, inviteUrl, previewInvite } from "../services/invites"
-import { POSITION_DERIVED_EVENT_TYPES, sharesPreciselySql } from "../services/presence"
+import {
+  POSITION_DERIVED_EVENT_TYPES,
+  preciseSinceAfter,
+  sharesPreciselySql,
+} from "../services/presence"
 
 const defaultSettings = (): CircleSettingsJson => ({
   historyRetentionDays: DEFAULTS.historyRetentionDays,
@@ -632,7 +636,12 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
 
         await tx
           .update(circleMembers)
-          .set({ sharingState: request.body.sharingState, pausedUntil, resumeToState })
+          .set({
+            sharingState: request.body.sharingState,
+            pausedUntil,
+            resumeToState,
+            preciseSince: preciseSinceAfter(request.body.sharingState),
+          })
           .where(memberFilter)
 
         // The rows stay. Fences stop being evaluated for a circle the moment

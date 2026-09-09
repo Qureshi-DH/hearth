@@ -15,7 +15,7 @@ import {
 import type { AppConfig } from "../env"
 import { getPushDriver } from "../runtime"
 import { broadcastEvent, recordEvent } from "../services/feed"
-import { effectiveSharingState } from "../services/presence"
+import { effectiveSharingState, preciseSinceOnLapse } from "../services/presence"
 import {
   drainOutbox,
   enqueuePush,
@@ -604,6 +604,7 @@ async function resumeExpiredPauses(db: Database): Promise<number> {
     .update(circleMembers)
     .set({
       sharingState: sql`coalesce(${circleMembers.resumeToState}, 'precise')`,
+      preciseSince: preciseSinceOnLapse,
       pausedUntil: null,
       resumeToState: null,
     })

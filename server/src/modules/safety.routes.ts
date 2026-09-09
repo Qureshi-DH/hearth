@@ -19,7 +19,7 @@ import { toPublicUser } from "../lib/serialize"
 import { rateLimitKey, requireAuth, requireMembership } from "../plugins/auth"
 import { getBus } from "../runtime"
 import { recordEvent } from "../services/feed"
-import { effectiveSharingState, projectPresence } from "../services/presence"
+import { effectiveSharingState, preciseSinceAfter, projectPresence } from "../services/presence"
 import { enqueuePush } from "../services/push"
 
 const circleIdParam = z.object({ circleId: z.string().uuid() })
@@ -140,7 +140,12 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
           // next pause coalesces onto it, and one raised during an approximate
           // pause would make an unrelated pause weeks later resume to
           // approximate rather than to the precise state this line just set.
-          .set({ sharingState: "precise", pausedUntil: null, resumeToState: null })
+          .set({
+            sharingState: "precise",
+            preciseSince: preciseSinceAfter("precise"),
+            pausedUntil: null,
+            resumeToState: null,
+          })
           .where(
             and(
               eq(circleMembers.circleId, membership.circleId),

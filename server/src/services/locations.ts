@@ -24,7 +24,7 @@ import { circleTopic } from "../lib/bus"
 import { getBus } from "../runtime"
 import { recordEvent } from "./feed"
 import { evaluateGeofenceBatch } from "./geofence"
-import { effectiveSharingState, loadRawPresenceByCircle } from "./presence"
+import { effectiveSharingState, loadRawPresenceByCircle, preciseSinceOnLapse } from "./presence"
 
 /** Fixes older than this are almost certainly a buggy client clock. */
 const MAX_BACKDATE_MS = 7 * 24 * 60 * 60 * 1000
@@ -976,6 +976,7 @@ export async function resumeExpiredPauses(db: Database, userId: string, now: Dat
     .update(circleMembers)
     .set({
       sharingState: sql`coalesce(${circleMembers.resumeToState}, 'precise')`,
+      preciseSince: preciseSinceOnLapse,
       pausedUntil: null,
       resumeToState: null,
     })
