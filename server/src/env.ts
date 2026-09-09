@@ -113,7 +113,12 @@ export interface AppConfig extends RawEnv {
 let cached: AppConfig | null = null
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
-  const parsed = schema.safeParse(source)
+  // `ADMIN_NAME=` in a .env file, or an empty compose variable, means "not
+  // set". Parsed as an empty string it fails validation and the server never
+  // boots, which is the first thing a new self-hoster would meet.
+  const parsed = schema.safeParse(
+    Object.fromEntries(Object.entries(source).filter(([, value]) => value !== "")),
+  )
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((issue) => `  - ${issue.path.join(".") || "(root)"}: ${issue.message}`)

@@ -109,8 +109,8 @@ JWT_SECRET=$(openssl rand -base64 48)   # paste the output
 PUBLIC_URL=https://hearth.example.com   # where phones will reach you
 ADMIN_EMAIL=you@example.com             # your account
 ADMIN_PASSWORD=a-long-passphrase        # at least 10 characters
-POSTGRES_PASSWORD=$(openssl rand -base64 24)
-S3_SECRET_ACCESS_KEY=$(openssl rand -base64 24)
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+S3_SECRET_ACCESS_KEY=$(openssl rand -hex 24)
 ```
 
 Compose refuses to start until the last two are set, so there is no default

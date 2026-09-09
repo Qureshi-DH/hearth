@@ -40,8 +40,8 @@ JWT_SECRET=            # openssl rand -base64 48, then paste the output
 PUBLIC_URL=http://192.168.1.10:4000   # the address phones will type
 ADMIN_EMAIL=you@example.com
 ADMIN_PASSWORD=a-long-passphrase      # at least 10 characters
-POSTGRES_PASSWORD=     # openssl rand -base64 24
-S3_SECRET_ACCESS_KEY=  # openssl rand -base64 24
+POSTGRES_PASSWORD=     # openssl rand -hex 24
+S3_SECRET_ACCESS_KEY=  # openssl rand -hex 24
 ```
 
 Compose refuses to start until `POSTGRES_PASSWORD` and `S3_SECRET_ACCESS_KEY`

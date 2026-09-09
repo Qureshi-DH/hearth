@@ -106,6 +106,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error("Failed to start Hearth:", error)
+  // The message alone. Some startup errors carry the connection string, with
+  // its password, and this line ends up in `docker logs`.
+  console.error("Failed to start Hearth:", error instanceof Error ? error.message : error)
   process.exit(1)
 })
