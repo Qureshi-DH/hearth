@@ -1251,6 +1251,54 @@ describe("account ownership", () => {
     expect(circles.json()[0].memberCount).toBe(1)
   })
 
+  it("leaves out places created in a circle the member has since left", async () => {
+    const owner = await registerUser(ctx.app, { displayName: "Owner" })
+    const former = await registerUser(ctx.app, { displayName: "Former" })
+    const circle = await createCircle(owner.headers)
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/invites/${circle.invite.code}/accept`,
+      headers: former.headers,
+    })
+    const created = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: former.headers,
+      payload: { name: "Home", lat: HOME.lat, lon: HOME.lon, radiusMeters: 150 },
+    })
+    expect(created.statusCode).toBe(201)
+
+    const before = await ctx.app.inject({
+      method: "GET",
+      url: "/api/v1/me/export",
+      headers: former.headers,
+    })
+    expect(before.json().placesCreated).toHaveLength(1)
+
+    const left = await ctx.app.inject({
+      method: "DELETE",
+      url: `/api/v1/circles/${circle.id}/members/${former.user.id}`,
+      headers: former.headers,
+    })
+    expect(left.statusCode).toBe(200)
+
+    // The family moves Home to the new address.
+    await ctx.app.inject({
+      method: "PATCH",
+      url: `/api/v1/circles/${circle.id}/places/${(created.json() as { id: string }).id}`,
+      headers: owner.headers,
+      payload: { lat: SCHOOL.lat, lon: SCHOOL.lon },
+    })
+
+    const after = await ctx.app.inject({
+      method: "GET",
+      url: "/api/v1/me/export",
+      headers: former.headers,
+    })
+    expect(after.statusCode).toBe(200)
+    expect(after.json().placesCreated).toEqual([])
+  })
+
   it("streams a multi-point history as one valid export document", async () => {
     const walker = await registerUser(ctx.app, { displayName: "Walker" })
     await uploadFixes(walker.headers, [

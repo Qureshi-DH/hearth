@@ -566,7 +566,18 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         db.select().from(checkIns).where(eq(checkIns.userId, user.id)),
       ])
 
-      const placesCreated = await db.select().from(places).where(eq(places.createdBy, user.id))
+      // Only places in circles this person still belongs to. A place they
+      // created before leaving is the circle's now, and the family may have
+      // moved it to an address the former member has no business learning.
+      const placesCreated = await db
+        .select({ place: places })
+        .from(places)
+        .innerJoin(
+          circleMembers,
+          and(eq(circleMembers.circleId, places.circleId), eq(circleMembers.userId, user.id)),
+        )
+        .where(eq(places.createdBy, user.id))
+        .then((rows) => rows.map((row) => row.place))
 
       /**
        * Every other part of this document is bounded by how many circles and
