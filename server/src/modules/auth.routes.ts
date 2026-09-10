@@ -27,6 +27,7 @@ import {
   unauthorized,
 } from "../lib/errors"
 import { avatarColorFor, normalizeEmail } from "../lib/ids"
+import { clientBucket } from "../lib/net"
 import { hashPassword, validatePasswordStrength, verifyPassword } from "../lib/password"
 import { toCurrentUser, toSessionSummary } from "../lib/serialize"
 import { loadCurrentUser, requireAuth } from "../plugins/auth"
@@ -134,7 +135,21 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     keyGenerator: (request) => {
       const body = request.body as { email?: unknown } | undefined
       const email = typeof body?.email === "string" ? normalizeEmail(body.email) : ""
-      return `login:${email}:${request.ip}`
+      return `login:${email}:${clientBucket(request.ip)}`
+    },
+  })
+
+  // And a budget per account across every address, so a password cannot be
+  // worked through slowly from a botnet either. Generous, because anyone who
+  // knows the email can spend it: running out stops new sign-ins to that
+  // account for the hour and touches no phone that is already signed in.
+  const accountAttempts = app.createRateLimit({
+    max: 100,
+    timeWindow: "1 hour",
+    keyGenerator: (request) => {
+      const body = request.body as { email?: unknown } | undefined
+      const email = typeof body?.email === "string" ? normalizeEmail(body.email) : ""
+      return `login-account:${email}`
     },
   })
 
@@ -262,6 +277,10 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       const attempt = await loginAttempts(request)
       if (!attempt.isAllowed && attempt.isExceeded) {
         throw tooManyRequests("Too many sign-in attempts for this account. Try again shortly.")
+      }
+      const overall = await accountAttempts(request)
+      if (!overall.isAllowed && overall.isExceeded) {
+        throw tooManyRequests("Too many sign-in attempts for this account. Try again in an hour.")
       }
 
       const [user] = await db

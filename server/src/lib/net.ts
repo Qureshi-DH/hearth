@@ -64,3 +64,23 @@ export const publicOnlyAgent = new Agent({
     })
   },
 })
+
+/**
+ * The address a rate limit should count a client under. An IPv6 host usually
+ * owns a whole /64, and counting each address in it separately hands anyone
+ * with one VPS an unlimited supply of fresh buckets.
+ */
+export function clientBucket(address: string): string {
+  const value = address.toLowerCase().replace(/^::ffff:(?=\d+\.)/, "")
+  if (isIP(value) !== 6) return value
+  const [head = "", tail = ""] = value.split("::")
+  const left = head ? head.split(":") : []
+  const right = tail ? tail.split(":") : []
+  const groups = value.includes("::")
+    ? [...left, ...Array(8 - left.length - right.length).fill("0"), ...right]
+    : left
+  return `${groups
+    .slice(0, 4)
+    .map((group) => group.replace(/^0+(?=.)/, ""))
+    .join(":")}::/64`
+}

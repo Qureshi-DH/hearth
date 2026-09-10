@@ -8,6 +8,7 @@ import { getDb } from "../db/client"
 import { circleMembers, sessions, users } from "../db/schema"
 import { getConfig } from "../env"
 import { forbidden, unauthorized } from "../lib/errors"
+import { clientBucket } from "../lib/net"
 
 export interface AuthContext {
   userId: string
@@ -67,12 +68,12 @@ export function isWebsocketUpgrade(request: FastifyRequest): boolean {
  */
 export function rateLimitKey(app: FastifyInstance, request: FastifyRequest): string {
   const token = extractToken(request)
-  if (!token) return `ip:${request.ip}`
+  if (!token) return `ip:${clientBucket(request.ip)}`
   try {
     const claims = app.jwt.verify<AccessTokenClaims>(token)
     return `user:${claims.sub}`
   } catch {
-    return `ip:${request.ip}`
+    return `ip:${clientBucket(request.ip)}`
   }
 }
 

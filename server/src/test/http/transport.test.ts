@@ -198,6 +198,30 @@ describe("the login throttle behind a real proxy", () => {
   })
 })
 
+describe("the login throttle across an IPv6 network", () => {
+  it("counts every address in one /64 as the same client", async () => {
+    const user = await registerUser(ctx.app)
+
+    const codes: number[] = []
+    for (let n = 1; n <= 10; n += 1) {
+      const response = await ctx.app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        remoteAddress: `2001:db8:1234:5678::${n.toString(16)}`,
+        payload: {
+          email: user.email,
+          password: "not-the-password",
+          device: { deviceId: "throttle-probe-v6", deviceName: "Probe", platform: "ios" },
+        },
+      })
+      codes.push(response.statusCode)
+    }
+
+    expect(codes.slice(0, 8)).toEqual(Array(8).fill(401))
+    expect(codes.slice(8)).toEqual([429, 429])
+  })
+})
+
 describe("logger scrubbing outside production", () => {
   afterEach(() => {
     resetConfig()
