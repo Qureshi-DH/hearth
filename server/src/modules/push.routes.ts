@@ -10,6 +10,7 @@ import { sessions } from "../db/schema"
 import { getConfig } from "../env"
 import { badRequest } from "../lib/errors"
 import { sha256 } from "../lib/ids"
+import { isPrivateAddress } from "../lib/net"
 import { requireAuth } from "../plugins/auth"
 import { enqueuePush } from "../services/push"
 
@@ -173,21 +174,4 @@ async function assertReachableSubscription(token: string): Promise<void> {
   if (addresses.some((entry) => isPrivateAddress(entry.address))) {
     throw badRequest("That web push endpoint is not a public address.")
   }
-}
-
-function isPrivateAddress(address: string): boolean {
-  const value = address.toLowerCase().replace(/^::ffff:/, "")
-  const octets = value.split(".").map(Number)
-  if (octets.length === 4 && octets.every((octet) => Number.isInteger(octet))) {
-    const [first = -1, second = -1] = octets
-    if (first === 0 || first === 10 || first === 127) return true
-    if (first === 169 && second === 254) return true
-    if (first === 172 && second >= 16 && second <= 31) return true
-    if (first === 192 && second === 168) return true
-    if (first === 100 && second >= 64 && second <= 127) return true
-    return false
-  }
-  if (value === "::" || value === "::1") return true
-  // Unique local (fc00::/7) and link local (fe80::/10).
-  return /^f[cd]/.test(value) || /^fe[89ab]/.test(value)
 }

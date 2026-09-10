@@ -3,8 +3,10 @@ import { MUTABLE_EVENT_TYPES, type PushProvider } from "@hearth/shared"
 import { and, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
-import { circleMembers, notificationOutbox, sessions, type OutboxRow } from "../db/schema"
+import { circleMembers, events, notificationOutbox, sessions, type OutboxRow } from "../db/schema"
+import { effectiveSharingState } from "./presence"
 import type { AppConfig } from "../env"
+import { publicOnlyAgent } from "../lib/net"
 
 export interface PushMessage {
   userId: string
@@ -27,6 +29,8 @@ export interface PushMessage {
    * the app could set for itself is allowed to do.
    */
   silent?: boolean
+  /** When the row was queued, so a silent push's lifetime runs from then and not from each retry. */
+  queuedAt?: Date
 }
 
 export interface DeliveryTarget {
@@ -69,6 +73,14 @@ const SILENT_TTL_SECONDS: Record<string, number> = {
 }
 const DEFAULT_SILENT_TTL_SECONDS = 300
 
+/**
+ * The longest one provider call may take. A provider, or a web push endpoint
+ * somebody registered, that accepts the connection and never answers would
+ * otherwise hold a worker for good, and with it every job the scheduler runs
+ * after the drain.
+ */
+const SEND_TIMEOUT_MS = 15_000
+
 function silentTtlSeconds(data: Record<string, unknown> | undefined): number {
   const type = typeof data?.type === "string" ? data.type : ""
   return SILENT_TTL_SECONDS[type] ?? DEFAULT_SILENT_TTL_SECONDS
@@ -105,16 +117,18 @@ class ExpoDriver implements PushDriver {
     if (this.accessToken) headers.authorization = `Bearer ${this.accessToken}`
 
     const ttl = silentTtlSeconds(message.data)
+    const queuedAt = Math.floor((message.queuedAt?.getTime() ?? Date.now()) / 1000)
     const response = await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
       headers,
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
       body: JSON.stringify([
         message.silent
           ? {
               to: target.token,
               data: message.data ?? {},
               ttl,
-              expiration: Math.floor(Date.now() / 1000) + ttl,
+              expiration: queuedAt + ttl,
               // Apple documents a content-available push sent at priority 10
               // as an error and throttles it; 5, which expo calls normal, is
               // what a background push is meant to travel at. Android stays
@@ -182,6 +196,7 @@ class NtfyDriver implements PushDriver {
     const response = await fetch(this.baseUrl.replace(/\/+$/, ""), {
       method: "POST",
       headers,
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
       body: JSON.stringify({
         topic: target.token,
         title: message.title,
@@ -231,7 +246,14 @@ class WebPushDriver implements PushDriver {
           body: message.body,
           data: message.data ?? {},
         }),
-        { urgency: message.channel === "sos" ? "high" : "normal", TTL: 60 * 60 },
+        {
+          urgency: message.channel === "sos" ? "high" : "normal",
+          TTL: 60 * 60,
+          timeout: SEND_TIMEOUT_MS,
+          // Checked at connect time: the endpoint's name may have been pointed
+          // at an internal address since it was registered.
+          agent: publicOnlyAgent,
+        },
       )
       return { ok: true }
     } catch (error) {
@@ -306,6 +328,9 @@ export async function recentSilentPushes(
         sql`${notificationOutbox.data}->>'type' = ${type}`,
         gt(notificationOutbox.createdAt, since),
         inArray(notificationOutbox.status, ["pending", "sending", "sent"]),
+        // One the provider already turned away is not on its way to the phone,
+        // and must not stop a fresh ask being sent in its place.
+        sql`not (${notificationOutbox.status} = 'pending' and ${notificationOutbox.attempts} > 0)`,
       ),
     )
     .orderBy(desc(notificationOutbox.createdAt))
@@ -394,7 +419,7 @@ async function runWithConcurrency<T>(
 export async function drainOutbox(
   db: Database,
   driver: PushDriver,
-  options: { batchSize?: number; concurrency?: number; now?: Date } = {},
+  options: { batchSize?: number; concurrency?: number; now?: Date; sendTimeoutMs?: number } = {},
 ): Promise<DrainSummary> {
   const batchSize = options.batchSize ?? 50
   const concurrency = options.concurrency ?? DEFAULT_SEND_CONCURRENCY
@@ -427,7 +452,8 @@ export async function drainOutbox(
     .sort((a, b) => Number(b.priority === "high") - Number(a.priority === "high") || a.id - b.id)
   if (allClaimed.length === 0) return summary
 
-  const claimed = await dropRowsForFormerMembers(db, allClaimed, now, summary)
+  const members = await dropRowsForFormerMembers(db, allClaimed, now, summary)
+  const claimed = await dropPlaceNewsNoLongerShared(db, members, now, summary)
   if (claimed.length === 0) return summary
 
   if (driver.provider === "none") {
@@ -477,6 +503,16 @@ export async function drainOutbox(
     byUser.set(row.userId, list)
   }
 
+  // Every write below is conditional on this claim still owning the row. A
+  // batch that runs long can have its rows requeued and delivered by another
+  // claimant, and this one must not then overwrite that result.
+  const owned = (row: OutboxRow) =>
+    and(
+      eq(notificationOutbox.id, row.id),
+      eq(notificationOutbox.status, "sending"),
+      eq(notificationOutbox.nextAttemptAt, row.nextAttemptAt),
+    )
+
   const deliver = async (row: OutboxRow) => {
     summary.processed += 1
     const targets = byUser.get(row.userId) ?? []
@@ -485,7 +521,7 @@ export async function drainOutbox(
       await db
         .update(notificationOutbox)
         .set({ status: "skipped", sentAt: now, lastError: "no registered device" })
-        .where(eq(notificationOutbox.id, row.id))
+        .where(owned(row))
       summary.skipped += 1
       return
     }
@@ -494,8 +530,20 @@ export async function drainOutbox(
       await db
         .update(notificationOutbox)
         .set({ status: "skipped", sentAt: now, lastError: "silent wake needs the expo provider" })
-        .where(eq(notificationOutbox.id, row.id))
+        .where(owned(row))
       summary.skipped += 1
+      return
+    }
+
+    // A wake or a watch answers a question somebody asked moments ago. Sent
+    // after its lifetime it turns the GPS on for a viewer who has long gone.
+    const expiresAt = row.createdAt.getTime() + silentTtlSeconds(row.data) * 1000
+    if (row.silent && now.getTime() >= expiresAt) {
+      await db
+        .update(notificationOutbox)
+        .set({ status: "failed", lastError: "expired before it could be delivered" })
+        .where(owned(row))
+      summary.failed += 1
       return
     }
 
@@ -508,12 +556,13 @@ export async function drainOutbox(
       channel: row.channel,
       priority: row.priority,
       silent: row.silent,
+      queuedAt: row.createdAt,
     }
 
     const results = await Promise.all(
       targets.map(async (target) => {
         try {
-          return await driver.send(target, message)
+          return await withDeadline(driver.send(target, message), options.sendTimeoutMs)
         } catch (error) {
           return { ok: false, error: (error as Error).message } satisfies DeliveryResult
         }
@@ -534,15 +583,16 @@ export async function drainOutbox(
       await db
         .update(notificationOutbox)
         .set({ status: "sent", sentAt: new Date(), attempts: row.attempts + 1 })
-        .where(eq(notificationOutbox.id, row.id))
+        .where(owned(row))
       summary.sent += 1
       return
     }
 
     const attempts = row.attempts + 1
     const lastError = results.find((result) => result.error)?.error ?? "delivery failed"
-    const exhausted = attempts >= MAX_ATTEMPTS
     const delaySeconds = BACKOFF[Math.min(attempts - 1, BACKOFF.length - 1)] ?? 3600
+    const retryAt = Date.now() + delaySeconds * 1000
+    const exhausted = attempts >= MAX_ATTEMPTS || (row.silent && retryAt >= expiresAt)
 
     await db
       .update(notificationOutbox)
@@ -550,9 +600,9 @@ export async function drainOutbox(
         status: exhausted ? "failed" : "pending",
         attempts,
         lastError,
-        nextAttemptAt: new Date(Date.now() + delaySeconds * 1000),
+        nextAttemptAt: new Date(retryAt),
       })
-      .where(eq(notificationOutbox.id, row.id))
+      .where(owned(row))
     summary.failed += 1
   }
 
@@ -608,6 +658,96 @@ async function dropRowsForFormerMembers(
   summary.skipped += gone.length
 
   const dropped = new Set(gone.map((row) => row.id))
+  return claimed.filter((row) => !dropped.has(row.id))
+}
+
+function withDeadline(
+  work: Promise<DeliveryResult>,
+  ms: number = SEND_TIMEOUT_MS,
+): Promise<DeliveryResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<DeliveryResult>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ ok: false, error: `no answer from the push provider in ${ms / 1000} s` }),
+      ms,
+    )
+  })
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer))
+}
+
+/**
+ * News of where somebody went is dropped if they stopped sharing precisely
+ * with that circle while it waited in the outbox, the same way the feed stops
+ * showing it. A crash alert is not in this list: a family is told about a
+ * possible incident whatever was switched a moment before it.
+ */
+const PLACE_NEWS = new Set(["place_arrive", "place_leave", "speed_alert", "trip_completed"])
+
+async function dropPlaceNewsNoLongerShared(
+  db: Database,
+  claimed: OutboxRow[],
+  now: Date,
+  summary: DrainSummary,
+): Promise<OutboxRow[]> {
+  const news = claimed.filter(
+    (row) =>
+      row.circleId &&
+      PLACE_NEWS.has(String(row.data.type)) &&
+      Number.isFinite(Number(row.data.eventId)),
+  )
+  if (news.length === 0) return claimed
+
+  const actors = await db
+    .select({ id: events.id, actor: events.actorUserId })
+    .from(events)
+    .where(inArray(events.id, [...new Set(news.map((row) => Number(row.data.eventId)))]))
+  const actorOf = new Map(actors.map((row) => [row.id, row.actor]))
+  const actorIds = [...new Set(actors.map((row) => row.actor).filter((id): id is string => !!id))]
+  const states =
+    actorIds.length === 0
+      ? []
+      : await db
+          .select({
+            circleId: circleMembers.circleId,
+            userId: circleMembers.userId,
+            sharingState: circleMembers.sharingState,
+            pausedUntil: circleMembers.pausedUntil,
+            resumeToState: circleMembers.resumeToState,
+          })
+          .from(circleMembers)
+          .where(inArray(circleMembers.userId, actorIds))
+  const precise = new Set(
+    states
+      .filter(
+        (row) =>
+          effectiveSharingState(row.sharingState, row.pausedUntil, now, row.resumeToState) ===
+          "precise",
+      )
+      .map((row) => `${row.userId}:${row.circleId}`),
+  )
+
+  const stale = news.filter((row) => {
+    const actor = actorOf.get(Number(row.data.eventId))
+    return actor != null && !precise.has(`${actor}:${row.circleId}`)
+  })
+  if (stale.length === 0) return claimed
+
+  await db
+    .update(notificationOutbox)
+    .set({
+      status: "skipped",
+      sentAt: now,
+      lastError: "no longer shared precisely with that circle",
+    })
+    .where(
+      inArray(
+        notificationOutbox.id,
+        stale.map((row) => row.id),
+      ),
+    )
+  summary.processed += stale.length
+  summary.skipped += stale.length
+  const dropped = new Set(stale.map((row) => row.id))
   return claimed.filter((row) => !dropped.has(row.id))
 }
 

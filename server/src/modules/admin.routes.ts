@@ -316,6 +316,7 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request) => {
+      const auth = requireAuth(request)
       const rows = await db
         .select()
         .from(notificationOutbox)
@@ -325,11 +326,15 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         .orderBy(desc(notificationOutbox.id))
         .limit(request.query.limit)
 
+      // Being a server admin is not being in every circle. The text of a
+      // notification says where somebody arrived and what was said to them,
+      // so it is shown only for the admin's own; the rest is enough to debug
+      // a provider.
       return rows.map((row) => ({
         id: String(row.id),
         userId: row.userId,
-        title: row.title,
-        body: row.body,
+        title: row.userId === auth.userId ? row.title : null,
+        body: row.userId === auth.userId ? row.body : null,
         channel: row.channel,
         status: row.status,
         attempts: row.attempts,
