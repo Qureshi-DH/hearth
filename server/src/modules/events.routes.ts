@@ -1,12 +1,17 @@
-import { and, desc, eq, getTableColumns, gt, notInArray, or, sql } from "drizzle-orm"
+import type { FeedEvent } from "@hearth/shared"
+import { and, desc, eq, getTableColumns, gt, inArray, notInArray, or, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
-import { getDb } from "../db/client"
+import { getDb, type Database } from "../db/client"
 import { circleMembers, events } from "../db/schema"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { hydrateEvents } from "../services/feed"
-import { POSITION_DERIVED_EVENT_TYPES, sharesPreciselySql } from "../services/presence"
+import {
+  effectiveSharingState,
+  POSITION_DERIVED_EVENT_TYPES,
+  sharesPreciselySql,
+} from "../services/presence"
 
 const circleIdParam = z.object({ circleId: z.string().uuid() })
 
@@ -53,6 +58,60 @@ const readableBy = (viewerId: string) =>
     sharesPreciselySql(events.circleId, events.actorUserId),
   )
 
+/**
+ * A check-in says "I'm fine" and, when it was written, where. The "I'm fine"
+ * survives a change of sharing state; the where follows the member's state
+ * now, the same way the check-ins list and the map do. Somebody who stopped
+ * sharing precisely, or left, still checked in, just not at a place.
+ */
+async function withCheckInsProjected(
+  db: Database,
+  circleId: string,
+  viewerId: string,
+  items: FeedEvent[],
+): Promise<FeedEvent[]> {
+  const others = items.filter(
+    (item) => item.type === "check_in" && item.actor && item.actor.id !== viewerId,
+  )
+  if (others.length === 0) return items
+
+  const now = new Date()
+  const rows = await db
+    .select({
+      userId: circleMembers.userId,
+      sharingState: circleMembers.sharingState,
+      pausedUntil: circleMembers.pausedUntil,
+      resumeToState: circleMembers.resumeToState,
+    })
+    .from(circleMembers)
+    .where(
+      and(
+        eq(circleMembers.circleId, circleId),
+        inArray(circleMembers.userId, [...new Set(others.map((item) => item.actor!.id))]),
+      ),
+    )
+  const precise = new Set(
+    rows
+      .filter(
+        (row) =>
+          effectiveSharingState(row.sharingState, row.pausedUntil, now, row.resumeToState) ===
+          "precise",
+      )
+      .map((row) => row.userId),
+  )
+
+  return items.map((item) => {
+    if (item.type !== "check_in" || !item.actor || item.actor.id === viewerId) return item
+    if (precise.has(item.actor.id)) return item
+    const payload = (item.payload ?? {}) as Record<string, unknown>
+    return {
+      ...item,
+      payload: { ...payload, lat: null, lon: null, placeId: null },
+      summary: `${item.actor.displayName} checked in`,
+    }
+  })
+}
+
 export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
 
@@ -97,9 +156,14 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
         .limit(limit + 1)
 
       const page = rows.slice(0, limit)
-      const items = await hydrateEvents(
+      const items = await withCheckInsProjected(
         db,
-        page.map(({ micros: _micros, ...row }) => row),
+        membership.circleId,
+        auth.userId,
+        await hydrateEvents(
+          db,
+          page.map(({ micros: _micros, ...row }) => row),
+        ),
       )
       const last = page[page.length - 1]
 

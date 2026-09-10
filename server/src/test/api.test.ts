@@ -1050,6 +1050,47 @@ describe("places and geofencing", () => {
 })
 
 describe("safety", () => {
+  it("keeps a check-in in the feed but drops its place once sharing is not precise", async () => {
+    const owner = await registerUser(ctx.app, { displayName: "Amina" })
+    const circle = await createCircle(owner.headers)
+    const teen = await registerUser(ctx.app, {
+      displayName: "Sami",
+      inviteCode: circle.invite.code,
+    })
+    const home = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/places`,
+      headers: owner.headers,
+      payload: { name: "Home", lat: HOME.lat, lon: HOME.lon, radiusMeters: 150 },
+    })
+    expect(home.statusCode).toBe(201)
+
+    const checkIn = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/check-in`,
+      headers: teen.headers,
+      payload: { lat: HOME.lat, lon: HOME.lon },
+    })
+    expect(checkIn.statusCode).toBe(201)
+    const seenWhilePrecise = (await feedItems(owner.headers, circle.id)).find(
+      (item) => item.type === "check_in",
+    )
+    expect(seenWhilePrecise?.summary).toBe("Sami checked in at Home")
+
+    await ctx.app.inject({
+      method: "PATCH",
+      url: `/api/v1/circles/${circle.id}/sharing`,
+      headers: teen.headers,
+      payload: { sharingState: "approximate" },
+    })
+
+    const later = (await feedItems(owner.headers, circle.id)).find(
+      (item) => item.type === "check_in",
+    )
+    expect(later?.summary).toBe("Sami checked in")
+    expect(later?.payload).toMatchObject({ lat: null, lon: null, placeId: null })
+  })
+
   it("raises and resolves an SOS, un-pausing the sender's location", async () => {
     const alice = await registerUser(ctx.app, { displayName: "Alice" })
     const bob = await registerUser(ctx.app, { displayName: "Bob" })

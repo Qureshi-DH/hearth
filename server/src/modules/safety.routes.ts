@@ -497,9 +497,9 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .limit(1)
       const name = singleLine(actor?.displayName ?? "") || "Someone"
 
-      // The row keeps what she reported. The feed keeps what this circle is
-      // allowed to know, and it keeps it forever, so the coarsening happens
-      // before the write rather than on the way out.
+      // The row keeps what she reported. The feed line is coarsened to what
+      // this circle may know now, and the events route strips its place again
+      // on every read if she later stops sharing precisely.
       const seen = projectCheckIn(
         shared,
         { lat: created.lat, lon: created.lon },

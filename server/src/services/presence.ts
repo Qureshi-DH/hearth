@@ -95,8 +95,9 @@ export function sharesPreciselySql(circleId: SQL | AnyColumn, userId: SQL | AnyC
  * Feed rows that only exist because the server watched somebody move. A circle
  * they share approximately with, or not at all, must not go on reading the
  * trail they built while they were precise, and one they left must not keep it
- * at all. Everything else in the feed (joins, messages, check-ins, battery)
- * survives a change of sharing state, because none of it says where anyone is.
+ * at all. Everything else in the feed (joins, messages, battery) survives a
+ * change of sharing state, because none of it says where anyone is. A
+ * check-in survives too, but the events route strips its place when read.
  */
 export const POSITION_DERIVED_EVENT_TYPES = [
   "place_arrive",
