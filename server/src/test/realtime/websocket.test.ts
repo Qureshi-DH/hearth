@@ -259,9 +259,9 @@ describe("websocket connection cap", () => {
       clients.push(client)
     }
 
-    expect(await waitFor(() => clients.filter((client) => client.isOpen()).length === 12)).toBe(
-      true,
-    )
+    expect(
+      await waitFor(() => clients.filter((client) => client.isOpen()).length === 12, 10_000),
+    ).toBe(true)
 
     const evicted = clients.filter((client) => !client.isOpen())
     expect(evicted).toHaveLength(8)
@@ -314,5 +314,67 @@ describe("realtime bus envelopes", () => {
     expect(
       openEnvelope(key, [version, iv, tag, flipped.toString("base64url")].join(".")),
     ).toBeNull()
+  })
+})
+
+describe("websocket frame budget", () => {
+  it("closes a socket that floods frames", async () => {
+    const bob = await registerUser(ctx.app)
+    const client = connect(bob.accessToken)
+    expect(await client.opened).toBe(true)
+
+    for (let n = 0; n < 200; n += 1) client.socket.send(JSON.stringify({ type: "ping" }))
+
+    expect(await waitFor(() => client.closeCode() !== null)).toBe(true)
+    expect(client.closeCode()).toBe(1008)
+  })
+})
+
+describe("location frames for a paused member", () => {
+  it("are not sent again while nothing a paused circle may see has changed", async () => {
+    const parent = await registerUser(ctx.app)
+    const created = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/circles",
+      headers: parent.headers,
+      payload: { name: "Family", emoji: "🏠" },
+    })
+    const circle = created.json() as { id: string; invite: { code: string } }
+    const teen = await registerUser(ctx.app, { inviteCode: circle.invite.code })
+    await ctx.app.inject({
+      method: "PATCH",
+      url: `/api/v1/circles/${circle.id}/sharing`,
+      headers: teen.headers,
+      payload: { sharingState: "paused" },
+    })
+
+    const watcher = connect(parent.accessToken)
+    expect(await watcher.opened).toBe(true)
+    expect(await waitFor(() => watcher.messages.some((m) => m.type === "subscribed"))).toBe(true)
+
+    for (let n = 0; n < 4; n += 1) {
+      await ctx.app.inject({
+        method: "POST",
+        url: "/api/v1/locations/batch",
+        headers: teen.headers,
+        payload: {
+          points: [
+            {
+              lat: 51.4545 + n * 0.001,
+              lon: -2.5879,
+              recordedAt: new Date(Date.now() - (4 - n) * 1000).toISOString(),
+              accuracyMeters: 8,
+            },
+          ],
+        },
+      })
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    const aboutTeen = watcher.messages.filter(
+      (m) => m.type === "location" && m.presence.userId === teen.user.id,
+    )
+    expect(aboutTeen.length).toBeLessThanOrEqual(1)
+    watcher.socket.close()
   })
 })

@@ -30,6 +30,13 @@ const CLOSE_TOO_MANY = 4429
 /** Room for a subscribe and a ping or two sent before the connect queries finish. */
 const MAX_PENDING_FRAMES = 16
 
+/** Far above what the app sends, far below what it takes to load the server. */
+const FRAMES_PER_SECOND = 10
+const FRAME_BURST = 40
+
+/** How often a control socket's frames refresh its stamp on the presence row. */
+const CONTROL_STAMP_EVERY_MS = 30_000
+
 const resolver = alias(users, "resolver")
 
 /** The raiser's membership of the circle the alert belongs to, which may be gone. */
@@ -97,6 +104,9 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
     let closed = false
     // Whether this socket is the phone's control channel; see services/control.
     let isControl = false
+    let controlStampedAt = 0
+    /** The last location frame this socket was sent for each member, by circle. */
+    const lastLocation = new Map<string, string>()
     const disposers: Array<() => void> = []
     const onClose = (dispose: () => void) => {
       if (closed) dispose()
@@ -113,7 +123,22 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
     // could plausibly mean to send in that window.
     const pending: Buffer[] = []
     let acceptingFrames = false
+    // A client sends a handful of frames a minute. A socket flooding them is
+    // closed rather than allowed to turn each one into work on the server.
+    let frameAllowance = FRAME_BURST
+    let allowanceAt = Date.now()
     socket.on("message", (raw: Buffer) => {
+      const now = Date.now()
+      frameAllowance = Math.min(
+        FRAME_BURST,
+        frameAllowance + ((now - allowanceAt) / 1000) * FRAMES_PER_SECOND,
+      )
+      allowanceAt = now
+      if (frameAllowance < 1) {
+        socket.close(1008, "too many frames")
+        return
+      }
+      frameAllowance -= 1
       if (acceptingFrames) handleFrame(raw)
       else if (pending.length < MAX_PENDING_FRAMES) pending.push(raw)
     })
@@ -256,7 +281,16 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
               ? projectCirclePresence(raw, userId)
               : await getCirclePresence(db, circleId!, userId)
             const presence = presences.find((entry) => entry.userId === payload.userId)
-            if (presence) send({ type: "location", circleId: circleId!, presence })
+            if (!presence) break
+            // A frame identical to the last is news of nothing but the upload
+            // itself. A paused member's projection never changes, so without
+            // this a paused circle could read "moving now" and "stopped at
+            // 14:32" off the cadence of empty frames.
+            const key = `${circleId}:${presence.userId}`
+            const frame = JSON.stringify(presence)
+            if (lastLocation.get(key) === frame) break
+            lastLocation.set(key, frame)
+            send({ type: "location", circleId: circleId!, presence })
             break
           }
           case "event": {
@@ -454,6 +488,13 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
               }
             })
           }
+          // The stamp is good for minutes, so writing it for every frame buys
+          // nothing and lets one socket queue unlimited upserts on one row.
+          if (Date.now() - controlStampedAt < CONTROL_STAMP_EVERY_MS) {
+            send({ type: "control", command: "ready" })
+            return
+          }
+          controlStampedAt = Date.now()
           void markControlSeen(db, userId)
             .then(() => send({ type: "control", command: "ready" }))
             .catch((error) => request.log.warn({ err: error }, "control channel stamp failed"))
