@@ -518,6 +518,75 @@ describe("circles and invites", () => {
   })
 })
 
+describe("removal and rejoining", () => {
+  const accept = (headers: Record<string, string>, code: string) =>
+    ctx.app.inject({ method: "POST", url: `/api/v1/invites/${code}/accept`, headers })
+
+  it("keeps a removed member out of old links but lets a new invite bring them back", async () => {
+    const owner = await registerUser(ctx.app)
+    const circle = await createCircle(owner.headers)
+    const ex = await registerUser(ctx.app)
+    expect((await accept(ex.headers, circle.invite.code)).statusCode).toBe(200)
+
+    const removed = await ctx.app.inject({
+      method: "DELETE",
+      url: `/api/v1/circles/${circle.id}/members/${ex.user.id}`,
+      headers: owner.headers,
+    })
+    expect(removed.statusCode).toBe(200)
+    expect((await accept(ex.headers, circle.invite.code)).statusCode).toBe(403)
+
+    const fresh = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/invites`,
+      headers: owner.headers,
+      payload: { role: "member" },
+    })
+    expect(fresh.statusCode).toBe(201)
+    const code = (fresh.json() as { code: string }).code
+    expect((await accept(ex.headers, code)).statusCode).toBe(200)
+  })
+
+  it("lets somebody who left come back through the same link", async () => {
+    const owner = await registerUser(ctx.app)
+    const circle = await createCircle(owner.headers)
+    const member = await registerUser(ctx.app)
+    expect((await accept(member.headers, circle.invite.code)).statusCode).toBe(200)
+    await ctx.app.inject({
+      method: "DELETE",
+      url: `/api/v1/circles/${circle.id}/members/${member.user.id}`,
+      headers: member.headers,
+    })
+    expect((await accept(member.headers, circle.invite.code)).statusCode).toBe(200)
+  })
+
+  it("shows the owner's admin invites to the owner only", async () => {
+    const owner = await registerUser(ctx.app)
+    const circle = await createCircle(owner.headers)
+    const admin = await registerUser(ctx.app)
+    await accept(admin.headers, circle.invite.code)
+    await ctx.app.inject({
+      method: "PATCH",
+      url: `/api/v1/circles/${circle.id}/members/${admin.user.id}`,
+      headers: owner.headers,
+      payload: { role: "admin" },
+    })
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/invites`,
+      headers: owner.headers,
+      payload: { role: "admin" },
+    })
+    const list = (headers: Record<string, string>) =>
+      ctx.app
+        .inject({ method: "GET", url: `/api/v1/circles/${circle.id}/invites`, headers })
+        .then((response) => (response.json() as Array<{ role: string }>).map((row) => row.role))
+
+    expect(await list(owner.headers)).toContain("admin")
+    expect(await list(admin.headers)).not.toContain("admin")
+  })
+})
+
 describe("roles", () => {
   async function circleWithAdminAndMember() {
     const owner = await registerUser(ctx.app, { displayName: "Owner" })

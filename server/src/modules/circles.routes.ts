@@ -7,13 +7,14 @@ import {
   roleAtLeast,
   type CircleRole,
 } from "@hearth/shared"
-import { and, desc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm"
+import { and, desc, eq, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
 import { getDb, type Database } from "../db/client"
 import {
   circleMembers,
+  circleRemovals,
   circles,
   events,
   invites,
@@ -554,9 +555,31 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(eq(users.id, userId))
         .limit(1)
 
-      await db
-        .delete(circleMembers)
-        .where(and(eq(circleMembers.circleId, circleId), eq(circleMembers.userId, userId)))
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(circleMembers)
+          .where(and(eq(circleMembers.circleId, circleId), eq(circleMembers.userId, userId)))
+        if (isSelf) return
+        // Removed, not left: an invite link still sitting in the family chat
+        // must not bring them straight back, and neither may one they made.
+        await tx
+          .insert(circleRemovals)
+          .values({ circleId, userId })
+          .onConflictDoUpdate({
+            target: [circleRemovals.circleId, circleRemovals.userId],
+            set: { removedAt: sql`now()` },
+          })
+        await tx
+          .update(invites)
+          .set({ revokedAt: new Date() })
+          .where(
+            and(
+              eq(invites.circleId, circleId),
+              eq(invites.createdBy, userId),
+              isNull(invites.revokedAt),
+            ),
+          )
+      })
 
       await recordEvent(db, {
         circleId,
@@ -785,7 +808,15 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         .select({ invite: invites, creator: users })
         .from(invites)
         .leftJoin(users, eq(users.id, invites.createdBy))
-        .where(and(eq(invites.circleId, membership.circleId), isNull(invites.revokedAt)))
+        .where(
+          and(
+            eq(invites.circleId, membership.circleId),
+            isNull(invites.revokedAt),
+            // Only the owner can make an admin, so only the owner sees the
+            // codes that make one.
+            membership.role === "owner" ? undefined : ne(invites.role, "admin"),
+          ),
+        )
         .orderBy(desc(invites.createdAt))
 
       return rows.map((row) => ({

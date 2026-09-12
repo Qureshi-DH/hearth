@@ -2,9 +2,9 @@ import type { CircleInvite, InvitePreview } from "@hearth/shared"
 import { and, eq, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
-import { circleMembers, circles, invites, users } from "../db/schema"
+import { circleMembers, circleRemovals, circles, invites, users } from "../db/schema"
 import { getConfig } from "../env"
-import { badRequest, notFound } from "../lib/errors"
+import { badRequest, forbidden, notFound } from "../lib/errors"
 import { inviteCode } from "../lib/ids"
 import { toPublicUser } from "../lib/serialize"
 import { recordEvent } from "./feed"
@@ -186,6 +186,17 @@ export async function acceptInvite(
     .where(eq(circles.id, invite.circleId))
     .limit(1)
   if (!circle) throw notFound("That circle no longer exists.")
+
+  // Somebody removed from the circle comes back only through an invite made
+  // after the removal, which somebody chose to send them.
+  const [removal] = await db
+    .select({ removedAt: circleRemovals.removedAt })
+    .from(circleRemovals)
+    .where(and(eq(circleRemovals.circleId, invite.circleId), eq(circleRemovals.userId, userId)))
+    .limit(1)
+  if (removal && invite.createdAt.getTime() <= removal.removedAt.getTime()) {
+    throw forbidden("You were removed from this circle. Ask for a new invite to rejoin.")
+  }
 
   const [existing] = await db
     .select({ role: circleMembers.role })
