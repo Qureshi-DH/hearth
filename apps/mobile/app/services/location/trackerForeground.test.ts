@@ -1,7 +1,8 @@
 import { AppState } from "react-native"
-import type { LocationFixInput } from "@hearth/shared"
+import type { CurrentUser, LocationFixInput } from "@hearth/shared"
 import * as Location from "expo-location"
 
+import { useAuthStore } from "@/stores/auth"
 import { useTrackingStore } from "@/stores/tracking"
 
 import {
@@ -300,5 +301,37 @@ describe("the foreground heartbeat", () => {
 
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(getPosition).toHaveBeenCalledWith({ accuracy: Location.Accuracy.High })
+  })
+})
+
+describe("a fix nobody asked for by hand", () => {
+  it("is not taken while sharing is off, so it cannot upload the day sharing is back", async () => {
+    // A nudge still arrives over the UI socket with the master switch off.
+    useTrackingStore.getState().setEnabled(false)
+
+    expect(await reportNow("nudge")).toBeNull()
+    expect(getPosition).not.toHaveBeenCalled()
+    expect(useTrackingStore.getState().queue).toHaveLength(0)
+  })
+
+  it("is still taken for an SOS", async () => {
+    useTrackingStore.getState().setEnabled(false)
+
+    expect(await reportNow("sos")).not.toBeNull()
+    expect(useTrackingStore.getState().queue).toHaveLength(1)
+  })
+
+  it("is dropped when the account signs out while it is being taken", async () => {
+    useAuthStore.setState({ user: { id: "a" } as CurrentUser })
+    getPosition.mockImplementationOnce(async () => {
+      useAuthStore.setState({ user: { id: "b" } as CurrentUser })
+      return {
+        timestamp: Date.now(),
+        coords: { latitude: 51.4545, longitude: -2.5879, accuracy: 20, speed: -1, heading: -1 },
+      }
+    })
+
+    expect(await reportNow("foreground")).toBeNull()
+    expect(useTrackingStore.getState().queue).toHaveLength(0)
   })
 })

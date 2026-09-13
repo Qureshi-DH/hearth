@@ -619,6 +619,11 @@ interface ReportOptions {
   lastKnown?: boolean
 }
 
+function sharingOn(): boolean {
+  const { enabled, mode } = useTrackingStore.getState()
+  return enabled && mode !== "off"
+}
+
 export async function reportNow(
   source: LocationSource = "manual",
   accuracy: Location.Accuracy = source === "sos"
@@ -626,11 +631,23 @@ export async function reportNow(
     : Location.Accuracy.High,
   { judge = true, activity, timeoutMs = WAKE_FIX_TIMEOUT_MS, lastKnown = true }: ReportOptions = {},
 ): Promise<LocationFixInput | null> {
+  // A check-in and an SOS are the person asking. Everything else is the
+  // phone deciding, and a nudge still reaches it over the UI socket with
+  // sharing off: a fix queued then would upload the day sharing comes back.
+  const asked = source === "manual" || source === "sos"
+  if (!asked && !sharingOn()) return null
+  const owner = useAuthStore.getState().user?.id
   const started = Date.now()
   logTracker("report", { source, accuracy })
   acquisitionStarted(timeoutMs)
   try {
     const { location, cached } = await acquireFix(accuracy, timeoutMs, lastKnown)
+    // A fix can take half a minute. Sharing may have gone off meanwhile, or
+    // the account may have signed out and somebody else signed in.
+    if (useAuthStore.getState().user?.id !== owner || (!asked && !sharingOn())) {
+      logTracker("report dropped", { source })
+      return null
+    }
     const battery = await batterySnapshot()
     const fix = toFix(location, source, battery, activity)
     useTrackingStore.getState().enqueue([fix])
