@@ -122,6 +122,8 @@ async function pruneSessions(db: Database): Promise<number> {
  * about the server rather than a coincidence between households.
  */
 const OUTAGE_MIN_REPORTING = 8
+/** How long a phone announced offline still counts towards an outage. */
+const OUTAGE_WINDOW_HOURS = 6
 
 /**
  * How long a quiet phone is given before each silent wake: the first counted
@@ -304,13 +306,15 @@ async function flagOfflineDevices(
     ),
   )
 
+  const counts = {
+    reporting: sql<number>`count(*) filter (where ${userPresence.recordedAt} is not null)::int`,
+    stale: sql<number>`count(*) filter (where ${quietFor})::int`,
+    fresh: sql<number>`count(*) filter (where ${userPresence.recordedAt} is not null and not (${quietFor}))::int`,
+  }
   const [totals] = await db
-    .select({
-      reporting: sql<number>`count(*) filter (where ${userPresence.recordedAt} is not null)::int`,
-      stale: sql<number>`count(*) filter (where ${quietFor})::int`,
-      fresh: sql<number>`count(*) filter (where ${userPresence.recordedAt} is not null and not (${quietFor}))::int`,
-    })
+    .select(counts)
     .from(userPresence)
+    .innerJoin(users, and(eq(users.id, userPresence.userId), eq(users.isActive, true)))
   if (!totals || totals.stale === 0) return 0
 
   // Most of the server quiet at once is evidence about the server, not about
@@ -323,9 +327,25 @@ async function flagOfflineDevices(
   // mean anything: in a family of three, all three being quiet says nothing,
   // and one phone that genuinely went dark must never be silenced by two
   // siblings who merely missed a background window.
-  if (totals.reporting >= OUTAGE_MIN_REPORTING && totals.stale > totals.fresh) {
+  // The guard counts the phones that could be part of an outage now: not a
+  // deactivated account, and not one whose phone was announced offline long
+  // ago and never came back. Those would otherwise outvote the phones that
+  // are reporting, on every tick, and no alert would ever go out again. A
+  // server that was itself down still counts every phone, since none of them
+  // has been announced yet.
+  const [outage] = await db
+    .select(counts)
+    .from(userPresence)
+    .innerJoin(users, and(eq(users.id, userPresence.userId), eq(users.isActive, true)))
+    .where(
+      or(
+        isNull(userPresence.offlineNotifiedAt),
+        sql`${userPresence.offlineNotifiedAt} > now() - make_interval(hours => ${OUTAGE_WINDOW_HOURS})`,
+      ),
+    )
+  if (outage && outage.reporting >= OUTAGE_MIN_REPORTING && outage.stale > outage.fresh) {
     log.warn(
-      { reporting: totals.reporting, stale: totals.stale, fresh: totals.fresh },
+      { reporting: outage.reporting, stale: outage.stale, fresh: outage.fresh },
       "offline alerts withheld; most of the server has stopped reporting",
     )
     return 0

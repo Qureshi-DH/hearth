@@ -15,6 +15,7 @@ import type { Database } from "../db/client"
 import {
   circleMembers,
   circles,
+  events,
   locationPoints,
   userPresence,
   users,
@@ -604,7 +605,30 @@ async function maybeRaiseDrivingAlerts(
     )
 
     let telling: AlertCircle[] = []
-    if (overThreshold.length > 0) {
+    if (overThreshold.length > 0 && !isLive) {
+      // A backlog replays a run into the feed without pushing, so it must not
+      // spend the cooldown the live part of the same drive will need. It only
+      // has to avoid writing the same run twice as its batches arrive.
+      const happenedAt = (alertAt ?? latest.recordedAt).getTime()
+      const windowMs = DEFAULTS.speedAlertCooldownSeconds * 1000
+      const already = await db
+        .select({ circleId: events.circleId })
+        .from(events)
+        .where(
+          and(
+            eq(events.actorUserId, userId),
+            eq(events.type, "speed_alert"),
+            inArray(
+              events.circleId,
+              overThreshold.map((circle) => circle.id),
+            ),
+            gt(events.occurredAt, new Date(happenedAt - windowMs)),
+            lt(events.occurredAt, new Date(happenedAt + windowMs)),
+          ),
+        )
+      const written = new Set(already.map((row) => row.circleId))
+      telling = overThreshold.filter((circle) => !written.has(circle.id))
+    } else if (overThreshold.length > 0) {
       const cooldownStart = new Date(now.getTime() - DEFAULTS.speedAlertCooldownSeconds * 1000)
       const circleIds = sql.join(
         overThreshold.map((circle) => sql`${circle.id}::uuid`),
@@ -646,33 +670,33 @@ async function maybeRaiseDrivingAlerts(
       `)) as unknown as Array<{ circle_id: string }>
       const claimedIds = new Set(claimed.map((row) => row.circle_id))
       telling = overThreshold.filter((circle) => claimedIds.has(circle.id))
+    }
 
-      if (telling.length > 0) {
-        const peakKmh = Math.round(alertPeakMps * 3.6)
-        const verb = alertActivities.size === 1 ? TRAVEL_VERBS[[...alertActivities][0]!] : undefined
-        const wording = `${name} was ${verb ?? "driving"} at ${peakKmh} km/h`
-        const happenedAt = alertAt ?? latest.recordedAt
-        for (const circle of telling) {
-          await recordEvent(db, {
-            circleId: circle.id,
-            type: "speed_alert",
-            actorUserId: userId,
-            occurredAt: happenedAt,
-            payload: {
-              speedKmh: peakKmh,
-              thresholdKmh: circle.settings.speedAlertKmh,
-              at: happenedAt.toISOString(),
-            },
-            summary: wording,
-            // A queue that drained an hour late replays a run that really
-            // happened, and it belongs in the feed at the time it happened.
-            // Buzzing a parent about it now would say the car is doing 150
-            // while it is on a driveway.
-            notify: isLive
-              ? { title: "Speed alert", body: `${wording}.`, channel: "alerts" }
-              : undefined,
-          })
-        }
+    if (telling.length > 0) {
+      const peakKmh = Math.round(alertPeakMps * 3.6)
+      const verb = alertActivities.size === 1 ? TRAVEL_VERBS[[...alertActivities][0]!] : undefined
+      const wording = `${name} was ${verb ?? "driving"} at ${peakKmh} km/h`
+      const happenedAt = alertAt ?? latest.recordedAt
+      for (const circle of telling) {
+        await recordEvent(db, {
+          circleId: circle.id,
+          type: "speed_alert",
+          actorUserId: userId,
+          occurredAt: happenedAt,
+          payload: {
+            speedKmh: peakKmh,
+            thresholdKmh: circle.settings.speedAlertKmh,
+            at: happenedAt.toISOString(),
+          },
+          summary: wording,
+          // A queue that drained an hour late replays a run that really
+          // happened, and it belongs in the feed at the time it happened.
+          // Buzzing a parent about it now would say the car is doing 150
+          // while it is on a driveway.
+          notify: isLive
+            ? { title: "Speed alert", body: `${wording}.`, channel: "alerts" }
+            : undefined,
+        })
       }
     }
 

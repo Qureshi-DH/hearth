@@ -197,41 +197,49 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
       if (request.params.userId === auth.userId && request.body.isActive === false) {
         throw badRequest("You cannot deactivate your own account.")
       }
-      if (request.body.isAdmin === false) {
-        const [{ count } = { count: 0 }] = await db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(users)
-          .where(eq(users.isAdmin, true))
-        if (count <= 1) throw badRequest("The server must keep at least one administrator.")
-      }
-      // A deactivated administrator cannot sign in, so deactivating the last
-      // one locks the server out just as thoroughly as demoting them, and only
-      // a hand-edit of the database gets it back.
-      if (request.body.isActive === false) {
-        const [{ count } = { count: 0 }] = await db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(users)
-          .where(
-            and(
-              eq(users.isAdmin, true),
-              eq(users.isActive, true),
-              ne(users.id, request.params.userId),
-            ),
-          )
-        if (count === 0) throw badRequest("The server must keep at least one administrator.")
-      }
+      // Two administrators demoting or deactivating each other at the same
+      // moment would each count the other and both pass, leaving nobody. The
+      // guards and the update run under one lock, so the second sees the
+      // first.
+      const { before, updated } = await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext('hearth:admins'))`)
+        if (request.body.isAdmin === false) {
+          const [{ count } = { count: 0 }] = await tx
+            .select({ count: sql<number>`count(*)::int` })
+            .from(users)
+            .where(eq(users.isAdmin, true))
+          if (count <= 1) throw badRequest("The server must keep at least one administrator.")
+        }
+        // A deactivated administrator cannot sign in, so deactivating the last
+        // one locks the server out just as thoroughly as demoting them, and
+        // only a hand-edit of the database gets it back.
+        if (request.body.isActive === false) {
+          const [{ count } = { count: 0 }] = await tx
+            .select({ count: sql<number>`count(*)::int` })
+            .from(users)
+            .where(
+              and(
+                eq(users.isAdmin, true),
+                eq(users.isActive, true),
+                ne(users.id, request.params.userId),
+              ),
+            )
+          if (count === 0) throw badRequest("The server must keep at least one administrator.")
+        }
 
-      const [before] = await db
-        .select({ isAdmin: users.isAdmin })
-        .from(users)
-        .where(eq(users.id, request.params.userId))
-        .limit(1)
+        const [previous] = await tx
+          .select({ isAdmin: users.isAdmin })
+          .from(users)
+          .where(eq(users.id, request.params.userId))
+          .limit(1)
 
-      const [updated] = await db
-        .update(users)
-        .set({ ...request.body, updatedAt: new Date() })
-        .where(eq(users.id, request.params.userId))
-        .returning()
+        const [row] = await tx
+          .update(users)
+          .set({ ...request.body, updatedAt: new Date() })
+          .where(eq(users.id, request.params.userId))
+          .returning()
+        return { before: previous, updated: row }
+      })
       if (!updated) throw notFound("No such account.")
 
       // Deactivation has to end the sessions too, or the account keeps its
