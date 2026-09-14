@@ -353,6 +353,16 @@ async function doFlush(): Promise<void> {
           scheduleRetry()
           return
         }
+        // The client refreshes on a 401 before this sees one, and a refusal
+        // clears the tokens. Tokens still held mean the refresh got no
+        // answer, from the network or a server mid-deploy, and the session
+        // is fine.
+        if (error.status === 401 && tokenVault.peek()) {
+          useTrackingStore.getState().setError("Could not reach the server.")
+          logTracker("flush failed", { status: "refresh", queued })
+          scheduleRetry()
+          return
+        }
         if (error.status === 401) {
           useTrackingStore.getState().setError("Signed out. Sharing paused.")
           logTracker("flush failed", { status: 401, queued })

@@ -164,8 +164,12 @@ jest.mock("@/services/api", () => ({
   ApiError: jest.requireActual("@/services/api/client").ApiError,
   endpoints: { locations: { upload: (...args: unknown[]) => mockUpload(...args) } },
 }))
+let mockHeldTokens: { accessToken: string; refreshToken: string } | null = null
 jest.mock("@/stores/tokenVault", () => ({
-  tokenVault: { hydrate: async () => ({ accessToken: "a", refreshToken: "r" }), peek: () => null },
+  tokenVault: {
+    hydrate: async () => ({ accessToken: "a", refreshToken: "r" }),
+    peek: () => mockHeldTokens,
+  },
 }))
 
 const start = Location.startLocationUpdatesAsync as unknown as jest.Mock
@@ -231,6 +235,7 @@ beforeEach(async () => {
   mockHere = { ...HOME }
   mockSpeed = 0
   mockAccuracy = 20
+  mockHeldTokens = null
   jest.clearAllMocks()
   fake.reset()
   // clearAllMocks keeps implementations, and a test that leaves a fix
@@ -1005,6 +1010,30 @@ describe("uploads", () => {
     await flush()
     await jest.advanceTimersByTimeAsync(30_000 + 10)
     expect(mockUpload).toHaveBeenCalledTimes(4)
+  })
+
+  it("retry when the token refresh got no answer, since the session is still good", async () => {
+    await enterMoving()
+    // The client refreshed on the 401 and the refresh hit a dropped network,
+    // so the tokens are still held and the 401 comes back to the tracker.
+    mockHeldTokens = { accessToken: "a", refreshToken: "r" }
+    mockUpload.mockRejectedValueOnce(new ApiError(401, "unauthorized", "expired"))
+    queued()
+    await flush()
+    expect(useTrackingStore.getState().lastError).not.toMatch(/signed out/i)
+    await jest.advanceTimersByTimeAsync(30_000 + 10)
+    expect(mockUpload).toHaveBeenCalledTimes(2)
+    expect(useTrackingStore.getState().queue).toHaveLength(0)
+  })
+
+  it("stop and say so once the server has ended the session", async () => {
+    await enterMoving()
+    mockUpload.mockRejectedValueOnce(new ApiError(401, "unauthorized", "expired"))
+    queued()
+    await flush()
+    expect(useTrackingStore.getState().lastError).toMatch(/signed out/i)
+    await jest.advanceTimersByTimeAsync(30_000 + 10)
+    expect(mockUpload).toHaveBeenCalledTimes(1)
   })
 
   it("are attempted on every delivery, whether or not it kept a fix", async () => {
