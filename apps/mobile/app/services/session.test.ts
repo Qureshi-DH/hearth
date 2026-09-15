@@ -46,6 +46,26 @@ describe("a session ending", () => {
     expect(request.content.title.length).toBeGreaterThan(0)
   })
 
+  it("lets the tracker finish stopping before it clears the queue", async () => {
+    useTrackingStore.getState().enqueue([
+      {
+        lat: 51.4545,
+        lon: -2.5879,
+        recordedAt: new Date().toISOString(),
+        accuracyMeters: 10,
+        source: "background",
+      },
+    ])
+    const queuedWhenStopped: number[] = []
+    mockStopTracking.mockImplementationOnce(async () => {
+      await Promise.resolve()
+      queuedWhenStopped.push(useTrackingStore.getState().queue.length)
+    })
+    await sessionExpired()
+    expect(queuedWhenStopped).toEqual([1])
+    expect(useTrackingStore.getState().queue).toHaveLength(0)
+  })
+
   it("says nothing on the shade when the app is open, where the sign-in screen says it", async () => {
     AppState.currentState = "active"
     await sessionExpired()

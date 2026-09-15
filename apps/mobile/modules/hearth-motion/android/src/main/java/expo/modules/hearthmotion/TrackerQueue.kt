@@ -37,6 +37,16 @@ internal object TrackerQueue {
   fun drainEvents(context: Context): List<Map<String, Any?>> =
     events(context).drain().mapNotNull { line -> runCatching { toMap(JSONObject(line)) }.getOrNull() }
 
+  /**
+   * Everything not yet drained, gone. Tracking stopping means sign-out, a
+   * server change or sharing off, and what the service saw on the way down
+   * must not reach whichever account tracks on this phone next.
+   */
+  fun clear(context: Context) {
+    fixes(context).clear()
+    events(context).clear()
+  }
+
   fun poke(context: Context) {
     if (HearthEvents.emit("onNativeQueue", emptyMap())) return
     if (HearthTrackingService.foreground) HearthHeadlessService.start(context, "queue")

@@ -34,6 +34,7 @@ type NativeModule = {
   setTrackerStateAsync(state: NativeTrackerState): Promise<void>
   drainFixesAsync(): Promise<NativeFix[]>
   drainEventsAsync(): Promise<NativeEvent[]>
+  clearQueueAsync(): Promise<void>
   addListener(event: "onNativeQueue", listener: () => void): { remove(): void }
 }
 
@@ -110,6 +111,10 @@ export function drainFixes(): Promise<Location.LocationObject[]> {
 
 export function drainEvents(): Promise<NativeEvent[]> {
   return required().drainEventsAsync()
+}
+
+export function clearQueue(): Promise<void> {
+  return required().clearQueueAsync()
 }
 
 /** Native saying the queue has something in it. Null where there is no native side. */

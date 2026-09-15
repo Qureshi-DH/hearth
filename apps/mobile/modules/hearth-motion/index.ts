@@ -119,6 +119,8 @@ declare class HearthMotionModule extends NativeModule<{
   drainFixesAsync(): Promise<NativeFix[]>
   /** The events the receivers took, oldest first, and no longer held once read. */
   drainEventsAsync(): Promise<NativeEvent[]>
+  /** Both queues emptied without being read. */
+  clearQueueAsync(): Promise<void>
 }
 
 export type ServiceStatus = "none" | "brief" | "starting" | "running" | "refused"

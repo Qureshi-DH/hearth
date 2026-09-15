@@ -183,6 +183,8 @@ class HearthMotionModule : Module() {
 
     AsyncFunction("drainEventsAsync") { TrackerQueue.drainEvents(context) }
 
+    AsyncFunction("clearQueueAsync") { TrackerQueue.clear(context) }
+
     OnStartObserving { startObservingPower() }
 
     OnStopObserving { stopObservingPower() }

@@ -116,6 +116,11 @@ export async function drainEvents(): Promise<NativeEvent[]> {
   return drained
 }
 
+export async function clearQueue(): Promise<void> {
+  fake.fixes = []
+  fake.events = []
+}
+
 export function onNativeQueue(handler: () => void): { remove(): void } {
   fake.handlers.push(handler)
   return {

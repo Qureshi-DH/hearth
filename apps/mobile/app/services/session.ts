@@ -16,7 +16,9 @@ import { useTrackingStore } from "@/stores/tracking"
  * cannot tell from a phone that is fine.
  */
 export async function sessionExpired(): Promise<void> {
-  void stopTracking()
+  // Stopped before the reset, so a fix the service takes on its way down
+  // lands on "off" and is dropped rather than queued for the next account.
+  await stopTracking().catch(() => undefined)
   useTrackingStore.getState().reset()
   useAuthStore.getState().signedOut()
   queryClient.clear()

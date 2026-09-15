@@ -1014,7 +1014,12 @@ export function processNativeQueue(): Promise<void> {
 
 async function drainNativeQueue(): Promise<void> {
   const fixes = await native.drainFixes().catch(() => [])
-  if (fixes.length > 0) {
+  // The service goes down a moment after it is told to, and what it saw
+  // in between belongs to a session that has ended or to sharing that is
+  // off. Kept, it would upload with the next account to track here.
+  if (fixes.length > 0 && !sharingOn()) {
+    logTracker("native dropped", { fixes: fixes.length })
+  } else if (fixes.length > 0) {
     fixes.sort((a, b) => a.timestamp - b.timestamp)
     await ingest(fixes, "background")
   }
@@ -2309,6 +2314,7 @@ export async function stopTracking(): Promise<void> {
   store.setWatchedUntil(null)
   syncControl()
   await applyRegistration().catch(() => undefined)
+  if (androidNative()) await native.clearQueue().catch(() => undefined)
   await dropFence()
   await stopMotionWatch()
   stopDriveSensors()

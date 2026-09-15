@@ -221,6 +221,27 @@ describe("the tiers on Android", () => {
   })
 })
 
+describe("fixes the service took on its way down", () => {
+  it("are not held for the next account once tracking has stopped", async () => {
+    await enterMoving()
+    fake.fixes = [at(AWAY, Date.now() - 2_000, 9)]
+    await stopTracking()
+    expect(fake.fixes).toHaveLength(0)
+  })
+
+  it("are dropped when they arrive after the stop", async () => {
+    await enterMoving()
+    await stopTracking()
+    mockUpload.mockClear()
+    // ACTION_STOP is handled a moment after the call, and a fix lands first.
+    fake.fixes = [at(AWAY, Date.now(), 9)]
+    await processNativeQueue()
+    expect(fake.fixes).toHaveLength(0)
+    expect(useTrackingStore.getState().queue).toHaveLength(0)
+    expect(mockUpload).not.toHaveBeenCalled()
+  })
+})
+
 describe("what the OS delivered while JavaScript was down", () => {
   it("takes a fence exit from the queue as the departure and the buffered fixes as the trail", async () => {
     await enterStationary(HOME.lat, HOME.lon)
