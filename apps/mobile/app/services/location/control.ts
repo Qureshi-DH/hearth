@@ -61,7 +61,14 @@ class ControlChannel {
     if (!this.wanted || this.refused) return
     if (this.socket && this.socket.readyState <= WebSocket.OPEN) return
     const url = api.websocketUrl()
-    if (!url) return
+    if (!url) {
+      // The tracker asks for the channel as it loads, and the keychain has
+      // not handed over the tokens yet. Nothing else would ask again until a
+      // rotation, a quarter hour or more away on a parked phone.
+      this.reconnectTimer = setTimeout(() => this.open(), this.backoff)
+      this.backoff = Math.min(MAX_BACKOFF_MS, this.backoff * 2)
+      return
+    }
 
     const socket = new WebSocket(url)
     this.socket = socket

@@ -50,10 +50,20 @@ class RealtimeClient {
     this.socket = null
   }
 
-  /** Closing is enough. The onclose handler reconnects with the current token. */
+  /**
+   * An open socket is closed and its onclose reconnects with the current
+   * token. One the server already refused with 4401 is gone and waits for
+   * this, and the refused socket usually loses the race to the refresh that
+   * follows it, so it is opened here.
+   */
   refresh() {
     if (!this.wanted) return
-    this.socket?.close()
+    if (this.socket) {
+      this.socket.close()
+      return
+    }
+    this.clearTimers()
+    this.open()
   }
 
   subscribe(listener: Listener): () => void {

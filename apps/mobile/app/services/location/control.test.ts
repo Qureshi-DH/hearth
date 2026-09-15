@@ -171,3 +171,16 @@ describe("the control channel", () => {
     expect(sockets).toHaveLength(0)
   })
 })
+
+describe("a channel wanted before the tokens are loaded", () => {
+  it("opens once they are, without waiting for a rotation", () => {
+    mockUrl = null
+    control.setWanted(true)
+    expect(sockets).toHaveLength(0)
+
+    mockUrl = "wss://hearth.test/api/v1/ws?access_token=t"
+    jest.advanceTimersByTime(1_000)
+
+    expect(sockets).toHaveLength(1)
+  })
+})

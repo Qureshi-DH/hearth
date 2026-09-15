@@ -225,3 +225,17 @@ describe("a feed event over the socket", () => {
     expect(feedIds()).toEqual(["20", "10"])
   })
 })
+
+describe("a socket the server refused for its token", () => {
+  it("comes back once the token has been refreshed", () => {
+    realtime.connect()
+    sockets[0]!.readyState = FakeSocket.CLOSED
+    sockets[0]!.onclose?.({ code: 4401 })
+    jest.advanceTimersByTime(60_000)
+    expect(sockets).toHaveLength(1)
+
+    realtime.refresh()
+
+    expect(sockets).toHaveLength(2)
+  })
+})
