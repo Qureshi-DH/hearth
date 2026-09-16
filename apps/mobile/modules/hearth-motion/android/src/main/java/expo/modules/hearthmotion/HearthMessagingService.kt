@@ -20,6 +20,10 @@ class HearthMessagingService : ExpoFirebaseMessagingService() {
   }
 
   private fun wantsWake(remoteMessage: RemoteMessage): Boolean {
+    // Sharing off or signed out, the tracker takes no fix for the push, and
+    // the service would only put "Updating your location" on the shade.
+    val prefs = TrackerPrefs(this)
+    if (!prefs.enabled || prefs.mode == "off") return false
     val body = remoteMessage.data["body"] ?: return false
     return try {
       when (JSONObject(body).optString("type")) {
