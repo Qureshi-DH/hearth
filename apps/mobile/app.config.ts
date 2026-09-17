@@ -15,17 +15,22 @@ import "tsx/cjs"
  * Plain-HTTP servers.
  *
  * Both platforms block cleartext traffic by default, which is right for a
- * public deployment (put TLS in front, see docs/docs/install/self-hosting.md). Families
- * trying Hearth on a LAN at http://192.168.x.x need it allowed, so development
- * builds allow it and production builds can opt in with HEARTH_ALLOW_HTTP=1.
+ * public deployment (put TLS in front, see docs/docs/install/self-hosting.md).
+ * Only an EAS development build, or a build made with HEARTH_ALLOW_HTTP=1,
+ * allows it to any host. The test is for development rather than production
+ * because `expo prebuild` sets NODE_ENV to development when it is unset, so a
+ * fork archiving a release from a plain prebuild would otherwise ship with
+ * cleartext on for every host and never know.
  */
-const isProductionBuild =
-  process.env.EAS_BUILD_PROFILE?.startsWith("production") === true ||
-  process.env.NODE_ENV === "production"
+const isDevelopmentBuild = process.env.EAS_BUILD_PROFILE?.startsWith("development") === true
 
 const allowInsecureHttp =
   process.env.HEARTH_ALLOW_HTTP === "1" ||
-  (process.env.HEARTH_ALLOW_HTTP !== "0" && !isProductionBuild)
+  (process.env.HEARTH_ALLOW_HTTP !== "0" && isDevelopmentBuild)
+
+if (process.env.HEARTH_ALLOW_HTTP === "1") {
+  console.warn("Hearth: HEARTH_ALLOW_HTTP=1, this build sends traffic over plain HTTP to any host.")
+}
 
 /**
  * Android App Links need a concrete domain baked in at build time, and every

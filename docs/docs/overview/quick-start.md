@@ -93,8 +93,8 @@ npx expo prebuild
 npx expo run:ios        # or run:android
 ```
 
-A development build allows plain HTTP, which is what makes this local try
-possible. Release builds do not: Android refuses cleartext outright and iOS
+A debug build reaches a LAN server over plain HTTP, which is what makes this
+local try possible. Release builds do not: Android refuses cleartext outright and iOS
 allows it only to private network addresses. [Mobile](../developer/mobile.md)
 has the full table and the build details.
 

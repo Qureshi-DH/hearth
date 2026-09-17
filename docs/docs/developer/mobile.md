@@ -42,10 +42,10 @@ pnpm build:ios:dev            # debug build for a real device
 pnpm build:ios:prod           # IPA
 ```
 
-Development builds allow plain HTTP so a family can try the app against a LAN
-server. Production builds do not, on either platform, which is the behaviour
-you want and the thing to remember when a release build cannot reach a server
-that a development build could.
+An EAS development build allows plain HTTP so a family can try the app against
+a LAN server. A release build does not, on either platform, which is the
+behaviour you want and the thing to remember when a release build cannot reach
+a server that a development build could.
 
 Android release builds are signed with the keystore EAS holds for the project.
 EAS injects it into `build.gradle` after the config plugins run, so nothing in
@@ -148,15 +148,19 @@ the floor.
 
 The two platforms differ here, and you tend to find out at release time.
 
-| Build                                 | iOS                                                              | Android                                |
-| ------------------------------------- | ---------------------------------------------------------------- | -------------------------------------- |
-| Development                           | any HTTP host (`NSAllowsArbitraryLoads`)                         | any HTTP host (`usesCleartextTraffic`) |
-| Production                            | **private ranges and `.local` only** (`NSAllowsLocalNetworking`) | **no HTTP at all**                     |
-| Production with `HEARTH_ALLOW_HTTP=1` | any HTTP host                                                    | any HTTP host                          |
+| Build                                    | iOS                                                              | Android                                  |
+| ---------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------- |
+| EAS `development` profile                | any HTTP host (`NSAllowsArbitraryLoads`)                         | any HTTP host (`usesCleartextTraffic`)   |
+| Anything else, a local prebuild included | **private ranges and `.local` only** (`NSAllowsLocalNetworking`) | debug any HTTP host, **release no HTTP** |
+| Built with `HEARTH_ALLOW_HTTP=1`         | any HTTP host                                                    | any HTTP host                            |
 
-Both are decided at prebuild time, from `EAS_BUILD_PROFILE` and `NODE_ENV`.
-`HEARTH_ALLOW_HTTP=0` forces the strict behaviour into a development build,
-which is how you check a TLS-only setup before you ship it.
+Both are decided at prebuild time from `EAS_BUILD_PROFILE`. `NODE_ENV` plays no
+part, because `expo prebuild` sets it to `development` whenever it is unset,
+and a release archived from that prebuild would otherwise allow every host
+without anyone having asked for it. An Android debug build allows HTTP anyway,
+from the template's debug manifest. `HEARTH_ALLOW_HTTP=0` forces the strict
+behaviour into an EAS development build, which is how you check a TLS-only
+setup before you ship it.
 
 iOS ignores `NSAllowsArbitraryLoads` whenever `NSAllowsLocalNetworking` is also
 present, so Hearth emits exactly one of the two.
