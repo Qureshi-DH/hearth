@@ -43,6 +43,8 @@ const en = {
     invalid:
       "Could not reach a server at that address. Check the address and that you are on the same network.",
     timeout: "That server did not respond in time. Is it running and reachable from this device?",
+    noHttps:
+      "Could not make a secure connection to that address. A server without HTTPS needs the address typed with http:// in front.",
     notHearth: "Something answered, but it is not a Hearth server.",
     connectedTo: "Connected to {{name}}",
     change: "Change server",

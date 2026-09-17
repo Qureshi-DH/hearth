@@ -14,8 +14,9 @@ import { endpoints } from "@/services/api"
 import { useAuthStore } from "@/stores/auth"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
+import { serverCandidates } from "@/utils/serverAddress"
 
-/** Accepts a bare hostname and tries https first, so nobody has to type a scheme. */
+/** Accepts a bare hostname and tries https, so nobody has to type a scheme. */
 export const ServerScreen: FC<AppStackScreenProps<"Server">> = ({ navigation }) => {
   const { themed, theme } = useAppTheme()
   const setServer = useAuthStore((state) => state.setServer)
@@ -25,19 +26,13 @@ export const ServerScreen: FC<AppStackScreenProps<"Server">> = ({ navigation }) 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const candidates = (raw: string): string[] => {
-    const trimmed = raw.trim().replace(/\/+$/, "")
-    if (!trimmed) return []
-    if (/^https?:\/\//i.test(trimmed)) return [trimmed]
-    return [`https://${trimmed}`, `http://${trimmed}`]
-  }
-
   const connect = async () => {
     setError(null)
     setBusy(true)
     try {
       let lastError: unknown = null
-      for (const candidate of candidates(url)) {
+      const candidates = serverCandidates(url)
+      for (const candidate of candidates) {
         try {
           const info = await endpoints.system.probe(candidate)
           setServer(candidate, info)
@@ -48,7 +43,7 @@ export const ServerScreen: FC<AppStackScreenProps<"Server">> = ({ navigation }) 
           lastError = probeError
         }
       }
-      setError(describeProbeFailure(lastError))
+      setError(describeProbeFailure(lastError, candidates))
     } finally {
       setBusy(false)
     }
@@ -123,11 +118,12 @@ function devServerGuess(): string {
   return `http://${host}:4000`
 }
 
-function describeProbeFailure(error: unknown): string {
+function describeProbeFailure(error: unknown, tried: string[]): string {
   const message = error instanceof Error ? error.message : ""
   if (message.includes("different API")) return message
   if (message.includes("answered")) return translate("server:notHearth")
   if (/abort/i.test(message)) return translate("server:timeout")
+  if (tried.length === 1 && tried[0]!.startsWith("https://")) return translate("server:noHttps")
   return translate("server:invalid")
 }
 
