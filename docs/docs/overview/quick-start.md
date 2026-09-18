@@ -33,11 +33,12 @@ from source.
 
 ## 2. Fill in .env
 
-Six values. The rest of the file has defaults that boot.
+Seven values. The rest of the file has defaults that boot.
 
 ```bash
 JWT_SECRET=            # openssl rand -base64 48, then paste the output
 PUBLIC_URL=http://192.168.1.10:4000   # the address phones will type
+HEARTH_BIND=0.0.0.0                   # let phones on the LAN reach the API
 ADMIN_EMAIL=you@example.com
 ADMIN_PASSWORD=a-long-passphrase      # at least 10 characters
 POSTGRES_PASSWORD=     # openssl rand -hex 24
@@ -57,6 +58,11 @@ invite, so a server you have not signed into yet cannot be claimed by whoever
 finds the URL. Editing `ADMIN_PASSWORD` afterwards does nothing, because the
 bootstrap only runs against an empty user table. Change the password from the
 app.
+
+`HEARTH_BIND` publishes the API on every interface of this machine, which is
+what a LAN first look needs. Out of the box it is published on loopback only,
+for a reverse proxy on the same machine. Put it back to `127.0.0.1` when the
+proxy goes in, because Docker's port rules go around the host firewall.
 
 `PUBLIC_URL` is what Hearth puts in invite links and push payloads, so point it
 at the address the phones will really use. Your machine's LAN address comes from

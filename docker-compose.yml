@@ -3,9 +3,10 @@
 #   cp .env.example .env      # then edit JWT_SECRET and PUBLIC_URL at minimum
 #   docker compose up -d
 #
-# The API listens on ${HEARTH_PORT:-4000}. Put a TLS-terminating reverse proxy
-# (Caddy, Traefik, nginx) in front of it before exposing it to the internet.
-# See docs/docs/install/self-hosting.md for a ready-made Caddy example.
+# The API is published on 127.0.0.1:${HEARTH_PORT:-4000}, so a TLS-terminating
+# reverse proxy on this machine (Caddy, Traefik, nginx) is the way in. See
+# docs/docs/install/self-hosting.md for a ready-made Caddy example, and
+# HEARTH_BIND in .env.example for trying it on a LAN without one.
 
 name: hearth
 
@@ -49,7 +50,11 @@ services:
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-hearth}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
     ports:
-      - "${HEARTH_PORT:-4000}:4000"
+      # Loopback unless HEARTH_BIND says otherwise. Docker's port rules go
+      # around ufw and firewalld, and with TRUST_PROXY on, a caller reaching
+      # this port directly arrives from Docker's bridge and is believed about
+      # its X-Forwarded-For.
+      - "${HEARTH_BIND:-127.0.0.1}:${HEARTH_PORT:-4000}:4000"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:4000/readyz"]
       interval: 30s

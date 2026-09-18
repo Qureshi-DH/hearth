@@ -73,7 +73,9 @@ services:
       DATABASE_URL: postgres://hearth:${POSTGRES_PASSWORD}@db:5432/hearth
       S3_ENDPOINT: ${S3_ENDPOINT-http://minio:9000}
     ports:
-      - "4000:4000"
+      # Loopback only, for the reverse proxy on this machine. Docker's port
+      # rules go around ufw and firewalld.
+      - "127.0.0.1:4000:4000"
 
 volumes:
   postgres-data:
@@ -187,9 +189,13 @@ Set `TRUST_PROXY=true` in `.env` once a proxy really is in front, or the rate
 limiter sees your whole family as one client. Hearth only believes
 `X-Forwarded-For` from the machine that connected to it, and only when that
 machine is on a private network, so a caller on the internet cannot pick its own
-address and walk past the login throttle. Two proxies in a row attribute the
-request to the second one, which shares a rate-limit bucket rather than losing
-the limit. Leave it `false` for a direct LAN deployment.
+address and walk past the login throttle. That holds while port 4000 is
+reachable only through the proxy, which is why the compose files publish it on
+`127.0.0.1`. Publish it on every interface and a caller reaching it directly
+arrives through Docker's bridge, from a private address, and is believed. Two
+proxies in a row attribute the request to the second one, which shares a
+rate-limit bucket rather than losing the limit. Leave it `false` for a direct
+LAN deployment.
 
 ### Traefik
 

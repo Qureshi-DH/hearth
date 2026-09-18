@@ -12,7 +12,7 @@
 
 services:
   ntfy:
-    image: binwiederhier/ntfy:latest
+    image: binwiederhier/ntfy:v2.28.0
     restart: unless-stopped
     command: serve
     environment:
@@ -26,7 +26,10 @@ services:
       - ntfy-cache:/var/cache/ntfy
       - ntfy-data:/var/lib/ntfy
     ports:
-      - "${NTFY_PORT:-8093}:80"
+      # Loopback, like the API. ntfy takes a visitor's address from
+      # X-Forwarded-For, so anyone reaching the port directly could pick a
+      # fresh one for every request and walk past its rate limits.
+      - "127.0.0.1:${NTFY_PORT:-8093}:80"
 
   api:
     depends_on:
