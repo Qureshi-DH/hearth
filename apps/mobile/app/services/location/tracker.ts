@@ -2070,11 +2070,9 @@ async function settle(lat: number, lon: number, parkFix: ParkFix): Promise<void>
   // A departure can land while the registration was in flight, and the
   // anchor written below would then describe a stop that is over.
   if (useTrackingStore.getState().mode !== "stationary") return
-  logTracker("stationary", {
-    from: previous,
-    lat: Number(lat.toFixed(5)),
-    lon: Number(lon.toFixed(5)),
-  })
+  // No coordinates. The log is shared into issues and chats, and where a
+  // phone parks is usually somebody's home.
+  logTracker("stationary", { from: previous })
   syncControl()
   // A parked phone wants no service, so a death remembered from the drive
   // is no longer what stands between it and reporting.
@@ -2375,18 +2373,15 @@ export async function resumeIfEnabled(): Promise<void> {
 
 /**
  * What a shared log opens with: the tracker's beliefs at the moment of
- * sharing, which the lines below cannot always be read back to.
+ * sharing, which the lines below cannot always be read back to. The anchor
+ * goes in by its age alone, for the same reason the log holds no positions.
  */
 export function headerForTrackerLog(): string {
   const { mode, stillAnchor, queue, lastError, permission, driving, watchedUntil, enabled } =
     useTrackingStore.getState()
   return [
     `mode ${mode}${driving ? ` (driving, gate ${driving.distance} m)` : ""}${enabled ? "" : " (sharing off)"}`,
-    `anchor ${
-      stillAnchor
-        ? `${stillAnchor.lat.toFixed(5)},${stillAnchor.lon.toFixed(5)} since ${stillAnchor.since}`
-        : "none"
-    }`,
+    `anchor ${stillAnchor ? `since ${stillAnchor.since}` : "none"}`,
     `queue ${queue.length}`,
     `lastError ${lastError ?? "none"}`,
     `permission ${permission}`,

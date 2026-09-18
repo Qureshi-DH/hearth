@@ -1106,11 +1106,19 @@ describe("diagnostics", () => {
     await enterStationary(HOME.lat, HOME.lon)
     const header = headerForTrackerLog()
     expect(header).toContain("mode stationary")
-    expect(header).toContain("anchor 51.4545")
+    expect(header).toContain("anchor since")
     expect(header).toContain("queue 0")
     expect(header).toContain("service none")
     expect(header).toContain("permission")
     expect(formatTrackerLog().startsWith(header)).toBe(true)
+  })
+
+  it("holds no position, since it is shared into issues and chats", async () => {
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    const shared = formatTrackerLog()
+    expect(shared).not.toContain(HOME.lat.toFixed(3))
+    expect(shared).not.toContain(HOME.lon.toFixed(3))
   })
 
   it("keeps a thousand lines", () => {

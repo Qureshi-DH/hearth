@@ -488,10 +488,12 @@ status after every registration, `reassert` before and after, `sync` for
 each run of the sync task, `watched` and `watch adopted`, `wake`, fence
 exits and whether they were false, the classifier's verdicts, and
 `heartbeat skipped` with the reason. A shared log opens with a header from
-`headerForTrackerLog()`: mode, anchor, queue length, last error, permission
-and service status. When a family member says "the notification stayed" or
-"it went quiet at home", this is the page to ask for; a stop that was called
-and a park fix that never left used to look identical.
+`headerForTrackerLog()`: mode, when the anchor was set, queue length, last
+error, permission and service status. The log holds no coordinates, so it can
+be pasted into an issue without saying where the phone parks. When a family
+member says "the notification stayed" or "it went quiet at home", this is the
+page to ask for. A stop that was called and a park fix that never left used to
+look identical.
 
 ### The control channel
 
