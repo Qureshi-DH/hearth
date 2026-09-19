@@ -326,9 +326,11 @@ docker run --rm -v hearth_minio-data:/data -v "$PWD:/backup" alpine \
 ```
 
 `hearth_minio-data` is the compose project name joined to the volume name, so
-it matches the file above. Objects are written once under a random key and never
-rewritten, so the copy does not need the stack stopped. If you pointed `S3_ENDPOINT` at storage you
-run elsewhere, back it up there instead and skip this step.
+it matches the file above. If you set `MINIO_DATA_PATH` to a host directory,
+the pictures live there and the volume is empty, so copy that directory
+instead. Objects are written once under a random key and never rewritten, so
+the copy does not need the stack stopped. If you pointed `S3_ENDPOINT` at
+storage you run elsewhere, back it up there instead and skip this step.
 
 Restoring means getting the dump in before the API creates the schema, so bring
 up Postgres on its own first:
