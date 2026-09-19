@@ -28,3 +28,9 @@ updates:
     directory: /server
     schedule:
       interval: monthly
+
+  # The images a self-hoster runs next to the API: Postgres, MinIO, ntfy.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: monthly
