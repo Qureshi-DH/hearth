@@ -45,8 +45,19 @@ trips, "at a place" and place arrive/leave alerts are all hidden there, though
 battery stays visible. Paused is nothing at all. Members see that you paused,
 not where.
 
+Going back to precise does not open up the time in between. History and trips
+recorded while a circle saw you paused or approximate stay out of that circle's
+view, and a place you crossed then is never announced to it.
+
 You always see yourself exactly. Circle admins get _no_ extra visibility into
 members' locations. Roles only govern circle management.
+
+A server administrator sees no positions either. The admin screen lists each
+account with its email, its number of circles and devices, when it last signed
+in, and the longest stretch its phone went without reporting over the last
+day. That last figure is measured whatever the sharing mode, so it tells the
+administrator whether a phone paused in every circle is still on and
+reporting, though never where it is.
 
 SOS is the one exception. Raising an SOS switches the sender to precise sharing
 in that circle and notifies everyone regardless of mutes. The sender (or an

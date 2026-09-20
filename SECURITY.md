@@ -59,6 +59,20 @@ notified: the entry push is held back and cancelled by the departure, so the
 phone never buzzes about a visit that did not happen. Closing the rest needs the
 entry held in the database until the transit window has passed.
 
+**Registration says whether an email already has an account.** Signing in gives
+the same answer for a wrong password and an unknown address, but registering
+with a taken address is refused as taken. Hiding that needs an email
+confirmation step, which Hearth does not have. On the default `invite` server
+it takes a valid invite code to ask at all, and registration is rate limited
+per client.
+
+**A flood of wrong passwords can lock an account out for an hour.** Besides the
+throttle per client, each account takes at most 100 sign-in attempts an hour
+from anywhere, so somebody with thousands of addresses still gets a bounded
+number of guesses. The cost is that the same flood keeps the owner from signing
+in until the hour is up. Phones already signed in carry on, because they
+refresh their session rather than sign in again.
+
 **Your own actions count toward your unread badge.** The badge counts exactly what
 the feed shows, and the feed shows your own check-ins and arrivals.
 
