@@ -235,4 +235,6 @@ If you find a security problem, please report it privately. See
 ## License
 
 [AGPL-3.0](LICENSE). Run it, change it, share it. If you offer it to other
-people as a service, share your changes too.
+people as a service, share your changes too. The parts that started as
+somebody else's work are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
