@@ -334,6 +334,12 @@ export const userPresence = pgTable("user_presence", {
    * down the channel while this is fresh, and by push otherwise.
    */
   controlSeenAt: timestamp("control_seen_at", { withTimezone: true }),
+  /**
+   * When an ask first went down the channel without an upload or a heartbeat
+   * since. A phone that took it answers within seconds, so one left standing
+   * longer is a channel that died without a close.
+   */
+  controlAskedAt: timestamp("control_asked_at", { withTimezone: true }),
   /** The phone's own account of what stands between it and reporting, see PATCH /me/health. */
   health: jsonb("health").$type<DeviceHealth>(),
   /** Watermark for the trip detector, so it never re-scans old breadcrumbs. */

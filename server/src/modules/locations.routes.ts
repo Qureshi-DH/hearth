@@ -22,7 +22,7 @@ import {
   preciseStretch,
   presenceIssues,
 } from "../services/presence"
-import { sendControl } from "../services/control"
+import { CONTROL_ANSWER_GRACE_MS, sendControl } from "../services/control"
 import { enqueuePush, recentSilentPushes } from "../services/push"
 
 // Accuracy fields are deliberately not constrained here. A platform sentinel
@@ -83,14 +83,6 @@ const MEMBER_REFRESH_FRESH_MS = 30 * 1000
  */
 const WATCH_REPUSH_AFTER_MS = 90 * 1000
 const WATCH_PUSHES_PER_WINDOW = 3
-/**
- * How long a phone with its channel open is given to answer an ask down it
- * before the next hold stops trusting the channel. An answer takes a second
- * or two; a socket iOS let die without a close keeps its stamp for minutes,
- * and the page would otherwise re-ask down the dead socket every minute for
- * the whole window.
- */
-const CONTROL_ANSWER_GRACE_MS = 20 * 1000
 
 const nothingToWatch: WatchResponse = {
   watching: false,

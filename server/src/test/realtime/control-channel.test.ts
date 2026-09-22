@@ -299,6 +299,43 @@ describe("a profile opened", () => {
     phone.socket.close()
   })
 
+  it("stops trusting a channel that took an ask and went silent", async () => {
+    // iOS suspended the app without closing the socket, so the stamp is still
+    // fresh. The ask went down it half a minute ago and nothing came back.
+    const { viewer, driver, circle } = await family()
+    const phone = await openControl(driver.accessToken)
+    const ask = () =>
+      ctx.app.inject({
+        method: "POST",
+        url: `/api/v1/circles/${circle.id}/members/${driver.user.id}/refresh`,
+        headers: viewer.headers,
+      })
+    expect((await ask()).json()).toEqual({ asked: "socket" })
+    await getDb().execute(sql`
+      update user_presence
+      set control_asked_at = now() - interval '30 seconds',
+          control_seen_at = now() - interval '40 seconds'
+      where user_id = ${driver.user.id}::uuid
+    `)
+
+    // The test server has no push provider. What matters is that the dead
+    // channel was not reported as the one that carried the ask.
+    expect((await ask()).json()).toEqual({ asked: "unsupported" })
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(controlCommands(phone.messages)).toHaveLength(1)
+
+    // Heard from after that ask, a minute ago, and the channel is believed
+    // again.
+    await getDb().execute(sql`
+      update user_presence set control_asked_at = now() - interval '3 minutes'
+      where user_id = ${driver.user.id}::uuid
+    `)
+    await upload(driver.headers, 0)
+    await backdate(driver.user.id, 1)
+    expect((await ask()).json()).toEqual({ asked: "socket" })
+    phone.socket.close()
+  })
+
   it("says so when the phone has no channel and cannot be pushed", async () => {
     const { viewer, driver, circle } = await family()
     const ask = await ctx.app.inject({
