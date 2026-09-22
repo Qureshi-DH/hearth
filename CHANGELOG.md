@@ -6,6 +6,91 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+Fixes from a security and code review before the repository goes public.
+Update the server first. Migrations 0009 and 0010 run on start, and phones
+work with either version.
+
+Three things change for an existing install:
+
+- The compose files publish the API and ntfy on `127.0.0.1` only. If anything
+  reaches port 4000 from another machine, a proxy elsewhere or phones on the
+  LAN, set `HEARTH_BIND=0.0.0.0` in `.env`.
+- With ntfy, every phone gets a new topic once, the next time the app
+  registers. Subscribe again from the app's "Subscribe in ntfy" button.
+- Signing in again on a phone ends the session it had before.
+
+### Security
+
+- A stolen refresh token is caught however many times the thief rotates it.
+  Each session remembers the last sixteen tokens it spent, a lost answer is
+  retried once from the same device, and any other reuse ends the session
+  with an audit row.
+- Signing in again from a device revokes its old session, so a socket or an
+  access token from before stops working.
+- Going back to precise no longer opens up what a pause hid. History, the
+  trips list and trip detail start from the moment the member returned to
+  precise, and a trip that began during a pause or while approximate is never
+  announced to that circle.
+- A former member's export no longer lists the current, edited places of a
+  circle they left.
+- A removed member cannot rejoin through an invite made before the removal,
+  and their own invites are revoked. Only the owner sees the invite codes
+  that make an admin.
+- A check-in in the feed loses its coordinates and place name once the member
+  stops sharing precisely with that circle, as the check-ins list already did.
+- The admin outbox view shows the text of the admin's own notifications only.
+- News of an arrival, a departure, a speed or a trip waiting in the outbox is
+  dropped if the member stopped sharing precisely with that circle meanwhile.
+- The login throttle counts an IPv6 client by its /64, and each account takes
+  at most 100 sign-in attempts an hour from anywhere.
+- Web push checks an endpoint's address when it connects, so a name
+  repointed at an internal host is refused.
+- A paused member's circle is no longer sent an empty websocket frame for
+  every upload, which gave away when they moved. Sockets have a frame budget.
+- The app never falls back to plain HTTP for a public server name, only for
+  addresses that can only be on the local network.
+- A build allows plain HTTP to any host only for the EAS development profile
+  or with `HEARTH_ALLOW_HTTP=1`. A release archived from a plain
+  `expo prebuild` used to allow it everywhere.
+- The shared tracker log holds no coordinates.
+- A nudge no longer queues a fix while sharing is off, and a fix taken while
+  an account signs out is dropped rather than uploaded under the next one.
+  On Android the native fix file is cleared when tracking stops.
+
+### Fixed
+
+- The server boots from `.env.example` as the quick start describes. A blank
+  line such as `ADMIN_NAME=` crashed it, and the Postgres password recipe
+  could produce a `/` that broke `DATABASE_URL`.
+- A push provider that never answers costs one attempt instead of stalling
+  the scheduler. Every send has a 15 second deadline.
+- An outbox row another claimant took over keeps the result it wrote, and a
+  silent wake past its lifetime is failed rather than retried for an hour.
+- The outage guard no longer counts deactivated accounts and long-dead phones,
+  which could hold back every offline alert on the server.
+- Two administrators demoting each other at once can no longer leave none.
+- A speed run replayed from a backlog no longer silences the live alert for
+  the same drive.
+- An ask to a control channel that went silent without closing goes by push
+  after twenty seconds, instead of being reported as delivered for minutes.
+- The map's websocket reconnects after its token is refreshed. It usually
+  lost that race and left the map on its minute poll.
+- The tracker's control channel opens at launch even when the tokens are read
+  from the keychain after it asks.
+- An upload whose token refresh got no answer is retried, instead of the app
+  saying it was signed out.
+- A wake push no longer brings up "Updating your location" on an Android
+  phone with sharing off.
+
+### Documentation
+
+- `THIRD_PARTY_NOTICES.md` credits Ignite, Expo and the Noto Emoji avatars.
+- The privacy page says what a server administrator sees, and SECURITY.md
+  lists two trade-offs: registration says whether an email is taken, and the
+  per-account sign-in budget can keep an owner out for an hour.
+- `MINIO_DATA_PATH` is documented, with how to back it up.
+- Dependabot watches the images in the compose files.
+
 ## [1.0.0] - 2026-09-04
 
 The first stable release, and the first with store listings. The app and the
