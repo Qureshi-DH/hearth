@@ -22,13 +22,16 @@ so they can be uploaded with fastlane later. Nothing here needs it.
 
 The privacy policy and account deletion pages both stores ask for are
 `web/privacy.html` and `web/delete-account.html`, linked from the landing
-page's footer. Both stores want them at a public URL, so the site has to be
-deployed before submitting. Put that URL in
-`app-store/metadata/en-US/privacy_url.txt` and in the Play forms.
+page's footer. Both stores want them at a public URL. The Pages workflow
+publishes `web/` to <https://qureshi-dh.github.io/hearth/> on every push to
+`main` that changes it, once the repository is public, and
+`app-store/metadata/en-US/privacy_url.txt` and `play/listing.md` already point
+there.
 
 ## Before submitting
 
-- Deploy `web/` and fill in `privacy_url.txt`. `validate.py` fails until you do.
+- Check that <https://qureshi-dh.github.io/hearth/privacy.html> loads. Pages
+  serves nothing while the repository is private.
 - Stand up a public HTTPS demo server and seed it. Both reviews need to sign
   in. The steps are in `app-store/listing.md` under App Review.
 - For Play, record the background location and foreground service videos

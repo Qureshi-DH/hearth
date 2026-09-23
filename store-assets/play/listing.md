@@ -5,19 +5,19 @@ Everything Play Console asks for that isn't an image. The listing text is in
 
 ## Main store listing
 
-| Field             | Value                                      |
-| ----------------- | ------------------------------------------ |
-| App name          | `metadata/en-US/title.txt`                 |
-| Short description | `metadata/en-US/short_description.txt`     |
-| Full description  | `metadata/en-US/full_description.txt`      |
-| App icon          | `graphics/icon_512x512.png`                |
-| Feature graphic   | `graphics/feature-graphic_1024x500.png`    |
-| Phone screenshots | `screenshots/phone-1080x1920/`, all eight  |
-| Category          | Lifestyle                                  |
-| Tags              | Family safety, Location sharing, Privacy   |
-| Email             | a contact address you are happy to publish |
-| Website           | `https://github.com/Qureshi-DH/hearth`     |
-| Privacy policy    | `<your website>/privacy.html`              |
+| Field             | Value                                              |
+| ----------------- | -------------------------------------------------- |
+| App name          | `metadata/en-US/title.txt`                         |
+| Short description | `metadata/en-US/short_description.txt`             |
+| Full description  | `metadata/en-US/full_description.txt`              |
+| App icon          | `graphics/icon_512x512.png`                        |
+| Feature graphic   | `graphics/feature-graphic_1024x500.png`            |
+| Phone screenshots | `screenshots/phone-1080x1920/`, all eight          |
+| Category          | Lifestyle                                          |
+| Tags              | Family safety, Location sharing, Privacy           |
+| Email             | a contact address you are happy to publish         |
+| Website           | `https://github.com/Qureshi-DH/hearth`             |
+| Privacy policy    | `https://qureshi-dh.github.io/hearth/privacy.html` |
 
 Tablet screenshots are optional. Leave them out.
 
@@ -25,7 +25,7 @@ Tablet screenshots are optional. Leave them out.
 
 ### Privacy policy
 
-`<your website>/privacy.html`, from `web/privacy.html`.
+`https://qureshi-dh.github.io/hearth/privacy.html`, from `web/privacy.html`.
 
 ### App access
 
@@ -79,7 +79,7 @@ user's server, and say it isn't shared.
 - Is all user data encrypted in transit: Yes. Store builds refuse plain HTTP
   (`usesCleartextTraffic` is false), except to a server on the local network.
 - Do you provide a way for users to request that their data is deleted: Yes.
-  Deletion URL: `<your website>/delete-account.html`.
+  Deletion URL: `https://qureshi-dh.github.io/hearth/delete-account.html`.
 
 | Data type                                  | Collected | Shared | Optional | Purposes                              |
 | ------------------------------------------ | --------- | ------ | -------- | ------------------------------------- |
