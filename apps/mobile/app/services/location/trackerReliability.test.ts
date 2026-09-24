@@ -739,6 +739,15 @@ describe("what survives a relaunch", () => {
     expect(fresh!.fake.events).toHaveLength(0)
   })
 
+  it("asks for the channel again once the keychain has handed over the tokens", async () => {
+    Platform.OS = "android"
+    useTrackingStore.setState({ enabled: true, mode: "moving" })
+    mockControlWanted.mockClear()
+    relaunch()
+    await jest.advanceTimersByTimeAsync(0)
+    expect(mockControlWanted.mock.calls.filter(([wanted]) => wanted)).toHaveLength(2)
+  })
+
   it("opens the control channel at boot on a parked iPhone, whose session keeps it alive", () => {
     Platform.OS = "ios"
     useTrackingStore.setState({ enabled: true, mode: "stationary" })

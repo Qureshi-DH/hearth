@@ -178,8 +178,9 @@ describe("a channel wanted before the tokens are loaded", () => {
     control.setWanted(true)
     expect(sockets).toHaveLength(0)
 
+    // The tracker asks again once the keychain has handed the tokens over.
     mockUrl = "wss://hearth.test/api/v1/ws?access_token=t"
-    jest.advanceTimersByTime(1_000)
+    control.setWanted(true)
 
     expect(sockets).toHaveLength(1)
   })

@@ -2406,8 +2406,11 @@ setTrackerLogHeader(headerForTrackerLog)
   })
   if (enabled && mode !== "off") void startMotionWatch()
   // And the channel: a process the OS restarted for a delivery has to be
-  // reachable again before anyone opens a page on it.
+  // reachable again before anyone opens a page on it. The first try runs
+  // before the keychain has handed over the tokens, so it is made again
+  // once it has, rather than at the next rotation a quarter hour away.
   syncControl()
+  void tokenVault.hydrate().then(syncControl)
   // Whatever the native side saw while this process was down is the first
   // thing this one deals with, and every poke after is dealt with the same way.
   native.onNativeQueue(() => void processNativeQueue())
