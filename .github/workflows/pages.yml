@@ -24,6 +24,7 @@ jobs:
     # one is private the job is skipped rather than failing every push.
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -15,6 +15,7 @@ jobs:
     # on private ones, so a private fork skips it rather than failing.
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       security-events: write
       actions: read

@@ -13,6 +13,9 @@ jobs:
   lint:
     name: Lint and format
     runs-on: ubuntu-latest
+    # Every job is capped. A test run that never exits otherwise holds a
+    # runner for the six hour default, on a private repository's minutes.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -38,6 +41,7 @@ jobs:
   docs:
     name: Documentation site
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -58,6 +62,7 @@ jobs:
   server:
     name: Server
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -104,6 +109,7 @@ jobs:
   mobile:
     name: Mobile
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -123,6 +129,7 @@ jobs:
   docker:
     name: Docker image
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [server]
     steps:
       - uses: actions/checkout@v4
