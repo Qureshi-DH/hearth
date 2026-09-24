@@ -223,6 +223,15 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
     })
     onClose(() => unsubscribe?.())
 
+    // A sign-out published while the queries above ran reached no listener,
+    // and the socket would have stayed open until the next timer pass. The
+    // row is revoked before it is announced, so reading it once more now
+    // that the listener is attached closes that gap.
+    if (!(await liveSession())) {
+      socket.close(4401, "unauthorized")
+      return
+    }
+
     async function reauthorise(): Promise<void> {
       // Revocation is checked against the session row rather than by
       // re-verifying the connect-time token. The token expires in minutes and
