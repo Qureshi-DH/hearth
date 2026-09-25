@@ -1,5 +1,3 @@
-import type { EventSubscription } from "expo-modules-core"
-
 import type {
   BackgroundRefreshStatus,
   MotionActivity,
@@ -11,6 +9,8 @@ import type {
 } from "../../../modules/hearth-motion"
 
 type MotionModule = typeof import("../../../modules/hearth-motion").default
+/** What a listener hands back, typed from the module: the app does not depend on expo-modules-core. */
+export type Subscription = ReturnType<MotionModule["addListener"]>
 
 /**
  * The native module only exists in a build that included it, so an older
@@ -89,7 +89,7 @@ export async function ensureMotionPermission(): Promise<boolean> {
  */
 export async function startMotion(
   onChange: (activity: MotionActivity, confidence: number, source: MotionSource) => void,
-): Promise<EventSubscription | null> {
+): Promise<Subscription | null> {
   if (!native) return null
   if ((await motionPermission()) !== "granted") return null
   const subscription = native.addListener("onMotionChange", (event: MotionChangeEvent) =>
@@ -104,7 +104,7 @@ export async function startMotion(
   return subscription
 }
 
-export async function stopMotion(subscription: EventSubscription | null): Promise<void> {
+export async function stopMotion(subscription: Subscription | null): Promise<void> {
   subscription?.remove()
   if (!native) return
   try {
@@ -123,7 +123,7 @@ export async function stopMotion(subscription: EventSubscription | null): Promis
  */
 export async function startSensorBatches(
   onBatch: (samples: SensorSample[]) => void,
-): Promise<EventSubscription | null> {
+): Promise<Subscription | null> {
   if (!native) return null
   const subscription = native.addListener("onSensorBatch", (event: SensorBatchEvent) =>
     onBatch(event.samples),
@@ -138,7 +138,7 @@ export async function startSensorBatches(
   return null
 }
 
-export async function stopSensorBatches(subscription: EventSubscription | null): Promise<void> {
+export async function stopSensorBatches(subscription: Subscription | null): Promise<void> {
   subscription?.remove()
   if (!native) return
   try {

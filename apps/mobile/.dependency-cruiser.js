@@ -86,6 +86,8 @@ module.exports = {
       from: {},
       to: {
         couldNotResolve: true,
+        // Types only, from @types/geojson, which the cruiser does not look in.
+        pathNot: "^geojson$",
       },
     },
     {

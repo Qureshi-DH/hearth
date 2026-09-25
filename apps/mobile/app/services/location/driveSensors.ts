@@ -1,4 +1,3 @@
-import type { EventSubscription } from "expo-modules-core"
 import { Accelerometer, Barometer, Gyroscope } from "expo-sensors"
 import { detectDriveEvent, IMPACT, type DriveEvent, type DriveSample } from "@hearth/shared"
 
@@ -63,7 +62,7 @@ type Subscription = { remove: () => void }
 let accelSub: Subscription | null = null
 let gyroSub: Subscription | null = null
 let baroSub: Subscription | null = null
-let nativeSub: EventSubscription | null = null
+let nativeSub: Subscription | null = null
 let starting = false
 
 let window: DriveSample[] = []
