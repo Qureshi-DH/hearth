@@ -22,7 +22,7 @@ jobs:
         with: { version: "10.14.0" }
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Prettier
@@ -48,7 +48,7 @@ jobs:
         with: { version: "10.14.0" }
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - name: Install
         working-directory: docs
@@ -82,7 +82,7 @@ jobs:
         with: { version: "10.14.0" }
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Typecheck
@@ -116,7 +116,7 @@ jobs:
         with: { version: "10.14.0" }
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Typecheck
