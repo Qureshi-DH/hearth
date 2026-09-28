@@ -10,6 +10,53 @@ updates:
         dependency-type: development
       expo:
         patterns: ["expo", "expo-*", "@expo/*", "react-native*"]
+    ignore:
+      # An Expo SDK pins React, React Native and the test and lint tooling that
+      # go with it. They move together at an SDK upgrade, by hand with
+      # `npx expo install --fix`, never one package at a time.
+      - dependency-name: "expo"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "expo-*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@expo/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "jest-expo"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-config-expo"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "jest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "babel-jest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/jest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@testing-library/react-native"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@babel/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "react-test-renderer"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "react-native"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "react-native-*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "@react-native/*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # typescript-eslint supports TypeScript below 6.1.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # eslint-config-expo's React plugin does not run on ESLint 10 yet.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
+      # Typed against the Node the server runs.
+      - dependency-name: "@types/node"
+        versions: [">= 25"]
 
   # The docs site is installed on its own, outside the pnpm workspace, so the
   # entry above never reaches its lockfile.
@@ -18,6 +65,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Docusaurus's shared tsconfig still sets baseUrl, which TypeScript 7
+      # removed.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
@@ -28,9 +80,18 @@ updates:
     directory: /server
     schedule:
       interval: monthly
+    ignore:
+      # LTS lines only. Take this out when Node 26 becomes LTS in October 2026.
+      - dependency-name: "node"
+        versions: [">= 25"]
 
   # The images a self-hoster runs next to the API: Postgres, MinIO, ntfy.
   - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: monthly
+    ignore:
+      # A new Postgres major cannot open the old one's data directory. Moving
+      # means a dump and a restore on every install, so it is done on purpose.
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
