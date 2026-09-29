@@ -14,8 +14,8 @@ which is [step 6](#6-before-you-invite-anyone) and a link to a longer page.
 
 - Docker Engine 24+ with Compose v2 (`docker compose version`)
 - Node 20.18+ and pnpm 9+, to build the app
-- Xcode (iOS) or Android Studio (Android). There is no App Store or Play build
-  yet, so you compile the app yourself
+- Xcode (iOS) or Android Studio (Android). The store builds are in review, so
+  for now you compile the app yourself
 - A phone or simulator on the same network as the server
 
 ## 1. Get the code

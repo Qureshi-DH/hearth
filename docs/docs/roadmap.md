@@ -10,11 +10,20 @@ value.
 ## Near term
 
 Measured against the family safety apps Hearth sets out to be a self-hosted version
-of, these are the gaps that remain after 0.6.0. The tracker's tiers, places
+of, these are the gaps that remain after 1.0. The tracker's tiers, places
 with arrival and departure alerts, check-ins, SOS, crash detection, low
 battery alerts, trips, history, and the member statuses other apps show
 ("location permission off", "at Home since") are all there.
 
+- A Hearth organisation for push. The app relies on Expo push, and every push to
+  a build goes out under the Expo project, Firebase project and Apple push key
+  it was built with. That is fine for somebody building with their own keys, and
+  it is why the store builds cannot carry personal ones. The plan is Hearth's
+  own Expo organisation, Firebase project and Apple developer account, with a
+  small relay in front of Expo that passes only Hearth's notification types and
+  limits each server and each phone. A store build could then push for any
+  server. It needs a legal entity and some funding, at today's prices about $99
+  a year for Apple and $25 once for Google Play. If you can help, open an issue.
 - Driving events on trips: hard braking, rapid acceleration, phone use while
   driving, and a weekly driving summary. The sensor pass already sees the
   braking; see the item below.

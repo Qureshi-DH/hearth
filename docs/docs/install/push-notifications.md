@@ -29,6 +29,33 @@ has to arrive through FCM or APNs in the app's own process. With `ntfy` the
 alerts are shown by the ntfy app, so the family still hears about arrivals and
 SOS, but a quiet phone waits for its own heartbeat rather than being woken.
 
+## What the app needs from Expo
+
+The iOS and Android apps are built and tested and waiting on App Store and Play
+Store review.
+
+Everything the app does while it is closed rides on Expo push: alerts on a
+locked phone, and the silent wakes that bring a phone back to reporting. A push
+reaches the app only through the Expo project, Firebase project and Apple push
+key it was built with, and every push to that build goes out under those
+accounts, whichever server sends it. That is why a store build cannot ship with
+personal keys that any server on the internet would be sending through.
+
+So today:
+
+- **With your own Expo account, Firebase project and Apple developer account**,
+  build the app with your keys as Option 3 describes, and push works fully
+  against your server.
+- **Without them**, Hearth still works. Use `ntfy` for alerts, with the limits
+  under Option 2, or no push at all.
+
+A Hearth organisation with its own Expo, Firebase and Apple accounts, and a
+small relay in front of Expo that passes only Hearth's own notifications, would
+let the store builds push for any server. It is on the
+[roadmap](../roadmap.md) and needs funding.
+
+## How a notification is sent
+
 All providers share the same server-side pipeline. Events are written to a
 durable `notification_outbox` table in the same transaction as the thing that
 caused them. Postgres wakes the worker the moment that transaction commits, so
@@ -64,7 +91,7 @@ arrive/leave/SOS as in-app banners while open.
 What you lose is alerts while the phone is locked. For a household that mostly
 opens the app to _check_ where people are, that's often fine.
 
-## Option 2: `ntfy` / UnifiedPush (recommended self-hosted path)
+## Option 2: `ntfy` (self-hosted alerts)
 
 [ntfy](https://ntfy.sh) is a small open-source pub/sub server. The phone holds a
 long-lived connection to _your_ ntfy instance, or on Android a single shared
@@ -90,12 +117,28 @@ and `ntfy access` inside the running container. Put `NTFY_TOKEN` in `.env` so th
 server authenticates when publishing. `NTFY_TOPIC_PREFIX` renames the `hearth-`
 part if you are sharing an ntfy instance with something else.
 
-Android is the good case here. UnifiedPush is battery-friendly and instant. iOS
-works through the ntfy iOS app, which itself uses APNs via ntfy's public
-instance for the wake-up signal _unless_ you configure your ntfy server's
-`upstream-base-url`, so read ntfy's iOS docs first. The _content_ still comes
-from your server either way. The real cost is that everyone installs a second
-app, which for a family is a one-time setup step.
+**ntfy is not a full replacement for Expo.** It carries the alerts, but it
+cannot wake Hearth itself. Only a push through FCM or APNs to the app's own
+process can do that, and a notification the ntfy app shows never reaches it. On
+a parked Android phone that means:
+
+- Live and a refresh wait for the phone's next report, up to a quarter of an
+  hour, or until it moves.
+- A phone that has gone quiet is not woken before its family is told it stopped
+  reporting.
+- "Ask for location" shows its words in ntfy, but no fresh fix is taken.
+
+Tracking itself carries on. The geofence, the activity transitions, the location
+service on a journey and the quarter-hourly report all run without push. iPhones
+feel this less, because their parked location session keeps the app's own line
+to the server open, and asks go down that instead.
+
+For alerts, Android is the good case. The ntfy app keeps one battery-friendly
+connection and shows them at once. iOS works through the ntfy iOS app, which
+itself uses APNs via ntfy's public instance for the wake-up signal _unless_ you
+configure your ntfy server's `upstream-base-url`, so read ntfy's iOS docs first.
+The _content_ still comes from your server either way. The real cost is that
+everyone installs a second app, which for a family is a one-time setup step.
 
 ## Option 3: `expo` (Expo's hosted push relay)
 
@@ -160,7 +203,8 @@ high-accuracy fix and uploads it. Whether that wakes a backgrounded app depends
 on the provider:
 
 - `expo`: yes on both platforms (`priority: high`).
-- `ntfy`: yes on Android. On iOS the user must tap the notification.
+- `ntfy`: no, on either platform. The words show in the ntfy app, and Hearth
+  takes a fix when it is next opened or reports on its own.
 - `none`: only if the app is in the foreground, via the websocket.
 
 ## Quick messages
@@ -175,8 +219,9 @@ records it either way, so the line is still there to find.
 
 ## Choosing, in one paragraph
 
-If you're running Hearth on a NAS for your own family and you care about privacy
-above all, run `ntfy` alongside it. That's one extra container and one extra app
-on each phone. If you'd rather never think about it, `expo` is one environment
-variable and works everywhere. Either way, start with `none`, get everyone on
-the map, and add push once the basics are solid.
+If you build the app with your own Expo, Firebase and Apple keys, use `expo`. It
+is one environment variable and it is the only option that gives you the whole
+app. If you care about privacy above all, or have no such keys, run `ntfy`
+alongside the server for alerts and accept the limits under Option 2. That's one
+extra container and one extra app on each phone. Either way, start with `none`,
+get everyone on the map, and add push once the basics are solid.

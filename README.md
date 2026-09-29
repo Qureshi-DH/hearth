@@ -48,9 +48,10 @@ and Android app that talks only to it.
 
 1.0. The features below are built and tested, and I run it for my own family.
 It has not been through an independent security audit, and the Android build
-has had less real device testing than iOS. Until the store listings are live you
-build the app yourself. Read [SECURITY.md](SECURITY.md) before pointing the
-server at the internet.
+has had less real device testing than iOS. The iOS and Android apps are built
+and tested and waiting on App Store and Play Store review, so they're coming
+soon. Until they're out you build the app yourself. Read
+[SECURITY.md](SECURITY.md) before pointing the server at the internet.
 
 ## What it does
 
@@ -134,8 +135,9 @@ has Caddy and nginx configs you can paste.
 
 ## Build the app
 
-There's no App Store build yet. The app uses native modules for maps and
-background location, so Expo Go won't run it and you need a development build.
+The store builds are in review and not out yet. The app uses native modules for
+maps and background location, so Expo Go won't run it and you need a
+development build.
 
 ```bash
 pnpm install
@@ -215,12 +217,21 @@ is the one part a self-hoster can't fully own. Pick a provider:
 | Provider         | Third party?        | Works on                     | Effort |
 | ---------------- | ------------------- | ---------------------------- | ------ |
 | `none` (default) | No                  | Both, while the app is open  | None   |
-| `ntfy`           | No, you host it     | Both, through the ntfy app   | Low    |
+| `ntfy`           | No, you host it     | Both, alerts only, in ntfy   | Low    |
 | `expo`           | Yes, Expo relays it | Both, including silent wakes | Low    |
 | `webpush`        | Browser vendor      | Browsers, UnifiedPush        | Medium |
 
-Only `expo` delivers the silent wakes that keep a parked Android phone reporting.
-Payloads carry names and identifiers, never coordinates. The
+Only `expo` wakes the app itself, and a lot rests on that: Live and a refresh on
+a parked Android phone, the wake that revives a phone gone quiet, and "Ask for
+location" on a phone in a pocket. `ntfy` carries the alerts, and those wait for
+the phone's own next report, up to a quarter of an hour.
+
+Expo push goes through the Expo project, Firebase project and Apple push key the
+app was built with. If you have those, build the app with them and push works
+fully against your server. If you don't, Hearth still runs, with `ntfy` for
+alerts. A Hearth organisation with its own accounts, so the store builds can
+push for any server, is on the [roadmap](docs/docs/roadmap.md) and needs
+funding. Payloads carry names and identifiers, never coordinates. The
 [push notifications guide](docs/docs/install/push-notifications.md) covers each one.
 
 ## Contributing

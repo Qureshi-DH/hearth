@@ -29,7 +29,8 @@ The one recurring bill most people end up with is a domain name, and
 Both. The app is Expo SDK 55 and React Native 0.83, and the same codebase builds
 for each.
 
-It is not on either store yet, so you build it yourself. The app uses native
+The store builds are built and tested and waiting on App Store and Play Store
+review. Until they're out you build it yourself. The app uses native
 modules for the map, background location and secure storage, which means Expo Go
 will not run it and you need a development build:
 

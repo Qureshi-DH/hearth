@@ -80,12 +80,15 @@ That means a reverse proxy and a domain, or a tunnel or VPN. See
 [Remote access](../install/remote-access.md).
 
 **Waking a sleeping phone.** That last hop belongs to Apple and Google, and it
-is the one part a self-hoster cannot fully own. The default is no push at all,
-which still works while the app is open. [Push
-notifications](../install/push-notifications.md) covers the options.
+is the one part a self-hoster cannot fully own. Hearth uses Expo push for it,
+which needs the Expo, Firebase and Apple keys the app was built with. The
+default is no push at all, which still works while the app is open. [Push
+notifications](../install/push-notifications.md) covers the options and what
+each one cannot do.
 
-**Building the app.** Hearth is alpha and is not on either store yet, so you
-build the app yourself from source. It has not had a security audit, and Android
+**Building the app.** The iOS and Android apps are built and tested and waiting
+on App Store and Play Store review. Until they're out, you build the app
+yourself from source. It has not had an independent security audit, and Android
 has seen less real-device testing than iOS.
 
 Registration is invite-only by default, and the first admin account is created
