@@ -12,6 +12,10 @@ pnpm start                        # local preview with hot reload
 pnpm build                        # what CI runs
 ```
 
+`.github/workflows/pages.yml` publishes it at
+<https://qureshi-dh.github.io/hearth/docs/>, under the landing page from `web/`,
+on every push to `main` that changes either.
+
 `onBrokenLinks` is set to `throw`, so an internal link to a page that has moved
 or been removed fails the build instead of shipping. That is deliberate: it is
 the mechanism that keeps the documentation honest as the code changes.

@@ -196,6 +196,9 @@ response shape changes, both fail to typecheck until they agree.
 
 ## Documentation
 
+The docs are at [qureshi-dh.github.io/hearth/docs](https://qureshi-dh.github.io/hearth/docs/),
+with search, and the same pages are in [`docs/docs`](docs/docs) here.
+
 |                                                               |                                                    |
 | ------------------------------------------------------------- | -------------------------------------------------- |
 | [Quick start](docs/docs/overview/quick-start.md)              | From nothing to one phone on the map               |

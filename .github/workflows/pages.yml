@@ -1,12 +1,13 @@
 name: Pages
 
-# Publishes web/, the landing page and the privacy and account deletion pages
-# the stores link to, at https://qureshi-dh.github.io/hearth/.
+# One site at https://qureshi-dh.github.io/hearth/: the landing page and the
+# privacy and account deletion pages the stores link to, from web/, with the
+# documentation from docs/ under /hearth/docs/.
 
 on:
   push:
     branches: [main]
-    paths: ["web/**", ".github/workflows/pages.yml"]
+    paths: ["web/**", "docs/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -24,15 +25,32 @@ jobs:
     # one is private the job is skipped rather than failing every push.
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with: { version: "10.14.0" }
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+      - name: Build the docs
+        working-directory: docs
+        run: |
+          pnpm install --frozen-lockfile --ignore-workspace
+          pnpm build
+      - name: Put the site together
+        run: |
+          mkdir -p _site
+          cp -R web/. _site/
+          cp -R docs/build _site/docs
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: web
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v5

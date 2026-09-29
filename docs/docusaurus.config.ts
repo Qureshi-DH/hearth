@@ -7,8 +7,11 @@ const config: Config = {
   tagline: "Family location sharing you host yourself",
   favicon: "img/favicon.ico",
 
-  url: "https://hearth-docs.pages.dev",
-  baseUrl: "/",
+  // One site on GitHub Pages: the landing page from web/ at /hearth/, and these
+  // docs under it at /hearth/docs/. See .github/workflows/pages.yml.
+  url: "https://qureshi-dh.github.io",
+  baseUrl: "/hearth/docs/",
+  trailingSlash: true,
   organizationName: "Qureshi-DH",
   projectName: "hearth",
 
@@ -23,8 +26,8 @@ const config: Config = {
       {
         docs: {
           sidebarPath: "./sidebars.ts",
-          // Docs are the whole site. There is no separate landing route here,
-          // because the marketing page lives in web/ and is deployed apart.
+          // Docs are the whole of this build. The landing page is web/, served
+          // one level up on the same site.
           routeBasePath: "/",
           editUrl: "https://github.com/Qureshi-DH/hearth/tree/main/docs/",
           showLastUpdateTime: true,
@@ -48,8 +51,20 @@ const config: Config = {
     colorMode: { defaultMode: "dark", respectPrefersColorScheme: true },
     navbar: {
       title: "Hearth",
-      logo: { alt: "Hearth", src: "img/logo.svg" },
+      // Up to the landing page, which is outside this build, so these links
+      // skip the base URL the docs are served under.
+      logo: {
+        alt: "Hearth",
+        src: "img/logo.svg",
+        href: "https://qureshi-dh.github.io/hearth/",
+        target: "_self",
+      },
       items: [
+        {
+          type: "html",
+          position: "left",
+          value: '<a class="navbar__item navbar__link" href="/hearth/">Home</a>',
+        },
         { type: "docSidebar", sidebarId: "docs", position: "left", label: "Documentation" },
         { to: "/developer/api", label: "API", position: "left" },
         {
