@@ -9,6 +9,9 @@
       content="What the Hearth app collects, where it goes, and who is responsible for it. Hearth is self-hosted, so your data stays on your own server."
     />
     <meta name="theme-color" content="#F5643A" />
+    <link rel="icon" href="favicon.ico" sizes="48x48" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <style>
       /* Palette is the app's own, so the site and the product agree. The
          neutrals are pulled warm toward the ember rather than left grey. */
@@ -570,16 +573,17 @@
 
     <main class="wrap doc">
       <h1>Privacy policy</h1>
-      <p class="meta">For the Hearth app on iOS and Android. Effective 13 September 2026.</p>
+      <p class="meta">For the Hearth app on iOS and Android. Effective 30 September 2026.</p>
 
       <div class="summary">
         <p>
-          <strong>The short version.</strong> Hearth is self-hosted. The app sends your account,
-          your location and your family's data to one place only: the Hearth server you choose to
-          sign in to. That server is run by you, your family, or someone you trust. It is not run by
-          the people who make Hearth, and we cannot see anything on it. There are no ads, no
-          analytics, no crash reporting and no tracking SDKs in the app. Other family locators keep
-          your location on their own servers. Hearth keeps it on yours, and nothing comes to us.
+          <strong>The short version.</strong> Hearth is self-hosted. Apart from the map, street-name
+          and notification services listed below, the app sends your account, your location and your
+          family's data to one place only: the Hearth server you choose to sign in to. That server
+          is run by you, your family, or someone you trust. It is not run by the people who make
+          Hearth, and we cannot see anything on it. There are no ads, no analytics, no crash
+          reporting and no tracking SDKs in the app. Other family locators keep your location on
+          their own servers. Hearth keeps it on yours, and nothing comes to us.
         </p>
       </div>
 
@@ -621,7 +625,7 @@
         <tr>
           <td>
             Location: position, accuracy, speed, heading, altitude, and whether you are still,
-            walking, cycling or driving
+            walking, running, cycling or driving
           </td>
           <td>
             To show your circle where you are, notice when you arrive at or leave a place, record
@@ -634,12 +638,14 @@
         </tr>
         <tr>
           <td>
-            Device name, platform, app and system version, a notification token, and the IP address
-            the device last connected from
+            Device name and maker, platform, app and system version, a notification token, the IP
+            address and user agent the device last connected with, and whether its location
+            permission, battery optimisation, power saving or background settings would stop it
+            sharing
           </td>
           <td>
-            To list your signed-in devices, deliver notifications to them, and help the operator
-            spot a sign-in that isn't yours.
+            To list your signed-in devices, deliver notifications to them, help the operator spot a
+            sign-in that isn't yours, and show your circle why a phone has gone quiet.
           </td>
         </tr>
         <tr>
@@ -648,9 +654,13 @@
         </tr>
       </table>
       <p>
-        By default a server keeps location history for 30 days per circle, and never more than 90,
-        though its operator can change both. Your current position is kept until the next one
-        replaces it.
+        By default a server keeps your location history for 30 days, and never more than 90. A
+        circle's admins can change the first number for their circle, and the server's operator can
+        change the second. If you are in several circles, the longest setting decides how long your
+        history is kept, and each circle only sees back as far as its own setting. Your current
+        position is kept until the next one replaces it. The check-ins, arrivals and departures
+        recorded in a circle's activity feed are not covered by these limits and stay until the
+        circle is deleted.
       </p>
 
       <h2>Location in the background</h2>
@@ -658,19 +668,24 @@
         While sharing is on, Hearth collects your location even when the app is closed or not in
         use. That is what lets your family see you without you opening the app, and what makes
         arrival alerts, trips, SOS and crash detection work. When you have stopped somewhere, the
-        app switches to a low-power mode and reports rarely. You can pause sharing, share only an
-        approximate area (about 750 metres), or turn sharing off at any time, separately for each
-        circle.
+        app switches to a low-power mode and reports rarely. You can pause sharing or share only an
+        approximate area (about 750 metres), separately for each circle, unless a circle's admin has
+        turned pausing off. Either one changes what that circle sees, but the phone still sends your
+        location to your server, which keeps it as history. To stop the phone sending it at all,
+        turn off Share my location, which you can do at any time.
       </p>
 
       <h2>Services the app talks to besides your server</h2>
       <ul>
         <li>
-          <strong>Notifications.</strong> To receive notifications, the phone registers with Apple
-          Push Notification service or Firebase Cloud Messaging. Depending on how your server is set
-          up, notifications are relayed through Expo's push service or through an ntfy server your
-          operator runs. A notification carries names and a short line of text, such as "Maya
-          arrived at School". It never contains coordinates.
+          <strong>Notifications.</strong> What happens depends on how your server is set up. With
+          Expo push, the phone registers with Expo's push service, and notifications travel from
+          your server through Expo and then Apple Push Notification service or Firebase Cloud
+          Messaging. With ntfy, notifications go through an ntfy server your operator runs and are
+          shown by the ntfy app. On iPhone the ntfy app's wake-up signal still goes through Apple,
+          and may go through ntfy's public server depending on how that ntfy server is set up. With
+          neither, no notification service is used. A notification carries names, a short line of
+          text such as "Maya arrived at School", and ids. It never contains coordinates.
         </li>
         <li>
           <strong>Maps.</strong> Map images are downloaded from the map provider your server is
@@ -680,7 +695,11 @@
         <li>
           <strong>Street names.</strong> To show "near Valencia St", the app asks the phone's own
           geocoding service, Apple's on iPhone and Google's on Android, which receives the
-          coordinates being looked up.
+          coordinates being looked up. You can turn street names off in You.
+        </li>
+        <li>
+          <strong>Directions.</strong> If you ask for directions to someone, the app opens your
+          phone's maps app at their position.
         </li>
         <li>
           <strong>App stores.</strong> Apple and Google collect data about downloads and purchases
@@ -691,10 +710,10 @@
 
       <h2>What stays on your phone</h2>
       <p>
-        Your settings, a short queue of locations waiting to upload if you are offline, and a
-        diagnostic log of what the tracker did. The log never leaves the phone unless you choose to
-        share it from You, Tracker diagnostics. Your sign-in tokens are kept in the phone's secure
-        keychain.
+        Your settings, a short queue of locations waiting to upload if you are offline, street names
+        the phone has already looked up, and a diagnostic log of what the tracker did. The log never
+        leaves the phone unless you choose to share it from You, Tracker diagnostics. Your sign-in
+        tokens are kept in the phone's secure storage.
       </p>
 
       <h2>Permissions</h2>
@@ -703,21 +722,22 @@
         (Android), so the app knows when you are still and can save battery. Notifications. The
         camera, only when you scan an invite QR code. Your photos, only through the system picker,
         which hands the app the one image you choose. On Android, an exemption from battery
-        optimisation so the phone does not stop sharing in the background. Hearth never asks for
-        your contacts, microphone, Bluetooth or advertising identifier.
+        optimisation so the phone does not stop sharing in the background. On iPhone, local network
+        access, which iOS asks about only when your server is on your home network. Hearth never
+        asks for your contacts, microphone, Bluetooth or advertising identifier.
       </p>
       <p>
-        Crash detection reads the accelerometer, gyroscope and barometer during a drive. Those
-        readings are worked through on the phone and are not uploaded. Only the alert is, if a crash
-        is detected and you don't cancel it.
+        Crash detection reads the accelerometer, gyroscope and barometer during a drive, when one of
+        your circles has turned it on. Those readings are worked through on the phone and are not
+        uploaded. Only the alert is, if a crash is detected and you don't cancel it.
       </p>
 
       <h2>Your choices</h2>
       <ul>
         <li>Pause, approximate or stop sharing in You, Location sharing.</li>
         <li>
-          Download everything your server holds about you in You, Privacy &amp; data, Export my
-          data.
+          Download your profile, circles, location history, trips, check-ins and the places you
+          created in You, Privacy &amp; data, Export my data.
         </li>
         <li>Erase your location history in You, Privacy &amp; data, Erase my location history.</li>
         <li>
@@ -729,17 +749,18 @@
       <h2>Children</h2>
       <p>
         Hearth is made for families, and families often use it to keep track of children. We do not
-        collect data from anyone, children included. Accounts for children are created on the
-        family's own server by the adults who run it. Anyone in a circle has the same controls as
-        everyone else, including pausing and leaving, unless a circle admin has turned pausing off,
-        which every member can see.
+        collect data from anyone, children included. Accounts for children, like everyone else's,
+        live on the family's own server, which by default only lets someone sign up with an invite
+        from a circle's admin. Anyone in a circle has the same controls as everyone else, including
+        pausing and leaving, unless a circle admin has turned pausing off, which every member can
+        see.
       </p>
 
       <h2>Security</h2>
       <p>
-        The store versions of the app connect to servers on the internet only over HTTPS. Plain HTTP
-        is allowed only for a server on your own local network. How the server itself is secured and
-        backed up is up to its operator.
+        The store versions of the app connect to servers on the internet only over HTTPS. On iPhone,
+        plain HTTP is allowed only for a server on your own local network, and on Android not at
+        all. How the server itself is secured and backed up is up to its operator.
       </p>
 
       <h2>Changes</h2>

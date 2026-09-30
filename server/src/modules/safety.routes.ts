@@ -629,8 +629,11 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["safety"],
         summary: "Nudge someone",
         description:
-          "Asks their device to report a fresh location, and optionally puts a short message " +
-          "on their screen. Rate limited so it cannot be used to badger someone.",
+          "Sends one member a notification asking where they are, or a short message, and " +
+          "records it in the circle's feed. An app in the foreground reports a fresh location " +
+          "when it arrives. A phone with the app in the background only shows the notification, " +
+          "so ask for the fix itself with POST /circles/{circleId}/members/{userId}/refresh. " +
+          "Rate limited so it cannot be used to badger someone.",
         params: circleIdParam.extend({ userId: z.string().uuid() }),
         body: z
           .object({

@@ -16,9 +16,11 @@ const PING_INTERVAL_MS = 25_000
 type Listener = (message: WsServerMessage) => void
 
 /**
- * One websocket for the whole app, alive only in the foreground. Holding a
- * socket open from a suspended phone is unreliable and drains the battery, so
- * background wake-ups come from push instead.
+ * One websocket for the screens, alive only in the foreground. Kept open in
+ * the background it would wake the radio of a phone in a pocket for every
+ * frame the map wants. Background asks come down the tracker's own control
+ * channel instead (services/location/control.ts), which carries nothing but
+ * asks, or by silent push when that is closed.
  *
  * Incoming frames are written straight into the React Query cache. Screens
  * render query data and never subscribe to the socket. A quick message is the

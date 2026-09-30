@@ -556,8 +556,9 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
     // A fix arriving is the clock's "not still yet"; the stop is judged from
     // how long they stop coming.
     armBackgroundClock()
-    // The live tier delivers every few seconds, so the first fix past the
-    // window is what steps it back down, whether or not the timer got there.
+    // The live tier delivers on its interval whether or not the phone moves,
+    // so the first fix past the window is what steps it back down, whether or
+    // not the timer got there.
     await endWatchIfOver()
   }
   // Whether or not this delivery kept a fix: the queue may hold an upload
@@ -1384,14 +1385,14 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
 
 /**
  * Parked is not silent, but it is quiet. On Android the request stays at
- * Wi-Fi grade with one fix wanted a quarter hour, under the same service as
- * every other tier. On iOS it is a cell-only session with the fence radius
- * as its distance filter: it costs almost nothing, it keeps the process
- * alive so the quarter hour heartbeat and the classifier keep running, and
- * a departure is seen by the session's own filter rather than at the
- * fence's leisure. Without a session iOS suspends the app within seconds,
- * and the fence alone is reported minutes late, or never with Background App
- * Refresh off.
+ * Wi-Fi grade with one fix wanted a quarter hour, and no service runs under
+ * it: a wake or a watch brings the brief service up for one fix. On iOS it
+ * is a cell-only session with no distance filter: it costs almost nothing,
+ * it keeps the process alive so the quarter hour heartbeat and the
+ * classifier keep running, and a departure shows in the session's own
+ * deliveries rather than at the fence's leisure. Without a session iOS
+ * suspends the app within seconds, and the fence alone is reported minutes
+ * late, or never with Background App Refresh off.
  */
 function restingOptions(): Location.LocationTaskOptions {
   if (Platform.OS === "ios") {
@@ -1437,16 +1438,17 @@ function currentOptions(): Location.LocationTaskOptions | null {
     if (Platform.OS === "android") return restingOptions()
     return watchedNow() ? liveOptions(Location.Accuracy.High) : restingOptions()
   }
-  // Somebody is looking. Full accuracy every few seconds for the window.
+  // Somebody is looking. Full accuracy at the live interval for the window.
   if (watchedNow()) return liveOptions(Location.Accuracy.High)
   if (driving) return drivingOptions(driving.distance)
   return updateOptions(policy)
 }
 
 /**
- * Somebody has this phone's owner's page open. Every few seconds, uploaded
- * as it comes, for the watch window and no longer: the one time the family
- * wants to see a car move along a road is when they are looking at it.
+ * Somebody has this phone's owner's Live page open. A fix at the live
+ * interval, uploaded as it comes, for the watch window and no longer: the one
+ * time the family wants to see a car move along a road is when they are
+ * looking at it.
  */
 function liveOptions(accuracy: Location.Accuracy): Location.LocationTaskOptions {
   return {
@@ -1454,7 +1456,7 @@ function liveOptions(accuracy: Location.Accuracy): Location.LocationTaskOptions 
     timeInterval: LIVE_INTERVAL_MS,
     // On the interval, whether or not the phone moved, so the first fix past
     // the window is always delivered and steps the tier down, and a car at
-    // the lights sends the same spot every few seconds, which is what live
+    // the lights sends the same spot on every tick, which is what live
     // means. iOS has no interval, and only a session with no distance filter
     // delivers to a phone standing still. ingest thins the stream to what is
     // worth uploading.
@@ -1710,7 +1712,8 @@ export async function enterWatched(seconds: number): Promise<void> {
   armWatchTimer()
   // The window is held either way, so a departure inside it goes straight
   // to live. A parked Android phone answers with one fix under the brief
-  // service, and the server asks again while the page stays open.
+  // service. The server pushes it again only once the window has run out,
+  // since a phone that answered is held until then.
   if (Platform.OS === "android" && store.mode === "stationary") {
     await wakeFix()
     return
@@ -1725,8 +1728,8 @@ export async function enterWatched(seconds: number): Promise<void> {
 
 /**
  * The upload reply says until when somebody has this phone's owner's page
- * open. A moving phone uploads every few seconds, so this reaches it whether
- * or not the silent push did. The window is measured against the server's
+ * open. A moving phone uploads with each fix, so this reaches it whether or
+ * not the silent push did. The window is measured against the server's
  * own clock, since the phone's may be minutes out. A window already held is
  * only moved out, never re-registered: the tier steps down on its own when
  * the window lapses.

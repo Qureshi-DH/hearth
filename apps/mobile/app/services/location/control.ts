@@ -20,13 +20,14 @@ export function setControlHandler(next: ControlHandler): void {
 }
 
 /**
- * The phone's own line to the server, open for as long as sharing is on:
- * an iPhone's parked session keeps its process alive, and a parked Android
- * phone exempt from battery optimisation keeps its network and its process
- * for hours. An ask from the family (a page opened, Live, the sweep's
- * wake) comes down it and is answered within a second. The UI's own
- * socket is a different thing: it lives with the screen and closes when the
- * app goes to the background, which is exactly when this one matters.
+ * The phone's own line to the server. An iPhone holds it for as long as
+ * sharing is on, because its parked session keeps the process alive. An
+ * Android phone holds it only while moving (syncControl in the tracker), and
+ * a parked one is reached by silent push instead. An ask from the family (a
+ * page opened, Live, the sweep's wake) comes down it and is answered within
+ * a second. The UI's own socket is a different thing: it lives with the
+ * screen and closes when the app goes to the background, which is exactly
+ * when this one matters.
  */
 class ControlChannel {
   private socket: WebSocket | null = null

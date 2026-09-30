@@ -5,7 +5,20 @@ import { themes as prismThemes } from "prism-react-renderer"
 const config: Config = {
   title: "Hearth",
   tagline: "Family location sharing you host yourself",
+  // The .ico is the fallback for browsers that don't take an SVG icon. Both,
+  // and the touch icon in headTags, are the landing page's flame mark.
   favicon: "img/favicon.ico",
+  headTags: [
+    {
+      tagName: "link",
+      attributes: { rel: "icon", type: "image/svg+xml", href: "/hearth/docs/img/favicon.svg" },
+    },
+    {
+      tagName: "link",
+      attributes: { rel: "apple-touch-icon", href: "/hearth/docs/img/apple-touch-icon.png" },
+    },
+    { tagName: "meta", attributes: { name: "theme-color", content: "#F5643A" } },
+  ],
 
   // One site on GitHub Pages: the landing page from web/ at /hearth/, and these
   // docs under it at /hearth/docs/. See .github/workflows/pages.yml.
@@ -75,7 +88,7 @@ const config: Config = {
       ],
     },
     footer: {
-      style: "dark",
+      style: "light",
       links: [
         {
           title: "Get started",

@@ -9,6 +9,9 @@
       content="How to delete your Hearth account and data, what is removed and what is kept."
     />
     <meta name="theme-color" content="#F5643A" />
+    <link rel="icon" href="favicon.ico" sizes="48x48" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <style>
       /* Palette is the app's own, so the site and the product agree. The
          neutrals are pulled warm toward the ember rather than left grey. */
@@ -592,20 +595,22 @@
       </ol>
       <p>
         The account is deleted straight away and every device signed in to it is signed out. If you
-        want a copy first, tap <strong>Export my data</strong> on the same screen. It downloads
-        everything the server holds about you as a JSON file.
+        want a copy first, tap <strong>Export my data</strong> on the same screen. It downloads your
+        profile, circles, location history, trips, check-ins and the places you created as a JSON
+        file.
       </p>
 
       <h2>What is deleted</h2>
       <ul>
         <li>Your account, email address, name and password.</li>
         <li>Your current position and your whole location history.</li>
-        <li>Your trips, check-ins and arrival and departure history.</li>
+        <li>Your trips, check-ins, SOS alerts, and arrival and departure history.</li>
         <li>Your signed-in devices and their notification registrations.</li>
         <li>Your membership of every circle.</li>
         <li>
-          Circles that only you own. A circle shared with other people passes to its longest
-          standing admin instead, so the rest of the family keeps it.
+          Circles you own that have nobody else in them. A circle shared with other people passes to
+          its longest-standing admin instead, or to its longest-standing member if it has no admin,
+          so the rest of the family keeps it.
         </li>
       </ul>
 
@@ -614,19 +619,20 @@
       <ul>
         <li>
           Lines in a circle's activity feed, such as "Sarah arrived at Home", lose their link to
-          your account but keep the text, which usually includes your name. They go when the circle
-          is deleted.
+          your account but keep the text, which usually includes your name. A check-in line also
+          keeps the position it was sent with. They go when the circle is deleted.
         </li>
         <li>
           Places you created in a shared circle stay, because the rest of the circle uses them.
         </li>
         <li>
-          The server's admin audit log keeps a record of admin actions and the IP address they came
-          from.
+          The server's admin audit log keeps its record of admin actions, and of any sign-in token
+          reused on one of your devices, with the IP address each came from.
         </li>
         <li>
           Your profile photo file is no longer linked to anything, but it stays in the server's
-          storage until the operator clears it.
+          storage until the operator clears it, and anyone who already has its link can still open
+          it.
         </li>
       </ul>
       <p>

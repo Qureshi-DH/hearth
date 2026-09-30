@@ -19,8 +19,9 @@ export const CONTROL_FRESH_MS = 5 * 60 * 1000
 /**
  * How often the server pings a declared control socket. Every ping wakes a
  * backgrounded phone's radio, so this is far slower than the on-screen
- * socket's half minute; the stamp above outlasts two of them, and a socket
- * that misses two is terminated, which clears the stamp at once.
+ * socket's half minute. The stamp above outlasts two of them, and a socket
+ * that has not answered one ping by the time the next is due is terminated,
+ * which clears the stamp at once.
  */
 export const CONTROL_HEARTBEAT_MS = 2 * 60 * 1000
 

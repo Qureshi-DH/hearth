@@ -521,9 +521,9 @@ const en = {
     serverNameHint: "What this server calls itself in the app.",
     maxRetention: "History retention",
     retentionDays: "{{count}} days",
-    retentionNone: "No server-wide limit",
+    retentionNone: "From the server's .env, 90 days by default",
     retentionHelper:
-      "Days of location history to keep, across every circle. Leave empty for no server-wide limit.",
+      "Days of location history to keep, across every circle, from 1 to 3650. Leave empty to use MAX_HISTORY_RETENTION_DAYS from the server's .env, 90 days by default.",
     usersCount: "{{count}} users",
     active24h: "Active 24h",
     circles: "Circles",

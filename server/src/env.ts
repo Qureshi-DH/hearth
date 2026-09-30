@@ -52,9 +52,9 @@ const schema = z.object({
 
   REGISTRATION_MODE: z.enum(REGISTRATION_MODES).default("invite"),
   /**
-   * The one account that exists on first boot. Required in production, because
-   * registration never lets an account through without an invite and somebody
-   * has to be able to issue the first one.
+   * The one account that exists on first boot. Required in production: with
+   * invite or closed registration nobody could get in without it, and with
+   * open registration the first stranger to sign up would become the admin.
    */
   ADMIN_EMAIL: z.string().optional(),
   ADMIN_PASSWORD: z.string().optional(),
@@ -145,8 +145,9 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   if (isProduction && (!env.ADMIN_EMAIL || !env.ADMIN_PASSWORD)) {
     throw new Error(
       "ADMIN_EMAIL and ADMIN_PASSWORD must both be set in production. They create the " +
-        "account that exists on first boot. Without them the server starts with no users " +
-        "and no way to make one, because registration always requires an invite.",
+        "account that exists on first boot. Without them the server starts with no users, " +
+        "and either nobody can get in or, with open registration, the first stranger to " +
+        "sign up becomes the administrator.",
     )
   }
 

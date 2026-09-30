@@ -170,9 +170,10 @@ const WAKE_TYPES = new Set(["wake", "nudge_requested"])
 const WATCH_TYPE = "watch"
 
 // Runs for a data-only push with the app in the background or not running
-// at all. The server sends one when a phone has missed two heartbeats, and
-// the answer is a fix. Defined at module scope: the OS can hand this over
-// before any React code has mounted.
+// at all. The server sends one when it wants a fix and the phone's control
+// channel is closed: a phone gone quiet, the map or a member's page opened,
+// or Live. The answer is a fix, or the live tier for a watch. Defined at
+// module scope: the OS can hand this over before any React code has mounted.
 TaskManager.defineTask(NOTIFICATION_WAKE_TASK, async ({ data, error }) => {
   if (error) return
   const type = pushType(data)

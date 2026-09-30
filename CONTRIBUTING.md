@@ -5,7 +5,7 @@ short.
 
 ## Getting set up
 
-You need Node 20.18 or newer, pnpm 9+, and a Postgres you can create databases
+You need Node 22.12 or newer, pnpm 9+, and a Postgres you can create databases
 in.
 
 ```bash
@@ -25,8 +25,8 @@ every restart, which invalidates the tokens it issued before it.
 `pnpm install` also installs the git hooks. They format and lint what you
 staged, and check the commit message.
 
-For the app, see [docs/docs/developer/mobile.md](docs/docs/developer/mobile.md). Short version:
-`npx expo prebuild && npx expo run:ios`.
+For the app, see [docs/docs/developer/mobile.md](docs/docs/developer/mobile.md). Short version,
+from `apps/mobile`: `npx expo prebuild && npx expo run:ios`.
 
 ## Before you open a pull request
 

@@ -26,17 +26,14 @@ battery alerts, trips, history, and the member statuses other apps show
   a year for Apple and $25 once for Google Play. If you can help, open an issue.
 - Driving events on trips: hard braking, rapid acceleration, phone use while
   driving, and a weekly driving summary. The sensor pass already sees the
-  braking; see the item below.
+  braking, as driving insights below explains.
 - A time-boxed approximate mode, a "bubble": share a rough area for
   the next few hours and snap back to precise on its own. Pause already has
-  a timer; approximate does not.
-- A manifest-declared receiver for activity transitions on Android, so a
-  car pulling away can relaunch a reclaimed process at a moment Android
-  allows the location service to start, rather than waiting for the fence.
+  a timer. Approximate does not.
 - Group messaging inside a circle. Quick messages and check-ins cover the
   short form today.
-
-- Direct APNs / FCM push drivers, so `expo` isn't the only zero-infra option.
+- Direct APNs / FCM push drivers, so a build made with your own keys can push
+  without Expo in the path.
   The `PushDriver` interface is one `send()` method. See
   `server/src/services/push.ts`.
 - A web client in `apps/web`. Read-mostly map and feed for the desktop, on top

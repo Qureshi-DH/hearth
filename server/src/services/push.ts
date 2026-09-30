@@ -99,9 +99,11 @@ class NoopDriver implements PushDriver {
 }
 
 /**
- * Expo's hosted push service relays to APNs and FCM, so a deployment needs no
- * Apple or Google credentials. The cost is that notification metadata routes
- * through a third party. See docs/docs/install/push-notifications.md.
+ * Expo's hosted push service relays to APNs and FCM, so the server needs no
+ * Apple or Google credentials. Those sit with the Expo project the app was
+ * built with, and every push to that build goes out under them, whichever
+ * server sends it. The cost is that the notification's text routes through a
+ * third party. See docs/docs/install/push-notifications.md.
  */
 class ExpoDriver implements PushDriver {
   readonly provider = "expo" as const
@@ -177,9 +179,11 @@ class ExpoDriver implements PushDriver {
 }
 
 /**
- * ntfy / UnifiedPush is fully self-hostable. The phone holds a long-lived
- * socket to your own ntfy server, so no payload reaches a third party and no
- * Google or Apple account is needed. iOS works through the ntfy app.
+ * ntfy is fully self-hostable. The ntfy app holds a long-lived socket to your
+ * own ntfy server, so no payload reaches a third party and no Google or Apple
+ * account is needed. It carries alerts only: what the ntfy app shows never
+ * reaches Hearth, so nothing silent goes this way. An iPhone is reached
+ * through ntfy's upstream server and APNs, which pass on a message id only.
  */
 class NtfyDriver implements PushDriver {
   readonly provider = "ntfy" as const
@@ -215,8 +219,9 @@ class NtfyDriver implements PushDriver {
 }
 
 /**
- * Web Push (VAPID). Self-contained for browsers, and on Android for any
- * UnifiedPush-capable client. iOS Safari supports it only for home-screen apps.
+ * Web Push (VAPID), for a web client. No Hearth client subscribes yet, and
+ * the native app turns this provider down. iOS Safari supports it only for
+ * home-screen apps.
  */
 class WebPushDriver implements PushDriver {
   readonly provider = "webpush" as const

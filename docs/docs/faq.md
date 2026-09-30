@@ -30,7 +30,8 @@ Both. The app is Expo SDK 55 and React Native 0.83, and the same codebase builds
 for each.
 
 The store builds are built and tested and waiting on App Store and Play Store
-review. Until they're out you build it yourself. The app uses native
+review. Until they're out you build it yourself, and push only fully works in a
+build you make yourself anyway, as the next answer explains. The app uses native
 modules for the map, background location and secure storage, which means Expo Go
 will not run it and you need a development build:
 
@@ -54,10 +55,11 @@ phones with no vendor account anywhere.
 For the app, it depends only on which push provider you choose:
 
 - `none` (the default) and `ntfy`: no vendor account.
-- `expo`: a free Expo account, for the project id that `eas init` writes into
-  `app.json`.
-- Direct APNs, which is not implemented in v1: a paid Apple Developer account
-  for the `.p8` key, plus a Firebase project for FCM.
+- `expo`: your own Expo account, your own Firebase project for Android, and a
+  paid Apple Developer account for the iOS push key. Every push to a build goes
+  out under the keys it was built with, so the store builds can't carry the
+  maintainer's, and push only fully works in a build you make yourself with
+  yours. [Push notifications](install/push-notifications.md) has the details.
 
 How you sign and install a build on your own iPhone is governed by Apple's
 rules, not by anything Hearth does, so budget for that separately.
@@ -97,19 +99,19 @@ The details worth knowing:
   fix cannot wedge the pipeline forever.
 - The server ignores duplicates by device and timestamp, so a retried upload is
   safe.
-- A parked phone in the background is in stationary mode and takes no fixes at
-  all, so the queue does not fill while nothing is happening. With the app open
-  it takes one at the circle's interval, to keep your own row fresh.
+- A parked phone in the background is in stationary mode and takes one cheap
+  fix a quarter of an hour, so the queue barely grows while nothing is
+  happening. With the app open it takes one at the circle's interval, to keep
+  your own row fresh.
 
 The background sync task also flushes the queue whenever the OS grants it time,
-and takes a fresh fix if the last one is over 30 minutes old.
+and takes a fresh fix if the last one is over 15 minutes old.
 
 While the server is down nobody can see anybody, and after 15 minutes without a
-fix everyone shows as stale. The job that alerts on a phone going quiet skips
-its whole tick when at least eight phones have ever reported and not one of
-them has reported recently, on the grounds that a simultaneous outage is the
-server's fault rather than everyone's, so a reboot does not send the family an
-alert each.
+fix everyone shows as stale. The job that alerts on a phone going quiet holds
+its alerts back when at least eight phones count and most of them have gone
+quiet at once, on the grounds that a simultaneous outage is the server's fault
+rather than everyone's, so a reboot does not send the family an alert each.
 
 ## How much battery does it use?
 
@@ -118,27 +120,26 @@ GPS is what costs, and nobody has published a measured comparison yet.
 
 What the code does to keep it down is worth understanding, because it is most of
 the answer. The tracker has two states. **Moving** means continuous OS location
-updates, and on Android that is a foreground service with a notification you
-cannot dismiss, though it stays out of the status bar and sits in the silent
-part of the shade. Once the phone has stayed inside a 90 metre circle for five
-minutes it switches to **stationary**: the GPS goes off, the service and its
-notification go with it, and an exit geofence is armed around where it
-stopped, 150 metres on Android and 200 on iOS. On Android a cheap request
-stays, which the OS answers a few times an hour. An iPhone runs nothing at
-all while parked and is asleep until the fence or a push wakes it, which is
-why it shows no location indicator, and what commercial apps do too. That 90
-metres is one and a half times the distance filter and never less than 60, so
-a circle that asks for coarser updates waits out a wider stop. Leaving the
-geofence puts it back into moving. So a phone sitting in a house overnight is
-costing you a few cheap fixes an hour on Android and nothing on iOS, not a
-GPS. A parked phone is expected to be quiet, so the server only calls it
-offline after twelve hours of silence; a phone last seen moving is reported
-after an hour, with a silent push asking for a fix before that. A phone
-that has told the server why it cannot report, a permission not set to
-Always, Location Services off, is shown as that under its name instead. Opening the map sends the same
-push to anyone quiet for a couple of minutes, and opening somebody's page
-asks their phone to report closely for ten minutes, which is the only time
-the GPS runs on a phone that is not driving.
+updates, and on Android that is a foreground service with a notification. It
+stays out of the status bar and sits in the silent part of the shade, and
+Android 13 and later let you swipe it away. Once the phone has stayed inside a
+90 metre circle for five minutes it switches to **stationary**: the GPS goes
+off, the service and its notification go with it, and an exit geofence is
+armed around where it stopped, 150 metres on Android and 200 on iOS. On
+Android a Wi-Fi grade request stays, which the OS answers a few times an hour.
+An iPhone keeps a cell-only location session, which costs almost nothing and
+keeps the app alive to report once a quarter of an hour. That 90 metres is one
+and a half times the distance filter and never less than 60, so a circle that
+asks for coarser updates waits out a wider stop. Leaving the geofence puts it
+back into moving. So a phone sitting in a house overnight is costing you a few
+cheap fixes an hour, not a GPS. A parked phone is expected to be quiet, so the
+server only calls it offline after twelve hours of silence. A phone last seen
+moving is reported after an hour, and the server asks it for a fix before
+that. A phone that has told the server why it cannot report, a permission not
+set to Always, Location Services off, is shown as that under its name instead.
+Opening the map asks anyone quiet for a couple of minutes for a fresh fix, and
+opening somebody's page asks their phone for one too. Live, offered while
+somebody is on the move, has their phone send a fix a second for ten minutes.
 
 Three other things affect it:
 
@@ -163,8 +164,8 @@ Almost always the phone closed Hearth to save battery, and the family is
 looking at the last position it sent before that. Android does this to any
 app that runs in the background, and several makers ship a power manager of
 their own that does it sooner and without asking. Xiaomi, Redmi and POCO,
-Huawei and Honor, OPPO, realme and OnePlus, vivo and iQOO, Samsung, and
-Infinix, Tecno and itel all need settings changed by hand. Pixels and most
+Huawei and Honor, OPPO, realme and OnePlus, vivo and iQOO, Samsung, Infinix,
+Tecno and itel, and ASUS all need settings changed by hand. Pixels and most
 Motorola phones do not.
 
 Open Hearth on that phone and go to _You → Tracking status_. On those makes
@@ -182,12 +183,15 @@ Android will admit to. The short version, per maker:
   background activity and auto-launch. Battery optimisation: Don't optimise.
   Turn off Sleep standby optimisation.
 - **vivo, iQOO.** Battery > Background power consumption management: allow
-  Hearth. i Manager > Autostart manager: Hearth on.
-- **Samsung.** Apps > Hearth > Battery: Unrestricted. Battery > Background
-  usage limits: turn off Put unused apps to sleep and add Hearth to Never
-  sleeping apps.
+  Hearth. i Manager > App manager > Autostart manager: Hearth on.
+- **Samsung.** Apps > Hearth > Battery: Unrestricted. Battery and device care >
+  Battery > Background usage limits: turn off Put unused apps to sleep and add
+  Hearth to Never sleeping apps.
 - **Infinix, Tecno, itel.** Phone Master > Auto-start management: Hearth on.
-  App battery management: allow it in the background.
+  Phone Master > Power saving > App battery management: allow it in the
+  background.
+- **ASUS.** Mobile Manager > PowerMaster > Auto-start manager: allow Hearth.
+  Battery-saving options: turn off Clean up in suspend.
 - **Everything else.** Settings > Apps > Hearth > Battery: Unrestricted, and
   leave Battery Saver off or exempt Hearth from it.
 
@@ -206,19 +210,22 @@ server can help with.
 
 Coordinates never leave it.
 
-Your server makes exactly one kind of outbound connection, and only if you
-configured it: to the push provider. Push payloads carry a title, a body and
-identifiers (`{type, circleId, eventId, placeId?, userId?}`), never a position.
-The phone fetches the actual location from your server when the notification is
+Apart from its own object storage, your server makes one kind of outbound
+connection, and only if you configured it: to the push provider. Push payloads
+carry a title, a body and identifiers such as `type`, `circleId` and `eventId`.
+The title and body can name a person and a place, but never a position. The
+phone fetches the actual location from your server when the notification is
 tapped.
 
 The phone itself requests map tiles from the style URL your server advertises,
 so that host sees roughly which area is being viewed, as it would with any map.
 Self-host tiles and that goes too.
 
-There is no analytics, no crash reporting and no third-party SDK anywhere in the
-server or the app. Set `PUSH_PROVIDER=ntfy` against your own ntfy instance, host
-your own tiles, and nothing at all leaves your infrastructure.
+There is no analytics, no crash reporting and no advertising or tracking SDK
+anywhere in the server or the app. Set `PUSH_PROVIDER=ntfy` against your own
+ntfy instance and host your own tiles, and nothing leaves your infrastructure
+except, for iPhones, the poll request ntfy passes through its public server to
+APNs, which carries a message id and no content.
 [Privacy](privacy.md) has the full table of what is stored and who can see it.
 
 ## Why are push notifications the awkward part?
@@ -232,11 +239,19 @@ and feed update live, it polls presence every 60 seconds as a fallback in case
 that socket is dead, and an active SOS shows as a banner on the circle's map.
 What you lose is alerts while the phone is locked.
 
-When you want more, `ntfy` is the fully self-hosted route, `expo` is the
-zero-infrastructure one. Either way, alerts are never lost in transit: events
-are written to an outbox table in the same transaction as the thing that caused
-them and drained by a background worker with back-off, so a broken push provider
-delays notifications rather than dropping them.
+When you want more, `ntfy` is the fully self-hosted route. It carries alerts
+only and never wakes the Hearth app. `expo` is the zero-infrastructure one and
+the only provider that can wake the app, but it only fully works in a build you
+make yourself with your own Expo project, Firebase project and Apple developer
+account. The store builds can't carry personal push keys. A Hearth organisation
+that would let them push for any server is on the [roadmap](roadmap.md) and
+needs funding.
+
+Whichever you pick, events are written to an outbox table in the same
+transaction as the thing that caused them and drained by a background worker
+with back-off, so a broken push provider delays notifications rather than
+dropping them at the first failure. A send that keeps failing is tried six
+times over about an hour and twenty minutes before it is given up.
 [Push notifications](install/push-notifications.md) compares all four options
 properly.
 
@@ -258,13 +273,13 @@ Two behaviours surprise people:
   collection. To stop collection, turn off _Share my location_ on the phone,
   which stops the OS updates so nothing is captured or queued at all.
 - **SOS overrides a pause.** Raising one switches you to precise in that circle
-  for the duration and notifies everyone regardless of mutes. See
-  [safety](safety.md).
+  and notifies everyone regardless of mutes. Resolving it does not put the
+  pause back. See [safety](safety.md).
 
 A pause can carry an expiry. It lapses on read, and a background job restores
 whatever mode you were in before pausing rather than defaulting you to precise.
-A circle owner can turn pausing off entirely, and that setting is visible to
-every member.
+A circle owner or admin can turn pausing off entirely, and that setting is
+visible to every member.
 
 ## Can a circle admin see more than an ordinary member?
 
@@ -278,7 +293,8 @@ always see yourself precisely.
 Each circle sets its own window, 30 days out of the box. A user's breadcrumbs
 live as long as the most generous circle they belong to asks for, under a
 server-wide ceiling: `MAX_HISTORY_RETENTION_DAYS`, 90 by default. Set a circle's
-retention to 0 and only the live position is kept.
+retention to 0 and that circle sees only the live position. The breadcrumbs
+themselves go once every circle the member is in is at 0.
 
 A circle never sees further back than its own retention, or than the day you
 joined it, whichever is later. So accepting an invite does not hand a new circle
@@ -298,22 +314,26 @@ hand control back to `.env`.
 
 ## What happens to the data when an account is deleted?
 
-`DELETE /api/v1/me` needs the account's password and is irreversible. Every
-other table cascades from `users.id`, so breadcrumbs, trips, alerts, check-ins,
-sessions and queued notifications all go with it.
+`DELETE /api/v1/me` needs the account's password and is irreversible. The rows
+that belong to you cascade from `users.id`, so breadcrumbs, trips, SOS alerts,
+check-ins, place history, sessions and queued notifications all go with it.
+Rows that only credit you, like who created a place or wrote a feed line, lose
+the link to your account instead. A feed line keeps the text it was written
+with, which usually names you. [Privacy](privacy.md) lists them.
 
 Circles need a decision, so the code makes one. A circle you solely own is
 deleted with you. A circle with other members survives and ownership transfers
 to the longest-standing admin, falling back to the longest-standing member.
 
-The one thing that outlives the cascade is a profile picture already in object
-storage, because a database cascade cannot reach a bucket. Nothing points at it
-any more and its key is random, so it is unreachable rather than exposed, but an
-operator who wants it gone has to delete the object.
+A profile picture already in object storage outlives the cascade too, because a
+database cascade cannot reach a bucket. Nothing points at it any more and its
+key is random, but anyone who already has its link can still load it until the
+operator deletes the object.
 
 Two lighter options exist. `DELETE /api/v1/me/history` erases your breadcrumbs
-and keeps the account, and `GET /api/v1/me/export` returns everything the server
-holds about you as JSON. Both are in the app under _You, Privacy and data_.
+and the trips made from them and keeps the account, and `GET /api/v1/me/export`
+returns your profile, circles, breadcrumbs, trips, check-ins and the places you
+created as JSON. Both are in the app under _You → Privacy & data_.
 
 An admin can activate, deactivate or promote an account from the app, but cannot
 delete one. Deactivating revokes that account's sessions immediately.

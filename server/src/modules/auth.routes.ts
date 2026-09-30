@@ -218,7 +218,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           // ADMIN_EMAIL, and the reason an open-mode server must be given one:
           // without a seeded administrator, open mode hands the server to the
           // first stranger who finds it. env.ts refuses to start without
-          // ADMIN_EMAIL outside development for exactly that reason.
+          // ADMIN_EMAIL in production for exactly that reason.
           isAdmin: isFirstUser,
         })
         .onConflictDoNothing({ target: users.emailNormalized })

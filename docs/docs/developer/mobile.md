@@ -42,10 +42,12 @@ pnpm build:ios:dev            # debug build for a real device
 pnpm build:ios:prod           # IPA
 ```
 
-An EAS development build allows plain HTTP so a family can try the app against
-a LAN server. A release build does not, on either platform, which is the
-behaviour you want and the thing to remember when a release build cannot reach
-a server that a development build could.
+An EAS development build allows plain HTTP to any host so a family can try the
+app against a LAN server. A release build doesn't. Android refuses plain HTTP
+outright and iOS allows it only to local network addresses. See
+[Plain-HTTP servers on a LAN](#plain-http-servers-on-a-lan). That's the
+behaviour you want, and the thing to remember when a release build cannot
+reach a server that a development build could.
 
 Android release builds are signed with the keystore EAS holds for the project.
 EAS injects it into `build.gradle` after the config plugins run, so nothing in
@@ -60,12 +62,21 @@ Keystore and Download to get it.
 EAS, with `expo prebuild` and Gradle directly. There it swaps the template's
 debug key for whatever the `HEARTH_UPLOAD_*` Gradle properties point at, and
 falls back to debug signing when they are missing, which is fine for trying
-the app and must not be given to anyone.
+the app and must not be given to anyone. `plugins/withAndroidReleaseManifest.ts`
+writes a release-only manifest that removes `SYSTEM_ALERT_WINDOW`, which React
+Native asks for so the dev menu can draw over other apps.
 
-Push notifications are configured for production only. `eas init` writes
-`extra.eas.projectId` into `app.json`, which is what `PUSH_PROVIDER=expo` needs,
-and Android additionally needs `google-services.json` present. Without either,
-the app falls back gracefully and tells the user push is unavailable.
+Push only fully works in a build you make yourself, with your own Expo project,
+Firebase project and Apple developer account. The store builds are waiting on
+App Store and Play Store review and can't ship with the maintainer's personal
+Expo, Firebase and Apple push keys. `app.json` has the maintainer's Expo
+`owner` and `extra.eas.projectId` committed. Remove both and run `eas init`,
+which writes a project id of your own, the one `PUSH_PROVIDER=expo` needs. An
+iOS build also needs a bundle identifier on your own Apple team. Android needs
+your own `google-services.json`. It's gitignored, and `app.config.ts` only
+points at it when the file is present. `google-services.example.json` shows
+the shape. Without a project id the app tells the user push is unavailable.
+See [push notifications](../install/push-notifications.md) for the rest.
 
 ## Permissions
 
@@ -78,7 +89,7 @@ _You → Tracking status_.
 | Location, foreground           | `NSLocationWhenInUseUsageDescription`                                         | `ACCESS_FINE_LOCATION` (+ coarse)                           | Show you on the map                                                              | Onboarding, step 1                                                              |
 | Location, **Always**           | `NSLocationAlwaysAndWhenInUseUsageDescription`, `UIBackgroundModes: location` | `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE_LOCATION` | Updates while the app is closed, plus arrive/leave alerts                        | Onboarding, step 1 (second prompt)                                              |
 | Precise location               | `NSLocationDefaultAccuracyReduced = false`                                    | fine vs coarse detected                                     | Places and trips need GPS accuracy                                               | Detected, checklist links to Settings                                           |
-| Notifications                  | runtime                                                                       | `POST_NOTIFICATIONS`                                        | Arrivals, battery, **SOS**. Local SOS banners need it even with no push provider | Onboarding, step 2                                                              |
+| Notifications                  | runtime, `UIBackgroundModes: remote-notification` for the silent wake         | `POST_NOTIFICATIONS`                                        | Arrivals, battery, **SOS**. Local SOS banners need it even with no push provider | Onboarding, step 2                                                              |
 | Battery optimisation exemption | n/a                                                                           | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`                      | Doze and vendor power managers are the #1 reason background location dies        | Onboarding (Android), opens the system dialog                                   |
 | Background refresh / tasks     | `UIBackgroundModes: fetch, processing`, `BGTaskSchedulerPermittedIdentifiers` | `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`                       | Flush the offline queue when the OS allows                                       | Declared, checklist explains the iOS toggle                                     |
 | Camera                         | `NSCameraUsageDescription`                                                    | `CAMERA` (via plugin)                                       | Scan an invite QR                                                                | Only when you tap _Scan_                                                        |
@@ -96,10 +107,12 @@ anything, and the module then reports denied for good. A phone that refuses,
 or one that cannot classify motion at all, works stops out from position
 instead. The server receives the same fixes either way.
 
-The accelerometer, gyroscope and barometer need no permission on either
-platform at the rates Hearth samples them, which is what makes crash detection
-possible without asking for anything. It appears on the setup checklist for
-exactly that reason: unannounced, it would be a sensor nobody agreed to.
+The accelerometer and gyroscope need no permission on either platform at the
+rates Hearth samples them, and on iPhone the barometer comes under Motion and
+Fitness, which the motion classifier already asks for. That is what makes crash
+detection possible without asking for anything new. It appears on the setup
+checklist for exactly that reason: unannounced, it would be a sensor nobody
+agreed to.
 
 Commercial trackers ask for a pile of things Hearth deliberately doesn't. No
 contacts, because invites are codes and QR. No microphone. No Bluetooth, because
@@ -202,8 +215,8 @@ All of this lives in `app/services/location/tracker.ts`.
    with the tier. On iOS every tier is `Location.startLocationUpdatesAsync`
    with those options. On Android the moving, driving and live tiers are
    the native tracking service in `modules/hearth-motion`, handed the same
-   options as a request (`applyAndroid`, `services/location/nativeTracker.ts`);
-   the parked tier is expo's resting request with no service, and a wake
+   options as a request (`applyAndroid`, `services/location/nativeTracker.ts`).
+   The parked tier is expo's resting request with no service, and a wake
    brings the service up for the length of one fix.
 3. Each delivery → `toFix()` (adds battery and the tracker's own `activity`)
    → `thin()` (drops near-duplicates, and on Android applies the circle's
@@ -224,6 +237,9 @@ All of this lives in `app/services/location/tracker.ts`.
    the queue, re-arm the fence and take a fix if the last one is stale, when
    the OS grants time, which is never while the app is open. Its fixes are
    bounded at fifteen seconds, since iOS gives the task about thirty.
+   `patches/expo-background-task@55.0.22.patch` makes it an app refresh task
+   on iOS (`BGAppRefreshTaskRequest`) rather than a processing task, which
+   iOS tends to hold for a phone that is idle and charging.
 6. The server's response carries the current policy. If it changed, updates
    restart with the new intervals, throttled to once a minute.
 
@@ -309,8 +325,10 @@ with no service, and a wake or a watch brings the service up for the length
 of one fix and drops it with the fix, which is the second-long "Updating
 your location" a messaging app shows when it checks for messages. The
 notification is one plain line on a channel the service creates at minimum
-importance, not ongoing, so from Android 13 the person can swipe it away
-and the service runs on without it.
+importance (`hearth-wake`, "Location updates"), not ongoing, so from Android
+13 the person can swipe it away and the service runs on without it. The app's
+own channels, `default`, `alerts` and `sos`, come from `setupChannels()` in
+`services/notifications.ts`.
 
 Everything that has to survive the JavaScript process being killed is
 native Kotlin in `modules/hearth-motion/android`:
@@ -322,10 +340,10 @@ native Kotlin in `modules/hearth-motion/android`:
   phone whose process is long gone. A geofence exit or an activity
   transition is a moment Android lets a background app start a foreground
   service, and the receivers start it right there, inside that moment,
-  from what the tracker last told them (`Departure.kt`, `TrackerPrefs`):
-  a vehicle transition or a fence exit on a parked phone brings the
-  tracking service up with the moving request; on foot is confirmed first
-  under the brief service, at most every two minutes; a transition on a
+  from what the tracker last told them (`Departure.kt`, `TrackerPrefs`).
+  A vehicle transition or a fence exit on a parked phone brings the
+  tracking service up with the moving request. On foot is confirmed first
+  under the brief service, at most every two minutes. A transition on a
   moving phone whose service has gone brings it back.
 - `HearthTrackingService` is the foreground service and owns the location
   request through a `LocationCallback`, so the fixes of a journey are
@@ -350,6 +368,9 @@ native Kotlin in `modules/hearth-motion/android`:
 - `HearthMessagingService` sits in front of expo-notifications' own and
   brings the brief service up inside the message handler for a wake or a
   watch push, the one other moment a background app may start a service.
+  It does the same for a `nudge_requested` push, but only when Firebase
+  hands that message to the app, which for a visible push means the app is
+  in the foreground.
 
 `reassertService` answers a refusal for a moving phone at every allowed
 moment: an activity transition, a fence exit, a wake or watch push and the
@@ -358,7 +379,7 @@ since re-registering hands back the fix the OS already had and that is
 another delivery. A parked phone wants no service and is left alone. A
 brief service found under a moving phone is upgraded in place. A status of
 `none` while a tier wants the service means it went down without the app
-asking, an OEM battery manager most often; the tracker brings it back,
+asking, an OEM battery manager most often. The tracker brings it back,
 remembers the moment for a day, and `serviceDiedUnexpectedly()` is what the
 health report sends as `serviceStopped`.
 
@@ -378,8 +399,8 @@ manager's `allowsBackgroundLocationUpdates`) and for the resting request's
 service state on Android, which the tracker no longer reads. Expo ships its
 modules to Android as prebuilt AARs, so `apps/mobile/package.json` lists
 expo-location and expo-notifications under
-`expo.autolinking.android.buildFromSource`. The patch is applied by
-`scripts/apply-patches.mjs` from the root `postinstall`, not by pnpm's
+`expo.autolinking.android.buildFromSource`. Every patch in `patches/` is
+applied by `scripts/apply-patches.mjs` from the root `postinstall`, not by pnpm's
 `patchedDependencies`: with `node-linker=hoisted`, which Metro needs, pnpm
 applies a patch again on every install, and `expo prebuild` runs one, which
 left the Kotlin declared twice. The script applies each patch once and
@@ -387,20 +408,30 @@ leaves one already in place alone.
 
 ### One-shot fixes
 
-Every one-shot fix (`reportNow`, the background clock, the sync task, the
-fence check, the classifier's confirmation) has a thirty second deadline
-inside `reportNow` itself. Android's `getCurrentPositionAsync` has no timeout
-of its own, and a request a background app makes can hang for the life of the
-process. When the fresh fix is late, the fix the OS already has stands in
-where that is still useful (a wake, a nudge, the app opening, the clock) and
-not where it would lie (a fence check, where a stale fix inside the circle
-would re-park a phone that has just left; the park fix, which is made up from
-the anchor instead).
+Every one-shot fix (`reportNow`, the heartbeat, the background clock, the sync
+task, the fence check, the classifier's confirmation) has a deadline inside
+`acquireFix`, thirty seconds, or fifteen for the sync task. Android's
+`getCurrentPositionAsync` has no timeout of its own, and a request a background
+app makes can hang for the life of the process. When the fresh fix is late,
+the fix the OS already has stands in where that is still useful: a wake, a
+nudge, the app opening, the clock. It doesn't stand in for a fence check,
+where a stale fix inside the circle would re-park a phone that has just left,
+or for the park fix. That one is made up instead: from the phone's newest real
+fix, with that fix's accuracy, if it is under two minutes old, and otherwise
+from the anchor. A stale anchor dated now once put a phone 174 m from where it
+was sitting.
+
+Fixes that arrive in a batch, as the Android native queue hands them over, are
+labelled with the activity the tracker had when each one was recorded, not
+when the batch was read. A drive's last minutes, drained after "walking" had
+ended it, once went up as a walk at 80 km/h. The timeline of verdicts is kept
+in the tracking store for an hour, so it survives the restart that drains a
+queue.
 
 A fresh request the OS answers from its cache, with a fix over a minute
 old, is asked once more inside the same deadline. An iPhone opened after
 hours away was handed the fix iOS still held from where the phone had
-been; uploaded with its own timestamp, the server never moved presence
+been. Uploaded with its own timestamp, the server never moved presence
 back to it, and the row kept saying "two hours ago, at home". A second
 cached answer is all the OS has and is taken as it is. Every `report done`
 line in the diagnostics log carries the fix's age in seconds.
@@ -436,7 +467,7 @@ is a sure "automotive" (a transition, or a sample at 75% or better). Handled
 in bed, a phone reads as walking at fifty or sixty percent, and taking that
 alone brought the full tier back to a phone going nowhere. On foot the
 verdict is confirmed by one Balanced fix, at most every two minutes, and only
-a fix clear of the anchor by more than its own error ends the stop; otherwise
+a fix clear of the anchor by more than its own error ends the stop. Otherwise
 the fence is the judge, as it would have been a minute later anyway. A fence
 exit on Android brings the full tier up first, inside the allowed moment, and
 then checks the exit against one bounded fix: a sharp fix clearly inside the
@@ -450,7 +481,7 @@ the phone stopped.
 ### Uploads
 
 A failed upload (network, 5xx, 429) keeps the queue and retries on its own
-after thirty seconds, then a minute, then two, while the process lives; after
+after thirty seconds, then a minute, then two, while the process lives. After
 that it waits for the next delivery, which flushes whether or not it kept a
 fix. An upload that gets through starts the ladder over. A 4xx that is not
 an auth problem drops that batch so one bad fix cannot wedge the pipeline.
@@ -489,8 +520,9 @@ each run of the sync task, `watched` and `watch adopted`, `wake`, fence
 exits and whether they were false, the classifier's verdicts, and
 `heartbeat skipped` with the reason. A shared log opens with a header from
 `headerForTrackerLog()`: mode, when the anchor was set, queue length, last
-error, permission and service status. The log holds no coordinates, so it can
-be pasted into an issue without saying where the phone parks. When a family
+error, permission, service status, the watch window and the platform. The log
+holds no coordinates, so it can be pasted into an issue without saying where
+the phone parks. When a family
 member says "the notification stayed" or "it went quiet at home", this is the
 page to ask for. A stop that was called and a park fix that never left used to
 look identical.
@@ -509,15 +541,15 @@ with backoff, and rotates its token itself when the server refuses it
 answered within a second: `wake` takes one fix, `watch` goes live. The UI's
 socket in `services/realtime.ts` is a different thing: it lives with the
 screen and closes when the app goes to the background, which is exactly when
-this one matters. An ask for a parked Android phone goes by high priority
-push, and `HearthMessagingService` in the motion module, which sits in
-front of expo-notifications' own service, brings the tracking service up
+this one matters. An ask for a parked Android phone goes by a silent, high
+priority Expo push, and `HearthMessagingService` in the motion module, which
+sits in front of expo-notifications' own service, brings the tracking service up
 brief inside the message handler: "Updating your location" for the one
 fix, gone with it, and stopping itself after the fix's deadline if nothing
 else does. That is the moment Android allows a service to start from the
 background, and the notification it posts is what keeps the app's pushes
 at high priority. The JavaScript task then takes the fix under it
-(`wakeFix`, `startBrief` in `services/location/nativeTracker.ts`).
+(`wakeFix` in `tracker.ts`, `startBrief` in `services/location/nativeTracker.ts`).
 
 Opening a member's page calls `POST /circles/:id/members/:userId/refresh`
 for one fix now, the way opening the map calls
@@ -544,12 +576,14 @@ answer within twenty seconds is not repeated down the channel on the next
 hold: a socket iOS let die without a close keeps its stamp for minutes, and
 the hold goes by push instead. Either way the phone puts `watchedUntil` in
 its store and `currentOptions()` returns the live tier whatever the phone
-was doing: `High` accuracy, a fix a second, every one uploaded, on both
-platforms and moving or not. iOS has no time interval, so the live session
-has no distance filter either, which is the only session shape that
-delivers to a phone standing still; `ingest` thins the stream at the live
-tier's own pace rather than the circle's. The phone also answers with one
-fix straight away. The window ends by a timer and by the first fix past it,
+was doing: `High` accuracy, a fix a second, every one uploaded. The one
+exception is a parked Android phone, which answers with one fix under the
+brief service rather than carry the service and its notification for the
+whole window, and goes live if it leaves inside it. iOS has no time interval,
+so the live session has no distance filter either, which is the only session
+shape that delivers to a phone standing still. `ingest` thins the stream at
+the live tier's own pace rather than the circle's. The phone also answers
+with one fix straight away. The window ends by a timer and by the first fix past it,
 whichever comes first, and the request steps back to the tier it was in.
 The Live page calls the phone live on any fix from the last thirty seconds,
 counting one from up to thirty seconds before the ask, since the one fix an
@@ -560,7 +594,7 @@ following someone along a road is watching rather than reading.
 The button that opens it is a promise that it will work, so it is offered
 only for a phone that is travelling _and_ has spoken within the last three
 minutes (`onTheMove` in `utils/activity.ts`). A travelling phone uploads
-every half minute; one that has said nothing for longer is out of signal or
+every half minute. One that has said nothing for longer is out of signal or
 asleep, and the page would sit on "asking" until the window lapsed.
 
 Where somebody is, in words, comes from the phone's own geocoder
@@ -583,11 +617,13 @@ between two fixes is dashed (`splitTrail` in `utils/trail.ts`), because the
 road between them is a guess. The profile map draws no trail.
 
 Opening the map calls `POST /circles/:id/locations/refresh`, which sends one
-`wake` to each member quiet for a couple of minutes, at most once every ten
-minutes per phone. Both routes refuse a provider that cannot carry a silent
-push and a member sharing approximately, whose live fixes the projection
-would throw away anyway. The server's own wake after half an hour of quiet is
-a second line behind the phone's heartbeats, not the heartbeat itself.
+`wake` to each member quiet for a couple of minutes. Each wake goes down the
+phone's control channel when it has one open, and otherwise by silent push,
+at most once every ten minutes per phone. Only `PUSH_PROVIDER=expo` can send
+that push. The map route skips members who have paused, and the member route
+asks only a member sharing precisely. The server's own wake, after ten
+minutes of quiet from a moving phone or half an hour from a parked one, is a
+second line behind the phone's heartbeats, not the heartbeat itself.
 
 ### Crash detection
 
@@ -644,21 +680,25 @@ back-off.
 app/
   components/   Avatar, GlassPanel, MemberMarker, SosHoldButton, IncidentPrompt, ListRow,
                 HearthMap and the rest
-  screens/      Server, Login, Register, Permissions, Map, MemberDetail, Places,
-                PlaceEditor, PlaceDetail, Activity, Circle, CircleSettings,
-                Invites, Sharing, NotificationPrefs, You, Devices, PrivacyData,
-                ChangePassword, Sos, CheckIn, Trips, TripDetail, Admin,
-                CreateCircle, JoinCircle
+  screens/      Server, Login, Register, Permissions, KeepAlive, Map, MemberDetail,
+                Live, Places, PlaceEditor, PlaceDetail, Activity, Circle,
+                CircleSettings, Invites, Sharing, NotificationPrefs, You, Devices,
+                PrivacyData, ChangePassword, TrackerLog, Sos, CheckIn, Trips,
+                TripDetail, Admin, CreateCircle, JoinCircle
   navigators/   AppNavigator (auth gate + stack), MainTabNavigator (Map / Places / Activity / You)
-  hooks/        queries.ts (TanStack Query), queryKeys.ts, useActiveCircle.ts
+  hooks/        queries.ts (TanStack Query), queryKeys.ts, useActiveCircle.ts,
+                useLiveness.ts, useNearby.ts
   services/     api/ (fetch client + typed endpoints), realtime.ts, notifications.ts,
-                location/ (tracker.ts, motion.ts, driveSensors.ts)
-  stores/       zustand: auth, settings, tracking, incident, nudge, push, toast.
-                mmkv (persisted-store adapter), tokenVault (SecureStore)
+                health.ts, permissions.ts, location/ (tracker.ts, nativeTracker.ts,
+                control.ts, motion.ts, driveSensors.ts, log.ts)
+  stores/       zustand: auth, settings, tracking, places, incident, nudge, push,
+                alert, toast. mmkv (persisted-store adapter), tokenVault (SecureStore)
   theme/        Ignite theming with Hearth's light/dark palettes
   i18n/         en.ts. v1 is English only, and a locale is a file typed as `Translations`
-modules/        hearth-motion: the Expo native module behind the motion classifier
-                and the batched sensor samples
+  utils/        activity, geocode, trail, format, storage (MMKV) and the rest
+modules/        hearth-motion: the Expo native module behind the motion classifier,
+                the batched sensor samples and, on Android, the tracking service,
+                its receivers and the native queue
 ```
 
 ## Design notes

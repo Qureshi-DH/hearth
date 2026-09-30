@@ -85,8 +85,9 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
           keyboardType: "number-pad",
           maxLength: 4,
           onSubmit: (value) => {
-            // Empty means no cap, which is a real answer here rather than a
-            // refusal to answer, so it is sent as null instead of ignored.
+            // Empty hands the cap back to MAX_HISTORY_RETENTION_DAYS in .env,
+            // which is a real answer here rather than a refusal to answer, so
+            // it is sent as null instead of ignored.
             if (value === "") return save({ maxHistoryRetentionDays: null })
             const days = Number(value)
             if (!Number.isInteger(days) || days < 1 || days > 3650) {
@@ -206,7 +207,7 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
         <ListRow
           tx="admin:maxRetention"
           subtitle={
-            // Undefined while it loads. Saying "no limit" before the answer
+            // Undefined while it loads. A limit shown before the answer
             // arrives is a claim about someone's data, not a placeholder.
             !settings.data
               ? undefined

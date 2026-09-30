@@ -16,8 +16,8 @@ smallest VPS you can rent is plenty for a family.
 Location updates are small, a few hundred bytes every 30 to 60 seconds per
 phone, so bandwidth won't be what runs out. Disk might. Measured over 200,000
 rows, a stored fix costs about 340 bytes with indexes. At one fix a minute that
-comes to roughly 14 MB per phone at the default 30 day retention, or 170 MB a
-year if you switch retention off entirely.
+comes to roughly 14 MB per phone at the default 30 day retention, or 170 MB for
+every year of history you keep.
 
 ## 1. Configure
 
@@ -88,7 +88,7 @@ variables above, and once to hand the whole file to the API.
 ```bash
 JWT_SECRET=                                # openssl rand -base64 48, paste the output
 PUBLIC_URL=https://hearth.example.com      # where phones will reach you
-POSTGRES_PASSWORD=some-long-random-string
+POSTGRES_PASSWORD=some-long-random-string  # openssl rand -hex 24, it goes into a URL
 ADMIN_EMAIL=you@example.com                # required, your account
 ADMIN_PASSWORD=a-long-passphrase           # required, at least 10 characters
 ADMIN_NAME=Your Name                       # optional, defaults to the part before the @
@@ -180,16 +180,16 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 120s;
+        proxy_read_timeout 300s;                     # above the 2 minute websocket ping
     }
 }
 ```
 
-Set `TRUST_PROXY=true` in `.env` once a proxy really is in front, or the rate
-limiter sees your whole family as one client. Hearth only believes
-`X-Forwarded-For` from the machine that connected to it, and only when that
-machine is on a private network, so a caller on the internet cannot pick its own
-address and walk past the login throttle. That holds while port 4000 is
+Set `TRUST_PROXY=true` in `.env` once a proxy really is in front, or every
+sign-in and token refresh in the family counts against one shared rate limit.
+Hearth only believes `X-Forwarded-For` from the machine that connected to it,
+and only when that machine is on a private network, so a caller on the internet
+cannot pick its own address and walk past the login throttle. That holds while port 4000 is
 reachable only through the proxy, which is why the compose files publish it on
 `127.0.0.1`. Publish it on every interface and a caller reaching it directly
 arrives through Docker's bridge, from a private address, and is believed. Two
@@ -201,7 +201,8 @@ LAN deployment.
 
 This one assumes you already run Traefik, with an entrypoint on 443 and a
 certificate resolver defined in its static configuration. Substitute your own
-names for `websecure` and `letsencrypt`. Add the labels to the `api` service.
+names for `websecure`, `letsencrypt` and the `traefik` network. Add the labels
+to the `api` service.
 
 ```yaml
 labels:
@@ -210,6 +211,9 @@ labels:
   - "traefik.http.routers.hearth.entrypoints=websecure"
   - "traefik.http.routers.hearth.tls.certresolver=letsencrypt"
   - "traefik.http.services.hearth.loadbalancer.server.port=4000"
+  # The container is on two networks. Without this Traefik may pick the one it
+  # isn't on and answer with a gateway timeout.
+  - "traefik.docker.network=traefik"
 networks:
   - default
   - traefik
@@ -227,8 +231,8 @@ networks:
 ```
 
 If you add Traefik as a service in this same compose file instead, it is already
-on the default network and neither networks block is needed. Websockets work
-with no extra configuration.
+on the default network, and you can drop both networks blocks and the
+`traefik.docker.network` label. Websockets work with no extra configuration.
 
 ## 4. Connect a phone
 
@@ -240,15 +244,22 @@ create a circle, and share the invite code or QR with the family.
 
 ### Push notifications
 
-Read [push notifications](push-notifications.md). For the fully self-hosted
-route, take the `docker-compose.ntfy.yml` overlay from the repository and run:
+Read [push notifications](push-notifications.md) first. Full push, including
+the silent pushes that wake a quiet phone, needs `expo` and an app you build
+yourself with your own Expo, Firebase and Apple accounts. Without those, ntfy is
+the self-hosted way to get alerts, and it never wakes the Hearth app itself.
+
+For ntfy, take the `docker-compose.ntfy.yml` overlay from the repository, set
+`PUSH_PROVIDER=ntfy` and `NTFY_BASE_URL=https://ntfy.example.com` in `.env`,
+and run:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.ntfy.yml up -d
 ```
 
-then set `PUSH_PROVIDER=ntfy` and `NTFY_BASE_URL=https://ntfy.example.com`, a
-second hostname on your proxy pointed at port `8093`.
+`ntfy.example.com` is a second hostname on your proxy, pointed at port `8093`.
+The overlay starts ntfy with every topic locked, so create Hearth's ntfy account
+and set `NTFY_TOKEN` as the push page describes, or the server can't publish.
 
 ### Profile pictures
 
@@ -285,8 +296,11 @@ By default the app loads a MapLibre style from OpenFreeMap. No key, no tracking,
 community-run. To be fully independent, host your own tiles with
 [Martin](https://martin.maplibre.org/) or [TileServer GL](https://github.com/maptiler/tileserver-gl)
 and point `MAP_STYLE_URL` at your style JSON, plus `MAP_STYLE_URL_DARK` for the
-app's dark theme and `MAP_ATTRIBUTION` for the credit line. The app reads all
-three from `/api/v1/server-info` on launch, so nothing has to be rebuilt.
+app's dark theme. Set both, or a phone in dark mode keeps loading OpenFreeMap.
+The app reads them from `/api/v1/server-info` on launch, so nothing has to be
+rebuilt. The credit line on the map comes from the attribution in your style's
+sources. `MAP_ATTRIBUTION` is published in server-info too, but the app doesn't
+show it.
 
 ### Several API replicas
 
@@ -326,11 +340,12 @@ docker run --rm -v hearth_minio-data:/data -v "$PWD:/backup" alpine \
 ```
 
 `hearth_minio-data` is the compose project name joined to the volume name, so
-it matches the file above. If you set `MINIO_DATA_PATH` to a host directory,
-the pictures live there and the volume is empty, so copy that directory
-instead. Objects are written once under a random key and never rewritten, so
-the copy does not need the stack stopped. If you pointed `S3_ENDPOINT` at
-storage you run elsewhere, back it up there instead and skip this step.
+it matches the file above. If you run the repository's compose file with
+`MINIO_DATA_PATH` pointed at a host directory, the pictures live there and the
+volume is empty, so copy that directory instead. Objects are written once under
+a random key and never rewritten, so the copy does not need the stack stopped.
+If you pointed `S3_ENDPOINT` at storage you run elsewhere, back it up there
+instead and skip this step.
 
 Restoring means getting the dump in before the API creates the schema, so bring
 up Postgres on its own first:
@@ -361,6 +376,10 @@ docker compose pull
 docker compose up -d
 ```
 
+If you run an overlay, give both commands the same `-f` files, or put
+`COMPOSE_FILE=docker-compose.yml:docker-compose.ntfy.yml` in `.env` so every
+command picks them up.
+
 Migrations run automatically on boot. Downgrades aren't supported, so if an
 upgrade goes badly, restore a backup. Pin a tag instead of `latest` if you would
 rather choose your moment.
@@ -389,7 +408,8 @@ One wrinkle worth knowing before you touch anything on that screen: saving any
 server setting writes the whole set, so renaming the server also stores whatever
 ceiling was in force at that moment. From then on, editing
 `MAX_HISTORY_RETENTION_DAYS` in `.env` changes nothing until you clear the field
-in the app.
+in the app. `REGISTRATION_MODE` and `SERVER_NAME` are stored the same way and
+have no field to clear, so after the first save they change from the app only.
 
 ### Health
 
@@ -416,11 +436,15 @@ without a compiler.
 Rate limits are per account, falling back to per IP, so one chatty phone on a
 home NAT doesn't throttle the whole household.
 
-All tables cascade from `users` and `circles`. Deleting an account deletes every
-breadcrumb, place, alert and notification tied to it. The one thing that outlives
-it is the profile picture in the bucket, which the cascade cannot reach. Nothing
-links to it any more and its key is random, so it is unreachable rather than
-exposed, but an operator who wants it gone has to remove the object.
+Every table but the audit log and the server settings cascades from `users` and
+`circles`. Deleting an account deletes every breadcrumb, trip, alert and
+notification tied to it. Places it created in a shared circle stay, for the
+others who use them. Two things outlive it. Audit log rows lose the link to
+the account but keep what they recorded, which for a reused refresh token is the
+device id and IP address. And the profile picture stays in the bucket, which the
+cascade cannot reach. Nothing links to it any more and its key is random, but
+`/media/` serves it without a token, so anyone who already has its link can
+still load it until the operator removes the object.
 
 `CORS_ORIGINS` is empty by default, which grants no cross-origin access at all.
 Native apps don't send an `Origin` header and don't need one. Add your web
@@ -443,5 +467,7 @@ start. They create the account the server boots with, which is the only way in,
 and in production the server refuses to start without them rather than leaving
 you one nobody can sign into.
 
-You'll need Node 20.18+ and Postgres 14+. Object storage is optional: leave
-`S3_ENDPOINT` unset and profile pictures are simply switched off.
+You'll need Node 22.12+ and Postgres 14+. The workspace's dev tooling needs
+that Node, and `pnpm install` refuses an older one. The image runs Node 24.
+Object storage is optional: leave `S3_ENDPOINT` unset and profile pictures are
+simply switched off.

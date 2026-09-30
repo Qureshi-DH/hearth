@@ -55,8 +55,8 @@ event fits:
    driving is also still, but the vehicle's vibration keeps coming through the
    floor, and that is what gives it away.
 4. **At least one further signal agreed.** Either the phone was spun hard, or
-   cabin pressure rose sharply in the fraction of a second after the jolt,
-   which is what an airbag inflating does to a closed car.
+   cabin pressure rose sharply in the second or two after the jolt, which is
+   what an airbag inflating does to a closed car.
 
 Points 1 and 3 are the same fact read twice, so they are treated as one. That
 matters more than it sounds: without that rule, an ordinary stop at a red light
@@ -89,8 +89,10 @@ description rather than to a better one.
 ## It asks for no permission
 
 Crash detection reads the accelerometer, the gyroscope and the barometer. At the
-rates Hearth samples them, neither iOS nor Android treats those as protected
-sensors, so no permission dialog appears for any of it.
+rates Hearth samples them, neither iOS nor Android treats the first two as
+protected sensors. On iPhone the barometer falls under Motion and Fitness, which
+the vehicle detection below already needs. So no permission dialog appears for
+any of it.
 
 Running something like that unannounced would be the wrong thing to do, so the
 app's permissions screen lists it anyway as an entry that is explicitly not a
@@ -128,9 +130,9 @@ That classifier runs whenever location sharing does, because the location
 side needs it to let the GPS sleep. Turning on incident alerts for a circle
 does not have to start anything. It is asked for on the setup checklist as
 Motion and Fitness on iOS, or activity recognition on Android. That is the
-only permission anywhere in this feature, and it belongs to the vehicle
-detection rather than to the crash sensing. A phone that refused it never
-knows a drive has started, so crash detection cannot run there.
+only permission anywhere in this feature. It is there for the vehicle
+detection, and on iPhone it also covers the barometer. A phone that refused it
+never knows a drive has started, so crash detection cannot run there.
 
 ## What happens when it escalates
 
@@ -179,12 +181,18 @@ back, so somebody who was paused or approximate has to set it again. A second
 SOS while one is already active is refused rather than duplicated.
 
 **Who is told.** Every other member of that circle, at the highest priority the
-transport allows, as "SOS from _name_" with your note as the body. This is the
-one alert that ignores notification mutes: somebody who muted the circle last
-Tuesday still gets it. On Android it arrives on a maximum-importance channel
-that bypasses Do Not Disturb. On iOS it is marked time sensitive. Delivery
-still depends on how you have set up [push
-notifications](install/push-notifications.md).
+transport allows, as "🚨 SOS from _name_" with your note as the body, or "Tap to
+see their location." without one. Notification mutes never apply to it, so
+somebody who muted the circle last Tuesday still gets it. With Expo push it
+arrives on Android on a maximum-importance channel that bypasses Do Not
+Disturb, and on iOS it is marked time sensitive. Through ntfy it goes out at
+ntfy's highest priority, and the ntfy app decides how to show it.
+
+A locked phone only hears about an SOS if the server has a push provider set
+up. With `PUSH_PROVIDER=none`, the default, nobody is buzzed. The alert shows
+as the red banner described below, on phones that have Hearth open or open it
+later. [Push notifications](install/push-notifications.md) covers the options
+and what each one needs.
 
 **While it is open.** With the SOS screen up the phone takes a highest-accuracy
 fix every 20 seconds on top of its normal cadence, so the circle sees movement
@@ -193,10 +201,10 @@ alert is open, and tapping it jumps to that person.
 
 **Ending it.** The person who raised it, or any admin of the circle, marks it
 resolved. A resolution notice then goes to the circle, the person who raised it
-included. Unlike the SOS itself, that notice respects notification mutes.
+included. Like the SOS itself, that notice ignores notification mutes.
 
-**Limits on it.** Three alerts per user per ten minutes, since an SOS bypasses
-mutes and fires at top priority.
+**Limits on it.** Three alerts per person in each circle per ten minutes, since
+an SOS bypasses mutes and fires at top priority.
 
 ## The server-side check, which is a different thing
 
@@ -214,9 +222,10 @@ Understand what that is. Fixes 30 seconds apart cannot tell a collision from
 parking hard. It is a prompt to check on somebody, not a claim that anything
 happened, and the wording in the app says so. It fires at most once an hour per
 person, it never becomes an SOS on its own, and it does not ask the person
-anything first. It only reaches circles that person shares precisely with, since
-telling a circle they stopped hard somewhere is precise information about
-somebody who may have chosen to be approximate.
+anything first. It is sent on the same notification channel as an SOS, and
+notification mutes don't silence it. It only reaches circles that person shares
+precisely with, since telling a circle they stopped hard somewhere is precise
+information about somebody who may have chosen to be approximate.
 
 The on-phone detector described above is the accurate one. This is the fallback
 that works when the phone cannot sample for itself, and it runs whether or not
@@ -252,7 +261,9 @@ default state.
 destroyed, out of battery, or has no route to your server sends nothing. If the
 call to the server fails, the app shows the error and leaves the prompt on
 screen with the button, but it does not retry on its own. A self-hosted server
-that is down is a server that cannot forward an SOS.
+that is down is a server that cannot forward an SOS. And one with no push
+provider can only show it to phones that have Hearth open, as [SOS](#sos)
+explains.
 
 **It needs a selected circle.** If no circle is currently selected in the app,
 the prompt clears without alerting anyone.

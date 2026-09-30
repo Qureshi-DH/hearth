@@ -173,9 +173,10 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["locations"],
         summary: "Upload location fixes",
         description:
-          "Accepts a batch of fixes from one device. Duplicates (same device and timestamp) " +
-          "are ignored, so a client may safely retry a failed upload. The response carries " +
-          "the tracking policy the device should apply from now on.",
+          "Accepts a batch of fixes from one device. A duplicate (same device and timestamp) " +
+          "changes nothing, except that one re-reported as still takes that activity, so a " +
+          "client may safely retry a failed upload. The response carries the tracking policy " +
+          "the device should apply from now on.",
         body: z.object({
           points: z.array(fixSchema).min(1).max(DEFAULTS.maxLocationBatchSize),
         }),
@@ -419,10 +420,10 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["locations"],
         summary: "Follow one person live for a while",
         description:
-          "Called while someone has a member's page open. The member's phone is asked to " +
-          "report at full accuracy every few seconds for the watch window, over its control " +
+          "Called while someone has a member's Live page open. The member's phone is asked " +
+          "to report at full accuracy, a fix a second, for the watch window, over its control " +
           "channel when it has one open, by silent push otherwise, and by its next upload " +
-          "reply, and the page keeps calling to hold it. A phone that has stopped reports " +
+          "reply, and the page keeps calling to hold it. A parked Android phone reports " +
           "once instead. Only members sharing precisely can be watched. The reply says what " +
           "became of the ask: `socket` when the channel carried it, `sent` when a push was queued by this call, " +
           "`held` when the phone was pushed moments ago or has uploaded since, `no_device` " +
@@ -491,8 +492,8 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         ? new Date(before.watchedUntil.getTime() - seconds * 1000)
         : null
       // The window is recorded whatever the push does. A phone in the middle
-      // of a drive uploads every few seconds and reads it off the reply, so
-      // the push is the fast path for a phone that has nothing to say yet.
+      // of a drive uploads with every fix and reads it off the reply, so the
+      // push is the fast path for a phone that has nothing to say yet.
       const watchedUntil = new Date(now.getTime() + seconds * 1000)
       const [presence] = await db
         .insert(userPresence)

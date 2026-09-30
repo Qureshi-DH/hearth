@@ -14,7 +14,7 @@
   <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
   <a href="https://github.com/Qureshi-DH/hearth/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Qureshi-DH/hearth/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <img alt="Expo SDK 55" src="https://img.shields.io/badge/Expo-SDK%2055-000020?logo=expo">
-  <img alt="Node 20.18+" src="https://img.shields.io/badge/node-%E2%89%A520.18-5FA04E?logo=node.js&logoColor=white">
+  <img alt="Node 22.12+" src="https://img.shields.io/badge/node-%E2%89%A522.12-5FA04E?logo=node.js&logoColor=white">
   <img alt="Postgres 14+" src="https://img.shields.io/badge/postgres-%E2%89%A514-336791?logo=postgresql&logoColor=white">
 </p>
 
@@ -42,7 +42,8 @@ own servers, under a privacy policy you don't control. Hearth runs on yours.
 No company account, no analytics, no ads, and nothing is sent to us.
 
 It's two pieces: an API server that runs in Docker next to Postgres, and an iOS
-and Android app that talks only to it.
+and Android app that talks to it. Apart from your server, the app only reaches
+the map tile host and, if you turn it on, Expo push.
 
 ## Status
 
@@ -129,9 +130,10 @@ Set the admin before the first boot. It is created once, on an empty database,
 and everyone else needs an invite, so nobody who finds the URL can claim your
 server.
 
-Phones won't talk to a plain HTTP server in the background, so put a TLS proxy
-in front before you invite anyone. [docs/docs/install/self-hosting.md](docs/docs/install/self-hosting.md)
-has Caddy and nginx configs you can paste.
+A release build of the app won't talk to a plain HTTP server on the internet,
+so put a TLS proxy in front before you invite anyone.
+[docs/docs/install/self-hosting.md](docs/docs/install/self-hosting.md) has
+Caddy and nginx configs you can paste.
 
 ## Build the app
 
@@ -187,7 +189,8 @@ apps/mobile/       Expo SDK 55, React Native, based on Ignite.
 packages/shared/   Types, constants, geo maths and the crash heuristic.
                    No runtime dependencies.
 deploy/            Reverse-proxy examples.
-web/               The landing page. Static, no build step.
+web/               The landing page, and the privacy and account deletion
+                   pages the stores link to. Static, no build step.
 docs/              Everything below.
 ```
 
@@ -217,24 +220,28 @@ with search, and the same pages are in [`docs/docs`](docs/docs) here.
 Waking a sleeping phone needs Apple's or Google's push service, so that last hop
 is the one part a self-hoster can't fully own. Pick a provider:
 
-| Provider         | Third party?        | Works on                     | Effort |
-| ---------------- | ------------------- | ---------------------------- | ------ |
-| `none` (default) | No                  | Both, while the app is open  | None   |
-| `ntfy`           | No, you host it     | Both, alerts only, in ntfy   | Low    |
-| `expo`           | Yes, Expo relays it | Both, including silent wakes | Low    |
-| `webpush`        | Browser vendor      | Browsers, UnifiedPush        | Medium |
+| Provider         | Third party?        | Works on                     | Effort                  |
+| ---------------- | ------------------- | ---------------------------- | ----------------------- |
+| `none` (default) | No                  | Both, while the app is open  | None                    |
+| `ntfy`           | No, you host it     | Both, alerts only, in ntfy   | Low                     |
+| `expo`           | Yes, Expo relays it | Both, including silent wakes | High, you build the app |
+| `webpush`        | Browser vendor      | Browsers only, not the app   | Medium                  |
 
 Only `expo` wakes the app itself, and a lot rests on that: Live and a refresh on
-a parked Android phone, the wake that revives a phone gone quiet, and "Ask for
-location" on a phone in a pocket. `ntfy` carries the alerts, and those wait for
-the phone's own next report, up to a quarter of an hour.
+a parked Android phone, and the wake that revives a phone gone quiet. `ntfy`
+carries the alerts, but without `expo` those asks wait for the phone's own next
+report, up to a quarter of an hour.
 
-Expo push goes through the Expo project, Firebase project and Apple push key the
-app was built with. If you have those, build the app with them and push works
-fully against your server. If you don't, Hearth still runs, with `ntfy` for
-alerts. A Hearth organisation with its own accounts, so the store builds can
-push for any server, is on the [roadmap](docs/docs/roadmap.md) and needs
-funding. Payloads carry names and identifiers, never coordinates. The
+Every push to a build goes out under the Expo project, Firebase project and
+Apple push key it was built with, whichever server sends it. That's why the
+store builds can't ship with my personal keys, and why push only fully works if
+you build the app yourself with your own Expo project, Firebase project and
+Apple developer account. `apps/mobile/app.json` has my Expo `owner` and
+`extra.eas.projectId` committed, so take those out and run `eas init`, which
+writes your own. Without your own keys Hearth still runs, with `ntfy` for alerts
+or no push at all. A Hearth organisation with its own accounts and a relay in
+front of Expo is on the [roadmap](docs/docs/roadmap.md) and needs funding.
+Payloads carry names, place labels and ids, never coordinates. The
 [push notifications guide](docs/docs/install/push-notifications.md) covers each one.
 
 ## Contributing

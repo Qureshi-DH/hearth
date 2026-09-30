@@ -78,7 +78,9 @@ And Cloudflare's free plan is intended for serving websites rather than
 proxying arbitrary application traffic, so read their current terms before you
 rely on it for something that matters.
 
-Websockets work over Tunnel, which Hearth needs for the live map.
+Websockets work over Tunnel, which Hearth needs for the live map. Cloudflare
+does close a websocket that carries nothing for a while, though, so read the
+note on timeouts below.
 
 ### Tailscale
 
@@ -114,20 +116,24 @@ leave the map looking frozen while everything else works. Caddy and Traefik do
 this correctly with no configuration. For nginx see the config in
 [self-hosting](self-hosting.md).
 
-**`PUBLIC_URL` must be the address phones actually use.** It is what invite
-links and avatar URLs are built from. If phones connect to
+**`PUBLIC_URL` must be the address phones actually use.** Invite links, the
+join page they open and the API docs are all built from it. If phones connect to
 `https://hearth.example.com` then that is the value, not `http://localhost:4000`
 and not the container's address.
 
 **Set `TRUST_PROXY=true` when you run behind a proxy.** Otherwise every request
-appears to come from the proxy, and the rate limiter treats your whole family as
-one client. The header is only believed when the machine that connected is on a
-private network, so turning this on does not let somebody on the internet choose
-the address their password guesses are counted against.
+appears to come from the proxy, and every sign-in and token refresh in the
+family counts against one shared rate limit. The header is only believed when
+the machine that connected is on a private network, so turning this on does not
+let somebody on the internet choose the address their password guesses are
+counted against.
 
 **Long-lived connections need a generous timeout.** Phones hold a websocket
-open. A proxy that closes idle connections after 30 seconds will cause a
-reconnect loop.
+open. The app's on-screen socket sends something every 25 seconds, but the line
+a phone keeps open for the server's asks, like Live and a fresh fix, hears only
+the server's ping, every two minutes. A proxy that closes idle connections
+sooner than that keeps cutting it, and those asks fall back to a silent push,
+which only `expo` can send. Allow five minutes or more.
 
 ## Checking it works
 

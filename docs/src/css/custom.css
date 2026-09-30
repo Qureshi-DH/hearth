@@ -1,32 +1,100 @@
 /**
- * The app's ember accent, darkened for light backgrounds so body text and
- * links keep an accessible contrast ratio against white.
+ * The landing page's palette, so the two halves of the site read as one.
+ * The neutrals are warm like the landing page's rather than Infima's greys,
+ * and the accent is the one web/index.html uses for links, which keeps an
+ * accessible contrast ratio on either background. No webfont is fetched,
+ * for the same reason the landing page gives.
  */
 :root {
-  --ifm-color-primary: #c9481c;
-  --ifm-color-primary-dark: #b54019;
-  --ifm-color-primary-darker: #aa3d18;
-  --ifm-color-primary-darkest: #8c3214;
-  --ifm-color-primary-light: #dd5222;
-  --ifm-color-primary-lighter: #e35c2d;
-  --ifm-color-primary-lightest: #e8764c;
-  --ifm-code-font-size: 92%;
-  --ifm-font-family-base:
-    system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+  --hearth-ground: #fbf7f2;
+  --hearth-raised: #ffffff;
+  --hearth-sunken: #f2ece4;
+  --hearth-ink: #1e1714;
+  --hearth-ink-soft: #6b6058;
+  --hearth-rule: #e4dacd;
+
+  --ifm-color-primary: #c9451f;
+  --ifm-color-primary-dark: #b53e1c;
+  --ifm-color-primary-darker: #ab3b1a;
+  --ifm-color-primary-darkest: #8d3016;
+  --ifm-color-primary-light: #de4f26;
+  --ifm-color-primary-lighter: #e05932;
+  --ifm-color-primary-lightest: #e57656;
+
+  --docusaurus-highlighted-code-line-bg: rgba(30, 23, 20, 0.08);
 }
 
-[data-theme="dark"] {
-  --ifm-color-primary: #ff8355;
-  --ifm-color-primary-dark: #ff6b36;
-  --ifm-color-primary-darker: #ff5f26;
-  --ifm-color-primary-darkest: #e84400;
-  --ifm-color-primary-light: #ff9b74;
-  --ifm-color-primary-lighter: #ffa784;
-  --ifm-color-primary-lightest: #ffcbb5;
-  --ifm-background-color: #121214;
-  --ifm-background-surface-color: #1a1a1d;
+html[data-theme="dark"] {
+  --hearth-ground: #131114;
+  --hearth-raised: #1c191d;
+  --hearth-sunken: #232025;
+  --hearth-ink: #f5efe9;
+  --hearth-ink-soft: #a89c92;
+  --hearth-rule: #322d33;
+
+  --ifm-color-primary: #ff9a70;
+  --ifm-color-primary-dark: #ff804b;
+  --ifm-color-primary-darker: #ff7339;
+  --ifm-color-primary-darkest: #ff4c02;
+  --ifm-color-primary-light: #ffa47e;
+  --ifm-color-primary-lighter: #ffa985;
+  --ifm-color-primary-lightest: #ffb89b;
+
   --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.1);
+}
+
+/*
+ * Infima sets its own dark surfaces on html[data-theme="dark"], which outranks
+ * :root, so the mapping sits on the same selector and comes later.
+ */
+html[data-theme="light"],
+html[data-theme="dark"] {
+  --ifm-background-color: var(--hearth-ground);
+  --ifm-background-surface-color: var(--hearth-raised);
+  --ifm-font-color-base: var(--hearth-ink);
+  --ifm-font-color-secondary: var(--hearth-ink-soft);
+  --ifm-font-family-base:
+    system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --ifm-heading-font-family: "Space Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --ifm-code-font-size: 92%;
+  --ifm-code-background: var(--hearth-sunken);
+  --ifm-hr-background-color: var(--hearth-rule);
+  --ifm-toc-border-color: var(--hearth-rule);
+  --ifm-table-border-color: var(--hearth-rule);
+  --ifm-table-head-background: var(--hearth-sunken);
+  --ifm-table-stripe-background: transparent;
+  --ifm-menu-color-background-active: var(--hearth-sunken);
+  --ifm-menu-color-background-hover: var(--hearth-sunken);
+  --ifm-navbar-background-color: var(--hearth-ground);
+  --ifm-navbar-shadow: none;
+  --ifm-footer-background-color: var(--hearth-ground);
+  --ifm-footer-color: var(--hearth-ink-soft);
+  --ifm-footer-link-color: var(--hearth-ink-soft);
+  --ifm-footer-title-color: var(--hearth-ink);
+}
+
+h1,
+h2,
+h3,
+.navbar__title {
+  letter-spacing: -0.02em;
+}
+
+.navbar {
+  border-bottom: 1px solid var(--hearth-rule);
+}
+
+.navbar__title {
+  font-family: var(--ifm-heading-font-family);
+  font-weight: 700;
+}
+
+.navbar__logo {
+  height: 2rem;
+}
+
+.footer {
+  border-top: 1px solid var(--hearth-rule);
 }
 
 .markdown table {
@@ -34,6 +102,18 @@
   width: 100%;
 }
 
+.markdown code {
+  border-color: var(--hearth-rule);
+}
+
 .markdown h2 {
   margin-top: 2.4rem;
+}
+
+/* A wide table scrolls inside itself on a phone instead of pushing the page. */
+@media (max-width: 996px) {
+  .markdown table {
+    display: block;
+    overflow-x: auto;
+  }
 }

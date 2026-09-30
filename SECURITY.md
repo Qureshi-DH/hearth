@@ -12,7 +12,7 @@ exploitable. You should hear back within a few days.
 ## Scope
 
 Everything under `server/` counts: authentication, authorisation, the privacy
-projection in `services/presence.ts`, input validation, injection, and rate
+projection in `src/services/presence.ts`, input validation, injection, and rate
 limiting. In `apps/mobile/`, it's token storage, deep-link handling, and
 anything else that could leak a position to a party the user didn't choose.
 Docker images and compose files too.
@@ -48,9 +48,9 @@ replaced and the old object is deleted. Nothing else is reachable that way, and
 the names cannot be guessed or listed.
 
 **The first account on an empty server becomes an administrator.** That is the
-zero-config way in, and it is why `ADMIN_EMAIL` and `ADMIN_PASSWORD` are refused
-as optional outside development. Do not start a server in `open` registration
-mode without them, or the first stranger to find the address owns it.
+zero-config way in, and it is why `ADMIN_EMAIL` and `ADMIN_PASSWORD` are
+required in production. Do not start a server in `open` registration mode
+without them, or the first stranger to find the address owns it.
 
 **A drive past a place can still be recorded as a visit.** When the fixes for a
 drive-through arrive as separate uploads, the server cannot know a departure is

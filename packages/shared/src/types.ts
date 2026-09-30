@@ -431,7 +431,7 @@ export interface PushConfig {
 export interface ServerSettings {
   serverName: string
   registrationMode: RegistrationMode
-  /** Hard cap on stored history, overriding per-circle settings. Null = no cap. */
+  /** Caps every circle's own retention. Null hands the cap back to MAX_HISTORY_RETENTION_DAYS. */
   maxHistoryRetentionDays: number | null
 }
 

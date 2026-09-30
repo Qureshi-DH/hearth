@@ -13,7 +13,7 @@ which is [step 6](#6-before-you-invite-anyone) and a link to a longer page.
 ## What you need
 
 - Docker Engine 24+ with Compose v2 (`docker compose version`)
-- Node 20.18+ and pnpm 9+, to build the app
+- Node 22.12+ and pnpm 9+, to build the app
 - Xcode (iOS) or Android Studio (Android). The store builds are in review, so
   for now you compile the app yourself
 - A phone or simulator on the same network as the server
@@ -53,20 +53,20 @@ Compose runs the API with `NODE_ENV=production`, so the server also refuses to
 boot without a `JWT_SECRET` of at least 32 characters and both admin values.
 
 That admin account is created once, while the database still has no users, and
-it is the only way in: registration never lets an account through without an
-invite, so a server you have not signed into yet cannot be claimed by whoever
-finds the URL. Editing `ADMIN_PASSWORD` afterwards does nothing, because the
-bootstrap only runs against an empty user table. Change the password from the
-app.
+it is the only way in. On the default `invite` setting, registration never lets
+an account through without an invite, so a server you have not signed into yet
+cannot be claimed by whoever finds the URL. Editing `ADMIN_PASSWORD` afterwards
+does nothing, because the bootstrap only runs against an empty user table.
+Change the password from the app.
 
 `HEARTH_BIND` publishes the API on every interface of this machine, which is
 what a LAN first look needs. Out of the box it is published on loopback only,
 for a reverse proxy on the same machine. Put it back to `127.0.0.1` when the
 proxy goes in, because Docker's port rules go around the host firewall.
 
-`PUBLIC_URL` is what Hearth puts in invite links and push payloads, so point it
-at the address the phones will really use. Your machine's LAN address comes from
-`ipconfig getifaddr en0` on macOS or `hostname -I` on Linux.
+`PUBLIC_URL` is what Hearth puts in invite links, the join page and the API
+docs, so point it at the address the phones will really use. Your machine's LAN
+address comes from `ipconfig getifaddr en0` on macOS or `hostname -I` on Linux.
 
 ## 3. Start the server
 
@@ -99,10 +99,11 @@ npx expo prebuild
 npx expo run:ios        # or run:android
 ```
 
-A debug build reaches a LAN server over plain HTTP, which is what makes this
-local try possible. Release builds do not: Android refuses cleartext outright and iOS
-allows it only to private network addresses. [Mobile](../developer/mobile.md)
-has the full table and the build details.
+The debug build that `expo run` makes reaches a LAN server over plain HTTP,
+which is what makes this local try possible. A release build is stricter. On
+iOS it allows plain HTTP only to private network addresses, and on Android it
+refuses it outright.
+[Mobile](../developer/mobile.md) has the full table and the build details.
 
 ## 5. Connect the phone
 
@@ -123,8 +124,9 @@ in [push notifications](../install/push-notifications.md).
 
 ## 6. Before you invite anyone
 
-Phones will not talk to a plain HTTP server in the background, so the LAN setup
-above stops here. Put a TLS-terminating proxy in front before anyone else joins.
+A release build will not talk to a plain HTTP server on the internet, so the LAN
+setup above stops here. Put a TLS-terminating proxy in front before anyone else
+joins.
 
 - [Remote access](../install/remote-access.md) compares the ways to reach your
   server from outside the house, and explains why the usual VPN-first advice
