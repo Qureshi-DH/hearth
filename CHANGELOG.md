@@ -6,9 +6,13 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
-Fixes from a security and code review before the repository goes public.
-Update the server first. Migrations 0009 and 0010 run on start, and phones
-work with either version.
+## [1.1.0] - 2026-10-01
+
+Fixes from a security and code review before the repository went public,
+fixes a real family's week turned up in trips, departures and activity
+labels, and two new quick messages. Update the server first. Migrations 0009
+and 0010 run on start. Phones work with either version, and a new app on an
+older server sends the new quick messages as plain text.
 
 Three things change for an existing install:
 
@@ -16,8 +20,17 @@ Three things change for an existing install:
   reaches port 4000 from another machine, a proxy elsewhere or phones on the
   LAN, set `HEARTH_BIND=0.0.0.0` in `.env`.
 - With ntfy, every phone gets a new topic once, the next time the app
-  registers. Subscribe again from the app's "Subscribe in ntfy" button.
+  registers. Subscribe again to the topic the app's notification settings
+  show.
 - Signing in again on a phone ends the session it had before.
+
+### Added
+
+- Two quick messages, "Please charge your phone." and "Your location isn't
+  updating. Please open Hearth." The message sheet puts the ones that fit the
+  other phone first: charging for a phone at or under the circle's low
+  battery line, opening Hearth for one that has gone quiet, the road for
+  somebody driving. Every message stays on offer.
 
 ### Security
 
@@ -81,6 +94,17 @@ Three things change for an existing install:
   saying it was signed out.
 - A wake push no longer brings up "Updating your location" on an Android
   phone with sharing off.
+- A network estimate from a parked phone no longer takes it out of a place or
+  makes a trip. A night of cell fixes a street away told a family twice that
+  a phone on the nightstand had gone to the neighbours and back. An estimate
+  worse than 100 m leaves a place only from more than twice its error away,
+  and trips are built without them.
+- A drive handed over late by Android's native queue is labelled a drive. It
+  went up as walking at 80 km/h, and the speed alert said so. The server also
+  refuses a walking or cycling label faster than anybody goes, in the alert
+  and on the map.
+- When the OS gives no fix as a phone parks, the arrival fix uses the phone's
+  newest real position rather than where the stop began.
 
 ### Documentation
 
@@ -90,6 +114,11 @@ Three things change for an existing install:
   per-account sign-in budget can keep an owner out for an hour.
 - `MINIO_DATA_PATH` is documented, with how to back it up.
 - Dependabot watches the images in the compose files.
+- The docs were checked against the code and corrected throughout, push
+  notifications most of all: what each provider can and cannot do, and why
+  push only fully works in a build made with your own keys.
+- The docs site and the landing page share one look and a favicon, and the
+  landing page shows the app, with a gallery of real screens.
 
 ## [1.0.0] - 2026-09-04
 
@@ -993,7 +1022,8 @@ security audit and there are no store builds yet.
   trusting the token
 - Push payloads never carry coordinates
 
-[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Qureshi-DH/hearth/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Qureshi-DH/hearth/compare/v0.10.0...v1.0.0
 [0.10.0]: https://github.com/Qureshi-DH/hearth/compare/v0.9.6...v0.10.0
 [0.9.6]: https://github.com/Qureshi-DH/hearth/compare/v0.9.5...v0.9.6

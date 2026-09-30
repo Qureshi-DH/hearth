@@ -394,6 +394,43 @@ describe("nudges", () => {
     expect(rejected.statusCode).toBe(404)
   })
 
+  // A phone at 9% or one that has gone quiet wanted a message of its own.
+  it("sends the messages for a flat battery and a phone that stopped reporting", async () => {
+    const owner = await registerUser(ctx.app, { displayName: "Amina" })
+    const circle = await createCircle(owner.headers)
+    const wife = await registerUser(ctx.app, { displayName: "Sara" })
+    await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/invites/${circle.invite.code}/accept`,
+      headers: wife.headers,
+    })
+
+    for (const quickKey of ["charge_phone", "open_hearth"]) {
+      const sent = await ctx.app.inject({
+        method: "POST",
+        url: `/api/v1/circles/${circle.id}/nudge/${wife.user.id}`,
+        headers: owner.headers,
+        payload: { quickKey },
+      })
+      expect(sent.statusCode).toBe(200)
+    }
+
+    const feed = await ctx.app.inject({
+      method: "GET",
+      url: `/api/v1/circles/${circle.id}/events`,
+      headers: wife.headers,
+    })
+    const lines = (feed.json().items as Array<{ type: string; summary: string }>)
+      .filter((item) => item.type === "nudge_requested")
+      .map((item) => item.summary)
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        "Amina: Please charge your phone.",
+        "Amina: Your location isn't updating. Please open Hearth.",
+      ]),
+    )
+  })
+
   it("still works with no message, as a bare request for a location", async () => {
     const owner = await registerUser(ctx.app, { displayName: "Amina" })
     const circle = await createCircle(owner.headers)

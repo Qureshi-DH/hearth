@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FC } from "react"
 import { View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
-import { QUICK_MESSAGES, type QuickMessageKey } from "@hearth/shared"
+import { QUICK_MESSAGES } from "@hearth/shared"
 import { useFocusEffect } from "@react-navigation/native"
 
 import { Avatar } from "@/components/Avatar"
@@ -39,6 +39,7 @@ import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { activityIconName, atUnnamedSpot, onTheMove } from "@/utils/activity"
+import { quickMessagesFor, sendQuickMessage } from "@/utils/quickMessages"
 import { availableDirectionsApps, openDirections, type DirectionsApp } from "@/utils/directions"
 import { formatSpeed } from "@/utils/format"
 import { relativeTime } from "@/utils/time"
@@ -122,11 +123,10 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   }
 
   const [choosingMessage, setChoosingMessage] = useState(false)
-  const sendQuick = async (quickKey: QuickMessageKey) => {
+  const sendQuick = async (quick: (typeof QUICK_MESSAGES)[number]) => {
     try {
-      await nudge.mutateAsync({ userId, quickKey })
-      const body = QUICK_MESSAGES.find((quick) => quick.key === quickKey)?.body ?? ""
-      toast.success(translate("member:messageSent", { name, body }))
+      await sendQuickMessage((message) => nudge.mutateAsync({ userId, ...message }), quick)
+      toast.success(translate("member:messageSent", { name, body: quick.body }))
     } catch (error) {
       toast.error((error as Error).message)
     }
@@ -419,12 +419,12 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
         visible={choosingMessage}
         titleTx="messages:title"
         onClose={() => setChoosingMessage(false)}
-        options={QUICK_MESSAGES.map((quick) => ({
+        options={quickMessagesFor(entry, circle?.settings.lowBatteryThreshold).map((quick) => ({
           key: quick.key,
           // The words themselves, because they are what the other person will
           // read on their screen and what the activity feed will record.
           label: quick.body,
-          onPress: () => void sendQuick(quick.key),
+          onPress: () => void sendQuick(quick),
         }))}
       />
       <PromptDialog

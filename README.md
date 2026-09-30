@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-F5643A"></a>
+  <a href="CHANGELOG.md"><img alt="Version 1.1.0" src="https://img.shields.io/badge/version-1.1.0-F5643A"></a>
   <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
   <a href="https://github.com/Qureshi-DH/hearth/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Qureshi-DH/hearth/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <img alt="Expo SDK 55" src="https://img.shields.io/badge/Expo-SDK%2055-000020?logo=expo">
@@ -47,7 +47,7 @@ the map tile host and, if you turn it on, Expo push.
 
 ## Status
 
-1.0. The features below are built and tested, and I run it for my own family.
+1.1. The features below are built and tested, and I run it for my own family.
 It has not been through an independent security audit, and the Android build
 has had less real device testing than iOS. The iOS and Android apps are built
 and tested and waiting on App Store and Play Store review, so they're coming

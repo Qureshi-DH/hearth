@@ -152,6 +152,8 @@ export const QUICK_MESSAGES = [
   { key: "where_are_you", body: "Where are you?" },
   { key: "arrived_safe", body: "Arrived safe." },
   { key: "drive_safe", body: "Drive safe." },
+  { key: "charge_phone", body: "Please charge your phone." },
+  { key: "open_hearth", body: "Your location isn't updating. Please open Hearth." },
 ] as const
 export type QuickMessageKey = (typeof QUICK_MESSAGES)[number]["key"]
 
