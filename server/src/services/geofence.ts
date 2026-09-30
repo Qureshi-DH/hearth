@@ -299,8 +299,14 @@ export async function evaluateGeofenceBatch(
         // refuses a fix far too vague to decide the fence at all.
         const accuracy = fix.accuracyMeters ?? 0
         const margin = accuracy / 2
+        // A network estimate may bring somebody into a place wide enough for
+        // it, but takes them out of one only from further than it strays: a
+        // night of cell fixes a street away had a phone on the nightstand
+        // leave home twice. Twice its error is past where nearly all of them
+        // fall, and still close enough to see a phone that really left.
+        const exitMargin = accuracy > DEFAULTS.coarseFixAccuracyMeters ? 2 * accuracy : margin
         const isInside = wasInside
-          ? distance - margin <= place.radiusMeters + DEFAULTS.geofenceExitBufferMeters
+          ? distance - exitMargin <= place.radiusMeters + DEFAULTS.geofenceExitBufferMeters
           : distance + margin <= place.radiusMeters
 
         if (isInside === wasInside && !firstEvaluation) continue

@@ -79,7 +79,9 @@ export function MemberRow({
   const { theme } = useAppTheme()
   const name = member.nickname ?? member.user.displayName
   const speed = presence?.approximate ? null : formatSpeed(presence?.speedMps, units)
-  const activityIcon = presence?.approximate ? null : activityIconName(presence?.activity)
+  const activityIcon = presence?.approximate
+    ? null
+    : activityIconName(presence?.activity, presence?.speedMps)
   const nearby = useMemberNearby(presence)
 
   return (

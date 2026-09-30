@@ -1,4 +1,4 @@
-import type { LocationFixInput } from "@hearth/shared"
+import type { ActivityType, LocationFixInput } from "@hearth/shared"
 import { create } from "zustand"
 import { createJSONStorage, persist } from "zustand/middleware"
 
@@ -62,6 +62,12 @@ interface TrackingState {
    */
   driving: DriveState | null
   lastVerdict: MotionActivity | null
+  /**
+   * The tracker's activity verdicts and when each began, kept on disk so a
+   * process started to drain the native queue labels what it drains by the
+   * verdict of the moment it was recorded, not of the moment it restarted.
+   */
+  activityHistory: Array<{ from: number; activity: ActivityType }>
   motionStillSince: number | null
   /** When the Android foreground service was last found down without the app stopping it. */
   serviceStoppedAt: string | null
@@ -86,6 +92,7 @@ interface TrackingState {
   setWatchedUntil(until: string | null): void
   setDriving(driving: DriveState | null): void
   setLastVerdict(verdict: MotionActivity | null): void
+  setActivityHistory(history: Array<{ from: number; activity: ActivityType }>): void
   setMotionStillSince(since: number | null): void
   setServiceStoppedAt(at: string | null): void
   setServiceRefusedAt(at: string | null): void
@@ -274,6 +281,7 @@ export const useTrackingStore = create<TrackingState>()(
       watchedUntil: null,
       driving: null,
       lastVerdict: null,
+      activityHistory: [],
       motionStillSince: null,
       serviceStoppedAt: null,
       serviceRefusedAt: null,
@@ -295,6 +303,7 @@ export const useTrackingStore = create<TrackingState>()(
       setWatchedUntil: (watchedUntil) => set({ watchedUntil }),
       setDriving: (driving) => set({ driving }),
       setLastVerdict: (lastVerdict) => set({ lastVerdict }),
+      setActivityHistory: (activityHistory) => set({ activityHistory }),
       setMotionStillSince: (motionStillSince) => set({ motionStillSince }),
       setServiceStoppedAt: (serviceStoppedAt) => set({ serviceStoppedAt }),
       setServiceRefusedAt: (serviceRefusedAt) => set({ serviceRefusedAt }),
@@ -326,6 +335,7 @@ export const useTrackingStore = create<TrackingState>()(
           watchedUntil: null,
           driving: null,
           lastVerdict: null,
+          activityHistory: [],
           motionStillSince: null,
           serviceStoppedAt: null,
           serviceRefusedAt: null,
@@ -352,6 +362,7 @@ export const useTrackingStore = create<TrackingState>()(
         watchedUntil: state.watchedUntil,
         driving: state.driving,
         lastVerdict: state.lastVerdict,
+        activityHistory: state.activityHistory,
         motionStillSince: state.motionStillSince,
         serviceStoppedAt: state.serviceStoppedAt,
         serviceRefusedAt: state.serviceRefusedAt,

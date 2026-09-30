@@ -183,7 +183,7 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
   const paused = entry?.sharingState === "paused"
   const live = !paused && liveness === "live"
   const measured = entry?.approximate ? null : formatSpeed(entry?.speedMps, units)
-  const activityIcon = live ? activityIconName(entry?.activity) : null
+  const activityIcon = live ? activityIconName(entry?.activity, entry?.speedMps) : null
   const where = entry?.atPlace
     ? entry.atPlace.name
     : nearby

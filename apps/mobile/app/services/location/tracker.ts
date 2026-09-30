@@ -241,6 +241,49 @@ export function currentActivity(): ActivityType {
 }
 
 /**
+ * What the tracker called the phone's activity, and from when. Android's
+ * native queue hands fixes over in batches, sometimes after the verdict has
+ * moved on, and a drive's last minutes stamped with the "walking" that ended
+ * it went up as a walk at 80 km/h. A fix is labelled with the verdict in
+ * force when it was recorded. An hour covers any batch the queue holds back,
+ * and the store keeps it across the restart that drains one.
+ */
+const ACTIVITY_MEMORY_MS = 60 * 60 * 1000
+
+function noteActivity(now: number = Date.now()): void {
+  const store = useTrackingStore.getState()
+  const activity = currentActivity()
+  // A clock set back leaves verdicts dated in the future, which would stand
+  // in front of everything recorded before them.
+  const history = store.activityHistory.filter((entry) => entry.from <= now)
+  const latest = history[history.length - 1]?.activity
+  if (history.length === store.activityHistory.length && latest === activity) return
+  if (latest !== activity) history.push({ from: now, activity })
+  while (history.length > 1 && now - history[1]!.from > ACTIVITY_MEMORY_MS) history.shift()
+  store.setActivityHistory(history)
+}
+
+/** The tracker's verdict as it stood at `at`, as far back as it remembers. */
+function activityAt(at: number): ActivityType {
+  noteActivity()
+  const history = useTrackingStore.getState().activityHistory
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i]!.from <= at) return history[i]!.activity
+  }
+  return history[0]?.activity ?? currentActivity()
+}
+
+useTrackingStore.subscribe((state, previous) => {
+  if (
+    state.mode !== previous.mode ||
+    state.driving !== previous.driving ||
+    state.lastVerdict !== previous.lastVerdict
+  ) {
+    noteActivity()
+  }
+})
+
+/**
  * The OS already applies a distance filter, but iOS emits bursts of
  * near-identical samples on wake. Thinning here saves battery and bandwidth
  * without losing the shape of a journey.
@@ -459,7 +502,9 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
   if (locations.length === 0) return
   const battery = await batterySnapshot()
   const state = useTrackingStore.getState()
-  const all = locations.map((location) => toFix(location, source, battery))
+  const all = locations.map((location) =>
+    toFix(location, source, battery, activityAt(location.timestamp)),
+  )
   const newest = all[all.length - 1]!
   if (source === "background" || source === "significant") rememberFixes(all)
   const live = watchedNow()
@@ -2090,6 +2135,28 @@ async function settle(lat: number, lon: number, parkFix: ParkFix): Promise<void>
 }
 
 /**
+ * The word "still" has to leave even when the OS gave no fix. The phone's own
+ * newest position stands in while it is fresh, with its accuracy, because the
+ * anchor is where the stop began and a report since may have the phone
+ * somewhere else: one park fix put a phone back 174 m from where it was
+ * sitting, dated now and read by the server as exact.
+ */
+const PARK_FIX_FRESH_MS = 2 * 60 * 1000
+
+function madeUpParkFix(lat: number, lon: number, battery: BatterySnapshot): LocationFixInput {
+  const { lastFix } = useTrackingStore.getState()
+  const fresh =
+    lastFix != null &&
+    lastFix.accuracyMeters != null &&
+    Date.now() - Date.parse(lastFix.recordedAt) <= PARK_FIX_FRESH_MS
+  if (!fresh) return syntheticFix(lat, lon, "significant", battery)
+  return {
+    ...syntheticFix(lastFix.lat, lastFix.lon, "significant", battery),
+    accuracyMeters: lastFix.accuracyMeters,
+  }
+}
+
+/**
  * The arrival fix, stamped still whatever the tracker's verdict, uploaded
  * before the request steps down. When the OS does not answer in time the
  * anchor itself is sent, dated now: where the phone stopped is known, and
@@ -2111,7 +2178,7 @@ async function sendParkFix(lat: number, lon: number, how: Exclude<ParkFix, "none
   }
   const synthesized = fix == null
   if (!fix) {
-    fix = syntheticFix(lat, lon, "significant", await batterySnapshot())
+    fix = madeUpParkFix(lat, lon, await batterySnapshot())
     useTrackingStore.getState().enqueue([fix])
   }
   await flush()

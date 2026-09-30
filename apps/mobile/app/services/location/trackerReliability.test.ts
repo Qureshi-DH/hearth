@@ -463,6 +463,31 @@ describe("the park fix", () => {
     expect(lastOptions().timeInterval).toBe(RESTING_HEARTBEAT_MS)
   })
 
+  // A report a moment earlier had the phone at home, 174 m from where the
+  // stop began. The made-up fix repeated the start of the stop with a fresh
+  // time and no accuracy, and her dot sat down the road for twelve minutes.
+  it("repeats a fresh real position rather than a stale anchor", async () => {
+    await enterMoving()
+    const home = { lat: HOME.lat + 174 / 111_195, lon: HOME.lon }
+    useTrackingStore.getState().enqueue([
+      toFix(at(home.lat, home.lon, Date.now(), null, 100), "nudge", {
+        batteryLevel: 0.3,
+        isCharging: false,
+      }),
+    ])
+    getPosition.mockImplementationOnce(() => new Promise(() => {}))
+    const parked = enterStationary(HOME.lat, HOME.lon)
+    await jest.advanceTimersByTimeAsync(30_000 + 10)
+    await parked
+    const park = uploaded().find((fix) => fix.source === "significant")
+    expect(park).toMatchObject({
+      lat: home.lat,
+      lon: home.lon,
+      activity: "still",
+      accuracyMeters: 100,
+    })
+  })
+
   it("parks once when the stop is called again while the fix is on its way", async () => {
     await enterMoving()
     let release: ((value: Location.LocationObject) => void) | null = null

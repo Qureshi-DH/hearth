@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { agreedMaxSpeedMps, agreedSpeedMps } from "./speed"
+import { agreedMaxSpeedMps, agreedSpeedMps, plausibleActivity } from "./speed"
 
 const ORIGIN = { lat: 51.4545, lon: -2.5879 }
 const METRES_PER_DEGREE_LAT = (Math.PI * 6_371_008.8) / 180
@@ -106,5 +106,31 @@ describe("agreedMaxSpeedMps", () => {
       recordedAt: fix.recordedAt.toISOString(),
     }))
     expect(agreedMaxSpeedMps([fixes[2]!, fixes[0]!, fixes[1]!], GAP)).toBe(11)
+  })
+})
+
+describe("plausibleActivity", () => {
+  const kmh = (value: number) => value / 3.6
+
+  it("keeps the phone's label while the speed fits it", () => {
+    expect(plausibleActivity("walking", kmh(5))).toBe("walking")
+    expect(plausibleActivity("running", kmh(14))).toBe("running")
+    expect(plausibleActivity("cycling", kmh(38))).toBe("cycling")
+    expect(plausibleActivity("driving", kmh(120))).toBe("driving")
+  })
+
+  it("calls it driving when nobody on foot could go that fast", () => {
+    expect(plausibleActivity("walking", kmh(81))).toBe("driving")
+    expect(plausibleActivity("running", kmh(45))).toBe("driving")
+  })
+
+  it("calls it driving when no bicycle could go that fast", () => {
+    expect(plausibleActivity("cycling", kmh(95))).toBe("driving")
+  })
+
+  it("leaves the label alone when no speed was measured", () => {
+    expect(plausibleActivity("walking", null)).toBe("walking")
+    expect(plausibleActivity("still", undefined)).toBe("still")
+    expect(plausibleActivity(null, kmh(81))).toBeNull()
   })
 })

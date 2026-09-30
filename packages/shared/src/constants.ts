@@ -190,6 +190,14 @@ export const DEFAULTS = {
    */
   geofenceExitBufferMeters: 40,
   geofenceMaxAccuracyMeters: 250,
+  /**
+   * Vaguer than this and a fix is a network estimate: an Android phone on
+   * its resting request is answered from the cell network when Wi-Fi is
+   * asleep, with a round 200 m of doubt, sometimes on the same spot down
+   * the road for hours. Good enough to arrive at a wide place, never enough
+   * to say somebody left one or went anywhere.
+   */
+  coarseFixAccuracyMeters: 100,
   tripIdleGapSeconds: 5 * 60,
   /**
    * A journey to somewhere unnamed has to cover this much road. Drift around

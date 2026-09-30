@@ -177,7 +177,9 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
 
   const canManage = circle?.role === "owner" || circle?.role === "admin"
   const speed = entry?.approximate ? null : formatSpeed(entry?.speedMps, units)
-  const activityIcon = entry?.approximate ? null : activityIconName(entry?.activity)
+  const activityIcon = entry?.approximate
+    ? null
+    : activityIconName(entry?.activity, entry?.speedMps)
 
   return (
     <Screen preset="scroll" safeAreaEdges={["bottom"]} contentContainerStyle={themed($container)}>

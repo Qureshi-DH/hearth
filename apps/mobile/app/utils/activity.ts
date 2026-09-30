@@ -1,6 +1,11 @@
 import type { ComponentProps } from "react"
 import type { Ionicons } from "@expo/vector-icons"
-import type { EventType, PlaceIcon } from "@hearth/shared"
+import {
+  plausibleActivity,
+  type ActivityType,
+  type EventType,
+  type PlaceIcon,
+} from "@hearth/shared"
 
 export type IoniconName = ComponentProps<typeof Ionicons>["name"]
 export type Tone = "neutral" | "tint" | "success" | "warning" | "error" | "info"
@@ -83,8 +88,11 @@ export function placeIconName(icon: PlaceIcon | null | undefined): IoniconName {
   }
 }
 
-export function activityIconName(activity: string | null | undefined): IoniconName | null {
-  switch (activity) {
+export function activityIconName(
+  activity: ActivityType | null | undefined,
+  speedMps: number | null | undefined,
+): IoniconName | null {
+  switch (plausibleActivity(activity, speedMps)) {
     case "driving":
       return "car"
     case "cycling":

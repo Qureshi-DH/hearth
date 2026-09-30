@@ -5,6 +5,7 @@ import {
   agreedSpeedMps,
   haversineMeters,
   isValidLatLng,
+  plausibleActivity,
   type ActivityType,
   type LocationFixInput,
   type LocationSource,
@@ -674,7 +675,8 @@ async function maybeRaiseDrivingAlerts(
 
     if (telling.length > 0) {
       const peakKmh = Math.round(alertPeakMps * 3.6)
-      const verb = alertActivities.size === 1 ? TRAVEL_VERBS[[...alertActivities][0]!] : undefined
+      const label = alertActivities.size === 1 ? [...alertActivities][0]! : undefined
+      const verb = label ? TRAVEL_VERBS[plausibleActivity(label, alertPeakMps)] : undefined
       const wording = `${name} was ${verb ?? "driving"} at ${peakKmh} km/h`
       const happenedAt = alertAt ?? latest.recordedAt
       for (const circle of telling) {

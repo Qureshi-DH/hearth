@@ -1,6 +1,7 @@
 import {
   DEFAULTS,
   coarsenLocation,
+  plausibleActivity,
   type EventType,
   type MemberPresence,
   type SharingState,
@@ -200,7 +201,9 @@ export function projectPresence(
     recordedAt: row.recordedAt?.toISOString() ?? null,
     batteryLevel: row.batteryLevel,
     isCharging: row.isCharging,
-    activity: approximate ? null : row.activity,
+    // The phone's label, unless its own speed rules it out: a drive handed
+    // over after the classifier moved on arrives labelled walking.
+    activity: approximate ? null : plausibleActivity(row.activity, row.speedMps),
     speedMps: approximate ? null : row.speedMps,
     headingDegrees: approximate ? null : row.headingDegrees,
     approximate,

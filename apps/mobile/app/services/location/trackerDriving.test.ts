@@ -227,6 +227,69 @@ describe("the driving tier", () => {
     expect(lastOptions().timeInterval).toBe(30_000)
   })
 
+  // Android's native queue hands a drive's fixes over in one batch, and on
+  // one evening it landed half a minute after "walking" had ended the drive.
+  // Stamped with the verdict of the moment they were processed, 35 fixes at
+  // 80 km/h went up as walking, and the speed alert said so.
+  it("labels a late batch with the activity in force when each fix was recorded", async () => {
+    await classifier()("automotive", 90)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const recorded = Date.now()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await classifier()("walking", 90)
+    expect(isDriving()).toBe(false)
+
+    await ingest(
+      [
+        sample(HOME.lat, HOME.lon, recorded, 22),
+        sample(HOME.lat + 0.002, HOME.lon, recorded + 1, 22),
+        sample(HOME.lat + 0.004, HOME.lon, recorded + 2, 0),
+      ],
+      "background",
+    )
+
+    const during = new Set([recorded, recorded + 1, recorded + 2])
+    const labels = useTrackingStore
+      .getState()
+      .queue.filter((fix) => during.has(Date.parse(fix.recordedAt)))
+      .map((fix) => fix.activity)
+    expect(labels.length).toBeGreaterThan(0)
+    expect(new Set(labels)).toEqual(new Set(["driving"]))
+  })
+
+  // Android can kill the process mid-drive and start a fresh one to drain the
+  // queue, after the classifier has already said "walking". What the last
+  // process knew is on disk, so the fresh one still labels the drive a drive.
+  it("labels a late batch after a restart from the timeline the last process kept", async () => {
+    const now = Date.now()
+    useTrackingStore.setState({
+      driving: null,
+      lastVerdict: "walking",
+      activityHistory: [
+        { from: now - 10 * 60_000, activity: "driving" },
+        { from: now - 60_000, activity: "walking" },
+      ],
+    })
+
+    const recorded = now - 5 * 60_000
+    await ingest(
+      [
+        sample(HOME.lat, HOME.lon, recorded, 22),
+        sample(HOME.lat + 0.002, HOME.lon, recorded + 1, 22),
+        sample(HOME.lat + 0.004, HOME.lon, recorded + 2, 0),
+      ],
+      "background",
+    )
+
+    const during = new Set([recorded, recorded + 1, recorded + 2])
+    const labels = useTrackingStore
+      .getState()
+      .queue.filter((fix) => during.has(Date.parse(fix.recordedAt)))
+      .map((fix) => fix.activity)
+    expect(labels.length).toBeGreaterThan(0)
+    expect(new Set(labels)).toEqual(new Set(["driving"]))
+  })
+
   it("ends the drive when the phone parks", async () => {
     await classifier()("automotive", 90)
     await enterStationary(HOME.lat, HOME.lon)

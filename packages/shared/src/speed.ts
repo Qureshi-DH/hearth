@@ -1,3 +1,4 @@
+import type { ActivityType } from "./constants"
 import { haversineMeters } from "./geo"
 
 /** How far apart two neighbouring speeds can be and still be one measurement. */
@@ -86,4 +87,26 @@ function isGpsClass(point: SpeedFix): boolean {
 
 function toMs(value: string | Date): number {
   return value instanceof Date ? value.getTime() : Date.parse(value)
+}
+
+/**
+ * Beyond these, the motion classifier's label is the one that is wrong. It
+ * lags a change of pace, and a phone held in a hand on a bus still swings
+ * like a walker's, but nobody on foot keeps up 30 km/h and no family member
+ * on a bicycle does 70.
+ */
+const MAX_PLAUSIBLE_KMH: Partial<Record<ActivityType, number>> = {
+  walking: 30,
+  running: 30,
+  cycling: 70,
+}
+
+/** The phone's activity label, unless the speed measured alongside it rules it out. */
+export function plausibleActivity<T extends ActivityType | null | undefined>(
+  activity: T,
+  speedMps: number | null | undefined,
+): T | "driving" {
+  if (activity == null || speedMps == null) return activity
+  const ceiling = MAX_PLAUSIBLE_KMH[activity]
+  return ceiling != null && speedMps * 3.6 > ceiling ? "driving" : activity
 }

@@ -126,6 +126,59 @@ describe("one speed rule for the alert and the trip", () => {
     expect(trip!.avgSpeedMps!).toBeLessThanOrEqual(trip!.maxSpeedMps!)
   })
 
+  // A phone that hands over a drive after its classifier has moved on can
+  // label every fix of it "walking". Nobody walks at 92 km/h.
+  it("calls it driving when the phone's label is impossible at that speed", async () => {
+    const user = await registerUser(ctx.app, { displayName: "Sam" })
+    const circle = await createCircle(user.headers, 80)
+
+    const upload = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/locations/batch",
+      headers: user.headers,
+      payload: {
+        points: theDrive(Date.now() - 14 * 60 * 1000).map((fix) => ({
+          ...fix,
+          activity: "walking",
+        })),
+      },
+    })
+    expect(upload.statusCode).toBe(200)
+
+    const feed = await ctx.app.inject({
+      method: "GET",
+      url: `/api/v1/circles/${circle.id}/events`,
+      headers: user.headers,
+    })
+    const alerts = (
+      feed.json() as { items: Array<{ type: string; summary: string }> }
+    ).items.filter((item) => item.type === "speed_alert")
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]!.summary).toBe("Sam was driving at 92 km/h")
+  })
+
+  it("shows the map a car rather than the impossible label", async () => {
+    const user = await registerUser(ctx.app, { displayName: "Sam" })
+    const circle = await createCircle(user.headers, 80)
+    const drive = theDrive(Date.now() - 2 * 60 * 1000)
+    const moving = drive.filter((fix) => fix.speedMps != null && fix.speedMps > 20)
+    const upload = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/locations/batch",
+      headers: user.headers,
+      payload: { points: [{ ...moving[moving.length - 1]!, activity: "walking" }] },
+    })
+    expect(upload.statusCode).toBe(200)
+
+    const map = await ctx.app.inject({
+      method: "GET",
+      url: `/api/v1/circles/${circle.id}/locations`,
+      headers: user.headers,
+    })
+    const [presence] = map.json() as Array<{ activity: string | null }>
+    expect(presence?.activity).toBe("driving")
+  })
+
   it("keeps a lone spike out of both", async () => {
     const user = await registerUser(ctx.app)
     const circle = await createCircle(user.headers, 120)

@@ -5,7 +5,21 @@ import {
   pathDistanceMeters,
   type FeedEvent,
 } from "@hearth/shared"
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm"
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import {
@@ -241,6 +255,7 @@ export async function detectTripsForUser(
         lt(locationPoints.recordedAt, settleBefore),
         isNull(locationPoints.tripId),
         notHeartbeat(),
+        notCoarse(),
       ),
     )
     .orderBy(asc(locationPoints.recordedAt))
@@ -373,6 +388,7 @@ async function scanFloor(db: Database, userId: string, since: Date, now: Date): 
         gt(locationPoints.recordedAt, new Date(now.getTime() - MAX_BACKDATE_MS)),
         gt(locationPoints.receivedAt, new Date(now.getTime() - BACKFILL_ARRIVAL_WINDOW_MS)),
         notHeartbeat(),
+        notCoarse(),
       ),
     )
     .orderBy(asc(locationPoints.recordedAt))
@@ -503,6 +519,19 @@ const deviceMatches = (deviceId: string | null) =>
 const notHeartbeat = () => ne(locationPoints.source, "heartbeat")
 
 /**
+ * A network estimate says roughly where the phone is, and roughly is a few
+ * hundred metres. One of them between two fixes at home drew an 880 m trip
+ * from home to home, and a night of them on the same spot down the road
+ * drew a trip there and a trip back. A real journey has sharper fixes to
+ * be read from, so the estimates are left out of the path altogether.
+ */
+const notCoarse = () =>
+  or(
+    isNull(locationPoints.accuracyMeters),
+    lte(locationPoints.accuracyMeters, DEFAULTS.coarseFixAccuracyMeters),
+  )
+
+/**
  * The newest segment counts as closed only if this device has been quiet for a
  * full idle gap since. Otherwise the journey may still be under way, and
  * cutting it here would turn one drive into two trips.
@@ -533,6 +562,7 @@ async function hasGoneQuiet(
         gt(locationPoints.recordedAt, last.recordedAt),
         isNull(locationPoints.tripId),
         notHeartbeat(),
+        notCoarse(),
       ),
     )
     .orderBy(asc(locationPoints.recordedAt))
