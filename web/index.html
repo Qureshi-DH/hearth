@@ -9,6 +9,9 @@
       content="Family location sharing you host yourself. Open-source family safety where the map, the history and the alerts live on your server."
     />
     <meta name="theme-color" content="#F5643A" />
+    <link rel="icon" href="favicon.ico" sizes="48x48" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
 
     <meta property="og:title" content="Hearth: family location sharing you host yourself" />
     <meta
@@ -16,6 +19,15 @@
       content="Open-source family safety. The map, the history and the alerts live on your server, not somebody else's."
     />
     <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://qureshi-dh.github.io/hearth/" />
+    <meta property="og:image" content="https://qureshi-dh.github.io/hearth/og.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Three phones showing Hearth's family map, a live drive and a member's page"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
 
     <style>
       /* Palette is the app's own, so the site and the product agree. The
@@ -70,6 +82,10 @@
 
       html {
         scroll-behavior: smooth;
+      }
+
+      main {
+        overflow-x: clip;
       }
 
       /* No webfont is fetched. This page tells visitors no third party sits in
@@ -226,7 +242,17 @@
 
       /* ---------- hero ---------- */
       .hero {
-        padding: 92px 0 76px;
+        padding: 76px 26px 84px;
+        display: grid;
+        gap: 56px;
+        align-items: center;
+      }
+
+      @media (min-width: 980px) {
+        .hero {
+          grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+          padding-top: 84px;
+        }
       }
 
       .kicker {
@@ -250,7 +276,7 @@
       }
 
       .hero h1 {
-        font-size: clamp(40px, 6.4vw, 72px);
+        font-size: clamp(40px, 5.6vw, 66px);
         line-height: 1.04;
         font-weight: 700;
         margin: 24px 0 0;
@@ -457,6 +483,370 @@
         color: var(--ink-soft);
       }
 
+      /* ---------- phones ----------
+         The screenshots are the app's own, captured from a release build
+         against a made-up family. The frame is drawn here so one image
+         serves both themes. --pw is the phone's width and everything else
+         in the frame scales from it. */
+      .phone {
+        --pw: 240px;
+        width: var(--pw);
+        flex: none;
+        padding: calc(var(--pw) * 0.028);
+        border-radius: calc(var(--pw) * 0.155);
+        background: #141012;
+        box-shadow:
+          inset 0 0 0 3px #2a2224,
+          0 30px 60px -28px rgba(40, 20, 10, 0.45),
+          0 10px 22px -12px rgba(40, 20, 10, 0.3);
+      }
+
+      .phone img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: calc(var(--pw) * 0.127);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) .phone {
+          box-shadow:
+            inset 0 0 0 3px #2a2224,
+            0 0 0 1px rgba(255, 255, 255, 0.07),
+            0 30px 60px -24px rgba(0, 0, 0, 0.8);
+        }
+      }
+
+      :root[data-theme="dark"] .phone {
+        box-shadow:
+          inset 0 0 0 3px #2a2224,
+          0 0 0 1px rgba(255, 255, 255, 0.07),
+          0 30px 60px -24px rgba(0, 0, 0, 0.8);
+      }
+
+      .stage {
+        position: relative;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 12px 0 20px;
+      }
+
+      .stage::before {
+        content: "";
+        position: absolute;
+        inset: -6% -4%;
+        border-radius: 50%;
+        background: radial-gradient(
+          closest-side,
+          color-mix(in srgb, var(--ember-soft) 34%, transparent),
+          color-mix(in srgb, var(--rose) 12%, transparent) 62%,
+          transparent
+        );
+        pointer-events: none;
+      }
+
+      .stage .phone {
+        --pw: 200px;
+        position: relative;
+      }
+
+      .stage .front {
+        --pw: 236px;
+        z-index: 2;
+      }
+
+      .stage .side {
+        margin-top: 56px;
+        z-index: 1;
+      }
+
+      .stage .left {
+        margin-right: -84px;
+        transform: rotate(-6deg);
+      }
+
+      .stage .right {
+        margin-left: -84px;
+        transform: rotate(6deg);
+      }
+
+      @media (max-width: 979px) {
+        .stage .side {
+          display: none;
+        }
+        .stage .front {
+          --pw: min(280px, 72vw);
+        }
+      }
+
+      /* ---------- tour ---------- */
+      .spots {
+        display: grid;
+        gap: 88px;
+        margin-top: 60px;
+      }
+
+      .spot {
+        display: grid;
+        gap: 34px;
+        align-items: center;
+      }
+
+      @media (min-width: 860px) {
+        .spot {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          gap: 72px;
+        }
+        .spot.flip .spot-media {
+          order: 2;
+        }
+      }
+
+      .spot-media {
+        position: relative;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 40px 16px;
+        border-radius: 28px;
+        background:
+          radial-gradient(
+            120% 90% at 50% 0%,
+            color-mix(in srgb, var(--ember-soft) 16%, transparent),
+            transparent 70%
+          ),
+          var(--sunken);
+      }
+
+      .spot-media .phone {
+        --pw: min(250px, 62vw);
+      }
+
+      .spot-media.pair .phone {
+        --pw: min(220px, 40vw);
+      }
+
+      .spot-media.pair .phone + .phone {
+        margin-left: calc(var(--pw) * -0.22);
+        margin-top: 56px;
+      }
+
+      .spot-copy h3 {
+        font-size: clamp(26px, 3.2vw, 34px);
+        line-height: 1.12;
+        font-weight: 700;
+      }
+
+      .spot-copy p {
+        color: var(--ink-soft);
+        margin: 16px 0 0;
+      }
+
+      .ticks {
+        list-style: none;
+        padding: 0;
+        margin: 22px 0 0;
+        display: grid;
+        gap: 10px;
+      }
+
+      .ticks li {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 16px;
+        display: flex;
+        gap: 11px;
+        align-items: baseline;
+      }
+
+      .ticks li::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: linear-gradient(140deg, var(--ember-soft), var(--rose));
+        flex: none;
+        transform: translateY(-1px);
+      }
+
+      /* ---------- gallery ---------- */
+      #screens {
+        padding-bottom: 60px;
+      }
+
+      .gallery-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .strip-nav {
+        display: flex;
+        gap: 10px;
+      }
+
+      .round {
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        border: 1px solid var(--rule);
+        background: var(--raised);
+        color: var(--ink);
+        display: grid;
+        place-items: center;
+        cursor: pointer;
+        transition:
+          border-color 180ms ease,
+          color 180ms ease;
+      }
+
+      .round:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      .round svg {
+        width: 20px;
+        height: 20px;
+      }
+
+      /* Full bleed, but the first phone lines up with the text above it. The
+         percentages are of the strip's own width, which is the page's. */
+      .strip {
+        --edge: max(26px, calc((100% - 1080px) / 2 + 26px));
+        list-style: none;
+        margin: 40px 0 0;
+        padding: 14px var(--edge) 30px;
+        display: flex;
+        gap: 28px;
+        overflow-x: auto;
+        scroll-snap-type: x mandatory;
+        scroll-padding-inline: var(--edge);
+        scrollbar-width: thin;
+        scrollbar-color: var(--rule) transparent;
+      }
+
+      .strip li {
+        flex: none;
+        scroll-snap-align: start;
+      }
+
+      .shot {
+        display: block;
+        color: var(--ink);
+        text-decoration: none;
+      }
+
+      .shot .phone {
+        --pw: 212px;
+        transition: transform 220ms ease;
+      }
+
+      .shot:hover .phone,
+      .shot:focus-visible .phone {
+        transform: translateY(-6px);
+      }
+
+      .shot:focus-visible {
+        outline: none;
+      }
+
+      .shot:focus-visible .phone {
+        outline: 3px solid var(--accent);
+        outline-offset: 4px;
+      }
+
+      .cap {
+        display: block;
+        width: 212px;
+        margin-top: 16px;
+        text-align: center;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 15px;
+        color: var(--ink-soft);
+      }
+
+      .viewer {
+        border: 0;
+        padding: 0;
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        max-height: none;
+        background: transparent;
+        color: #f5efe9;
+      }
+
+      .viewer::backdrop {
+        background: rgba(19, 17, 20, 0.9);
+        backdrop-filter: blur(10px);
+      }
+
+      .viewer-inner {
+        height: 100%;
+        display: grid;
+        grid-template-columns: auto auto auto;
+        justify-content: center;
+        align-items: center;
+        gap: 28px;
+        padding: 24px;
+      }
+
+      .viewer figure {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .viewer .phone {
+        --pw: min(380px, 78vw, calc((100vh - 130px) * 0.44));
+      }
+
+      .viewer figcaption {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 17px;
+      }
+
+      .viewer .round {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.18);
+        color: #f5efe9;
+      }
+
+      .viewer .close {
+        position: fixed;
+        top: 18px;
+        right: 18px;
+      }
+
+      @media (max-width: 640px) {
+        .viewer-inner {
+          grid-template-columns: auto auto;
+          grid-template-areas: "shot shot" "prev next";
+          align-content: center;
+          gap: 18px;
+        }
+        .viewer figure {
+          grid-area: shot;
+        }
+        .viewer [data-step="-1"] {
+          grid-area: prev;
+          justify-self: end;
+        }
+        .viewer [data-step="1"] {
+          grid-area: next;
+          justify-self: start;
+        }
+        .viewer .phone {
+          --pw: min(300px, 76vw, calc((100vh - 200px) * 0.44));
+        }
+      }
+
       /* ---------- footer ---------- */
       footer {
         border-top: 1px solid var(--rule);
@@ -505,6 +895,7 @@
           </span>
           Hearth
         </a>
+        <a class="link" href="#tour">Tour</a>
         <a class="link" href="#features">Features</a>
         <a class="link" href="#privacy">Privacy</a>
         <a class="link" href="#self-host">Self-host</a>
@@ -523,46 +914,213 @@
     <main id="top">
       <!-- hero -->
       <div class="hero wrap">
-        <span class="kicker"><span class="pip" aria-hidden="true"></span> Alpha · AGPL-3.0</span>
-        <h1>Know where your family is. <em>Nobody else does.</em></h1>
-        <p class="lede prose">
-          Every commercial family safety app keeps your positions on its own servers, under a
-          privacy policy you do not control and they can change. Hearth has no servers. It runs on
-          yours, and there is nobody on the other end to sell anything to.
-        </p>
-        <div class="actions">
-          <a class="btn btn-solid" href="#self-host">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              aria-hidden="true"
-            >
-              <rect x="3" y="5" width="18" height="12" rx="2" />
-              <path d="M8 21h8M12 17v4" stroke-linecap="round" />
-            </svg>
-            Self-host it
-          </a>
-          <a class="btn btn-line" href="docs/overview/quick-start/#4-build-the-app">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              aria-hidden="true"
-            >
-              <path d="M12 3v11m0 0 4-4m-4 4-4-4" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
-            </svg>
-            Get the app
-          </a>
+        <div class="hero-copy">
+          <span class="kicker"><span class="pip" aria-hidden="true"></span> 1.1 · AGPL-3.0</span>
+          <h1>Know where your family is. <em>Nobody else does.</em></h1>
+          <p class="lede prose">
+            Every commercial family safety app keeps your positions on its own servers, under a
+            privacy policy you do not control and they can change. Hearth has no servers. It runs on
+            yours, and there is nobody on the other end to sell anything to.
+          </p>
+          <div class="actions">
+            <a class="btn btn-solid" href="#self-host">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                aria-hidden="true"
+              >
+                <rect x="3" y="5" width="18" height="12" rx="2" />
+                <path d="M8 21h8M12 17v4" stroke-linecap="round" />
+              </svg>
+              Self-host it
+            </a>
+            <a class="btn btn-line" href="docs/overview/quick-start/#4-build-the-app">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                aria-hidden="true"
+              >
+                <path
+                  d="M12 3v11m0 0 4-4m-4 4-4-4"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
+              </svg>
+              Get the app
+            </a>
+          </div>
+          <p class="aside">
+            Coming soon to the App Store and Play Store. The apps are built, tested and in review,
+            so for now you build it yourself.
+          </p>
         </div>
-        <p class="aside">
-          Coming soon to the App Store and Play Store. The apps are built, tested and in review, so
-          for now you build it yourself.
-        </p>
+
+        <div class="stage">
+          <div class="phone side left">
+            <img
+              src="screens/live-440.webp"
+              srcset="screens/live-440.webp 440w, screens/live-880.webp 880w"
+              sizes="200px"
+              width="440"
+              height="956"
+              alt="Live view following David at 46 km/h near Harrison Street"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+          <div class="phone front">
+            <picture>
+              <source
+                media="(prefers-color-scheme: dark)"
+                srcset="screens/map-dark-440.webp 440w, screens/map-dark-880.webp 880w"
+                sizes="(max-width: 979px) 72vw, 236px"
+              />
+              <img
+                src="screens/map-440.webp"
+                srcset="screens/map-440.webp 440w, screens/map-880.webp 880w"
+                sizes="(max-width: 979px) 72vw, 236px"
+                width="440"
+                height="956"
+                alt="Hearth's family map with five members, their places and battery levels"
+                fetchpriority="high"
+                decoding="async"
+              />
+            </picture>
+          </div>
+          <div class="phone side right">
+            <img
+              src="screens/profile-driving-440.webp"
+              srcset="screens/profile-driving-440.webp 440w, screens/profile-driving-880.webp 880w"
+              sizes="200px"
+              width="440"
+              height="956"
+              alt="David's page while he drives, with his recent trips"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+        </div>
       </div>
+
+      <!-- tour -->
+      <section id="tour">
+        <div class="wrap">
+          <p class="eyebrow">Inside the app</p>
+          <h2>A map your family will actually open.</h2>
+          <p class="sub prose">
+            Every picture on this page is the app itself: a release build, running against a server
+            with a made-up family on it.
+          </p>
+
+          <div class="spots">
+            <div class="spot">
+              <div class="spot-media">
+                <div class="phone">
+                  <img
+                    src="screens/live-440.webp"
+                    srcset="screens/live-440.webp 440w, screens/live-880.webp 880w"
+                    sizes="(max-width: 860px) 62vw, 250px"
+                    width="440"
+                    height="956"
+                    alt="Live view following David at 46 km/h near Harrison Street"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </div>
+              </div>
+              <div class="spot-copy">
+                <h3>Watch a drive as it happens.</h3>
+                <p>
+                  Open Live on somebody who is on the move and their phone sends a fix a second,
+                  with speed and street, for as long as you keep the page open. When nobody is
+                  watching, it goes back to its usual pace.
+                </p>
+                <ul class="ticks">
+                  <li>Battery, walking or driving, and how old each fix is</li>
+                  <li>Opening someone's page asks their phone for a fresh fix</li>
+                  <li>Directions to anyone, in your own maps app</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="spot flip">
+              <div class="spot-media pair">
+                <div class="phone">
+                  <img
+                    src="screens/places-440.webp"
+                    srcset="screens/places-440.webp 440w, screens/places-880.webp 880w"
+                    sizes="220px"
+                    width="440"
+                    height="956"
+                    alt="The places list: Grandma's, Gym, Home, School and Work, with who is at each"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </div>
+                <div class="phone">
+                  <img
+                    src="screens/activity-440.webp"
+                    srcset="screens/activity-440.webp 440w, screens/activity-880.webp 880w"
+                    sizes="220px"
+                    width="440"
+                    height="956"
+                    alt="The activity feed with the day's arrivals, departures and trips"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </div>
+              </div>
+              <div class="spot-copy">
+                <h3>Know who got where.</h3>
+                <p>
+                  Draw a circle around home, school or work. Arrivals and departures land in the
+                  family feed next to every trip, and on everyone's lock screen once push
+                  notifications are set up.
+                </p>
+                <ul class="ticks">
+                  <li>Trips worked out on the server, with distance and top speed</li>
+                  <li>Leaving takes 40 metres more than arriving, so a boundary stays quiet</li>
+                  <li>A one-tap check-in when you get somewhere</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="spot">
+              <div class="spot-media">
+                <div class="phone">
+                  <img
+                    src="screens/sharing-440.webp"
+                    srcset="screens/sharing-440.webp 440w, screens/sharing-880.webp 880w"
+                    sizes="(max-width: 860px) 62vw, 250px"
+                    width="440"
+                    height="956"
+                    alt="Location sharing settings: precise, approximate or paused for the Family circle"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </div>
+              </div>
+              <div class="spot-copy">
+                <h3>Every circle sees what you choose.</h3>
+                <p>
+                  Precise, an area about 750 metres wide, or paused, set separately for each circle.
+                  Turn off Share my location and the phone stops reporting altogether.
+                </p>
+                <ul class="ticks">
+                  <li>Going back to precise doesn't reveal the time in between</li>
+                  <li>Invites are codes, never your address book</li>
+                  <li>An SOS cuts through every mute in the circle</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <!-- features -->
       <section id="features">
@@ -590,7 +1148,7 @@
               </h3>
               <p>
                 Everyone's position with battery level, whether they're walking or driving, and how
-                long ago it arrived. Live over a websocket, by push when the app is closed.
+                long ago it arrived. Live over a websocket while the app is open.
               </p>
             </article>
 
@@ -678,8 +1236,8 @@
               </h3>
               <p>
                 Speeding, low battery, and a crash the phone works out from its own accelerometer,
-                gyroscope and barometer. It asks you first, and only silence raises the alarm. Every
-                one is a family setting, and every one can be off.
+                gyroscope and barometer. It asks you first, and only silence raises the alarm. The
+                family sets each one, and speeding and crash alerts stay off until it turns them on.
               </p>
             </article>
 
@@ -708,6 +1266,328 @@
         </div>
       </section>
 
+      <!-- gallery -->
+      <section id="screens">
+        <div class="wrap gallery-head">
+          <div>
+            <p class="eyebrow">Every screen</p>
+            <h2>Have a look around.</h2>
+          </div>
+          <div class="strip-nav">
+            <button class="round" type="button" data-dir="-1" aria-label="Scroll back">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                aria-hidden="true"
+              >
+                <path d="m15 5-7 7 7 7" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <button class="round" type="button" data-dir="1" aria-label="Scroll on">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                aria-hidden="true"
+              >
+                <path d="m9 5 7 7-7 7" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <ul class="strip" aria-label="Screens from the app">
+          <li>
+            <a class="shot" href="screens/map-880.webp" data-caption="The family map">
+              <div class="phone">
+                <img
+                  src="screens/map-440.webp"
+                  srcset="screens/map-440.webp 440w, screens/map-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="The family map with five members, their places and battery levels"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">The family map</span>
+            </a>
+          </li>
+          <li>
+            <a class="shot" href="screens/focus-880.webp" data-caption="Tap someone to follow them">
+              <div class="phone">
+                <img
+                  src="screens/focus-440.webp"
+                  srcset="screens/focus-440.webp 440w, screens/focus-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="The map centred on Leo near Mission Dolores Park"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">Tap someone to follow them</span>
+            </a>
+          </li>
+          <li>
+            <a class="shot" href="screens/live-880.webp" data-caption="Live, a fix a second">
+              <div class="phone">
+                <img
+                  src="screens/live-440.webp"
+                  srcset="screens/live-440.webp 440w, screens/live-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="Live view following David at 46 km/h near Harrison Street"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">Live, a fix a second</span>
+            </a>
+          </li>
+          <li>
+            <a
+              class="shot"
+              href="screens/profile-driving-880.webp"
+              data-caption="Someone on the road"
+            >
+              <div class="phone">
+                <img
+                  src="screens/profile-driving-440.webp"
+                  srcset="
+                    screens/profile-driving-440.webp 440w,
+                    screens/profile-driving-880.webp 880w
+                  "
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="David's page while he drives, with his recent trips"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">Someone on the road</span>
+            </a>
+          </li>
+          <li>
+            <a class="shot" href="screens/trip-880.webp" data-caption="A trip, worked out for you">
+              <div class="phone">
+                <img
+                  src="screens/trip-440.webp"
+                  srcset="screens/trip-440.webp 440w, screens/trip-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="A trip from Home to Work with its route, distance, duration and speeds"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">A trip, worked out for you</span>
+            </a>
+          </li>
+          <li>
+            <a
+              class="shot"
+              href="screens/profile-880.webp"
+              data-caption="Where someone is right now"
+            >
+              <div class="phone">
+                <img
+                  src="screens/profile-440.webp"
+                  srcset="screens/profile-440.webp 440w, screens/profile-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="Maya's page, at School since 8:01"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">Where someone is right now</span>
+            </a>
+          </li>
+          <li>
+            <a class="shot" href="screens/places-880.webp" data-caption="Places and who is there">
+              <div class="phone">
+                <img
+                  src="screens/places-440.webp"
+                  srcset="screens/places-440.webp 440w, screens/places-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="The places list: Grandma's, Gym, Home, School and Work"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">Places and who is there</span>
+            </a>
+          </li>
+          <li>
+            <a class="shot" href="screens/activity-880.webp" data-caption="The day, in the feed">
+              <div class="phone">
+                <img
+                  src="screens/activity-440.webp"
+                  srcset="screens/activity-440.webp 440w, screens/activity-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="The activity feed with the day's arrivals, departures and trips"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">The day, in the feed</span>
+            </a>
+          </li>
+          <li>
+            <a class="shot" href="screens/quick-message-880.webp" data-caption="A word, in one tap">
+              <div class="phone">
+                <img
+                  src="screens/quick-message-440.webp"
+                  srcset="screens/quick-message-440.webp 440w, screens/quick-message-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="The quick message sheet with six short messages"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">A word, in one tap</span>
+            </a>
+          </li>
+          <li>
+            <a
+              class="shot"
+              href="screens/save-place-880.webp"
+              data-caption="Name a spot as a place"
+            >
+              <div class="phone">
+                <img
+                  src="screens/save-place-440.webp"
+                  srcset="screens/save-place-440.webp 440w, screens/save-place-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="Leo's page offering to save the spot he is at as a place"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">Name a spot as a place</span>
+            </a>
+          </li>
+          <li>
+            <a
+              class="shot"
+              href="screens/sharing-880.webp"
+              data-caption="Precise, approximate or paused"
+            >
+              <div class="phone">
+                <img
+                  src="screens/sharing-440.webp"
+                  srcset="screens/sharing-440.webp 440w, screens/sharing-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="Location sharing settings for the Family circle"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">Precise, approximate or paused</span>
+            </a>
+          </li>
+          <li>
+            <a
+              class="shot"
+              href="screens/map-dark-880.webp"
+              data-caption="The same map, after dark"
+            >
+              <div class="phone">
+                <img
+                  src="screens/map-dark-440.webp"
+                  srcset="screens/map-dark-440.webp 440w, screens/map-dark-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="The family map in dark mode"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">The same map, after dark</span>
+            </a>
+          </li>
+          <li>
+            <a class="shot" href="screens/server-880.webp" data-caption="Your server, your address">
+              <div class="phone">
+                <img
+                  src="screens/server-440.webp"
+                  srcset="screens/server-440.webp 440w, screens/server-880.webp 880w"
+                  sizes="212px"
+                  width="440"
+                  height="956"
+                  alt="The connect screen asking for your server's address"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <span class="cap">Your server, your address</span>
+            </a>
+          </li>
+        </ul>
+      </section>
+
+      <dialog class="viewer" aria-label="Screen viewer">
+        <div class="viewer-inner">
+          <button class="round" type="button" data-step="-1" aria-label="Previous screen">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              aria-hidden="true"
+            >
+              <path d="m15 5-7 7 7 7" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <figure>
+            <div class="phone"><img alt="" width="880" height="1912" /></div>
+            <figcaption></figcaption>
+          </figure>
+          <button class="round" type="button" data-step="1" aria-label="Next screen">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              aria-hidden="true"
+            >
+              <path d="m9 5 7 7-7 7" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+        <button class="round close" type="button" aria-label="Close">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" />
+          </svg>
+        </button>
+      </dialog>
+
       <!-- privacy -->
       <section id="privacy">
         <div class="wrap">
@@ -728,8 +1608,8 @@
             </li>
             <li>
               <b>No third parties in the path</b>
-              The app talks to your server and nothing else. No analytics, no ad network, no data
-              broker in the middle.
+              Apart from map tiles and the push provider you pick, the app talks to your server and
+              nothing else. No analytics, no ad network, no data broker in the middle.
             </li>
             <li>
               <b>It never asks for your contacts</b>
@@ -743,7 +1623,7 @@
             </li>
             <li>
               <b>The GPS sleeps when you do</b>
-              Location updates run while you are moving and stop once you park, which is most of the
+              GPS updates run while you are moving and stop once you park, which is most of the
               battery story on a phone.
             </li>
             <li>
@@ -771,8 +1651,8 @@
               <li>
                 <span
                   >Make a folder, add <code>docker-compose.yml</code> and <code>.env</code>, and set
-                  <code>JWT_SECRET</code>, <code>ADMIN_EMAIL</code> and
-                  <code>ADMIN_PASSWORD</code>.</span
+                  <code>JWT_SECRET</code>, <code>PUBLIC_URL</code>, <code>ADMIN_EMAIL</code>,
+                  <code>ADMIN_PASSWORD</code> and the database and storage passwords.</span
                 >
               </li>
               <li>
@@ -793,7 +1673,7 @@
   api:
     image: dhqureshi/hearth-api:latest
     env_file: [.env]
-    ports: ["4000:4000"]
+    ports: ["127.0.0.1:4000:4000"]
     depends_on: [db, minio]</code></pre>
           </div>
 
@@ -813,11 +1693,13 @@
               through it, which is why the default is no push at all rather than a convenient
               default that quietly costs you something.
             </p>
-            <h3>It is alpha, and that means something</h3>
+            <h3>What 1.0 means</h3>
             <p>
               The features above are built and tested, and it runs a real family. It has not been
-              through a security audit, Android has had less device testing than iOS, and there is
-              no store build yet. Read SECURITY.md before you point it at the internet.
+              through a security audit, and Android has had less device testing than iOS. The store
+              builds are still in review, and they won't carry the maintainer's own push keys, so
+              push only fully works in a build you make yourself. Read SECURITY.md before you point
+              it at the internet.
             </p>
           </div>
         </div>
@@ -835,5 +1717,57 @@
         >
       </div>
     </footer>
+
+    <script>
+      // The strip scrolls without this, and each screen is a link to its own
+      // image, so all this adds is the buttons and a viewer that stays on the page.
+      ;(() => {
+        const strip = document.querySelector(".strip")
+        const viewer = document.querySelector(".viewer")
+        if (!strip || !viewer || typeof viewer.showModal !== "function") return
+        const shots = [...strip.querySelectorAll(".shot")]
+        const image = viewer.querySelector("img")
+        const caption = viewer.querySelector("figcaption")
+        const motion = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"
+        let index = 0
+
+        for (const button of document.querySelectorAll("[data-dir]")) {
+          button.addEventListener("click", () => {
+            const step = Number(button.dataset.dir) * strip.clientWidth * 0.8
+            strip.scrollBy({ left: step, behavior: motion })
+          })
+        }
+
+        const show = (next) => {
+          index = (next + shots.length) % shots.length
+          const shot = shots[index]
+          image.src = shot.getAttribute("href")
+          image.alt = shot.querySelector("img").alt
+          caption.textContent = shot.dataset.caption
+        }
+
+        shots.forEach((shot, i) => {
+          shot.addEventListener("click", (event) => {
+            event.preventDefault()
+            show(i)
+            viewer.showModal()
+          })
+        })
+
+        for (const button of viewer.querySelectorAll("[data-step]")) {
+          button.addEventListener("click", () => show(index + Number(button.dataset.step)))
+        }
+        viewer.querySelector(".close").addEventListener("click", () => viewer.close())
+        viewer.addEventListener("click", (event) => {
+          if (event.target === viewer || event.target.classList.contains("viewer-inner")) {
+            viewer.close()
+          }
+        })
+        viewer.addEventListener("keydown", (event) => {
+          if (event.key === "ArrowLeft") show(index - 1)
+          if (event.key === "ArrowRight") show(index + 1)
+        })
+      })()
+    </script>
   </body>
 </html>

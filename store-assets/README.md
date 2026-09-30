@@ -80,6 +80,8 @@ needed.
 
 The pictures in the repository README come from the same captures:
 `node store-assets/tools/readme-images.mjs` writes them to `.github/assets/`.
+So do the landing page's: `node store-assets/tools/site-images.mjs` writes the
+screens to `web/screens/` and the link preview card to `web/og.jpg`.
 
 Compositing uses headless Google Chrome for the layout and Pillow to flatten to
 RGB. The font is Space Grotesk from the app's own dependencies, so run
