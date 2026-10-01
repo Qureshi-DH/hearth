@@ -99,6 +99,10 @@ const schema = z.object({
   JOB_INTERVAL_SECONDS: z.coerce.number().int().min(10).default(60),
   ENABLE_JOBS: bool.default(true),
   ENABLE_SWAGGER: bool.default(true),
+  /** The admin portal at the server's own address. Off leaves no sign-in page there. */
+  ENABLE_ADMIN_PORTAL: bool.default(true),
+  /** Where the built portal is, when it is not beside the server or in the workspace. */
+  ADMIN_PORTAL_DIR: z.string().optional(),
 })
 
 export type RawEnv = z.infer<typeof schema>

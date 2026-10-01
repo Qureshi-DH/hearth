@@ -62,12 +62,25 @@ view, and a place you crossed then is never announced to it.
 You always see yourself exactly. Circle admins get _no_ extra visibility into
 members' locations. Roles only govern circle management.
 
-A server administrator sees no positions either. The admin screen lists each
-account with its email, its number of circles and devices, when it last signed
-in, and the longest stretch its phone went without reporting over the last
-day. That last figure is measured whatever the sharing mode, so it tells the
-administrator whether a phone paused in every circle is still on and
-reporting, though never where it is.
+A server administrator sees no positions either. The admin screen in the app
+and the admin portal list each account with its email, its number of circles
+and devices, when it last signed in, and the longest stretch its phone went
+without reporting over the last day. That last figure is measured whatever the
+sharing mode, so it tells the administrator whether a phone paused in every
+circle is still on and reporting, though never where it is. The portal also
+shows each circle's name, members and settings, each account's signed-in
+devices, and the words of the administrator's own notifications only. Its
+dashboard counts fixes and notifications per day, and shows each person's phone
+model and app version, when the phone was last heard from, and anything the
+phone says is switched off, such as location permission.
+
+An administrator can set a new password for an account, for somebody who forgot
+theirs. That is also a way in: with the new password they could sign in to the
+app as that person and see what that person sees. So the portal asks for the
+administrator's own password first, signs the account out everywhere, and
+writes the change to the audit log. A portal session ends twelve hours after
+signing in, however often it is used, so a browser left open does not stay a
+way in.
 
 SOS is the one exception. Raising an SOS switches the sender to precise sharing
 in that circle and notifies everyone regardless of mutes. The sender (or an

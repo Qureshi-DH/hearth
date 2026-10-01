@@ -23,6 +23,7 @@ import { eventRoutes } from "./modules/events.routes"
 import { locationRoutes } from "./modules/locations.routes"
 import { mediaRoutes } from "./modules/media.routes"
 import { placeRoutes } from "./modules/places.routes"
+import { findPortalDir, registerPortal, type Portal } from "./plugins/portal"
 import { pushRoutes } from "./modules/push.routes"
 import { safetyRoutes } from "./modules/safety.routes"
 import { healthRoutes, joinRoutes, systemRoutes } from "./modules/system.routes"
@@ -135,9 +136,12 @@ export async function buildApp(): Promise<FastifyInstance> {
       transform: jsonSchemaTransform,
     })
 
+    // The reference shares an origin with the admin portal, so a hole in it
+    // would be a hole in the portal. It gets a content policy of its own.
     await app.register(swaggerUi.default, {
       routePrefix: "/docs",
       uiConfig: { docExpansion: "list", deepLinking: true },
+      staticCSP: true,
     })
   }
 
@@ -190,11 +194,18 @@ export async function buildApp(): Promise<FastifyInstance> {
     })
   })
 
-  app.setNotFoundHandler((request, reply) =>
-    reply.code(404).send({
+  const portalDir = config.ENABLE_ADMIN_PORTAL ? findPortalDir(config.ADMIN_PORTAL_DIR) : null
+  const portal: Portal | null = portalDir ? await registerPortal(app, portalDir) : null
+
+  // A browser asking for a portal page the router does not know, a bookmark
+  // to /accounts, gets the portal, which works out the page itself. Limited
+  // like every other route, since anyone can ask for a path that is not one.
+  app.setNotFoundHandler({ preHandler: app.rateLimit() }, (request, reply) => {
+    if (portal?.wants(request)) return portal.send(reply)
+    return reply.code(404).send({
       error: { code: "not_found", message: `No route for ${request.method} ${request.url}.` },
-    }),
-  )
+    })
+  })
 
   await app.register(healthRoutes)
   await app.register(joinRoutes)

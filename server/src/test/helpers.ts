@@ -7,6 +7,7 @@ import { runMigrations } from "../db/migrate"
 import { loadConfig, resetConfig } from "../env"
 import { createBus } from "../lib/bus"
 import { resetRuntime, setRuntime } from "../runtime"
+import { forgetSettledDays } from "../services/admin-overview"
 import { createPushDriver } from "../services/push"
 
 /**
@@ -52,6 +53,7 @@ export async function startTestApp(): Promise<TestContext> {
   return {
     app,
     async reset() {
+      forgetSettledDays()
       await db.execute(sql`
         truncate table
           audit_log, notification_outbox, trips, check_ins, sos_alerts, events,

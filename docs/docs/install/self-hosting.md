@@ -240,6 +240,34 @@ Install the Hearth app (see [the mobile app page](../developer/mobile.md) for bu
 `https://hearth.example.com`, sign in as the admin account you configured,
 create a circle, and share the invite code or QR with the family.
 
+## The admin portal
+
+Open the server's address in a browser, `https://hearth.example.com`, and sign
+in with an administrator account. The portal is where running the server
+happens without a phone in your hand:
+
+- a dashboard: fixes and active people over the last two weeks, a week of
+  notifications by what became of them, and each person's phone with its model,
+  app version, when it was last heard from and anything it says is switched off
+- a check list of what in the setup will bite later, a plain HTTP address, open
+  sign-up, no push provider, a single administrator, failed notifications
+- every account, with its devices, and the controls to sign a lost phone out,
+  set a new password for somebody who forgot theirs, deactivate or reactivate
+  an account, and make or remove an administrator
+- the circles on the server, their members and settings
+- who can sign up, the server's name and the history ceiling
+- the notification queue, a test notification and "send now"
+- the audit log
+
+It shows no positions, trails or place coordinates, and nobody else's
+notification text: running the server is not being in every circle. Only an
+administrator can sign in, with the same rate limits as the app, and the
+session's refresh token is a cookie the page's own script cannot read. A portal
+session ends twelve hours after signing in, and setting somebody else's
+password asks for your own first. Set
+`ENABLE_ADMIN_PORTAL=false` to leave no sign-in page at the address. The admin
+screen in the app works either way.
+
 ## Optional pieces
 
 ### Push notifications
@@ -417,7 +445,8 @@ have no field to clear, so after the first save they change from the app only.
 - `GET /readyz` says the database is reachable, and it's the one to point your
   proxy and uptime checks at
 - `GET /api/v1/admin/stats` (admin token) returns users, points, queue depth and
-  DB size
+  DB size, and the admin portal's overview shows the same, with two weeks of
+  activity from `GET /api/v1/admin/overview`
 
 ### Logs
 

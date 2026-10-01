@@ -315,6 +315,38 @@ Screens just render query data. The control channel
 (`services/location/control.ts`) is a separate socket the tracker holds in the
 background, as described above.
 
+## Admin portal (`apps/admin`)
+
+A React app, bundled by esbuild into a handful of static files that the server
+serves at its own address with `@fastify/static` (`modules/portal.routes.ts`).
+Any other browser route outside `/api` gets the page, so a bookmark to
+`/accounts` works. The image builds it and carries the files beside the server,
+and a server run from source finds `apps/admin/dist` in the workspace.
+`ENABLE_ADMIN_PORTAL=false` serves nothing.
+
+It is same-origin with the API in development too: run the server, run
+`pnpm --filter @hearth/admin dev` for a watch build, and open
+`http://localhost:4000`. Everything it does goes through the admin API, so the
+app's admin screen and the portal stay in step.
+
+The access token lives in memory. The refresh token is an `HttpOnly`,
+`SameSite=Strict` cookie scoped to the portal's session routes
+(`modules/portal.routes.ts`, served by `plugins/portal.ts`), and a 401 that
+means the token ran out renews it once for every call waiting on it, one tab at
+a time. The session ends twelve hours after sign-in and renewing does not
+extend it. Swagger UI shares the origin, so it is served with its own content
+policy. Its pages carry a
+Content-Security-Policy that allows `'self'` and nothing else, and
+`frame-ancestors 'none'`. It never shows a position: the circles list names
+members and settings only, and notification text is the administrator's own.
+
+The overview is a dashboard built from `GET /admin/overview?tz=`, which counts
+fixes, active accounts and notifications per day in the viewer's time zone and
+lists each account's phone (`services/admin-overview.ts`). The fixes are
+counted person by person, so each count is a range over the `(user_id,
+recorded_at)` index rather than a scan of the whole table. The charts are
+plain SVG and CSS, so the page still loads nothing from anywhere else.
+
 ## Security model, briefly
 
 - Access tokens: 15 min, HS256, `{sub, sid}`. The admin flag is read from the

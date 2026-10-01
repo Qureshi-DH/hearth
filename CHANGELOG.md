@@ -6,6 +6,26 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-02
+
+An admin portal at the server's own address, notifications that gather one
+person's news into one, and a fix for phones behind a firewall that locks out
+an address after a failed request. Update the server first. Migration 0011 runs
+on start. Phones work with either version, and the grouped notifications need
+nothing from the app.
+
+### Added
+
+- An admin portal at the server's own address. Sign in with an administrator
+  account in a browser. Its dashboard shows the last two weeks of activity and
+  whether each person's phone is reporting. From there you can see what in the
+  setup needs attention, manage accounts and their devices, set a new password
+  for somebody who forgot theirs, read the circles, change who can sign up,
+  work the notification queue and read the audit log. It shows no positions
+  and nobody else's notification text. Setting somebody's password asks for
+  your own first, and a portal session ends after twelve hours.
+  `ENABLE_ADMIN_PORTAL=false` turns it off.
+
 ### Changed
 
 - Through Expo, news about one person shares one notification that grows a
@@ -14,8 +34,18 @@ Notable changes to Hearth. The format is loosely
   new one. A trip that ends at a saved place no longer buzzes on its own. Its
   distance goes on the arrival line instead. The same news through two circles
   is sent once, a backlog lands as one update, and a resolved SOS replaces the
-  SOS. ntfy and Web Push still get each notification on its own. Migration
-  0011 runs on start, and no app update is needed.
+  SOS. ntfy and Web Push still get each notification on its own.
+
+### Fixed
+
+- A phone whose token the server refused, because it was signed out from
+  another device or its token ran out, sent the same token again whenever its
+  renewal got no answer. Behind a firewall that locks an address out after a
+  failed request, each of those refusals locked out every phone at that
+  address again, and a phone signed out from elsewhere never learned that it
+  was. The app now renews before it sends a refused token again, and renews a
+  minute before a token runs out, so a phone that is fine never has its token
+  refused. The admin portal does the same.
 
 ## [1.1.0] - 2026-10-01
 
@@ -1033,7 +1063,8 @@ security audit and there are no store builds yet.
   trusting the token
 - Push payloads never carry coordinates
 
-[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Qureshi-DH/hearth/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Qureshi-DH/hearth/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Qureshi-DH/hearth/compare/v0.10.0...v1.0.0
 [0.10.0]: https://github.com/Qureshi-DH/hearth/compare/v0.9.6...v0.10.0

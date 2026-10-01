@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="hearth-mark" x1="0.18" y1="0.1" x2="0.82" y2="0.9">
+      <stop offset="0" stop-color="#FF8A5C"/>
+      <stop offset="1" stop-color="#F04A6A"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="10" fill="url(#hearth-mark)"/>
+  <path transform="translate(6.5 6.5) scale(0.7917)" fill="#FFFFFF" fill-rule="evenodd" d="M12 2c.6 3.2-1.2 4.6-2.6 6C7.6 9.6 6 11.3 6 14a6 6 0 0 0 12 0c0-2.5-1.2-4.3-2.6-6C13.7 6 12.6 4.4 12 2Zm0 8.6c1.2 1.4 2 2.4 2 3.6a2 2 0 1 1-4 0c0-1.2.8-2.2 2-3.6Z"/>
+</svg>

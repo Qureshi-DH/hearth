@@ -51,12 +51,30 @@ export interface RequestOptions {
 const DEFAULT_TIMEOUT_MS = 20_000
 
 /**
+ * How long before a token runs out it is renewed. A token sent after that is
+ * refused with a 401, and a firewall in front of a home server can read a 401
+ * as an attack and lock out every phone behind the same address.
+ */
+const RENEW_AHEAD_MS = 60_000
+
+/**
  * Every authenticated request that comes back 401 waits on one shared refresh
  * promise and is retried once. A burst of queries on app resume therefore costs
  * one refresh call, not one per query.
  */
 export class ApiClient {
   private refreshing: Promise<TokenPair | null> | null = null
+  /**
+   * The server refused the access token and no renewal has had an answer
+   * since. Until one does, the token is not sent again: each try would be
+   * another 401, and behind such a firewall another lockout, and a phone
+   * signed out from elsewhere would never hear that it was.
+   */
+  private refused = false
+  /** Why the last renewal failed, for a caller it holds back. */
+  private renewalError: ApiError | null = null
+  /** The access token in use and when to renew it, by this phone's own elapsed time. */
+  private held: { token: string; renewAt: number } | null = null
 
   constructor(private readonly hooks: ApiClientHooks) {}
 
@@ -74,10 +92,20 @@ export class ApiClient {
   }
 
   async request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
+    if (options.auth !== false && this.hooks.getTokens() && this.renewalDue()) {
+      const renewed = await this.refreshTokens()
+      // A token due for renewal is still good for a minute if nobody refused
+      // it, so an unanswered renewal only holds back one that was refused.
+      if (!renewed && (this.refused || !this.hooks.getTokens())) {
+        throw this.renewalError ?? new ApiError(0, "network_error", "Could not reach the server.")
+      }
+    }
+
     const first = await this.send<T>(method, path, options)
     if (first.kind === "ok") return first.data
 
     if (first.error.status === 401 && options.auth !== false && this.hooks.getTokens()) {
+      this.refused = true
       const refreshed = await this.refreshTokens()
       if (refreshed) {
         const second = await this.send<T>(method, path, options)
@@ -197,7 +225,8 @@ export class ApiClient {
    * a quarter hour, so it cannot wait for one to do the rotating. Single
    * flight, and a refusal still ends the session as it does on any call.
    */
-  refreshTokens(): Promise<TokenPair | null> {
+  refreshTokens(options: { refused?: boolean } = {}): Promise<TokenPair | null> {
+    if (options.refused) this.refused = true
     if (!this.refreshing) {
       this.refreshing = this.doRefresh().finally(() => {
         this.refreshing = null
@@ -219,16 +248,55 @@ export class ApiClient {
     })
 
     if (result.kind === "error") {
+      this.renewalError = result.error
       // A network blip must not log the user out. Only a definitive rejection does.
       if (result.error.status === 401 || result.error.status === 403) {
+        this.refused = false
         await this.hooks.setTokens(null)
         this.hooks.onSessionExpired()
       }
       return null
     }
 
+    this.refused = false
+    this.renewalError = null
     const next = { accessToken: result.data.accessToken, refreshToken: result.data.refreshToken }
     await this.hooks.setTokens(next)
     return next
+  }
+
+  /** Whether the token in hand has to be renewed before it is sent. */
+  private renewalDue(): boolean {
+    if (this.refused) return true
+    const token = this.hooks.getTokens()?.accessToken
+    if (!token) return false
+    if (this.held?.token !== token) {
+      const lifetime = lifetimeSeconds(token)
+      this.held = {
+        token,
+        renewAt: lifetime ? Date.now() + lifetime * 1000 - RENEW_AHEAD_MS : Infinity,
+      }
+    }
+    return Date.now() >= this.held.renewAt
+  }
+}
+
+/**
+ * How long the server made the token last, from its own issued and expiry
+ * times. Only the difference is used, so a phone whose clock is wrong still
+ * renews on time: it counts from when it got the token.
+ */
+function lifetimeSeconds(token: string): number | null {
+  try {
+    const segment = token.split(".")[1] ?? ""
+    const base64 = segment.replace(/-/g, "+").replace(/_/g, "/")
+    const claims = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="))) as {
+      iat?: number
+      exp?: number
+    }
+    const lifetime = (claims.exp ?? 0) - (claims.iat ?? 0)
+    return Number.isFinite(lifetime) && lifetime > 0 ? lifetime : null
+  } catch {
+    return null
   }
 }

@@ -46,22 +46,48 @@ from a request that names no device, is refused. Presented more than thirty
 seconds after the rotation, it also ends the session. Send `deviceId` with
 the refresh so the server can tell these apart.
 
+The admin portal signs in through its own three routes, for administrators
+only:
+
+```text
+POST /auth/portal/login     { email, password, deviceId }
+POST /auth/portal/refresh   { deviceId }
+POST /auth/portal/logout
+```
+
+The body carries the access token and the user, never the refresh token. That
+goes into an `HttpOnly`, `SameSite=Strict` cookie named `hearth_portal`, scoped
+to `/api/v1/auth/portal`, and `Secure` when the request is HTTPS or reached the
+https public address. The session ends twelve hours after sign-in, and renewing
+does not extend it. Refresh reads and rotates the cookie, refuses a request
+whose `Origin` names another site, clears the cookie when the session is over,
+and ends the session if the account is no longer an administrator. Logout needs
+only the cookie and refuses another site's `Origin` too. A non-administrator
+gets a `403` from login and no session is created. Each sign-in is written to
+the audit log.
+
+`POST /admin/users/:id/password` takes `{ password, currentPassword }`, where
+`currentPassword` is the administrator's own. A wrong password, here and at
+`POST /auth/password`, answers `401` with the code `wrong_password`, so a client
+can tell it from a session that ran out (`unauthorized`). Ten wrong guesses in a
+quarter of an hour answer `429` until the quarter is up.
+
 ## Endpoint map
 
-| Area      | Endpoints                                                                                                                                                                                                                                                                                                                                   |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| System    | `GET /server-info` (public capabilities), `GET /media/*` (stored images), `GET /healthz`, `GET /readyz` and `GET /join/:code` (root, not under `/api/v1`)                                                                                                                                                                                   |
-| Account   | `GET/PATCH /auth/me`, `POST/DELETE /auth/me/avatar`, `POST /auth/password`, `GET /auth/sessions`, `DELETE /auth/sessions/:id`, `POST /auth/sessions/revoke-all`, `GET /me/export`, `DELETE /me`, `GET /me/stats`, `DELETE /me/history`, `PATCH /me/health` ([what the phone says about itself](mobile.md#what-the-phone-says-about-itself)) |
-| Circles   | `GET/POST /circles`, `GET/PATCH/DELETE /circles/:id`, `GET /circles/:id/members`, `PATCH/DELETE /circles/:id/members/:userId`, `PATCH /circles/:id/sharing`, `PATCH /circles/:id/notifications`                                                                                                                                             |
-| Invites   | `GET/POST /circles/:id/invites` (list omits revoked, `expiresInHours: null` = never expires), `DELETE /circles/:id/invites/:inviteId`, `GET /invites/:code` (public preview), `POST /invites/:code/accept`                                                                                                                                  |
-| Locations | `POST /locations/batch`, `GET /circles/:id/locations`, `POST /circles/:id/locations/refresh`, `GET /circles/:id/members/:userId/history`, `POST /circles/:id/members/:userId/refresh`, `POST /circles/:id/members/:userId/watch`                                                                                                            |
-| Places    | `GET/POST /circles/:id/places`, `PATCH/DELETE /circles/:id/places/:placeId`, `GET /circles/:id/places/:placeId/events`                                                                                                                                                                                                                      |
-| Events    | `GET /circles/:id/events?limit&cursor`, `POST /circles/:id/events/read`, `GET /circles/:id/events/unread-count`                                                                                                                                                                                                                             |
-| Nudges    | `POST /circles/:id/nudge/:userId` (one member, no history)                                                                                                                                                                                                                                                                                  |
-| Safety    | `POST /circles/:id/sos` (3 per 10 min), `POST /sos/:alertId/resolve`, `GET /circles/:id/sos?activeOnly=true`, `POST /circles/:id/check-in`, `GET /circles/:id/check-ins`                                                                                                                                                                    |
-| Trips     | `GET /circles/:id/members/:userId/trips`, `GET /me/trips`, `GET /trips/:tripId`                                                                                                                                                                                                                                                             |
-| Push      | `GET /push/config`, `POST/DELETE /push/register`, `POST /push/test`                                                                                                                                                                                                                                                                         |
-| Admin     | `GET/PATCH /admin/settings`, `GET /admin/users`, `PATCH /admin/users/:id`, `GET /admin/stats`, `GET /admin/push/queue`, `POST /admin/push/drain`, `GET /admin/audit`                                                                                                                                                                        |
+| Area      | Endpoints                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| System    | `GET /server-info` (public capabilities), `GET /media/*` (stored images), `GET /healthz`, `GET /readyz` and `GET /join/:code` (root, not under `/api/v1`)                                                                                                                                                                                                                                             |
+| Account   | `GET/PATCH /auth/me`, `POST/DELETE /auth/me/avatar`, `POST /auth/password`, `GET /auth/sessions`, `DELETE /auth/sessions/:id`, `POST /auth/sessions/revoke-all`, `GET /me/export`, `DELETE /me`, `GET /me/stats`, `DELETE /me/history`, `PATCH /me/health` ([what the phone says about itself](mobile.md#what-the-phone-says-about-itself))                                                           |
+| Circles   | `GET/POST /circles`, `GET/PATCH/DELETE /circles/:id`, `GET /circles/:id/members`, `PATCH/DELETE /circles/:id/members/:userId`, `PATCH /circles/:id/sharing`, `PATCH /circles/:id/notifications`                                                                                                                                                                                                       |
+| Invites   | `GET/POST /circles/:id/invites` (list omits revoked, `expiresInHours: null` = never expires), `DELETE /circles/:id/invites/:inviteId`, `GET /invites/:code` (public preview), `POST /invites/:code/accept`                                                                                                                                                                                            |
+| Locations | `POST /locations/batch`, `GET /circles/:id/locations`, `POST /circles/:id/locations/refresh`, `GET /circles/:id/members/:userId/history`, `POST /circles/:id/members/:userId/refresh`, `POST /circles/:id/members/:userId/watch`                                                                                                                                                                      |
+| Places    | `GET/POST /circles/:id/places`, `PATCH/DELETE /circles/:id/places/:placeId`, `GET /circles/:id/places/:placeId/events`                                                                                                                                                                                                                                                                                |
+| Events    | `GET /circles/:id/events?limit&cursor`, `POST /circles/:id/events/read`, `GET /circles/:id/events/unread-count`                                                                                                                                                                                                                                                                                       |
+| Nudges    | `POST /circles/:id/nudge/:userId` (one member, no history)                                                                                                                                                                                                                                                                                                                                            |
+| Safety    | `POST /circles/:id/sos` (3 per 10 min), `POST /sos/:alertId/resolve`, `GET /circles/:id/sos?activeOnly=true`, `POST /circles/:id/check-in`, `GET /circles/:id/check-ins`                                                                                                                                                                                                                              |
+| Trips     | `GET /circles/:id/members/:userId/trips`, `GET /me/trips`, `GET /trips/:tripId`                                                                                                                                                                                                                                                                                                                       |
+| Push      | `GET /push/config`, `POST/DELETE /push/register`, `POST /push/test`                                                                                                                                                                                                                                                                                                                                   |
+| Admin     | `GET/PATCH /admin/settings`, `GET /admin/users`, `PATCH /admin/users/:id`, `GET /admin/users/:id/sessions`, `DELETE /admin/users/:id/sessions/:sessionId`, `POST /admin/users/:id/sessions/revoke-all`, `POST /admin/users/:id/password`, `GET /admin/circles`, `GET /admin/checks`, `GET /admin/overview`, `GET /admin/stats`, `GET /admin/push/queue`, `POST /admin/push/drain`, `GET /admin/audit` |
 
 `PATCH /admin/settings` takes `serverName`, `registrationMode` and
 `maxHistoryRetentionDays`. Whatever it stores overrides the matching environment

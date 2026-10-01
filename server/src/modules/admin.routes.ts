@@ -1,65 +1,31 @@
 import { REGISTRATION_MODES } from "@hearth/shared"
-import { and, desc, eq, gte, ne, sql } from "drizzle-orm"
+import { and, eq, gt, isNull, ne, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
-import { getDb } from "../db/client"
-import {
-  auditLog,
-  circleMembers,
-  circles,
-  locationPoints,
-  notificationOutbox,
-  places,
-  sessions,
-  users,
-} from "../db/schema"
-import { getConfig } from "../env"
+import { getDb, type Database } from "../db/client"
+import { auditLog, sessions, users } from "../db/schema"
 import { badRequest, notFound } from "../lib/errors"
+import { toSessionSummary } from "../lib/serialize"
 import { requireAuth } from "../plugins/auth"
-import { revokeAllSessions } from "../services/auth"
+import { passwordGuesses } from "../plugins/password-guesses"
+import {
+  auditEntries,
+  listAccounts,
+  listCircles,
+  outboxEntries,
+  serverStats,
+} from "../services/admin"
+import { adminOverview } from "../services/admin-overview"
+import { confirmPassword, revokeAllSessions, revokeSession, setPassword } from "../services/auth"
+import { serverChecks } from "../services/checks"
 import { drainOutbox } from "../services/push"
 import { getServerSettings, updateServerSettings } from "../services/settings"
-import { getPushDriver, uptimeSeconds } from "../runtime"
-import { VERSION } from "./system.routes"
+import { getPushDriver } from "../runtime"
 
 export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
-
-  /**
-   * `min(recorded_at)` over the whole table has no index to lead with and reads
-   * every breadcrumb on the server. Per user it does have one: the
-   * (user_id, recorded_at) index answers each account from a single entry, and
-   * a household has a handful of accounts against millions of points.
-   */
-  async function oldestPointAt(): Promise<string | null> {
-    const rows = (await db.execute(sql`
-      select min(p.recorded_at) as oldest
-      from users u
-      cross join lateral (
-        select lp.recorded_at
-        from location_points lp
-        where lp.user_id = u.id
-        order by lp.recorded_at
-        limit 1
-      ) p
-    `)) as unknown as { oldest: Date | string | null }[]
-    const raw = rows[0]?.oldest
-    return raw ? new Date(raw).toISOString() : null
-  }
-
-  /** Some managed Postgres roles are not allowed to read the database size. */
-  async function databaseSizeBytes(): Promise<number | null> {
-    try {
-      const rows = (await db.execute(
-        sql`select pg_database_size(current_database())::bigint as size`,
-      )) as unknown as { size: string | number }[]
-      const raw = rows[0]?.size
-      return raw == null ? null : Number(raw)
-    } catch {
-      return null
-    }
-  }
+  const guarded = passwordGuesses(app)
 
   app.get(
     "/admin/settings",
@@ -109,69 +75,7 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         }),
       },
     },
-    async (request) => {
-      const rows = await db
-        .select()
-        .from(users)
-        .where(
-          request.query.q
-            ? sql`${users.emailNormalized} like ${`%${request.query.q.toLowerCase()}%`} or lower(${users.displayName}) like ${`%${request.query.q.toLowerCase()}%`}`
-            : undefined,
-        )
-        .orderBy(desc(users.createdAt))
-        .limit(request.query.limit)
-
-      const counts = await db
-        .select({
-          userId: circleMembers.userId,
-          circleCount: sql<number>`count(*)::int`,
-        })
-        .from(circleMembers)
-        .groupBy(circleMembers.userId)
-      const circleCounts = new Map(counts.map((row) => [row.userId, row.circleCount]))
-
-      const devices = await db
-        .select({ userId: sessions.userId, deviceCount: sql<number>`count(*)::int` })
-        .from(sessions)
-        .where(sql`${sessions.revokedAt} is null`)
-        .groupBy(sessions.userId)
-      const deviceCounts = new Map(devices.map((row) => [row.userId, row.deviceCount]))
-
-      // Gaps between consecutive fixes over the last day, and the gap still
-      // open since the last one, so a phone that went quiet reads as such
-      // before the sweep says so.
-      const silences = (await db.execute(sql`
-        with recent as (
-          select user_id, recorded_at,
-                 recorded_at - lag(recorded_at) over (partition by user_id order by recorded_at) as gap
-          from location_points
-          where recorded_at > now() - interval '24 hours'
-        )
-        select user_id,
-               greatest(
-                 coalesce(extract(epoch from max(gap)), 0),
-                 extract(epoch from now() - max(recorded_at))
-               )::int as longest
-        from recent
-        group by user_id
-      `)) as unknown as Array<{ user_id: string; longest: number }>
-      const longestSilence = new Map(silences.map((row) => [row.user_id, row.longest]))
-
-      return rows.map((row) => ({
-        id: row.id,
-        email: row.email,
-        displayName: row.displayName,
-        avatarColor: row.avatarColor,
-        avatarUrl: row.avatarUrl,
-        isAdmin: row.isAdmin,
-        isActive: row.isActive,
-        createdAt: row.createdAt.toISOString(),
-        lastSeenAt: row.lastSeenAt?.toISOString() ?? null,
-        circleCount: circleCounts.get(row.id) ?? 0,
-        deviceCount: deviceCounts.get(row.id) ?? 0,
-        longestSilenceSeconds: longestSilence.get(row.id) ?? null,
-      }))
-    },
+    async (request) => listAccounts(db, { query: request.query.q, limit: request.query.limit }),
   )
 
   app.patch(
@@ -265,49 +169,7 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     "/admin/stats",
     { preHandler: app.requireAdmin, schema: { tags: ["admin"], summary: "Server statistics" } },
-    async () => {
-      const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
-
-      const [
-        [userCount],
-        [activeCount],
-        [circleCount],
-        [placeCount],
-        [pointCount],
-        oldest,
-        [queueDepth],
-        dbSize,
-      ] = await Promise.all([
-        db.select({ count: sql<number>`count(*)::int` }).from(users),
-        db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(users)
-          .where(gte(users.lastSeenAt, dayAgo)),
-        db.select({ count: sql<number>`count(*)::int` }).from(circles),
-        db.select({ count: sql<number>`count(*)::int` }).from(places),
-        db.select({ count: sql<number>`count(*)::int` }).from(locationPoints),
-        oldestPointAt(),
-        db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(notificationOutbox)
-          .where(eq(notificationOutbox.status, "pending")),
-        databaseSizeBytes(),
-      ])
-
-      return {
-        users: userCount?.count ?? 0,
-        activeUsers24h: activeCount?.count ?? 0,
-        circles: circleCount?.count ?? 0,
-        places: placeCount?.count ?? 0,
-        locationPoints: pointCount?.count ?? 0,
-        oldestPointAt: oldest,
-        pushQueueDepth: queueDepth?.count ?? 0,
-        databaseSizeBytes: dbSize,
-        uptimeSeconds: uptimeSeconds(),
-        pushProvider: getConfig().PUSH_PROVIDER,
-        version: VERSION,
-      }
-    },
+    async () => serverStats(db),
   )
 
   app.get(
@@ -323,34 +185,12 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         }),
       },
     },
-    async (request) => {
-      const auth = requireAuth(request)
-      const rows = await db
-        .select()
-        .from(notificationOutbox)
-        .where(
-          request.query.status ? eq(notificationOutbox.status, request.query.status) : undefined,
-        )
-        .orderBy(desc(notificationOutbox.id))
-        .limit(request.query.limit)
-
-      // Being a server admin is not being in every circle. The text of a
-      // notification says where somebody arrived and what was said to them,
-      // so it is shown only for the admin's own; the rest is enough to debug
-      // a provider.
-      return rows.map((row) => ({
-        id: String(row.id),
-        userId: row.userId,
-        title: row.userId === auth.userId ? row.title : null,
-        body: row.userId === auth.userId ? row.body : null,
-        channel: row.channel,
-        status: row.status,
-        attempts: row.attempts,
-        lastError: row.lastError,
-        createdAt: row.createdAt.toISOString(),
-        sentAt: row.sentAt?.toISOString() ?? null,
-      }))
-    },
+    async (request) =>
+      outboxEntries(db, {
+        status: request.query.status,
+        limit: request.query.limit,
+        viewerId: requireAuth(request).userId,
+      }),
   )
 
   app.post(
@@ -380,22 +220,198 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
         querystring: z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) }),
       },
     },
+    async (request) => auditEntries(db, request.query.limit),
+  )
+
+  const userParams = z.object({ userId: z.string().uuid() })
+
+  app.get(
+    "/admin/users/:userId/sessions",
+    {
+      preHandler: app.requireAdmin,
+      schema: { tags: ["admin"], summary: "An account's signed-in devices", params: userParams },
+    },
     async (request) => {
+      const auth = requireAuth(request)
       const rows = await db
         .select()
-        .from(auditLog)
-        .orderBy(desc(auditLog.id))
-        .limit(request.query.limit)
-      return rows.map((row) => ({
-        id: String(row.id),
-        actorUserId: row.actorUserId,
-        action: row.action,
-        targetType: row.targetType,
-        targetId: row.targetId,
-        meta: row.meta,
-        ip: row.ip,
-        createdAt: row.createdAt.toISOString(),
-      }))
+        .from(sessions)
+        .where(
+          and(
+            eq(sessions.userId, request.params.userId),
+            isNull(sessions.revokedAt),
+            gt(sessions.expiresAt, new Date()),
+          ),
+        )
+        .orderBy(sql`${sessions.lastUsedAt} desc nulls last`)
+      return rows.map((row) => toSessionSummary(row, auth.sessionId))
+    },
+  )
+
+  app.delete(
+    "/admin/users/:userId/sessions/:sessionId",
+    {
+      preHandler: app.requireAdmin,
+      schema: {
+        tags: ["admin"],
+        summary: "Sign one of an account's devices out",
+        description: "For a lost or stolen phone. The device has to sign in again.",
+        params: userParams.extend({ sessionId: z.string().uuid() }),
+      },
+    },
+    async (request) => {
+      const auth = requireAuth(request)
+      const [session] = await db
+        .select({ id: sessions.id, deviceName: sessions.deviceName })
+        .from(sessions)
+        .where(
+          and(
+            eq(sessions.id, request.params.sessionId),
+            eq(sessions.userId, request.params.userId),
+            isNull(sessions.revokedAt),
+          ),
+        )
+        .limit(1)
+      if (!session) throw notFound("That device is not signed in.")
+      await revokeSession(db, session.id)
+      await db.insert(auditLog).values({
+        actorUserId: auth.userId,
+        action: "session.revoke",
+        targetType: "user",
+        targetId: request.params.userId,
+        meta: { sessionId: session.id, deviceName: session.deviceName },
+        ip: request.ip,
+      })
+      return { ok: true }
+    },
+  )
+
+  app.post(
+    "/admin/users/:userId/sessions/revoke-all",
+    {
+      preHandler: app.requireAdmin,
+      schema: {
+        tags: ["admin"],
+        summary: "Sign an account out everywhere",
+        description: "Your own session is kept when the account is yours.",
+        params: userParams,
+      },
+    },
+    async (request) => {
+      const auth = requireAuth(request)
+      const keep = request.params.userId === auth.userId ? auth.sessionId : undefined
+      const count = await revokeAllSessions(db, request.params.userId, keep)
+      await db.insert(auditLog).values({
+        actorUserId: auth.userId,
+        action: "session.revoke_all",
+        targetType: "user",
+        targetId: request.params.userId,
+        meta: { count },
+        ip: request.ip,
+      })
+      return { ok: true, revokedSessions: count }
+    },
+  )
+
+  app.post(
+    "/admin/users/:userId/password",
+    {
+      preHandler: app.requireAdmin,
+      schema: {
+        tags: ["admin"],
+        summary: "Set a new password for an account",
+        description:
+          "Hearth sends no email, so this is how somebody who forgot their password gets " +
+          "back in. The account is signed out everywhere, and the password is never logged.",
+        params: userParams,
+        body: z.object({
+          password: z.string().min(1).max(512),
+          // Setting somebody's password is a way into their account, and
+          // from there to where their family is. The administrator proves
+          // it is them at the keyboard, not whoever found the portal open.
+          currentPassword: z.string().min(1).max(512),
+        }),
+      },
+    },
+    async (request) => {
+      const auth = requireAuth(request)
+      if (request.params.userId === auth.userId) {
+        throw badRequest(
+          "Change your own password from Your account, which asks for the current one.",
+        )
+      }
+      await guarded(request, () => confirmPassword(db, auth.userId, request.body.currentPassword))
+      if (!(await setPassword(db, request.params.userId, request.body.password))) {
+        throw notFound("No such account.")
+      }
+      await revokeAllSessions(db, request.params.userId)
+      await db.insert(auditLog).values({
+        actorUserId: auth.userId,
+        action: "user.password",
+        targetType: "user",
+        targetId: request.params.userId,
+        meta: {},
+        ip: request.ip,
+      })
+      return { ok: true }
+    },
+  )
+
+  app.get(
+    "/admin/circles",
+    {
+      preHandler: app.requireAdmin,
+      schema: {
+        tags: ["admin"],
+        summary: "The circles on this server",
+        description:
+          "Who is in each circle and how it is set up. Running the server is not being in " +
+          "every circle, so no position or place coordinate is included.",
+      },
+    },
+    async () => listCircles(db),
+  )
+
+  app.get(
+    "/admin/checks",
+    {
+      preHandler: app.requireAdmin,
+      schema: { tags: ["admin"], summary: "What about this server's setup needs attention" },
+    },
+    async () => serverChecks(db),
+  )
+
+  app.get(
+    "/admin/overview",
+    {
+      preHandler: app.requireAdmin,
+      schema: {
+        tags: ["admin"],
+        summary: "The portal's dashboard: activity by day and whether each phone is reporting",
+        querystring: z.object({ tz: z.string().max(64).optional() }),
+      },
+    },
+    async (request) => {
+      const timeZone = request.query.tz ?? "UTC"
+      if (!(await isTimeZone(db, timeZone))) throw badRequest(`${timeZone} is not a time zone.`)
+      return adminOverview(db, timeZone)
     },
   )
 }
+
+/**
+ * A zone name such as Asia/Karachi, or UTC, that the database knows. A bare
+ * offset such as "+05:00" is turned away even where Postgres would take it:
+ * it reads one as POSIX, where the sign means the opposite, and every day
+ * would shift.
+ */
+async function isTimeZone(db: Database, name: string): Promise<boolean> {
+  if (!/^(?:UTC|[A-Za-z]+(?:\/[A-Za-z0-9_+-]+)+)$/.test(name)) return false
+  zoneNames ??= db
+    .execute(sql`select name from pg_timezone_names`)
+    .then((rows) => new Set((rows as unknown as Array<{ name: string }>).map((row) => row.name)))
+  return (await zoneNames).has(name)
+}
+
+/** Read once. The database's zone list changes only with its own upgrade. */
+let zoneNames: Promise<Set<string>> | null = null

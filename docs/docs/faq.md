@@ -335,19 +335,22 @@ and the trips made from them and keeps the account, and `GET /api/v1/me/export`
 returns your profile, circles, breadcrumbs, trips, check-ins and the places you
 created as JSON. Both are in the app under _You → Privacy & data_.
 
-An admin can activate, deactivate or promote an account from the app, but cannot
-delete one. Deactivating revokes that account's sessions immediately.
+An admin can activate, deactivate or promote an account from the app or the
+admin portal, but cannot delete one. Deactivating revokes that account's
+sessions immediately.
 
 ## Somebody forgot their password. What do I do?
 
-There is no answer you will like. v1 has no password reset flow. The server has
-no mail dependency at all, so it cannot send a reset link even in principle, and
-the admin API can activate, deactivate and promote an account but not reset its
-password. Changing a password requires the current one.
+An administrator sets a new one. Open the server's address in a browser, sign in
+to the admin portal, find the account under Accounts and choose _Set a new
+password_. The portal asks for your own password first. Every device on that
+account is signed out, and you tell them the new password yourself. The server
+has no mail dependency at all, so there is no reset link, and the audit log
+records that the password was set, never what it was.
 
-Today, recovery means an operator with database access replacing that row's
-scrypt hash by hand. Worth knowing before you invite people who will not
-remember what they typed.
+If the forgotten password is the only administrator's, an operator with database
+access has to replace that row's scrypt hash by hand, which is one reason to make
+a second person an administrator.
 
 ## How many phones can one server handle?
 

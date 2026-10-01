@@ -1,0 +1,28 @@
+{
+  "name": "@hearth/admin",
+  "version": "1.2.0",
+  "private": true,
+  "description": "The admin portal the server serves at its own address.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hearth/shared": "workspace:*",
+    "@tanstack/react-query": "^5.102.8",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "@types/react-dom": "~19.2.3",
+    "esbuild": "0.27.7",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "typescript": "5.9.3",
+    "vitest": "^5.0.2"
+  }
+}

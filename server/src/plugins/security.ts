@@ -18,8 +18,9 @@ export const securityPlugin = fp(async (app: FastifyInstance) => {
 
   await app.register(cors, {
     // Native clients send no Origin header and need no CORS, so the default
-    // grants nothing and a web client opts in through CORS_ORIGINS. Auth is a
-    // bearer token, never a cookie, so credentialed requests never apply.
+    // grants nothing and a web client opts in through CORS_ORIGINS. The API
+    // takes a bearer token. The one cookie, the admin portal's, is only sent
+    // to its own origin, so credentialed cross-origin requests never apply.
     origin: config.corsOrigins.length > 0 ? config.corsOrigins : false,
     credentials: false,
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],

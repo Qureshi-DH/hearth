@@ -1,5 +1,6 @@
 import { PLATFORMS, type DeviceHealth } from "@hearth/shared"
 import { and, desc, eq, gt, isNull, lte, sql } from "drizzle-orm"
+import type { FastifyRequest } from "fastify"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { Readable } from "node:stream"
 import { z } from "zod"
@@ -26,13 +27,23 @@ import {
   tooManyRequests,
   unauthorized,
 } from "../lib/errors"
+import { emailSchema } from "../lib/email"
 import { avatarColorFor, normalizeEmail } from "../lib/ids"
 import { clientBucket } from "../lib/net"
 import { hashPassword, validatePasswordStrength, verifyPassword } from "../lib/password"
 import { toCurrentUser, toSessionSummary } from "../lib/serialize"
 import { loadCurrentUser, requireAuth } from "../plugins/auth"
-import { issueSession, revokeAllSessions, revokeSession, rotateSession } from "../services/auth"
+import {
+  confirmPassword,
+  issueSession,
+  revokeAllSessions,
+  revokeSession,
+  rotateSession,
+  setPassword,
+} from "../services/auth"
 import { acceptInvite, previewInvite } from "../services/invites"
+import { portalRoutes } from "./portal.routes"
+import { passwordGuesses } from "../plugins/password-guesses"
 import { registrationMode } from "../services/settings"
 import {
   avatarKey,
@@ -102,15 +113,9 @@ const displayNameSchema = z
     message: "A display name has to be between 1 and 80 characters.",
   })
 
-const emailSchema = z
-  .string()
-  .trim()
-  .min(3)
-  .max(254)
-  .refine((value) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value), "Enter a valid email address.")
-
 export const authRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
+  const guarded = passwordGuesses(app)
   const config = getConfig()
 
   // A password check runs a full scrypt, which costs orders of magnitude more
@@ -152,6 +157,34 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       return `login-account:${email}`
     },
   })
+
+  /**
+   * Both sign-ins, the app's and the admin portal's, run the same budgets and
+   * the same checks, so the portal is no softer a target than the app.
+   */
+  async function checkCredentials(request: FastifyRequest, email: string, password: string) {
+    const attempt = await loginAttempts(request)
+    if (!attempt.isAllowed && attempt.isExceeded) {
+      throw tooManyRequests("Too many sign-in attempts for this account. Try again shortly.")
+    }
+    const overall = await accountAttempts(request)
+    if (!overall.isAllowed && overall.isExceeded) {
+      throw tooManyRequests("Too many sign-in attempts for this account. Try again in an hour.")
+    }
+
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.emailNormalized, normalizeEmail(email)))
+      .limit(1)
+
+    // Same error and roughly the same work either way, so the response does
+    // not reveal whether the address is registered.
+    const ok = user ? await verifyPassword(password, user.passwordHash) : await burnTime(password)
+    if (!user || !ok) throw unauthorized("Email or password is incorrect.")
+    if (!user.isActive) throw forbidden("This account has been deactivated.")
+    return user
+  }
 
   app.post(
     "/auth/register",
@@ -273,28 +306,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (request) => {
       const { email, password, device } = request.body
-
-      const attempt = await loginAttempts(request)
-      if (!attempt.isAllowed && attempt.isExceeded) {
-        throw tooManyRequests("Too many sign-in attempts for this account. Try again shortly.")
-      }
-      const overall = await accountAttempts(request)
-      if (!overall.isAllowed && overall.isExceeded) {
-        throw tooManyRequests("Too many sign-in attempts for this account. Try again in an hour.")
-      }
-
-      const [user] = await db
-        .select()
-        .from(users)
-        .where(eq(users.emailNormalized, normalizeEmail(email)))
-        .limit(1)
-
-      // Same error and roughly the same work either way, so the response does
-      // not reveal whether the address is registered.
-      const ok = user ? await verifyPassword(password, user.passwordHash) : await burnTime(password)
-      if (!user || !ok) throw unauthorized("Email or password is incorrect.")
-      if (!user.isActive) throw forbidden("This account has been deactivated.")
-
+      const user = await checkCredentials(request, email, password)
       return issueSession(app, db, user, {
         device,
         ip: request.ip,
@@ -341,6 +353,8 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       return { ok: true }
     },
   )
+
+  await app.register(portalRoutes, { checkCredentials, rateLimit: credentialLimit })
 
   app.get(
     "/auth/me",
@@ -477,17 +491,8 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     async (request) => {
       const auth = requireAuth(request)
       const user = await loadCurrentUser(request)
-
-      if (!(await verifyPassword(request.body.currentPassword, user.passwordHash))) {
-        throw unauthorized("Current password is incorrect.")
-      }
-      const strengthError = validatePasswordStrength(request.body.newPassword)
-      if (strengthError) throw badRequest(strengthError)
-
-      await db
-        .update(users)
-        .set({ passwordHash: await hashPassword(request.body.newPassword), updatedAt: new Date() })
-        .where(eq(users.id, user.id))
+      await guarded(request, () => confirmPassword(db, user.id, request.body.currentPassword))
+      await setPassword(db, user.id, request.body.newPassword)
 
       const revoked = await revokeAllSessions(db, user.id, auth.sessionId)
       return { ok: true, revokedSessions: revoked }

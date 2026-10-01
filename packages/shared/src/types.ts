@@ -82,6 +82,9 @@ export interface AuthResponse extends AuthTokens {
   user: CurrentUser
 }
 
+/** What the admin portal holds after signing in. Its refresh token stays in a cookie. */
+export type PortalSession = Omit<AuthResponse, "refreshToken">
+
 export interface SessionSummary {
   id: string
   deviceName: string | null
@@ -450,6 +453,99 @@ export interface AdminUserSummary extends PublicUser {
   longestSilenceSeconds: number | null
 }
 
+/** A circle on the server, as its operator sees it: who is in it, never where. */
+export interface AdminCircleSummary {
+  id: string
+  name: string
+  emoji: string | null
+  createdAt: string
+  memberCount: number
+  placeCount: number
+  members: Array<{ userId: string; displayName: string; role: CircleRole }>
+  settings: Pick<
+    CircleSettings,
+    | "historyRetentionDays"
+    | "allowHistory"
+    | "allowSharingPause"
+    | "speedAlertKmh"
+    | "incidentDetection"
+  >
+}
+
+/**
+ * What the portal's dashboard draws: how busy the server was each day, what
+ * became of its notifications, and whether each person's phone is reporting.
+ * Counts and times, never a position.
+ */
+export interface AdminOverview {
+  /** The window's days in the viewer's time zone, oldest first, as YYYY-MM-DD. */
+  days: string[]
+  /** Fixes recorded on each day. */
+  fixes: number[]
+  /** Accounts that recorded at least one fix on each day. */
+  activeAccounts: number[]
+  /**
+   * Notifications queued on each day, by what became of them. Silent wakes are
+   * left out. The queue is pruned sooner than the window ends, so its oldest
+   * days read zero.
+   */
+  notifications: { sent: number[]; failed: number[]; skipped: number[]; waiting: number[] }
+  /** Each active account and the phone it last used. */
+  phones: AdminPhone[]
+}
+
+/**
+ * How a phone is doing, judged as the server judges it before telling the
+ * family it went offline. A parked phone is allowed a much longer silence
+ * than one last seen on the move, so "parked" is not a fault.
+ */
+export type AdminPhoneState = "reporting" | "quiet" | "parked" | "offline" | "never" | "none"
+
+export interface AdminPhone {
+  userId: string
+  displayName: string
+  avatarColor: string
+  deviceName: string | null
+  platform: Platform | null
+  appVersion: string | null
+  /** The last time the phone was heard from, with or without a fix. */
+  lastHeardAt: string | null
+  state: AdminPhoneState
+  /** What the phone itself said stands between it and reporting. */
+  issues: PresenceIssue[]
+}
+
+export type AdminCheckId =
+  | "public_address"
+  | "registration"
+  | "push"
+  | "administrators"
+  | "failed_notifications"
+  | "storage"
+  | "api_docs"
+
+/** Something about how the server is set up that its operator should know. */
+export interface AdminCheck {
+  id: AdminCheckId
+  level: "ok" | "info" | "warning"
+  title: string
+  detail: string
+}
+
+export interface AdminAuditEntry {
+  id: string
+  actorUserId: string | null
+  actorName: string | null
+  action: string
+  targetType: string | null
+  targetId: string | null
+  /** The account's name when the target is an account. */
+  targetName: string | null
+  meta: Record<string, unknown> | null
+  ip: string | null
+  createdAt: string
+}
+
 export interface AdminStats {
   users: number
   activeUsers24h: number
@@ -460,7 +556,27 @@ export interface AdminStats {
   pushQueueDepth: number
   databaseSizeBytes: number | null
   uptimeSeconds: number
+  pushProvider: PushProvider
   version: string
+}
+
+/**
+ * A notification in the outbox. The title and body are the administrator's
+ * own only: running the server is not reading everybody's alerts.
+ */
+export interface AdminOutboxEntry {
+  id: string
+  userId: string
+  /** Null once the account is gone. */
+  userName: string | null
+  title: string | null
+  body: string | null
+  channel: "default" | "alerts" | "sos"
+  status: "pending" | "sending" | "sent" | "failed" | "skipped"
+  attempts: number
+  lastError: string | null
+  createdAt: string
+  sentAt: string | null
 }
 
 /* ------------------------------------------------------------------ */

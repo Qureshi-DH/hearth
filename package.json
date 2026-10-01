@@ -1,6 +1,6 @@
 {
   "name": "hearth",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Self-hosted family location sharing with no company on the other end.",
   "license": "AGPL-3.0-only",
@@ -16,9 +16,9 @@
   "scripts": {
     "dev": "pnpm --filter @hearth/server dev",
     "dev:mobile": "pnpm --filter hearth-mobile start",
-    "build": "pnpm --filter @hearth/shared build && pnpm --filter @hearth/server build",
+    "build": "pnpm --filter @hearth/shared build && pnpm --filter @hearth/server build && pnpm --filter @hearth/admin build",
     "typecheck": "pnpm -r --no-bail typecheck",
-    "test": "pnpm --filter @hearth/shared test && pnpm --filter @hearth/server test && pnpm --filter hearth-mobile exec jest --ci --passWithNoTests",
+    "test": "pnpm --filter @hearth/shared test && pnpm --filter @hearth/server test && pnpm --filter @hearth/admin test && pnpm --filter hearth-mobile exec jest --ci --passWithNoTests",
     "lint": "pnpm -r --no-bail lint",
     "db:generate": "pnpm --filter @hearth/server db:generate",
     "db:migrate": "pnpm --filter @hearth/server db:migrate",

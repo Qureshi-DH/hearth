@@ -601,3 +601,4 @@ export type FeedEventRow = typeof events.$inferSelect
 export type SosAlertRow = typeof sosAlerts.$inferSelect
 export type TripRow = typeof trips.$inferSelect
 export type OutboxRow = typeof notificationOutbox.$inferSelect
+export type AuditRow = typeof auditLog.$inferSelect

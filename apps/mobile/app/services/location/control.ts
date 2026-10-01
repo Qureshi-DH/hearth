@@ -129,7 +129,7 @@ class ControlChannel {
    */
   private async renew(): Promise<void> {
     if (!this.wanted) return
-    const next = await api.refreshTokens().catch(() => null)
+    const next = await api.refreshTokens({ refused: true }).catch(() => null)
     if (!this.wanted) return
     if (next) {
       this.refresh()

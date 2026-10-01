@@ -19,6 +19,14 @@ export const badRequest = (message: string, details?: unknown) =>
 export const unauthorized = (message = "Authentication required.") =>
   new AppError(401, "unauthorized", message)
 
+/**
+ * A password the person typed was wrong. Its own code, because a client
+ * renews its session on an "unauthorized" and must not mistake one for the
+ * other.
+ */
+export const wrongPassword = (message = "That password is not right.") =>
+  new AppError(401, "wrong_password", message)
+
 export const forbidden = (message = "You do not have access to this resource.") =>
   new AppError(403, "forbidden", message)
 

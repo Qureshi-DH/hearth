@@ -6,8 +6,9 @@ import type { Database } from "../db/client"
 import { auditLog, sessions, users, type SpentRefreshJson, type User } from "../db/schema"
 import { getConfig } from "../env"
 import { userTopic } from "../lib/bus"
-import { unauthorized } from "../lib/errors"
+import { badRequest, unauthorized, wrongPassword } from "../lib/errors"
 import { randomToken, sha256 } from "../lib/ids"
+import { hashPassword, validatePasswordStrength, verifyPassword } from "../lib/password"
 import { toCurrentUser } from "../lib/serialize"
 import type { AccessTokenClaims } from "../plugins/auth"
 import { getBus } from "../runtime"
@@ -16,6 +17,8 @@ export interface IssueOptions {
   device: DeviceInfo
   ip?: string | null
   userAgent?: string | null
+  /** How long the session may live. The app's last the configured refresh lifetime. */
+  lifetimeMs?: number
 }
 
 export interface RotateOptions {
@@ -23,6 +26,8 @@ export interface RotateOptions {
   userAgent?: string | null
   /** The device the client says it is, so a replay can be told from a race. */
   deviceId?: string | null
+  /** Rotate the token without pushing the session's end further away. */
+  keepExpiry?: boolean
 }
 
 /**
@@ -60,7 +65,8 @@ export async function issueSession(
 ): Promise<AuthResponse> {
   const config = getConfig()
   const refreshToken = randomToken()
-  const expiresAt = new Date(Date.now() + config.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)
+  const lifetimeMs = options.lifetimeMs ?? config.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000
+  const expiresAt = new Date(Date.now() + lifetimeMs)
 
   const { session, replaced } = await db.transaction(async (tx) => {
     // Two sign-ins racing from one phone must not both find nothing to
@@ -237,7 +243,12 @@ async function rotate(
   if (!user.isActive) throw unauthorized("This account has been deactivated.")
 
   const nextRefresh = randomToken()
-  const expiresAt = new Date(Date.now() + config.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)
+  // A browser session, which is the portal's, never stretches, whichever
+  // route renews it.
+  const expiresAt =
+    origin.keepExpiry || session.platform === "web"
+      ? session.expiresAt
+      : new Date(Date.now() + config.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)
   const spentRefresh: SpentRefreshJson[] = [
     ...session.spentRefresh.map((entry) =>
       entry.h === retriedHash ? { ...entry, retried: true } : entry,
@@ -301,6 +312,19 @@ export async function revokeSession(db: Database, sessionId: string): Promise<vo
   if (row) await announceRevoked(row.userId, sessionId)
 }
 
+/** Ends whichever live session a refresh token belongs to, if any. */
+export async function revokeSessionByRefreshToken(
+  db: Database,
+  refreshToken: string,
+): Promise<void> {
+  const [row] = await db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(and(eq(sessions.refreshTokenHash, sha256(refreshToken)), isNull(sessions.revokedAt)))
+    .limit(1)
+  if (row) await revokeSession(db, row.id)
+}
+
 export async function revokeAllSessions(
   db: Database,
   userId: string,
@@ -314,4 +338,30 @@ export async function revokeAllSessions(
   const targets = rows.filter((row) => row.id !== exceptSessionId)
   for (const target of targets) await revokeSession(db, target.id)
   return targets.length
+}
+
+/** Throws unless `password` is the account's own. */
+export async function confirmPassword(db: Database, userId: string, password: string) {
+  const [user] = await db
+    .select({ passwordHash: users.passwordHash })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+  if (!user || !(await verifyPassword(password, user.passwordHash))) throw wrongPassword()
+}
+
+/**
+ * Stores a new password, refusing a weak one. False when there is no such
+ * account. Signing the account out is the caller's choice, since changing
+ * your own keeps the device you changed it from.
+ */
+export async function setPassword(db: Database, userId: string, password: string) {
+  const weak = validatePasswordStrength(password)
+  if (weak) throw badRequest(weak)
+  const [updated] = await db
+    .update(users)
+    .set({ passwordHash: await hashPassword(password), updatedAt: new Date() })
+    .where(eq(users.id, userId))
+    .returning({ id: users.id })
+  return Boolean(updated)
 }
