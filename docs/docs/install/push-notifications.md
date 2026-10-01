@@ -84,14 +84,50 @@ Disturb on Android. A silent push to an iPhone goes at Apple's background
 priority instead, because APNs throttles a background push sent at the higher
 one.
 
+## One notification per person
+
+Through Expo, news about one person shares one notification, the way you'd
+follow their afternoon. When Amina leaves home, gets to the shop and comes back,
+her notification grows a line each time rather than three appearing.
+
+- Where somebody went goes under their name: arrivals, departures, trips and
+  check-ins.
+- Quick messages and location requests go under the name of whoever sent them.
+- Low battery and a phone that stopped reporting go under "Amina's phone".
+
+The newest line comes first, so a collapsed notification shows the news. Five
+lines fit, and older ones are counted underneath. After two hours with no news
+about someone, the next piece starts a new notification, so one you swiped away
+in the morning doesn't come back with the whole morning in it.
+
+A backlog, after the phone or the provider was out of reach for a while,
+arrives as one update rather than a buzz for every line in a row.
+
+A trip that ends at a saved place doesn't send a notification of its own,
+because the arrival already did. Its distance is added to the arrival line and
+shows with the next update. A trip that ends somewhere unsaved gets its own
+line. News that reaches you through two circles you share with the same person
+is sent once.
+
+An SOS always gets a notification to itself, and the notice that it was
+resolved replaces it. An SOS that couldn't be delivered before it was resolved
+isn't sent late. Speed and crash alerts always stand alone.
+
+Every update still makes the phone buzz. There are fewer buzzes because a
+finished trip no longer adds one. ntfy and Web Push can't replace a
+notification, so through them each piece of news still arrives as its own.
+
 ## What a notification actually contains
 
 Hearth keeps push payloads deliberately boring:
 
-- title: `"Home"` / `"Amina's battery is low"` / `"🚨 SOS from Amina"`
-- body: `"Amina arrived at Home"` / `"Amina's phone is at 12%."`
+- title: `"Amina"` / `"Amina's phone"` / `"🚨 SOS from Amina"`
+- body: `"Arrived at Home"` with earlier lines under it / `"Battery at 12%"`
 - data: `{ type, circleId, eventId }`, plus a `placeId`, `userId` or timestamp
   where the alert needs one. Identifiers and times, nothing more.
+
+Through ntfy and Web Push each notification stands alone, so the wording does
+too: `"Home"` and `"Amina arrived at Home"`.
 
 **Coordinates are never included in a push.** The phone fetches the actual
 position from _your_ server when the notification is tapped. So the

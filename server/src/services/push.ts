@@ -1,10 +1,18 @@
 import type postgres from "postgres"
 import { MUTABLE_EVENT_TYPES, type PushProvider } from "@hearth/shared"
-import { and, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm"
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm"
+import type { PgUpdateSetSource } from "drizzle-orm/pg-core"
 
 import type { Database } from "../db/client"
-import { circleMembers, events, notificationOutbox, sessions, type OutboxRow } from "../db/schema"
-import { effectiveSharingState } from "./presence"
+import {
+  circleMembers,
+  notificationOutbox,
+  sessions,
+  sosAlerts,
+  type OutboxRow,
+} from "../db/schema"
+import { ALREADY_SHOWN, composeCard, type PushGroup } from "./notification-groups"
+import { placeNewsNoLongerShared, rowsForFormerMembers } from "./outbox-visibility"
 import type { AppConfig } from "../env"
 import { publicOnlyAgent } from "../lib/net"
 
@@ -31,6 +39,10 @@ export interface PushMessage {
   silent?: boolean
   /** When the row was queued, so a silent push's lifetime runs from then and not from each retry. */
   queuedAt?: Date
+  /** Joins the notification already showing about the same person. See notification-groups.ts. */
+  group?: PushGroup
+  /** The phone replaces a notification it already shows under this key instead of adding one. */
+  replaceKey?: string
 }
 
 export interface DeliveryTarget {
@@ -154,6 +166,15 @@ class ExpoDriver implements PushDriver {
               channelId: message.channel ?? "default",
               // So an SOS is still shown when the recipient already has the app open.
               _displayInForeground: message.channel === "sos",
+              // iOS replaces a card by collapse id. Android replaces by tag,
+              // and is not given a collapse id: there it becomes an FCM
+              // collapse key, and FCM keeps only four of those for a phone
+              // that is offline, which could cost it an SOS.
+              ...(message.replaceKey
+                ? target.platform === "ios"
+                  ? { collapseId: message.replaceKey }
+                  : { tag: message.replaceKey }
+                : {}),
             },
       ]),
     })
@@ -306,6 +327,9 @@ export async function enqueuePush(db: Database, messages: PushMessage[]): Promis
       channel: message.channel ?? ("default" as const),
       priority: message.priority ?? ("high" as const),
       silent: message.silent ?? false,
+      groupKey: message.group?.key ?? null,
+      groupTitle: message.group?.title ?? null,
+      groupLine: message.group?.line ?? null,
       ...(message.notBefore ? { nextAttemptAt: message.notBefore } : {}),
     })),
   )
@@ -375,6 +399,12 @@ export interface DrainSummary {
   sent: number
   failed: number
   skipped: number
+  /**
+   * News for somebody this drain sent a card about is due and still waiting,
+   * left behind while the card was in flight. The caller should go round
+   * again rather than leave it for the next tick.
+   */
+  waiting: boolean
 }
 
 /**
@@ -429,36 +459,14 @@ export async function drainOutbox(
   const batchSize = options.batchSize ?? 50
   const concurrency = options.concurrency ?? DEFAULT_SEND_CONCURRENCY
   const now = options.now ?? new Date()
-  const summary: DrainSummary = { processed: 0, sent: 0, failed: 0, skipped: 0 }
+  const summary: DrainSummary = { processed: 0, sent: 0, failed: 0, skipped: 0, waiting: false }
 
-  // SKIP LOCKED claims rows atomically, so several API replicas, or an admin
-  // "flush now" racing the scheduler, cannot deliver the same alert twice.
-  // Claiming also stamps next_attempt_at with the moment of the claim, which is
-  // what lets requeueStuckSends tell a send that is still in flight from one
-  // abandoned by a replica that died holding it.
-  const raw = (await db.execute(sql`
-    update notification_outbox
-    set status = 'sending', next_attempt_at = ${now.toISOString()}::timestamptz
-    where id in (
-      select id from notification_outbox
-      where status = 'pending' and next_attempt_at <= ${now.toISOString()}::timestamptz
-      order by (priority = 'high') desc, next_attempt_at asc
-      limit ${batchSize}
-      for update skip locked
-    )
-    returning *
-  `)) as unknown as Array<Record<string, unknown>>
-
-  // RETURNING hands rows back in heap order, whatever the subselect asked
-  // for, so the claim decides which rows make the batch and this decides who
-  // goes first within it. Ids climb with enqueue order.
-  const allClaimed = raw
-    .map(rowFromDriver)
-    .sort((a, b) => Number(b.priority === "high") - Number(a.priority === "high") || a.id - b.id)
+  const allClaimed = await claimDue(db, batchSize, now)
   if (allClaimed.length === 0) return summary
 
   const members = await dropRowsForFormerMembers(db, allClaimed, now, summary)
-  const claimed = await dropPlaceNewsNoLongerShared(db, members, now, summary)
+  const shared = await dropPlaceNewsNoLongerShared(db, members, now, summary)
+  const claimed = await dropSosAlreadyResolved(db, shared, now, summary)
   if (claimed.length === 0) return summary
 
   if (driver.provider === "none") {
@@ -511,57 +519,95 @@ export async function drainOutbox(
   // Every write below is conditional on this claim still owning the row. A
   // batch that runs long can have its rows requeued and delivered by another
   // claimant, and this one must not then overwrite that result.
-  const owned = (row: OutboxRow) =>
-    and(
-      eq(notificationOutbox.id, row.id),
-      eq(notificationOutbox.status, "sending"),
-      eq(notificationOutbox.nextAttemptAt, row.nextAttemptAt),
+  const owned = (rows: OutboxRow[]) =>
+    or(
+      ...rows.map((row) =>
+        and(
+          eq(notificationOutbox.id, row.id),
+          eq(notificationOutbox.status, "sending"),
+          eq(notificationOutbox.nextAttemptAt, row.nextAttemptAt),
+        ),
+      ),
     )
+  const settle = async (
+    rows: OutboxRow[],
+    change: PgUpdateSetSource<typeof notificationOutbox>,
+  ) => {
+    if (rows.length > 0) await db.update(notificationOutbox).set(change).where(owned(rows))
+  }
 
-  const deliver = async (row: OutboxRow) => {
-    summary.processed += 1
-    const targets = byUser.get(row.userId) ?? []
+  /**
+   * One push for a lane: a single row, or every due row of one person's news
+   * to one recipient, which go out as one card. The rows a push carries share
+   * its fate, sent together or retried together.
+   */
+  const deliver = async (lane: OutboxRow[]) => {
+    summary.processed += lane.length
+    const head = lane.at(-1)!
+    const targets = byUser.get(head.userId) ?? []
 
     if (targets.length === 0) {
-      await db
-        .update(notificationOutbox)
-        .set({ status: "skipped", sentAt: now, lastError: "no registered device" })
-        .where(owned(row))
-      summary.skipped += 1
+      await settle(lane, { status: "skipped", sentAt: now, lastError: "no registered device" })
+      summary.skipped += lane.length
       return
     }
 
-    if (row.silent && driver.provider !== "expo") {
-      await db
-        .update(notificationOutbox)
-        .set({ status: "skipped", sentAt: now, lastError: "silent wake needs the expo provider" })
-        .where(owned(row))
-      summary.skipped += 1
+    if (head.silent && driver.provider !== "expo") {
+      await settle(lane, {
+        status: "skipped",
+        sentAt: now,
+        lastError: "silent wake needs the expo provider",
+      })
+      summary.skipped += lane.length
       return
     }
 
     // A wake or a watch answers a question somebody asked moments ago. Sent
     // after its lifetime it turns the GPS on for a viewer who has long gone.
-    const expiresAt = row.createdAt.getTime() + silentTtlSeconds(row.data) * 1000
-    if (row.silent && now.getTime() >= expiresAt) {
-      await db
-        .update(notificationOutbox)
-        .set({ status: "failed", lastError: "expired before it could be delivered" })
-        .where(owned(row))
-      summary.failed += 1
+    const expiresAt = head.createdAt.getTime() + silentTtlSeconds(head.data) * 1000
+    if (head.silent && now.getTime() >= expiresAt) {
+      await settle(lane, { status: "failed", lastError: "expired before it could be delivered" })
+      summary.failed += lane.length
       return
     }
 
     const message: PushMessage = {
-      userId: row.userId,
-      circleId: row.circleId,
-      title: row.title,
-      body: row.body,
-      data: row.data,
-      channel: row.channel,
-      priority: row.priority,
-      silent: row.silent,
-      queuedAt: row.createdAt,
+      userId: head.userId,
+      circleId: head.circleId,
+      title: head.title,
+      body: head.body,
+      data: head.data,
+      channel: head.channel,
+      priority: head.priority,
+      silent: head.silent,
+      queuedAt: head.createdAt,
+    }
+    let carried = lane
+    let groupThread: number | null = null
+    const cards = canReplace(driver) && head.groupKey
+    // Only a provider that replaces a card on the phone gets one. Through any
+    // other a growing card would land as a new notification each time,
+    // repeating everything before it, so those get each row as written.
+    if (cards) {
+      const { card, echoes } = await composeCard(db, lane, now)
+      await settle(echoes, { status: "skipped", sentAt: now, lastError: ALREADY_SHOWN })
+      summary.skipped += echoes.length
+      if (!card) return
+      carried = card.rows
+      groupThread = card.thread
+      // A tap opens what the card's newest line is about, never a copy it left out.
+      const newest = card.rows.at(-1)!
+      Object.assign(message, {
+        circleId: newest.circleId,
+        data: newest.data,
+        queuedAt: newest.createdAt,
+        title: card.title,
+        body: card.body,
+        replaceKey: card.replaceKey,
+      })
+    } else if (canReplace(driver) && isSos(head)) {
+      // The all clear takes the place of the alarm it answers.
+      message.replaceKey = `sos:${String(head.data.alertId)}`
     }
 
     const results = await Promise.all(
@@ -585,39 +631,144 @@ export async function drainOutbox(
     }
 
     if (results.some((result) => result.ok)) {
-      await db
-        .update(notificationOutbox)
-        .set({ status: "sent", sentAt: new Date(), attempts: row.attempts + 1 })
-        .where(owned(row))
-      summary.sent += 1
+      await settle(carried, {
+        status: "sent",
+        sentAt: now,
+        attempts: sql`${notificationOutbox.attempts} + 1`,
+        groupThread,
+      })
+      summary.sent += carried.length
       return
     }
 
-    const attempts = row.attempts + 1
     const lastError = results.find((result) => result.error)?.error ?? "delivery failed"
-    const delaySeconds = BACKOFF[Math.min(attempts - 1, BACKOFF.length - 1)] ?? 3600
-    const retryAt = Date.now() + delaySeconds * 1000
-    const exhausted = attempts >= MAX_ATTEMPTS || (row.silent && retryAt >= expiresAt)
-
-    await db
-      .update(notificationOutbox)
-      .set({
+    for (const row of carried) {
+      const attempts = row.attempts + 1
+      const delaySeconds = BACKOFF[Math.min(attempts - 1, BACKOFF.length - 1)] ?? 3600
+      const retryAt = Date.now() + delaySeconds * 1000
+      const exhausted = attempts >= MAX_ATTEMPTS || (row.silent && retryAt >= expiresAt)
+      await settle([row], {
         status: exhausted ? "failed" : "pending",
         attempts,
         lastError,
         nextAttemptAt: new Date(retryAt),
       })
-      .where(owned(row))
-    summary.failed += 1
+    }
+    summary.failed += carried.length
   }
 
-  // The rows are independent, so a slow provider round trip for one family
-  // must not hold up the next. A bounded pool rather than Promise.all, so a
-  // backlog after an outage does not open hundreds of connections at once.
-  await runWithConcurrency(claimed, concurrency, deliver)
+  // A provider that replaces cards gets one person's due news as one lane,
+  // and one push. Every other row is a lane of its own. The lanes are
+  // independent, so a slow provider round trip for one family must not hold
+  // up the next. A bounded pool rather than Promise.all, so a backlog after
+  // an outage does not open hundreds of connections at once.
+  const lanes: OutboxRow[][] = []
+  const laneFor = new Map<string, OutboxRow[]>()
+  for (const row of claimed) {
+    if (!canReplace(driver) || !row.groupKey) {
+      lanes.push([row])
+      continue
+    }
+    const key = `${row.userId}|${row.groupKey}`
+    const lane = laneFor.get(key)
+    if (lane) {
+      lane.push(row)
+    } else {
+      const fresh = [row]
+      laneFor.set(key, fresh)
+      lanes.push(fresh)
+    }
+  }
+  await runWithConcurrency(lanes, concurrency, deliver)
 
+  const carded = lanes.filter((lane) => lane[0]!.groupKey && canReplace(driver))
+  summary.waiting = carded.length > 0 && (await siblingsDue(db, carded, now))
   return summary
 }
+
+/** Whether any of these people has news due that a claim passed over while their card was in flight. */
+async function siblingsDue(db: Database, lanes: OutboxRow[][], now: Date): Promise<boolean> {
+  const [due] = await db
+    .select({ id: notificationOutbox.id })
+    .from(notificationOutbox)
+    .where(
+      and(
+        eq(notificationOutbox.status, "pending"),
+        lte(notificationOutbox.nextAttemptAt, now),
+        or(
+          ...lanes.map((lane) =>
+            and(
+              eq(notificationOutbox.userId, lane[0]!.userId),
+              eq(notificationOutbox.groupKey, lane[0]!.groupKey!),
+            ),
+          ),
+        ),
+      ),
+    )
+    .limit(1)
+  return Boolean(due)
+}
+
+/**
+ * Longer than any one send can take, a card being a single push with its own
+ * deadline. A row claimed before this was abandoned by a replica that died,
+ * and stops holding back the rest of the person's news.
+ */
+const IN_FLIGHT_MS = 2 * 60 * 1000
+
+/**
+ * Claims the rows that are due. SKIP LOCKED keeps several replicas, or an
+ * admin "flush now" racing the scheduler, from claiming one row twice, and
+ * the claim stamps next_attempt_at, which is what lets requeueStuckSends
+ * tell a send still in flight from one a dead replica abandoned.
+ *
+ * News for a card already on its way stays where it is. Sent alongside, it
+ * would build its card without the line in flight, and whichever reached the
+ * phone last would lose the other's. The claims take turns under one lock so
+ * each sees what the last one took.
+ */
+async function claimDue(db: Database, batchSize: number, now: Date): Promise<OutboxRow[]> {
+  const claimed = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('hearth:outbox:claim'))`)
+    const due = tx
+      .select({ id: notificationOutbox.id })
+      .from(notificationOutbox)
+      .where(
+        and(
+          eq(notificationOutbox.status, "pending"),
+          lte(notificationOutbox.nextAttemptAt, now),
+          sql`not exists (
+            select 1 from ${notificationOutbox} busy
+            where busy.status = 'sending'
+              and busy.user_id = ${notificationOutbox.userId}
+              and busy.group_key = ${notificationOutbox.groupKey}
+              and busy.next_attempt_at > ${new Date(now.getTime() - IN_FLIGHT_MS).toISOString()}::timestamptz
+          )`,
+        ),
+      )
+      .orderBy(
+        sql`(${notificationOutbox.priority} = 'high') desc`,
+        notificationOutbox.nextAttemptAt,
+      )
+      .limit(batchSize)
+      .for("update", { skipLocked: true })
+    return tx
+      .update(notificationOutbox)
+      .set({ status: "sending", nextAttemptAt: now })
+      .where(inArray(notificationOutbox.id, due))
+      .returning()
+  })
+  // RETURNING hands rows back in heap order, whatever the subselect asked
+  // for, so the claim decides which rows make the batch and this decides who
+  // goes first within it. Ids climb with enqueue order.
+  return claimed.sort(
+    (a, b) => Number(b.priority === "high") - Number(a.priority === "high") || a.id - b.id,
+  )
+}
+
+/** Whether the driver can replace a notification already on the phone. */
+export const canReplace = (driver: Pick<PushDriver, "provider">): boolean =>
+  driver.provider === "expo"
 
 /**
  * Membership is checked again at delivery time, not only when the row was
@@ -632,38 +783,16 @@ async function dropRowsForFormerMembers(
   now: Date,
   summary: DrainSummary,
 ): Promise<OutboxRow[]> {
-  const scoped = claimed.filter((row): row is OutboxRow & { circleId: string } => !!row.circleId)
-  if (scoped.length === 0) return claimed
-
-  const memberRows = await db
-    .select({ userId: circleMembers.userId, circleId: circleMembers.circleId })
-    .from(circleMembers)
-    .where(
-      and(
-        inArray(circleMembers.userId, [...new Set(scoped.map((row) => row.userId))]),
-        inArray(circleMembers.circleId, [...new Set(scoped.map((row) => row.circleId))]),
-      ),
-    )
-
-  const key = (userId: string, circleId: string) => `${userId}:${circleId}`
-  const stillIn = new Set(memberRows.map((row) => key(row.userId, row.circleId)))
-  const gone = scoped.filter((row) => !stillIn.has(key(row.userId, row.circleId)))
-  if (gone.length === 0) return claimed
+  const gone = await rowsForFormerMembers(db, claimed)
+  if (gone.size === 0) return claimed
 
   await db
     .update(notificationOutbox)
     .set({ status: "skipped", sentAt: now, lastError: "no longer a member of that circle" })
-    .where(
-      inArray(
-        notificationOutbox.id,
-        gone.map((row) => row.id),
-      ),
-    )
-  summary.processed += gone.length
-  summary.skipped += gone.length
-
-  const dropped = new Set(gone.map((row) => row.id))
-  return claimed.filter((row) => !dropped.has(row.id))
+    .where(inArray(notificationOutbox.id, [...gone]))
+  summary.processed += gone.size
+  summary.skipped += gone.size
+  return claimed.filter((row) => !gone.has(row.id))
 }
 
 function withDeadline(
@@ -680,62 +809,14 @@ function withDeadline(
   return Promise.race([work, deadline]).finally(() => clearTimeout(timer))
 }
 
-/**
- * News of where somebody went is dropped if they stopped sharing precisely
- * with that circle while it waited in the outbox, the same way the feed stops
- * showing it. A crash alert is not in this list: a family is told about a
- * possible incident whatever was switched a moment before it.
- */
-const PLACE_NEWS = new Set(["place_arrive", "place_leave", "speed_alert", "trip_completed"])
-
 async function dropPlaceNewsNoLongerShared(
   db: Database,
   claimed: OutboxRow[],
   now: Date,
   summary: DrainSummary,
 ): Promise<OutboxRow[]> {
-  const news = claimed.filter(
-    (row) =>
-      row.circleId &&
-      PLACE_NEWS.has(String(row.data.type)) &&
-      Number.isFinite(Number(row.data.eventId)),
-  )
-  if (news.length === 0) return claimed
-
-  const actors = await db
-    .select({ id: events.id, actor: events.actorUserId })
-    .from(events)
-    .where(inArray(events.id, [...new Set(news.map((row) => Number(row.data.eventId)))]))
-  const actorOf = new Map(actors.map((row) => [row.id, row.actor]))
-  const actorIds = [...new Set(actors.map((row) => row.actor).filter((id): id is string => !!id))]
-  const states =
-    actorIds.length === 0
-      ? []
-      : await db
-          .select({
-            circleId: circleMembers.circleId,
-            userId: circleMembers.userId,
-            sharingState: circleMembers.sharingState,
-            pausedUntil: circleMembers.pausedUntil,
-            resumeToState: circleMembers.resumeToState,
-          })
-          .from(circleMembers)
-          .where(inArray(circleMembers.userId, actorIds))
-  const precise = new Set(
-    states
-      .filter(
-        (row) =>
-          effectiveSharingState(row.sharingState, row.pausedUntil, now, row.resumeToState) ===
-          "precise",
-      )
-      .map((row) => `${row.userId}:${row.circleId}`),
-  )
-
-  const stale = news.filter((row) => {
-    const actor = actorOf.get(Number(row.data.eventId))
-    return actor != null && !precise.has(`${actor}:${row.circleId}`)
-  })
-  if (stale.length === 0) return claimed
+  const stale = await placeNewsNoLongerShared(db, claimed, now)
+  if (stale.size === 0) return claimed
 
   await db
     .update(notificationOutbox)
@@ -744,6 +825,42 @@ async function dropPlaceNewsNoLongerShared(
       sentAt: now,
       lastError: "no longer shared precisely with that circle",
     })
+    .where(inArray(notificationOutbox.id, [...stale]))
+  summary.processed += stale.size
+  summary.skipped += stale.size
+  return claimed.filter((row) => !stale.has(row.id))
+}
+
+/**
+ * An SOS still queued once it was resolved, typically a retry after a
+ * provider outage. Sent now it would sound the alarm for something that is
+ * over, and on a phone that replaces by key it would cover the all clear.
+ */
+async function dropSosAlreadyResolved(
+  db: Database,
+  claimed: OutboxRow[],
+  now: Date,
+  summary: DrainSummary,
+): Promise<OutboxRow[]> {
+  const raised = claimed.filter((row) => row.data.type === "sos_started" && isSos(row))
+  if (raised.length === 0) return claimed
+
+  const resolved = await db
+    .select({ id: sosAlerts.id })
+    .from(sosAlerts)
+    .where(
+      and(
+        inArray(sosAlerts.id, [...new Set(raised.map((row) => String(row.data.alertId)))]),
+        isNotNull(sosAlerts.resolvedAt),
+      ),
+    )
+  const over = new Set(resolved.map((row) => row.id))
+  const stale = raised.filter((row) => over.has(String(row.data.alertId)))
+  if (stale.length === 0) return claimed
+
+  await db
+    .update(notificationOutbox)
+    .set({ status: "skipped", sentAt: now, lastError: "resolved before it could be delivered" })
     .where(
       inArray(
         notificationOutbox.id,
@@ -756,27 +873,9 @@ async function dropPlaceNewsNoLongerShared(
   return claimed.filter((row) => !dropped.has(row.id))
 }
 
-/** A raw db.execute comes back in snake_case, not the Drizzle row shape. */
-function rowFromDriver(raw: Record<string, unknown>): OutboxRow {
-  return {
-    id: Number(raw.id),
-    userId: String(raw.user_id),
-    sessionId: (raw.session_id as string | null) ?? null,
-    circleId: (raw.circle_id as string | null) ?? null,
-    title: String(raw.title),
-    body: String(raw.body),
-    data: (raw.data as Record<string, unknown>) ?? {},
-    channel: raw.channel as OutboxRow["channel"],
-    priority: raw.priority as OutboxRow["priority"],
-    silent: Boolean(raw.silent),
-    status: raw.status as OutboxRow["status"],
-    attempts: Number(raw.attempts),
-    lastError: (raw.last_error as string | null) ?? null,
-    nextAttemptAt: new Date(raw.next_attempt_at as string),
-    createdAt: new Date(raw.created_at as string),
-    sentAt: raw.sent_at ? new Date(raw.sent_at as string) : null,
-  }
-}
+const isSos = (row: OutboxRow) =>
+  (row.data.type === "sos_started" || row.data.type === "sos_resolved") &&
+  typeof row.data.alertId === "string"
 
 /**
  * A replica that dies mid-drain leaves rows stuck in "sending" with nobody to

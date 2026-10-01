@@ -67,15 +67,17 @@ async function main(): Promise<void> {
     }
   }
 
-  const scheduler = config.ENABLE_JOBS ? startScheduler(getDb(), config, app.log) : { stop() {} }
+  const scheduler = config.ENABLE_JOBS
+    ? startScheduler(getDb(), config, app.log)
+    : { stop: async () => {} }
 
   let shuttingDown = false
   const shutdown = async (signal: string) => {
     if (shuttingDown) return
     shuttingDown = true
     app.log.info({ signal }, "shutting down")
-    scheduler.stop()
     try {
+      await scheduler.stop()
       await app.close()
       await bus.close()
       await closeDb()

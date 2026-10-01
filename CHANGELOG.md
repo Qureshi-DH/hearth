@@ -6,6 +6,17 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Changed
+
+- Through Expo, news about one person shares one notification that grows a
+  line at a time: where they went under their name, their messages under the
+  sender's, and battery and silence under their phone. Two quiet hours start a
+  new one. A trip that ends at a saved place no longer buzzes on its own. Its
+  distance goes on the arrival line instead. The same news through two circles
+  is sent once, a backlog lands as one update, and a resolved SOS replaces the
+  SOS. ntfy and Web Push still get each notification on its own. Migration
+  0011 runs on start, and no app update is needed.
+
 ## [1.1.0] - 2026-10-01
 
 Fixes from a security and code review before the repository went public,

@@ -4,17 +4,12 @@ import type { FastifyBaseLogger } from "fastify"
 
 import { getSql, type Database } from "../db/client"
 import { CONTROL_FRESH_MS, controlOpenSql, sendControl } from "../services/control"
-import {
-  circleMembers,
-  events,
-  placeMemberships,
-  sessions,
-  userPresence,
-  users,
-} from "../db/schema"
+import { circleMembers, events, sessions, userPresence, users } from "../db/schema"
 import type { AppConfig } from "../env"
 import { getPushDriver } from "../runtime"
 import { broadcastEvent, recordEvent } from "../services/feed"
+import { phoneGroup } from "../services/notification-groups"
+import { heardAt, parked, silentPastCutoff } from "../services/reporting"
 import { effectiveSharingState, preciseSinceOnLapse } from "../services/presence"
 import {
   drainOutbox,
@@ -145,12 +140,6 @@ const WAKE_GRACE_MS = 10 * 60 * 1000
 const UNANSWERED_WAKES_FOR_OFFLINE = 2
 
 /**
- * The last moment the phone spoke, fix or no fix. greatest() ignores a null,
- * so a row that predates the column reads its last fix as before.
- */
-const heardAt = sql`greatest(${userPresence.recordedAt}, ${userPresence.lastHeardAt})`
-
-/**
  * Whether the phone can be reached by a silent push at all. The provider has
  * to carry one and the phone has to have registered for it; a phone that has
  * not is judged on its silence alone, as it always was.
@@ -161,29 +150,6 @@ const wakeable = sql`exists (
     and ${sessions.revokedAt} is null
     and ${sessions.pushToken} is not null
     and ${sessions.pushProvider} = 'expo'
-)`
-
-/**
- * Whether the phone is parked, judged from everything the server knows and
- * not from the one label the phone may never manage to send. The fix that
- * arrives somewhere is by construction a moving fix: it crossed the fence
- * while the tracker still called the phone "driving", and the stop that
- * would say "still" is the least reliable request the phone makes. So a
- * phone inside a place the family named is parked, and so is one that
- * measured itself standing still with a fix sharp enough to mean it.
- */
-const parked = sql`(
-  ${userPresence.activity} = 'still'
-  or exists (
-    select 1 from ${placeMemberships} inside
-    where inside.user_id = ${userPresence.userId} and inside.is_inside
-  )
-  or (
-    ${userPresence.speedMps} is not null
-    and ${userPresence.speedMps} < ${DEFAULTS.incidentStoppedSpeedMps}
-    and ${userPresence.accuracyMeters} is not null
-    and ${userPresence.accuracyMeters} <= ${DEFAULTS.geofenceMaxAccuracyMeters}
-  )
 )`
 
 /**
@@ -284,15 +250,7 @@ async function flagOfflineDevices(
   log: FastifyBaseLogger,
   driver: PushDriver | null,
 ): Promise<number> {
-  const cutoff = new Date(Date.now() - DEFAULTS.offlineAfterSeconds * 1000)
-  // A parked phone is expected to go quiet: iOS suspends it, and answers a
-  // silent push only when it feels like it. Silence from a parked phone is
-  // news after a night, not after an hour. A phone last seen moving that
-  // goes quiet is the one worth a word.
-  const parkedCutoff = new Date(Date.now() - DEFAULTS.parkedOfflineAfterSeconds * 1000)
-  const quietFor = sql`${heardAt} < (case when ${parked}
-    then ${parkedCutoff.toISOString()}::timestamptz
-    else ${cutoff.toISOString()}::timestamptz end)`
+  const quietFor = silentPastCutoff(new Date())
   // A phone that was never asked cannot have failed to answer. Where no wake
   // can be sent the silence alone has to do, as it always did. Where one
   // can, the verdict waits for two to go unanswered and the last of them to
@@ -455,6 +413,11 @@ async function flagOfflineDevices(
               ? `${row.displayName}'s phone says its ${reason}.`
               : `${row.displayName}'s phone has not reported in for a while.`,
             channel: "alerts",
+            group: phoneGroup(
+              row.userId,
+              row.displayName,
+              reason ? `Says its ${reason}` : "Has not reported in for a while",
+            ),
           },
         })
         broadcasts.push({ circleId: membership.circleId, event })
@@ -724,10 +687,13 @@ export async function runJobs(
     const driver = getPushDriver()
     if (!driver) return
     await requeueStuckSends(db, new Date(Date.now() - 10 * 60 * 1000))
-    const summary = await drainOutbox(db, driver, { batchSize: 100 })
-    report.pushSent = summary.sent
-    report.pushFailed = summary.failed
-    report.pushSkipped = summary.skipped
+    let summary
+    do {
+      summary = await drainOutbox(db, driver, { batchSize: 100 })
+      report.pushSent += summary.sent
+      report.pushFailed += summary.failed
+      report.pushSkipped += summary.skipped
+    } while (summary.waiting)
   })
 
   await step("pauses.resume", async () => {
@@ -766,7 +732,8 @@ export async function runJobs(
 }
 
 export interface Scheduler {
-  stop(): void
+  /** Settles once no drain is mid-send, so shutting down does not strand a claimed row. */
+  stop(): Promise<void>
 }
 
 /**
@@ -792,7 +759,7 @@ export function createOutboxDrainer(
       let summary
       do {
         summary = await drainOutbox(db, driver, { batchSize })
-      } while (summary.processed === batchSize)
+      } while (summary.processed === batchSize || summary.waiting)
     } while (again)
   }
 
@@ -856,10 +823,11 @@ export function startScheduler(db: Database, config: AppConfig, log: FastifyBase
   }
 
   return {
-    stop() {
+    async stop() {
       clearInterval(timer)
       clearTimeout(kickoff)
-      void listener?.stop()
+      await listener?.stop()
+      await drainer.idle()
     },
   }
 }

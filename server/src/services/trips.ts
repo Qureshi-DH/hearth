@@ -32,6 +32,7 @@ import {
   users,
 } from "../db/schema"
 import { broadcastEvent, recordEvent } from "./feed"
+import { outingGroup } from "./notification-groups"
 import { preciseStretch } from "./presence"
 
 const MAX_POINTS_PER_PASS = 5000
@@ -863,12 +864,12 @@ async function announceTrip(db: Database, pass: Pass, columns: TripColumns): Pro
   const fresh = pass.now.getTime() - columns.endedAt.getTime() < TRIP_PUSH_FRESHNESS_MS
 
   for (const circleId of circleIds) {
-    const from = placeNameIn(pass.places, circleId, {
-      lat: columns.startLat,
-      lon: columns.startLon,
-    })
-    const to = placeNameIn(pass.places, circleId, { lat: columns.endLat, lon: columns.endLon })
-    const summary = tripSummary(audience.name, columns.distanceMeters, from, to)
+    const from =
+      placeIn(pass.places, circleId, { lat: columns.startLat, lon: columns.startLon })?.name ?? null
+    const end = placeIn(pass.places, circleId, { lat: columns.endLat, lon: columns.endLon })
+    const to = end?.name ?? null
+    const route = journey(columns.distanceMeters, from, to)
+    const summary = `${audience.name} travelled ${route}`
 
     const event = await recordEvent(db, {
       circleId,
@@ -887,24 +888,39 @@ async function announceTrip(db: Database, pass: Pass, columns: TripColumns): Pro
         endedAt: columns.endedAt.toISOString(),
       },
       summary,
-      notify: fresh ? { title: "Trip finished", body: `${summary}.` } : undefined,
+      notify: fresh
+        ? {
+            title: "Trip finished",
+            body: `${summary}.`,
+            group: outingGroup(pass.userId, audience.name, `Travelled ${route}`),
+            // Ending at a saved place, the arrival has already buzzed, and the
+            // distance reads best on its line.
+            amends: end
+              ? {
+                  placeId: end.id,
+                  startedAt: columns.startedAt,
+                  endedAt: columns.endedAt,
+                  line: `Arrived at ${end.name} after ${distanceText(columns.distanceMeters)}`,
+                }
+              : undefined,
+          }
+        : undefined,
     })
     pass.broadcasts.push({ circleId, event })
   }
 }
 
-function tripSummary(
-  name: string,
-  distanceMeters: number,
-  from: string | null,
-  to: string | null,
-): string {
-  const distance =
-    distanceMeters >= 1000 ? `${(distanceMeters / 1000).toFixed(1)} km` : `${distanceMeters} m`
-  if (from && to) return `${name} travelled ${distance} from ${from} to ${to}`
-  if (to) return `${name} travelled ${distance} to ${to}`
-  if (from) return `${name} travelled ${distance} from ${from}`
-  return `${name} travelled ${distance}`
+function distanceText(distanceMeters: number): string {
+  return distanceMeters >= 1000 ? `${(distanceMeters / 1000).toFixed(1)} km` : `${distanceMeters} m`
+}
+
+/** "4.2 km from Home to Work", naming whichever ends were saved places. */
+function journey(distanceMeters: number, from: string | null, to: string | null): string {
+  const distance = distanceText(distanceMeters)
+  if (from && to) return `${distance} from ${from} to ${to}`
+  if (to) return `${distance} to ${to}`
+  if (from) return `${distance} from ${from}`
+  return distance
 }
 
 async function loadAudience(db: Database, userId: string, now: Date): Promise<Audience> {
@@ -1086,15 +1102,15 @@ function placeContaining(placeRows: PlaceRow[], point: { lat: number; lon: numbe
   return undefined
 }
 
-function placeNameIn(
+function placeIn(
   placeRows: PlaceRow[],
   circleId: string,
   point: { lat: number; lon: number },
-): string | null {
+): PlaceRow | null {
   for (const place of placeRows) {
     if (place.circleId !== circleId) continue
     if (haversineMeters(point, { lat: place.lat, lon: place.lon }) <= place.radiusMeters) {
-      return place.name
+      return place
     }
   }
   return null

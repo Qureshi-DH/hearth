@@ -5,8 +5,35 @@ import type { Database } from "../db/client"
 import { events, users } from "../db/schema"
 import { circleTopic } from "../lib/bus"
 import { toFeedEvent, toPublicUser } from "../lib/serialize"
-import { getBus } from "../runtime"
-import { enqueuePush, resolveCircleRecipients } from "./push"
+import { getBus, getPushDriver } from "../runtime"
+import { amendArrivalLine, type PushGroup } from "./notification-groups"
+import { canReplace, enqueuePush, resolveCircleRecipients } from "./push"
+
+type Notify = {
+  title: string
+  body: string
+  channel?: "default" | "alerts" | "sos"
+  priority?: "normal" | "high"
+  /** Defaults to true. You rarely want a push about your own action. */
+  excludeActor?: boolean
+  /** Narrows delivery. Each member's mutes still apply on top. */
+  onlyUserIds?: string[]
+  data?: Record<string, unknown>
+  /** Hold the send back until this time. See PushMessage.notBefore. */
+  notBefore?: Date
+} & (
+  | { group?: undefined; amends?: undefined }
+  | {
+      /** Joins the notification already showing about the person. */
+      group: PushGroup
+      /**
+       * Rewrite the line of an arrival already queued for the recipient
+       * instead of sending this. Only recipients with no such arrival get the
+       * push. See amendArrivalLine.
+       */
+      amends?: { placeId: string; startedAt: Date; endedAt: Date; line: string }
+    }
+)
 
 export interface RecordEventInput {
   circleId: string
@@ -20,19 +47,7 @@ export interface RecordEventInput {
    * they happened rather than at the time the queue drained.
    */
   occurredAt?: Date
-  notify?: {
-    title: string
-    body: string
-    channel?: "default" | "alerts" | "sos"
-    priority?: "normal" | "high"
-    /** Defaults to true. You rarely want a push about your own action. */
-    excludeActor?: boolean
-    /** Narrows delivery. Each member's mutes still apply on top. */
-    onlyUserIds?: string[]
-    data?: Record<string, unknown>
-    /** Hold the send back until this time. See PushMessage.notBefore. */
-    notBefore?: Date
-  }
+  notify?: Notify
   /**
    * Hold the websocket fan-out back and let the caller send it after its
    * transaction commits. The push queue still goes in the transaction, because
@@ -93,6 +108,19 @@ export async function recordEvent(db: Database, input: RecordEventInput): Promis
       const allowed = new Set(input.notify.onlyUserIds)
       recipients = recipients.filter((userId) => allowed.has(userId))
     }
+    const { amends, group } = input.notify
+    // Only a provider that replaces cards ever shows the rewritten line.
+    // Anywhere else the trip keeps its own notification.
+    const driver = getPushDriver()
+    if (amends && group && driver && canReplace(driver)) {
+      const amended = await amendArrivalLine(db, {
+        userIds: recipients,
+        circleId: input.circleId,
+        groupKey: group.key,
+        ...amends,
+      })
+      recipients = recipients.filter((userId) => !amended.has(userId))
+    }
 
     await enqueuePush(
       db,
@@ -104,6 +132,7 @@ export async function recordEvent(db: Database, input: RecordEventInput): Promis
         channel: input.notify!.channel ?? "default",
         priority: input.notify!.priority ?? "high",
         notBefore: input.notify!.notBefore,
+        group: input.notify!.group,
         data: {
           type: input.type,
           circleId: input.circleId,

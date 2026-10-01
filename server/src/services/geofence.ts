@@ -11,6 +11,7 @@ import {
   users,
 } from "../db/schema"
 import { broadcastEvent, recordEvent } from "./feed"
+import { outingGroup } from "./notification-groups"
 
 /**
  * A crossing cancelled this quickly was a transit, not a visit. Driving through
@@ -490,6 +491,11 @@ export async function evaluateGeofenceBatch(
           ? {
               title: transition.placeName,
               body: `${name} ${verb} ${transition.placeName}`,
+              group: outingGroup(
+                userId,
+                name,
+                `${transition.type === "arrive" ? "Arrived at" : "Left"} ${transition.placeName}`,
+              ),
               // An entry waits out the time a transit would take to contradict
               // it. A leave has nothing left to be contradicted by, so it goes
               // straight out.

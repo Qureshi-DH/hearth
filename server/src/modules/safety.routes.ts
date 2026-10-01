@@ -19,6 +19,7 @@ import { toPublicUser } from "../lib/serialize"
 import { rateLimitKey, requireAuth, requireMembership } from "../plugins/auth"
 import { getBus } from "../runtime"
 import { recordEvent } from "../services/feed"
+import { messagesGroup, outingGroup } from "../services/notification-groups"
 import { effectiveSharingState, preciseSinceAfter, projectPresence } from "../services/presence"
 import { enqueuePush } from "../services/push"
 
@@ -317,6 +318,7 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
           body: `${actor?.displayName ?? "Someone"} marked the alert as resolved.`,
           channel: "alerts",
           excludeActor: false,
+          data: { alertId: alert.id },
         },
       })
 
@@ -506,6 +508,7 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         match ? { id: match.id, name: match.name } : null,
       )
       const where = seen.placeName ? ` at ${seen.placeName}` : ""
+      const checkedIn = singleLine(`in${where}.${created.note ? ` "${created.note}"` : ""}`)
 
       await recordEvent(db, {
         circleId: membership.circleId,
@@ -521,9 +524,8 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: singleLine(`${name} checked in${where}`),
         notify: {
           title: "Check-in",
-          body: singleLine(
-            `${name} checked in${where}.${created.note ? ` "${created.note}"` : ""}`,
-          ),
+          body: `${name} checked ${checkedIn}`,
+          group: outingGroup(auth.userId, name, `Checked ${checkedIn}`),
         },
       })
 
@@ -719,6 +721,7 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
           priority: "high",
           onlyUserIds: [target.userId],
           data: { fromUserId: auth.userId },
+          group: messagesGroup(auth.userId, name, oneLine || "Asked where you are"),
         },
       })
 

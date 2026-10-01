@@ -163,12 +163,32 @@ listens for it and drains straight away. The drain claims pending rows with
 `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)`, high priority first,
 which is safe across several API replicas and against an admin "flush now",
 and sends them through the configured `PushDriver` (`none` / `expo` / `ntfy` /
-`webpush`) 8 at a time. Before sending, it drops a row whose recipient has left
-the circle, and place news about somebody who no longer shares precisely with
-it. Each provider call gets 15 s. A failed send is retried with back-off, and
-after 6 attempts the row is marked `failed`. The scheduler tick still drains,
+`webpush`) 8 at a time. Claims take turns under an advisory lock, and a row
+waits while a sibling for the same recipient and card is still sending, so two
+drains never build one card twice. Before sending, it drops a row whose
+recipient has left the circle, and place news about somebody who no longer
+shares precisely with it (`services/outbox-visibility.ts`). Each provider call
+gets 15 s. A failed send is retried with back-off, and after 6 attempts the row
+is marked `failed`. The scheduler tick still drains,
 for those retries, dead-token cleanup, and re-queueing of rows a crashed
 replica left in `sending`. See [push notifications](../install/push-notifications.md).
+
+News about one person shares a notification (`services/notification-groups.ts`).
+A row can carry a group key, `outing:`, `messages:` or `phone:` plus the
+person's id, with a title and a one-line version of itself. Through `expo` the
+drain builds one card from every due row of the same recipient and key
+(`composeCard`), so a backlog lands as one buzz. The card continues the
+recipient's thread (two quiet hours start a new one), lists its lines newest
+first, and goes out under a `collapseId` on iOS and a `tag` on Android, so the
+phone replaces the card it shows. The rows a card carries are sent or retried
+together. Android gets no collapse id,
+because FCM keeps only four collapse keys for an offline phone. Earlier lines
+pass the same membership and sharing checks as the row itself. A line the card
+already shows, arriving through a second circle, is skipped. When the provider
+is `expo`, a trip that ends at a saved place rewrites the arrival's line
+(`amendArrivalLine`) instead of queueing a push of its own. Other providers
+send each row's standalone title and body. An SOS still queued after it was
+resolved is dropped, so a late retry can't sound the alarm again.
 
 A silent push (`silent: true`, the `wake` and `watch` rows) can only go through
 `expo`, and the drain marks it `skipped` for any other provider. It carries a

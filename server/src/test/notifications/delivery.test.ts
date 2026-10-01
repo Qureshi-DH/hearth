@@ -586,7 +586,7 @@ describe("outbox delivery", () => {
     expect(second).toMatchObject({ processed: 1, sent: 1, failed: 0 })
     expect(back.delivered).toHaveLength(1)
     expect(back.delivered[0]!.token).toBe("ExponentPushToken[teen-phone]")
-    expect(back.delivered[0]!.message.body).toContain("checked in")
+    expect(back.delivered[0]!.message.body).toContain("Checked in")
     ;[row] = await outbox()
     expect(row!.status).toBe("sent")
 
@@ -876,7 +876,9 @@ describe("membership", () => {
     const toParent = back.delivered.filter(
       (entry) => entry.token === "ExponentPushToken[parent-phone]",
     )
-    expect(toParent.map((entry) => entry.message.body)).toEqual(["Teen arrived at Home"])
+    expect(toParent.map((entry) => [entry.message.title, entry.message.body])).toEqual([
+      ["Teen", "Arrived at Home"],
+    ])
   })
 })
 

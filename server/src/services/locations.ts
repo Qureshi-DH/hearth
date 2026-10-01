@@ -26,6 +26,7 @@ import { circleTopic } from "../lib/bus"
 import { getBus } from "../runtime"
 import { recordEvent } from "./feed"
 import { evaluateGeofenceBatch } from "./geofence"
+import { phoneGroup } from "./notification-groups"
 import { effectiveSharingState, loadRawPresenceByCircle, preciseSinceOnLapse } from "./presence"
 
 /** Fixes older than this are almost certainly a buggy client clock. */
@@ -992,6 +993,7 @@ async function maybeRaiseBatteryAlert(
         title: `${name}'s battery is low`,
         body: `${name}'s phone is at ${percent}%.`,
         channel: "alerts",
+        group: phoneGroup(userId, name, `Battery at ${percent}%`),
       },
     })
   }

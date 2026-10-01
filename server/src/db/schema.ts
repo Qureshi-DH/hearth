@@ -540,11 +540,24 @@ export const notificationOutbox = pgTable(
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: createdAt(),
     sentAt: timestamp("sent_at", { withTimezone: true }),
+    /**
+     * News that joins a notification already on the phone, such as one
+     * person's afternoon. Rows with the same key and recipient form a thread
+     * while they keep coming, and each send replaces the card with the
+     * thread's lines. Title and body above stay the standalone wording, for a
+     * provider that cannot replace a notification.
+     */
+    groupKey: text("group_key"),
+    groupTitle: text("group_title"),
+    groupLine: text("group_line"),
+    /** The id of the row that opened the thread, set once this row is sent into it. */
+    groupThread: bigint("group_thread", { mode: "number" }),
   },
   (table) => [
     index("notification_outbox_pending_idx").on(table.status, table.nextAttemptAt),
-    index("notification_outbox_user_idx").on(table.userId),
     index("notification_outbox_session_idx").on(table.sessionId),
+    // Leads with the recipient, so it serves every lookup by recipient too.
+    index("notification_outbox_group_idx").on(table.userId, table.groupKey),
   ],
 )
 

@@ -122,3 +122,109 @@ export const sessionIdOf = (accessToken: string): string => {
   const [, claims] = accessToken.split(".")
   return (JSON.parse(Buffer.from(claims ?? "", "base64url").toString()) as { sid: string }).sid
 }
+
+type Headers = Record<string, string>
+
+export async function createCircle(app: FastifyInstance, headers: Headers, name = "Family") {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/circles",
+    headers,
+    payload: { name, emoji: "🏠" },
+  })
+  if (response.statusCode !== 201) throw new Error(`create circle: ${response.body}`)
+  return response.json() as { id: string; invite: { code: string } }
+}
+
+export async function joinCircle(app: FastifyInstance, headers: Headers, code: string) {
+  const response = await app.inject({
+    method: "POST",
+    url: `/api/v1/invites/${code}/accept`,
+    headers,
+  })
+  if (response.statusCode !== 200) throw new Error(`join circle: ${response.body}`)
+}
+
+export async function createPlace(
+  app: FastifyInstance,
+  headers: Headers,
+  circleId: string,
+  place: { name: string; lat: number; lon: number; radiusMeters?: number },
+) {
+  const response = await app.inject({
+    method: "POST",
+    url: `/api/v1/circles/${circleId}/places`,
+    headers,
+    payload: { icon: "home", radiusMeters: 150, ...place },
+  })
+  if (response.statusCode !== 201) throw new Error(`create place: ${response.body}`)
+  return response.json() as { id: string }
+}
+
+export interface Fix {
+  lat: number
+  lon: number
+  recordedAt: string
+  accuracyMeters?: number
+  speedMps?: number
+  batteryLevel?: number
+  isCharging?: boolean
+}
+
+export async function uploadFixes(app: FastifyInstance, headers: Headers, points: Fix[]) {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/locations/batch",
+    headers,
+    payload: { points },
+  })
+  if (response.statusCode !== 200) throw new Error(`upload: ${response.body}`)
+  return response.json() as { accepted: number; placeEvents: number }
+}
+
+export async function setSharing(
+  app: FastifyInstance,
+  headers: Headers,
+  circleId: string,
+  sharingState: "precise" | "approximate" | "paused",
+) {
+  const response = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/circles/${circleId}/sharing`,
+    headers,
+    payload: { sharingState },
+  })
+  if (response.statusCode !== 200) throw new Error(`sharing: ${response.body}`)
+}
+
+export async function checkIn(
+  app: FastifyInstance,
+  headers: Headers,
+  circleId: string,
+  at: { lat: number; lon: number },
+  note?: string,
+) {
+  const response = await app.inject({
+    method: "POST",
+    url: `/api/v1/circles/${circleId}/check-in`,
+    headers,
+    payload: { lat: at.lat, lon: at.lon, note: note ?? null },
+  })
+  if (response.statusCode !== 201) throw new Error(`check-in: ${response.body}`)
+}
+
+/** A signed-in phone that has accepted notifications through Expo. */
+export async function enablePush(userId: string, token: string) {
+  await getDb().execute(
+    sql`update sessions set push_provider = 'expo', push_token = ${token}
+        where user_id = ${userId}::uuid`,
+  )
+}
+
+/**
+ * Setting a scenario up queues "someone joined the circle" notifications,
+ * which a test about some other notification is better off without.
+ */
+export async function clearOutbox() {
+  await getDb().execute(sql`delete from notification_outbox`)
+}
