@@ -141,3 +141,30 @@ describe("a token about to run out", () => {
     expect(calls.map((call) => call.path)).toEqual(["/circles", "/places"])
   })
 })
+
+// A firewall or a proxy in front of the server answers with its own page, and
+// a 403 from it says nothing about the session. Only the server's own refusal
+// may sign the phone out.
+describe("a renewal refused by something in front of the server", () => {
+  const firewall = (status: number) => () => ({ status, body: "<html>Access denied</html>" })
+
+  it("keeps the session when a firewall's page answers 403", async () => {
+    const { client, expired, tokens } = setup([refused, firewall(403)])
+    await expect(client.get("/circles")).rejects.toBeInstanceOf(ApiError)
+    expect(expired).not.toHaveBeenCalled()
+    expect(tokens()).not.toBeNull()
+  })
+
+  it("keeps the session when a proxy's page answers 401", async () => {
+    const { client, expired } = setup([refused, firewall(401)])
+    await expect(client.get("/circles")).rejects.toBeInstanceOf(ApiError)
+    expect(expired).not.toHaveBeenCalled()
+  })
+
+  it("still signs out when the server itself refuses", async () => {
+    const { client, expired, tokens } = setup([refused, refused])
+    await expect(client.get("/circles")).rejects.toMatchObject({ status: 401 })
+    expect(expired).toHaveBeenCalledTimes(1)
+    expect(tokens()).toBeNull()
+  })
+})

@@ -390,7 +390,7 @@ async function doFlush(): Promise<void> {
     } catch (error) {
       const queued = useTrackingStore.getState().queue.length
       if (error instanceof ApiError) {
-        if (error.isNetwork || error.status >= 500 || error.status === 429) {
+        if (error.isNetwork || error.isForeign || error.status >= 500 || error.status === 429) {
           useTrackingStore.getState().setError(error.message)
           logTracker("flush failed", { status: error.isNetwork ? "network" : error.status, queued })
           scheduleRetry()

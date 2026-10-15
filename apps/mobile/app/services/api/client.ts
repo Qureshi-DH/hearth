@@ -16,6 +16,14 @@ export class ApiError extends Error {
   get isNetwork() {
     return this.status === 0
   }
+  /**
+   * Answered by something in front of the server, a firewall or a proxy,
+   * with a page of its own. Hearth's own errors always name their code, so
+   * this one says nothing about the request itself.
+   */
+  get isForeign() {
+    return this.status > 0 && this.code === `http_${this.status}`
+  }
   get isUnauthorized() {
     return this.status === 401
   }
@@ -249,8 +257,11 @@ export class ApiClient {
 
     if (result.kind === "error") {
       this.renewalError = result.error
-      // A network blip must not log the user out. Only a definitive rejection does.
-      if (result.error.status === 401 || result.error.status === 403) {
+      // A network blip must not log the user out, and neither may a firewall
+      // or a proxy in front of the server answering with a 401 or 403 page
+      // of its own. Only the server's own refusal, which names its code, ends it.
+      const { status, code } = result.error
+      if ((status === 401 && code === "unauthorized") || (status === 403 && code === "forbidden")) {
         this.refused = false
         await this.hooks.setTokens(null)
         this.hooks.onSessionExpired()

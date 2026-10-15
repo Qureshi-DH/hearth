@@ -1058,6 +1058,32 @@ describe("uploads", () => {
     expect(useTrackingStore.getState().queue).toHaveLength(0)
   })
 
+  // A firewall in front of the server answers with a page of its own, often
+  // a 403 while it holds the address out. That says nothing about the fixes,
+  // and dropping them as a bad batch lost the whole queue.
+  it("keep the batch when something in front of the server refused it", async () => {
+    await enterMoving()
+    mockUpload.mockRejectedValueOnce(
+      new ApiError(403, "http_403", "Request failed with status 403."),
+    )
+    queued()
+    await flush()
+    expect(useTrackingStore.getState().queue).not.toHaveLength(0)
+    await jest.advanceTimersByTimeAsync(30_000 + 10)
+    expect(mockUpload).toHaveBeenCalledTimes(2)
+    expect(useTrackingStore.getState().queue).toHaveLength(0)
+  })
+
+  it("drop a batch the server itself refused, so one bad fix cannot hold up the rest", async () => {
+    await enterMoving()
+    mockUpload.mockRejectedValueOnce(new ApiError(400, "validation_error", "Invalid body"))
+    queued()
+    await flush()
+    expect(useTrackingStore.getState().queue).toHaveLength(0)
+    await jest.advanceTimersByTimeAsync(30_000 + 10)
+    expect(mockUpload).toHaveBeenCalledTimes(1)
+  })
+
   it("stop and say so once the server has ended the session", async () => {
     await enterMoving()
     mockUpload.mockRejectedValueOnce(new ApiError(401, "unauthorized", "expired"))

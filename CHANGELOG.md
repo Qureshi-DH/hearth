@@ -15,6 +15,16 @@ Notable changes to Hearth. The format is loosely
   window, parked or moving, with the location notification up until the window
   ends. If Android won't start the service, it answers with one fix as before
   and keeps its quarter-hourly report.
+- The "Signed out of Hearth" notification could arrive as
+  `session:signedOutTitle` and `session:signedOutBody`. When Android starts
+  Hearth in the background for the tracker, the app's screens never load, and
+  they were the only thing that set up the app's text. It now sets itself up
+  the first time anything asks for a string.
+- A phone no longer signs itself out when something in front of the server,
+  such as a firewall or a proxy, answers a token renewal with its own 401 or
+  403 page. Only Hearth's own refusal ends the session now. Anything else is
+  retried, as a network failure is. The admin portal does the same, and a phone
+  keeps the location fixes such a page refused rather than throwing them away.
 
 ## [1.2.0] - 2026-10-02
 

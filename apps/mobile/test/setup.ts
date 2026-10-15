@@ -40,6 +40,7 @@ jest.mock("expo-localization", () => ({
 }))
 
 jest.mock("../app/i18n/index.ts", () => ({
+  ensureI18n: () => undefined,
   i18n: {
     isInitialized: true,
     language: "en",

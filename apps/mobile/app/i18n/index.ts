@@ -37,19 +37,28 @@ if (locale?.languageTag && locale?.textDirection === "rtl") {
   I18nManager.allowRTL(false)
 }
 
+const options = {
+  resources,
+  lng: locale?.languageTag ?? fallbackLocale,
+  fallbackLng: fallbackLocale,
+  interpolation: {
+    escapeValue: false,
+  },
+}
+
 export const initI18n = async () => {
-  i18n.use(initReactI18next)
-
-  await i18n.init({
-    resources,
-    lng: locale?.languageTag ?? fallbackLocale,
-    fallbackLng: fallbackLocale,
-    interpolation: {
-      escapeValue: false,
-    },
-  })
-
+  ensureI18n()
   return i18n
+}
+
+/**
+ * Starts i18n at once if nothing has yet. The strings are bundled, so there
+ * is nothing to wait for. A process Android starts for the tracker never
+ * mounts the app, and anything it says before this would come out as keys.
+ */
+export function ensureI18n(): void {
+  if (i18n.isInitialized) return
+  i18n.use(initReactI18next).init({ ...options, initImmediate: false })
 }
 
 export type TxKeyPath = RecursiveKeyOf<Translations>

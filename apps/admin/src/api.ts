@@ -128,7 +128,8 @@ export function createClient(options: ClientOptions = {}) {
   /**
    * Null only when the server says the session is over. A failure to reach
    * it, or a broken answer, is thrown, so a flaky network does not look like
-   * being signed out.
+   * being signed out. So is a 401 or 403 page from a firewall or a proxy in
+   * front of the server, since only Hearth's own refusal names its code.
    */
   async function refresh(): Promise<CurrentUser | null> {
     try {
@@ -140,7 +141,11 @@ export function createClient(options: ClientOptions = {}) {
         ),
       )
     } catch (error) {
-      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+      if (
+        error instanceof ApiError &&
+        ((error.status === 401 && error.code === "unauthorized") ||
+          (error.status === 403 && error.code === "forbidden"))
+      ) {
         accessToken = null
         return null
       }

@@ -11,7 +11,7 @@ interface Call {
   body: unknown
 }
 
-type Failure = "network" | "html" | 403 | 429 | 502 | null
+type Failure = "network" | "html" | "firewall-401" | "firewall-403" | 403 | 429 | 502 | null
 
 /** A server that answers the portal's routes, with switches for what can go wrong. */
 function fakeServer() {
@@ -65,6 +65,8 @@ function fakeServer() {
       }
       if (state.refreshFails === "network") throw new TypeError("Failed to fetch")
       if (state.refreshFails === "html") return html(200)
+      if (state.refreshFails === "firewall-401") return html(401)
+      if (state.refreshFails === "firewall-403") return html(403)
       if (state.refreshFails === 403) {
         return json(403, { error: { code: "forbidden", message: "Not an administrator." } })
       }
@@ -343,6 +345,19 @@ describe("the portal's API client", () => {
       const { api } = client(server)
       const failure = await api.resume().catch((error: unknown) => error)
       expect(failure).toBeInstanceOf(ApiError)
+    })
+
+    // A firewall in front of the server answers with a page of its own, often
+    // while it holds the address out after a 4xx. That says nothing about the
+    // session, and reading it as a refusal signed the administrator out.
+    it("is an error, not a sign-out, when a firewall's page answers 401 or 403", async () => {
+      for (const page of ["firewall-401", "firewall-403"] as const) {
+        const server = fakeServer()
+        server.state.refreshFails = page
+        const { api, onSignedOut } = client(server)
+        await expect(api.resume()).rejects.toBeInstanceOf(ApiError)
+        expect(onSignedOut).not.toHaveBeenCalled()
+      }
     })
 
     it("still means signed out when the server refuses with a 403", async () => {
