@@ -6,6 +6,18 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Added
+
+- Hearth can sit at a path on a domain that already has something at its root,
+  such as `https://lab.example.com/hearth`. Put the path in `PUBLIC_URL`. A
+  proxy that strips the path and one that passes it on both work. The admin
+  portal, its sign-in cookie, the websocket, invite links and the API docs all
+  follow the path, and phones take the full address with the path in it. The
+  server refuses a path Hearth already uses, such as `/join` or `/docs`. A path
+  shares its domain's origin with the app at the root, which can then act as
+  you in the admin portal, so the docs suggest a subdomain unless you trust
+  that app as much as Hearth.
+
 ### Fixed
 
 - Live stays live when the Android phone you're watching is standing still or

@@ -23,6 +23,7 @@ import { eventRoutes } from "./modules/events.routes"
 import { locationRoutes } from "./modules/locations.routes"
 import { mediaRoutes } from "./modules/media.routes"
 import { placeRoutes } from "./modules/places.routes"
+import { basePath, stripBasePath } from "./lib/base-path"
 import { findPortalDir, registerPortal, type Portal } from "./plugins/portal"
 import { pushRoutes } from "./modules/push.routes"
 import { safetyRoutes } from "./modules/safety.routes"
@@ -75,6 +76,7 @@ export function proxyTrust(
 
 export async function buildApp(): Promise<FastifyInstance> {
   const config = getConfig()
+  const base = basePath(config.PUBLIC_URL)
 
   const app = Fastify({
     logger: loggerOptions(),
@@ -82,6 +84,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     // Location batches are the largest thing a client sends.
     bodyLimit: 2 * 1024 * 1024,
     genReqId: () => crypto.randomUUID(),
+    // Behind a proxy at a path, every route, the websocket and the portal
+    // answer with the path or without it, whichever the proxy hands on.
+    rewriteUrl: base ? (request) => stripBasePath(request.url ?? "/", base) : undefined,
   })
 
   app.setValidatorCompiler(validatorCompiler)
@@ -111,7 +116,8 @@ export async function buildApp(): Promise<FastifyInstance> {
             "Self-hosted family location sharing. All endpoints live under `/api/v1` and, " +
             "unless marked otherwise, require a bearer access token.",
         },
-        servers: [{ url: config.PUBLIC_URL }],
+        // "Try it out" adds /api/v1/... to this, and a slash on the end would double up.
+        servers: [{ url: config.PUBLIC_URL.replace(/\/+$/, "") }],
         components: {
           securitySchemes: {
             bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
@@ -140,6 +146,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     // would be a hole in the portal. It gets a content policy of its own.
     await app.register(swaggerUi.default, {
       routePrefix: "/docs",
+      // The reference names its own files from where the browser sees it.
+      indexPrefix: base,
       uiConfig: { docExpansion: "list", deepLinking: true },
       staticCSP: true,
     })
@@ -195,7 +203,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   })
 
   const portalDir = config.ENABLE_ADMIN_PORTAL ? findPortalDir(config.ADMIN_PORTAL_DIR) : null
-  const portal: Portal | null = portalDir ? await registerPortal(app, portalDir) : null
+  const portal: Portal | null = portalDir ? await registerPortal(app, portalDir, base) : null
 
   // A browser asking for a portal page the router does not know, a bookmark
   // to /accounts, gets the portal, which works out the page itself. Limited

@@ -2,6 +2,7 @@ import type { CurrentUser } from "@hearth/shared"
 import { useState, type FormEvent } from "react"
 
 import { ApiError, UNREACHABLE } from "../api"
+import { serverAddress } from "../base"
 import { client } from "../client"
 import { Button, Field } from "../components/ui"
 import { Mark } from "../components/Mark"
@@ -67,7 +68,7 @@ export function SignIn({
         </Button>
         <p className="muted small">
           Everyone else in the family uses the Hearth app. It needs this server's address:{" "}
-          <strong>{window.location.origin}</strong>
+          <strong>{serverAddress()}</strong>
         </p>
       </form>
     </main>

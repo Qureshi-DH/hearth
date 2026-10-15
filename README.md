@@ -134,7 +134,8 @@ server.
 A release build of the app won't talk to a plain HTTP server on the internet,
 so put a TLS proxy in front before you invite anyone.
 [docs/docs/install/self-hosting.md](docs/docs/install/self-hosting.md) has
-Caddy and nginx configs you can paste.
+Caddy and nginx configs you can paste, and one for running Hearth at a path on
+a domain you already use, like `lab.example.com/hearth`.
 
 ## Build the app
 

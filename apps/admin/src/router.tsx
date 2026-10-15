@@ -1,5 +1,7 @@
 import { useEffect, useState, type AnchorHTMLAttributes, type MouseEvent } from "react"
 
+import { BASE } from "./base"
+
 export const PAGES = {
   "/": "Overview",
   "/accounts": "Accounts",
@@ -14,16 +16,37 @@ export type PagePath = keyof typeof PAGES
 
 const NAVIGATE = "hearth:navigate"
 
-function current(): PagePath {
-  const path = window.location.pathname.replace(/\/+$/, "") || "/"
+/**
+ * The page an address shows. The base comes off when it is there, so the
+ * portal opened on the server's own port, past the proxy, still finds its page.
+ */
+export function pageAt(pathname: string, base: string): PagePath {
+  const inside =
+    base && (pathname === base || pathname.startsWith(`${base}/`))
+      ? pathname.slice(base.length)
+      : pathname
+  const path = inside.replace(/\/+$/, "") || "/"
   return path in PAGES ? (path as PagePath) : "/"
 }
 
-/** An address with no page of its own shows the overview, so the address bar says "/" too. */
+/**
+ * The overview ends in a slash under a path, because a proxy matching
+ * /hearth/* does not match /hearth, and a reload has to find the server.
+ */
+export function hrefFor(page: PagePath, base: string): string {
+  return page === "/" ? `${base}/` : `${base}${page}`
+}
+
+function current(): PagePath {
+  return pageAt(window.location.pathname, BASE)
+}
+
+/** An address with no page of its own shows the overview, so the address bar says so too. */
 function settle(): PagePath {
   const path = current()
-  if (window.location.pathname !== path) {
-    window.history.replaceState(null, "", `${path}${window.location.search}${window.location.hash}`)
+  const href = hrefFor(path, BASE)
+  if (window.location.pathname !== href) {
+    window.history.replaceState(null, "", `${href}${window.location.search}${window.location.hash}`)
   }
   return path
 }
@@ -45,7 +68,7 @@ export function usePath(): PagePath {
 
 function navigate(path: PagePath) {
   if (path === current()) return
-  window.history.pushState(null, "", path)
+  window.history.pushState(null, "", hrefFor(path, BASE))
   window.dispatchEvent(new Event(NAVIGATE))
   window.scrollTo(0, 0)
 }
@@ -59,5 +82,5 @@ export function Link({ to, ...props }: { to: PagePath } & AnchorHTMLAttributes<H
     event.preventDefault()
     navigate(to)
   }
-  return <a {...props} href={to} onClick={onClick} />
+  return <a {...props} href={hrefFor(to, BASE)} onClick={onClick} />
 }

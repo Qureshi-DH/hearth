@@ -11,16 +11,14 @@ import { startTestApp, type TestContext } from "../helpers"
  * directory keeps this independent of whether the real one has been built.
  */
 
+const PAGE =
+  '<!doctype html><html><head><title>Hearth admin</title><script type="module" ' +
+  'src="portal.js"></script></head><body><div id=root></div></body></html>'
+
 const built = mkdtempSync(join(tmpdir(), "hearth-portal-"))
 mkdirSync(join(built, "assets"))
-writeFileSync(
-  join(built, "index.html"),
-  "<!doctype html><title>Hearth admin</title><div id=root></div>",
-)
-writeFileSync(
-  join(built, "index.html.br"),
-  brotliCompressSync("<!doctype html><title>Hearth admin</title><div id=root></div>"),
-)
+writeFileSync(join(built, "index.html"), PAGE)
+writeFileSync(join(built, "index.html.br"), brotliCompressSync(PAGE))
 writeFileSync(join(built, "assets", "portal-abc123.js"), "console.log('portal')")
 
 let ctx: TestContext
@@ -48,17 +46,27 @@ describe("the admin portal at the server's address", () => {
     expect(response.headers["cache-control"]).toContain("no-cache")
   })
 
-  // The build leaves a compressed copy beside the page, and the copy is what a
-  // browser gets. It must carry the same policy.
-  it("keeps the policy on the compressed copy of the page", async () => {
-    const response = await ctx.app.inject({
-      method: "GET",
-      url: "/",
-      headers: { "accept-encoding": "br" },
-    })
-    expect(response.statusCode).toBe(200)
-    expect(response.headers["content-encoding"]).toBe("br")
-    expect(String(response.headers["content-security-policy"])).toContain("default-src 'self'")
+  // At the root of a domain the page says so, and its files resolve where
+  // they always did.
+  it("tells the page it is at the root", async () => {
+    const response = await ctx.app.inject({ method: "GET", url: "/" })
+    expect(response.body).toContain('<base href="/"')
+    expect(response.body).toContain('<meta name="hearth-base" content=""')
+    expect(response.body).toContain('src="portal.js"')
+  })
+
+  it("sends the page it wrote, with its policy, to a browser that takes brotli", async () => {
+    for (const url of ["/", "/index.html"]) {
+      const response = await ctx.app.inject({
+        method: "GET",
+        url,
+        headers: { "accept-encoding": "br" },
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.headers["content-encoding"]).toBeUndefined()
+      expect(response.body).toContain('<meta name="hearth-base"')
+      expect(String(response.headers["content-security-policy"])).toContain("default-src 'self'")
+    }
   })
 
   it("serves its scripts", async () => {
@@ -75,6 +83,7 @@ describe("the admin portal at the server's address", () => {
     })
     expect(response.statusCode).toBe(200)
     expect(response.body).toContain("Hearth admin")
+    expect(response.body).toContain('<base href="/"')
     expect(String(response.headers["content-security-policy"])).toContain("default-src 'self'")
   })
 

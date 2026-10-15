@@ -35,6 +35,8 @@ export type SignOutReason = "expired" | "signed-out"
 
 export interface ClientOptions {
   fetch?: typeof globalThis.fetch
+  /** The path the server is behind, "" at the root of a domain. */
+  base?: string
   /** Where the browser's device id is kept. It names the browser, and is not a secret. */
   storage?: KeyValueStore
   /**
@@ -75,6 +77,7 @@ const RENEW_AHEAD_MS = 60_000
  */
 export function createClient(options: ClientOptions = {}) {
   const fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis)
+  const apiRoot = `${options.base ?? ""}${API_PREFIX}`
   const locks = options.locks === undefined ? browserLocks(options.storage) : options.locks
   const deviceId = browserDeviceId(options.storage)
   let accessToken: string | null = null
@@ -91,7 +94,7 @@ export function createClient(options: ClientOptions = {}) {
     const headers: Record<string, string> = { accept: "application/json" }
     if (token) headers.authorization = `Bearer ${token}`
     if (init.body !== undefined) headers["content-type"] = "application/json"
-    const response = await fetchImpl(`${API_PREFIX}${path}`, {
+    const response = await fetchImpl(`${apiRoot}${path}`, {
       method: init.method ?? "GET",
       headers,
       body: init.body === undefined ? undefined : JSON.stringify(init.body),

@@ -1,6 +1,7 @@
 import type { RegistrationMode, ServerSettings } from "@hearth/shared"
 import { useState, type FormEvent } from "react"
 
+import { serverAddress } from "../base"
 import { client } from "../client"
 import { Button, Card, Field, Loading, Problem, useToast } from "../components/ui"
 import { PUSH_PROVIDER_DETAIL, PUSH_PROVIDER_LABEL, SIGN_UP_LABEL } from "../labels"
@@ -38,7 +39,7 @@ export function Settings() {
             <dl className="facts facts-wide">
               <div>
                 <dt>Address</dt>
-                <dd>{window.location.origin}</dd>
+                <dd>{serverAddress()}</dd>
               </div>
               <div>
                 <dt>Version</dt>

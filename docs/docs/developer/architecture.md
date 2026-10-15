@@ -320,11 +320,21 @@ background, as described above.
 ## Admin portal (`apps/admin`)
 
 A React app, bundled by esbuild into a handful of static files that the server
-serves at its own address with `@fastify/static` (`modules/portal.routes.ts`).
+serves at its own address with `@fastify/static` (`plugins/portal.ts`).
 Any other browser route outside `/api` gets the page, so a bookmark to
 `/accounts` works. The image builds it and carries the files beside the server,
 and a server run from source finds `apps/admin/dist` in the workspace.
 `ENABLE_ADMIN_PORTAL=false` serves nothing.
+
+Hearth can sit at a path, and the path is the one in `PUBLIC_URL`. Fastify's
+`rewriteUrl` takes it off any request that carries it, before routing, so a
+proxy that strips the path and one that passes it on reach the same routes,
+the websocket included. The page is the one file not sent as built. It names
+its files relative to a `<base>` the server writes into it, beside a
+`hearth-base` meta tag. The portal reads the path from the meta, since its
+policy allows no inline script, and puts it in front of its API calls and its
+own addresses. The refresh cookie's `Path` carries it too, because the browser
+matches the cookie against the address it sees.
 
 It is same-origin with the API in development too: run the server, run
 `pnpm --filter @hearth/admin dev` for a watch build, and open
@@ -333,7 +343,7 @@ app's admin screen and the portal stay in step.
 
 The access token lives in memory. The refresh token is an `HttpOnly`,
 `SameSite=Strict` cookie scoped to the portal's session routes
-(`modules/portal.routes.ts`, served by `plugins/portal.ts`), and a 401 that
+(`modules/portal.routes.ts`), and a 401 that
 means the token ran out renews it once for every call waiting on it, one tab at
 a time. The session ends twelve hours after sign-in and renewing does not
 extend it. Swagger UI shares the origin, so it is served with its own content

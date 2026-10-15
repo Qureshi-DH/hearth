@@ -98,7 +98,7 @@ async function main(): Promise<void> {
   app.log.info(
     {
       url: config.PUBLIC_URL,
-      docs: config.ENABLE_SWAGGER ? `${config.PUBLIC_URL}/docs` : null,
+      docs: config.ENABLE_SWAGGER ? `${config.PUBLIC_URL.replace(/\/+$/, "")}/docs` : null,
       push: config.PUSH_PROVIDER,
       realtime: bus.kind,
       registration: config.REGISTRATION_MODE,

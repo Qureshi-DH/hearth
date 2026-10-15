@@ -10,7 +10,8 @@ smallest VPS you can rent is plenty for a family.
 ## Requirements
 
 - Docker Engine 24+ with Compose v2 (`docker compose version`)
-- A domain (or subdomain) pointing at the host, e.g. `hearth.example.com`
+- A domain or subdomain pointing at the host, e.g. `hearth.example.com`, or a
+  path on a domain you already use, e.g. `lab.example.com/hearth`
 - Ports 80/443 reachable, for the reverse proxy
 
 Location updates are small, a few hundred bytes every 30 to 60 seconds per
@@ -234,11 +235,56 @@ If you add Traefik as a service in this same compose file instead, it is already
 on the default network, and you can drop both networks blocks and the
 `traefik.docker.network` label. Websockets work with no extra configuration.
 
+### At a path on a domain you already use
+
+Hearth doesn't need a hostname of its own. It can sit at a path, say
+`https://lab.example.com/hearth`, with another app at the root of the domain.
+Put the whole address in `PUBLIC_URL`, path included, and give the phones that
+same address.
+
+```bash
+PUBLIC_URL=https://lab.example.com/hearth
+```
+
+```caddyfile
+lab.example.com {
+    redir /hearth /hearth/
+    handle_path /hearth/* {
+        reverse_proxy localhost:4000
+    }
+    handle {
+        reverse_proxy localhost:2283    # whatever already lives at the root
+    }
+}
+```
+
+`handle_path` takes `/hearth` off before it passes the request on. A proxy that
+passes the path on unchanged works too, Caddy's `handle /hearth/*` for one,
+because Hearth takes the path in `PUBLIC_URL` off any request that still
+carries it. The `redir` line is there because `/hearth/*` doesn't match a bare
+`/hearth`.
+
+The app, the websocket, invite links and the page they open all follow the
+path, and so do the admin portal at `https://lab.example.com/hearth/` and the
+API docs at `/hearth/docs`. Port 4000 answers with or without it, so `/healthz`
+still works for a probe that skips the proxy. Pick the path before you hand out
+invites, because every phone and every invite link carries it. It can't be one
+Hearth already uses, `/docs`, `/join`, `/healthz`, `/readyz` or `/api/v1`, and
+the server says so at startup if it is.
+
+Sharing a domain means sharing an origin, and a browser draws no line between
+two apps on one. A script on the app at the root, its own or one slipped into
+it, can call the admin portal's sign-in renewal with your browser's cookie and
+act as you in the portal. Put Hearth under a path only beside an app you trust
+as much as Hearth itself. A subdomain, `hearth.lab.example.com`, keeps the two
+apart.
+
 ## 4. Connect a phone
 
 Install the Hearth app (see [the mobile app page](../developer/mobile.md) for building it), enter
-`https://hearth.example.com`, sign in as the admin account you configured,
-create a circle, and share the invite code or QR with the family.
+`https://hearth.example.com`, or the full address with its path if Hearth sits
+at one, sign in as the admin account you configured, create a circle, and
+share the invite code or QR with the family.
 
 ## The admin portal
 

@@ -119,7 +119,8 @@ this correctly with no configuration. For nginx see the config in
 **`PUBLIC_URL` must be the address phones actually use.** Invite links, the
 join page they open and the API docs are all built from it. If phones connect to
 `https://hearth.example.com` then that is the value, not `http://localhost:4000`
-and not the container's address.
+and not the container's address. Behind a proxy at a path, the path is part of
+it, as in `https://lab.example.com/hearth`.
 
 **Set `TRUST_PROXY=true` when you run behind a proxy.** Otherwise every request
 appears to come from the proxy, and every sign-in and token refresh in the

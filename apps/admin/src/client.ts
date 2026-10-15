@@ -1,4 +1,5 @@
 import { createClient, type SignOutReason } from "./api"
+import { BASE } from "./base"
 
 /** Raised on window when the session ends, whichever call found out. Its detail is the reason. */
 export const SIGNED_OUT = "hearth:signed-out"
@@ -6,6 +7,7 @@ export const SIGNED_OUT = "hearth:signed-out"
 export type SignedOutEvent = CustomEvent<SignOutReason>
 
 export const client = createClient({
+  base: BASE,
   storage: browserStorage(),
   onSignedOut: (reason) => window.dispatchEvent(new CustomEvent(SIGNED_OUT, { detail: reason })),
 })

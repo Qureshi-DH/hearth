@@ -34,8 +34,9 @@ const options = {
 // The server sends the .br or .gz beside a file in its place, so a copy
 // older than the file would hide the newer build. That is why dist/ is
 // emptied first, and why the watch build, which rewrites files in place,
-// makes no copies at all.
-const COMPRESSIBLE = /\.(js|css|html|svg)$/
+// makes no copies at all. The page gets none either. The server fills in the
+// path it is served under, so a copy of the page as built would never be sent.
+const COMPRESSIBLE = /\.(js|css|svg)$/
 
 function precompress(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

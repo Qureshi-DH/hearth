@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto"
 import { PUSH_PROVIDERS, REGISTRATION_MODES } from "@hearth/shared"
 import { z } from "zod"
 
+import { basePath, basePathConflict } from "./lib/base-path"
+
 const csv = (value: string | undefined): string[] =>
   (value ?? "")
     .split(",")
@@ -27,7 +29,23 @@ const schema = z.object({
   HOST: z.string().default("::"),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   /** The address phones reach. Invite links, the join page and the API docs all quote it. */
-  PUBLIC_URL: z.string().default("http://localhost:4000"),
+  PUBLIC_URL: z
+    .string()
+    .default("http://localhost:4000")
+    .superRefine((value, ctx) => {
+      let base: string
+      try {
+        base = basePath(value)
+      } catch {
+        ctx.addIssue({
+          code: "custom",
+          message: "must be a full address, such as https://hearth.example.com",
+        })
+        return
+      }
+      const conflict = basePathConflict(base)
+      if (conflict) ctx.addIssue({ code: "custom", message: conflict })
+    }),
   /** Deep-link scheme registered by the mobile app. */
   APP_SCHEME: z.string().default("hearth"),
   SERVER_NAME: z.string().default("Hearth"),

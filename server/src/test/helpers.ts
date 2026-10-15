@@ -22,7 +22,8 @@ export interface TestContext {
   close(): Promise<void>
 }
 
-export async function startTestApp(): Promise<TestContext> {
+/** `env` is applied last, for a spec that needs a setting the defaults here fix. */
+export async function startTestApp(env: Record<string, string> = {}): Promise<TestContext> {
   resetConfig()
   const databaseUrl =
     process.env.TEST_DATABASE_URL ??
@@ -39,6 +40,7 @@ export async function startTestApp(): Promise<TestContext> {
     ENABLE_JOBS: "false",
     ENABLE_SWAGGER: "false",
     RATE_LIMIT_MAX: "100000",
+    ...env,
   })
 
   await runMigrations()

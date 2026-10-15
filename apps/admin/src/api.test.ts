@@ -180,6 +180,32 @@ describe("the portal's API client", () => {
     expect(login.body).toMatchObject({ email: "d@example.com", deviceId: expect.any(String) })
   })
 
+  it("calls the API at the root of the domain by default", async () => {
+    const server = fakeServer()
+    const { api } = client(server)
+    await api.signIn("d@example.com", "pw")
+    await api.request("/admin/stats")
+    expect(server.calls.map((call) => call.url)).toEqual([
+      "/api/v1/auth/portal/login",
+      "/api/v1/admin/stats",
+    ])
+  })
+
+  it("calls the API under the path the server is behind", async () => {
+    const server = fakeServer()
+    const { api } = client(server, vi.fn(), { base: "/hearth" })
+    await api.signIn("d@example.com", "pw")
+    await api.request("/admin/stats")
+    await api.resume()
+    await api.signOut()
+    expect(server.calls.map((call) => call.url)).toEqual([
+      "/hearth/api/v1/auth/portal/login",
+      "/hearth/api/v1/admin/stats",
+      "/hearth/api/v1/auth/portal/refresh",
+      "/hearth/api/v1/auth/portal/logout",
+    ])
+  })
+
   it("keeps one device id for the browser", async () => {
     const server = fakeServer()
     const { api } = client(server)

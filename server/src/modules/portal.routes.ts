@@ -10,6 +10,7 @@ import { readCookie, serializeCookie } from "../lib/cookies"
 import { emailSchema } from "../lib/email"
 import { AppError, forbidden, unauthorized } from "../lib/errors"
 import { toPortalSession } from "../lib/serialize"
+import { basePath } from "../lib/base-path"
 import { issueSession, revokeSessionByRefreshToken, rotateSession } from "../services/auth"
 
 /**
@@ -19,7 +20,6 @@ import { issueSession, revokeSessionByRefreshToken, rotateSession } from "../ser
 const PORTAL_SESSION_MS = 12 * 60 * 60 * 1000
 
 const PORTAL_COOKIE = "hearth_portal"
-const COOKIE_PATH = `${API_PREFIX}/auth/portal`
 
 export interface PortalRouteOptions {
   /** The app's own credential check, so both sign-ins spend the same budgets. */
@@ -38,6 +38,9 @@ export const portalRoutes: FastifyPluginAsyncZod<PortalRouteOptions> = async (ap
   const db = getDb()
   const config = getConfig()
   const publicHost = new URL(config.PUBLIC_URL).host
+  // The browser sends the cookie by the path it sees, which carries the base
+  // whether or not the proxy strips it on the way in.
+  const cookiePath = `${basePath(config.PUBLIC_URL)}${API_PREFIX}/auth/portal`
 
   /**
    * Secure when the page is on https: the request's own, or the public
@@ -49,7 +52,7 @@ export const portalRoutes: FastifyPluginAsyncZod<PortalRouteOptions> = async (ap
     const secure =
       request.protocol === "https" ||
       (config.PUBLIC_URL.startsWith("https://") && request.headers.host === publicHost)
-    return serializeCookie(PORTAL_COOKIE, value, { path: COOKIE_PATH, secure, maxAgeSeconds })
+    return serializeCookie(PORTAL_COOKIE, value, { path: cookiePath, secure, maxAgeSeconds })
   }
 
   /**
