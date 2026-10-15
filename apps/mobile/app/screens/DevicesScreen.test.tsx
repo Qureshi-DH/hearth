@@ -7,10 +7,17 @@ import { useAlertStore } from "@/stores/alert"
 import en from "../i18n/en"
 import { ThemeProvider } from "../theme/context"
 
-let mockSessions: SessionSummary[] = []
+let mockSessions: SessionSummary[] | undefined = []
+/** What TanStack Query reports beside the data. */
+let mockStatus: { isPending: boolean; isError: boolean; error: Error | null } = {
+  isPending: false,
+  isError: false,
+  error: null,
+}
+const mockRefetch = jest.fn()
 
 jest.mock("../hooks/queries", () => ({
-  useSessions: () => ({ data: mockSessions }),
+  useSessions: () => ({ data: mockSessions, ...mockStatus, refetch: mockRefetch }),
   useRevokeSession: () => ({ mutate: jest.fn() }),
 }))
 // The real one scrolls with react-native-keyboard-controller, which has no
@@ -20,6 +27,21 @@ jest.mock("../components/Screen", () => {
   const rn = require("react-native")
   return {
     Screen: ({ children }: { children?: unknown }) => react.createElement(rn.View, null, children),
+  }
+})
+// Reanimated has no native half here. The placeholder is still found by its label.
+jest.mock("../components/Skeleton", () => {
+  const react = require("react")
+  const rn = require("react-native")
+  return {
+    Skeleton: ({
+      accessibilityLabel,
+      children,
+    }: {
+      accessibilityLabel: string
+      children?: unknown
+    }) => react.createElement(rn.View, { accessible: true, accessibilityLabel }, children),
+    Bone: () => null,
   }
 })
 // The screen is not inside a navigator here, and its header is chrome.
@@ -68,6 +90,56 @@ describe("DevicesScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockSessions = []
+    mockStatus = { isPending: false, isError: false, error: null }
+  })
+
+  // The list used to render nothing at all until it arrived, and nothing for
+  // good when it did not, which read as "no devices" rather than "not yet".
+  it("shows the list is on its way rather than an empty card", async () => {
+    mockSessions = undefined
+    mockStatus = { isPending: true, isError: false, error: null }
+
+    const { getByLabelText } = await renderScreen()
+
+    expect(getByLabelText("settings:devicesLoading")).toBeTruthy()
+  })
+
+  it("says the list could not load, and why, with a way to try again", async () => {
+    mockSessions = undefined
+    mockStatus = {
+      isPending: false,
+      isError: true,
+      error: new Error("Request failed with status 429."),
+    }
+
+    const { getByText } = await renderScreen()
+
+    expect(getByText("settings:devicesFailed")).toBeTruthy()
+    expect(getByText("Request failed with status 429.")).toBeTruthy()
+    fireEvent.press(getByText("common:retry"))
+    expect(mockRefetch).toHaveBeenCalledTimes(1)
+  })
+
+  it("says so when the server lists no devices, rather than drawing an empty card", async () => {
+    mockSessions = []
+
+    const { getByText } = await renderScreen()
+
+    expect(getByText("settings:devicesEmpty")).toBeTruthy()
+  })
+
+  it("keeps the devices on screen when a later refresh fails", async () => {
+    mockSessions = [session({ id: "mine", deviceName: "Sarah's iPhone", current: true })]
+    mockStatus = {
+      isPending: false,
+      isError: true,
+      error: new Error("Could not reach the server."),
+    }
+
+    const { getByText, queryByText } = await renderScreen()
+
+    expect(getByText("Sarah's iPhone")).toBeTruthy()
+    expect(queryByText("settings:devicesFailed")).toBeNull()
   })
 
   it("names an unnamed session after its platform, never the raw enum", async () => {

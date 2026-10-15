@@ -8,7 +8,7 @@ import { useSettingsStore } from "@/stores/settings"
  * never points at nothing after the user leaves or a circle is deleted.
  */
 export function useActiveCircle() {
-  const { data: circles, isLoading } = useCircles()
+  const { data: circles, isLoading, isError, refetch } = useCircles()
   const activeCircleId = useSettingsStore((state) => state.activeCircleId)
   const setActiveCircle = useSettingsStore((state) => state.setActiveCircle)
 
@@ -18,5 +18,5 @@ export function useActiveCircle() {
     if (resolved && resolved.id !== activeCircleId) setActiveCircle(resolved.id)
   }, [resolved, activeCircleId, setActiveCircle])
 
-  return { circle: resolved, circles: circles ?? [], isLoading, setActiveCircle }
+  return { circle: resolved, circles: circles ?? [], isLoading, isError, refetch, setActiveCircle }
 }

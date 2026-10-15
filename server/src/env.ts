@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto"
 
-import { PUSH_PROVIDERS, REGISTRATION_MODES } from "@hearth/shared"
+import { PUSH_PROVIDERS, REGISTRATION_MODES, type MapStyle } from "@hearth/shared"
 import { z } from "zod"
 
 import { basePath, basePathConflict } from "./lib/base-path"
@@ -15,6 +15,71 @@ const bool = z
   .union([z.boolean(), z.string()])
   .transform((value) =>
     typeof value === "boolean" ? value : ["1", "true", "yes", "on"].includes(value.toLowerCase()),
+  )
+
+const OPENFREEMAP = "https://tiles.openfreemap.org/styles"
+const OPENFREEMAP_LIGHT = `${OPENFREEMAP}/liberty`
+const OPENFREEMAP_DARK = `${OPENFREEMAP}/dark`
+
+/**
+ * Offered only while both style URLs are still OpenFreeMap's. An operator who
+ * pointed either one at their own tiles may be doing it to keep phones off
+ * third-party servers, so they get exactly what they configured.
+ */
+const OPENFREEMAP_STYLES: MapStyle[] = [
+  { id: "liberty", name: "Liberty", url: OPENFREEMAP_LIGHT, scheme: "light" },
+  { id: "bright", name: "Bright", url: `${OPENFREEMAP}/bright`, scheme: "light" },
+  { id: "positron", name: "Positron", url: `${OPENFREEMAP}/positron`, scheme: "light" },
+  { id: "dark", name: "Dark", url: OPENFREEMAP_DARK, scheme: "dark" },
+  { id: "fiord", name: "Fiord", url: `${OPENFREEMAP}/fiord`, scheme: "dark" },
+]
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value)
+    return protocol === "http:" || protocol === "https:"
+  } catch {
+    return false
+  }
+}
+
+const mapStyle = z.object({
+  id: z.string().trim().min(1).max(64),
+  name: z.string().trim().min(1).max(40),
+  url: z.string().trim().refine(isHttpUrl, "must be an http or https URL the phones can reach"),
+  scheme: z.enum(["light", "dark"]),
+})
+
+const mapStyles = z
+  .string()
+  .transform((raw, ctx) => {
+    try {
+      return JSON.parse(raw) as unknown
+    } catch {
+      ctx.addIssue({
+        code: "custom",
+        message: 'must be a JSON array like [{"id":"…","name":"…","url":"…","scheme":"light"}]',
+      })
+      return z.NEVER
+    }
+  })
+  .pipe(
+    z
+      .array(mapStyle)
+      .min(1, "must list at least one style")
+      .superRefine((styles, ctx) => {
+        const seen = new Set<string>()
+        styles.forEach((style, index) => {
+          if (seen.has(style.id)) {
+            ctx.addIssue({
+              code: "custom",
+              path: [index, "id"],
+              message: `"${style.id}" is used by another style. Phones remember a choice by id.`,
+            })
+          }
+          seen.add(style.id)
+        })
+      }),
   )
 
 const schema = z.object({
@@ -104,8 +169,10 @@ const schema = z.object({
   /** MinIO serves buckets as a path, not a subdomain. */
   S3_FORCE_PATH_STYLE: bool.default(true),
 
-  MAP_STYLE_URL: z.string().default("https://tiles.openfreemap.org/styles/liberty"),
-  MAP_STYLE_URL_DARK: z.string().default("https://tiles.openfreemap.org/styles/dark"),
+  MAP_STYLE_URL: z.string().default(OPENFREEMAP_LIGHT),
+  MAP_STYLE_URL_DARK: z.string().default(OPENFREEMAP_DARK),
+  /** The styles people choose between. Set, it replaces the two URLs above. */
+  MAP_STYLES: mapStyles.optional(),
   MAP_ATTRIBUTION: z.string().default("© OpenStreetMap contributors"),
 
   /** Hard ceiling applied on top of each circle's own retention setting. */
@@ -130,6 +197,27 @@ export interface AppConfig extends RawEnv {
   corsOrigins: string[]
   isProduction: boolean
   isTest: boolean
+  /** What server-info offers. The first of each scheme is the default. */
+  mapStyles: MapStyle[]
+}
+
+function publishedMapStyles(env: RawEnv): MapStyle[] {
+  if (env.MAP_STYLES) return env.MAP_STYLES
+  if (env.MAP_STYLE_URL === OPENFREEMAP_LIGHT && env.MAP_STYLE_URL_DARK === OPENFREEMAP_DARK) {
+    return OPENFREEMAP_STYLES
+  }
+  return [
+    { id: "default-light", name: "Default", url: env.MAP_STYLE_URL, scheme: "light" },
+    { id: "default-dark", name: "Default", url: env.MAP_STYLE_URL_DARK, scheme: "dark" },
+  ]
+}
+
+/**
+ * A list with no dark style falls back to its first light one rather than to
+ * OpenFreeMap, for the same reason the operator's own URLs replace its styles.
+ */
+export function defaultMapStyleUrl(styles: MapStyle[], scheme: MapStyle["scheme"]): string {
+  return (styles.find((style) => style.scheme === scheme) ?? styles[0]!).url
 }
 
 let cached: AppConfig | null = null
@@ -193,6 +281,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     corsOrigins: csv(env.CORS_ORIGINS),
     isProduction,
     isTest: env.NODE_ENV === "test",
+    mapStyles: publishedMapStyles(env),
   }
   return cached
 }

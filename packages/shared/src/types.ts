@@ -17,6 +17,16 @@ import type {
 /* Server metadata                                                     */
 /* ------------------------------------------------------------------ */
 
+export interface MapStyle {
+  /** What a phone remembers its choice by, so it has to stay put across renames. */
+  id: string
+  name: string
+  /** A MapLibre style URL. */
+  url: string
+  /** Which of the app's themes the style is drawn under. */
+  scheme: "light" | "dark"
+}
+
 /** Unauthenticated. The app fetches this first to configure itself. */
 export interface ServerInfo {
   serverName: string
@@ -31,6 +41,11 @@ export interface ServerInfo {
   /** Must be a MapLibre style URL. */
   mapStyleUrl: string
   mapStyleUrlDark?: string
+  /**
+   * Every style a phone may choose from. mapStyleUrl and mapStyleUrlDark stay
+   * the defaults, and servers older than the list leave it out.
+   */
+  mapStyles?: MapStyle[]
   mapAttribution: string
   features: {
     places: boolean

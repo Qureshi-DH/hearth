@@ -15,6 +15,7 @@ import { SectionHeader } from "@/components/SectionHeader"
 import { SegmentedControl } from "@/components/SegmentedControl"
 import { Text } from "@/components/Text"
 import { useMe, useRemoveAvatar, useUpdateMe, useUploadAvatar } from "@/hooks/queries"
+import { offersMapStyleChoice, useChosenMapStyle } from "@/hooks/useMapStyle"
 import { translate } from "@/i18n/translate"
 import type { MainTabScreenProps } from "@/navigators/navigationTypes"
 import { endpoints } from "@/services/api"
@@ -70,6 +71,9 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
   const lastError = useTrackingStore((state) => state.lastError)
   const resetTracking = useTrackingStore((state) => state.reset)
   const updateMe = useUpdateMe()
+  const mapStyleNames = [useChosenMapStyle("light").name, useChosenMapStyle("dark").name]
+    .filter(Boolean)
+    .join(" · ")
 
   const setTheme = (mode: ThemeMode) => {
     setThemeMode(mode)
@@ -294,6 +298,14 @@ export const YouScreen: FC<MainTabScreenProps<"You">> = ({ navigation }) => {
             ]}
           />
         </View>
+        {offersMapStyleChoice(serverInfo) ? (
+          <ListRow
+            tx="settings:mapStyle"
+            subtitle={mapStyleNames || undefined}
+            icon="layers-outline"
+            onPress={() => navigation.navigate("MapStyle")}
+          />
+        ) : null}
         <ListRow
           tx="settings:haptics"
           icon="phone-portrait-outline"

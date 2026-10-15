@@ -22,6 +22,8 @@ export interface ListRowProps {
   value?: boolean
   onValueChange?: (value: boolean) => void
   right?: ReactNode
+  /** Makes the row one choice of several, with a tick in place of the chevron. */
+  selected?: boolean
   destructive?: boolean
   disabled?: boolean
   style?: StyleProp<ViewStyle>
@@ -39,6 +41,7 @@ export function ListRow({
   value,
   onValueChange,
   right,
+  selected,
   destructive,
   disabled,
   style,
@@ -46,12 +49,14 @@ export function ListRow({
   const { theme } = useAppTheme()
   const color = destructive ? theme.colors.error : toneColor(iconTone, theme.colors)
   const isSwitch = typeof value === "boolean"
+  const isChoice = typeof selected === "boolean"
 
   return (
     <Pressable
       onPress={isSwitch ? () => onValueChange?.(!value) : onPress}
       disabled={disabled || (!onPress && !isSwitch)}
-      accessibilityRole={isSwitch ? "switch" : "button"}
+      accessibilityRole={isSwitch ? "switch" : isChoice ? "radio" : "button"}
+      accessibilityState={isChoice ? { checked: selected } : undefined}
       style={({ pressed }) => [
         {
           flexDirection: "row",
@@ -93,7 +98,11 @@ export function ListRow({
         ) : null}
       </View>
       {right}
-      {isSwitch ? (
+      {isChoice ? (
+        selected ? (
+          <Ionicons name="checkmark" size={20} color={theme.colors.tint} />
+        ) : null
+      ) : isSwitch ? (
         <Switch
           value={value}
           onValueChange={onValueChange}

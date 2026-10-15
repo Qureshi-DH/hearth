@@ -1,16 +1,26 @@
 import { memo, useCallback, useMemo, type FC } from "react"
-import { Pressable, RefreshControl, SectionList, View, type ViewStyle } from "react-native"
+import {
+  Pressable,
+  RefreshControl,
+  SectionList,
+  View,
+  type DimensionValue,
+  type ViewStyle,
+} from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import type { FeedEvent } from "@hearth/shared"
 import { useFocusEffect } from "@react-navigation/native"
 
 import { Avatar } from "@/components/Avatar"
 import { EmptyState } from "@/components/EmptyState"
+import { LoadFailed } from "@/components/LoadFailed"
 import { toneColor } from "@/components/Pill"
 import { Screen } from "@/components/Screen"
+import { Bone, Skeleton } from "@/components/Skeleton"
 import { Text } from "@/components/Text"
 import { useEvents, useMarkFeedRead } from "@/hooks/queries"
 import { useActiveCircle } from "@/hooks/useActiveCircle"
+import { translate } from "@/i18n/translate"
 import type { MainTabScreenProps } from "@/navigators/navigationTypes"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
@@ -20,7 +30,12 @@ import { dayLabel, formatClock } from "@/utils/time"
 
 export const ActivityScreen: FC<MainTabScreenProps<"Activity">> = ({ navigation }) => {
   const { themed, theme } = useAppTheme()
-  const { circle } = useActiveCircle()
+  const {
+    circle,
+    isLoading: circlesLoading,
+    isError: circlesFailed,
+    refetch: refetchCircles,
+  } = useActiveCircle()
   const circleId = circle?.id ?? null
   const events = useEvents(circleId)
   const markRead = useMarkFeedRead(circleId ?? "")
@@ -54,6 +69,15 @@ export const ActivityScreen: FC<MainTabScreenProps<"Activity">> = ({ navigation 
     }
     return [...byDay.values()].map((data) => ({ title: dayLabel(data[0]!.occurredAt, now), data }))
   }, [events.data])
+
+  // The feed waits on the circle, and TanStack Query does not count a query
+  // that is waiting as loading, so the circles' own load has to count here or
+  // a cold start would claim it was all quiet.
+  const loading = (!circle && circlesLoading) || events.isLoading
+  // Events already on screen stay there through a failed refresh. Swapping a
+  // feed that was fine a minute ago for an error helps nobody.
+  const failed = sections.length === 0 && (circle ? events.isError : circlesFailed)
+  const retry = () => void (circle ? events.refetch() : refetchCircles())
 
   const openEvent = useCallback(
     (event: FeedEvent) => {
@@ -97,7 +121,7 @@ export const ActivityScreen: FC<MainTabScreenProps<"Activity">> = ({ navigation 
         refreshControl={
           <RefreshControl
             refreshing={events.isRefetching}
-            onRefresh={() => events.refetch()}
+            onRefresh={retry}
             tintColor={theme.colors.tint}
           />
         }
@@ -112,7 +136,15 @@ export const ActivityScreen: FC<MainTabScreenProps<"Activity">> = ({ navigation 
         )}
         renderItem={({ item }) => <EventRow event={item} onPress={openEvent} />}
         ListEmptyComponent={
-          events.isLoading ? null : (
+          loading ? (
+            <FeedSkeleton />
+          ) : failed ? (
+            <LoadFailed
+              headingTx="activity:failed"
+              contentTx="activity:failedBody"
+              onRetry={retry}
+            />
+          ) : (
             <EmptyState
               headingTx="activity:empty"
               contentTx="activity:emptyBody"
@@ -122,6 +154,40 @@ export const ActivityScreen: FC<MainTabScreenProps<"Activity">> = ({ navigation 
         }
       />
     </Screen>
+  )
+}
+
+// Uneven on purpose. Rows of one length read as a table, not as a feed.
+const SKELETON_ROWS: Array<{ title: DimensionValue; detail: DimensionValue }> = [
+  { title: "72%", detail: "38%" },
+  { title: "56%", detail: "46%" },
+  { title: "80%", detail: "30%" },
+  { title: "64%", detail: "42%" },
+  { title: "48%", detail: "34%" },
+  { title: "76%", detail: "40%" },
+]
+
+/** Laid out like EventRow, so the feed lands where the shapes were. */
+function FeedSkeleton() {
+  const { themed, theme } = useAppTheme()
+  return (
+    <Skeleton accessibilityLabel={translate("activity:loading")}>
+      <View style={themed($dayLabel)}>
+        <Bone width={72} height={10} radius={5} />
+      </View>
+      {SKELETON_ROWS.map((row, index) => (
+        <View key={index} style={{ paddingHorizontal: theme.spacing.md, paddingVertical: 6 }}>
+          <View style={themed($skeletonRow)}>
+            <Bone width={42} height={42} radius={21} />
+            <View style={{ flex: 1, gap: 8 }}>
+              <Bone width={row.title} height={12} />
+              <Bone width={row.detail} height={10} />
+            </View>
+            <Bone width={34} height={10} radius={5} />
+          </View>
+        </View>
+      ))}
+    </Skeleton>
   )
 }
 
@@ -221,6 +287,14 @@ const $header: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   paddingHorizontal: spacing.md,
   paddingTop: spacing.sm,
   paddingBottom: spacing.xs,
+})
+const $skeletonRow: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
+  flexDirection: "row",
+  alignItems: "center",
+  gap: spacing.sm,
+  padding: spacing.sm,
+  borderRadius: 18,
+  backgroundColor: colors.surface,
 })
 const $dayLabel: ThemedStyle<ViewStyle> = ({ spacing, colors }) => ({
   paddingHorizontal: spacing.md,

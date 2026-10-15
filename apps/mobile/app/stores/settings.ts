@@ -1,9 +1,11 @@
+import type { MapStyle } from "@hearth/shared"
 import { create } from "zustand"
 import { createJSONStorage, persist } from "zustand/middleware"
 
 import { mmkvStorage } from "./mmkv"
 
 export type ThemeMode = "system" | "light" | "dark"
+export type MapScheme = MapStyle["scheme"]
 
 interface SettingsState {
   themeMode: ThemeMode
@@ -23,6 +25,12 @@ interface SettingsState {
    * the answer has to survive a process kill on its own.
    */
   incidentDetection: boolean
+  /**
+   * Ids from the server's list, one per theme. Null, or an id the server no
+   * longer offers, draws the server's default.
+   */
+  mapStyleLight: string | null
+  mapStyleDark: string | null
 
   setThemeMode(mode: ThemeMode): void
   setUnits(units: "metric" | "imperial"): void
@@ -31,6 +39,7 @@ interface SettingsState {
   setReduceMotion(reduce: boolean): void
   setStreetNames(on: boolean): void
   setIncidentDetection(enabled: boolean): void
+  setMapStyle(scheme: MapScheme, id: string | null): void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -43,6 +52,8 @@ export const useSettingsStore = create<SettingsState>()(
       reduceMotion: false,
       streetNames: true,
       incidentDetection: false,
+      mapStyleLight: null,
+      mapStyleDark: null,
 
       setThemeMode: (themeMode) => set({ themeMode }),
       setUnits: (units) => set({ units }),
@@ -51,6 +62,8 @@ export const useSettingsStore = create<SettingsState>()(
       setReduceMotion: (reduceMotion) => set({ reduceMotion }),
       setStreetNames: (streetNames) => set({ streetNames }),
       setIncidentDetection: (incidentDetection) => set({ incidentDetection }),
+      setMapStyle: (scheme, id) =>
+        set(scheme === "dark" ? { mapStyleDark: id } : { mapStyleLight: id }),
     }),
     {
       name: "hearth.settings.v1",

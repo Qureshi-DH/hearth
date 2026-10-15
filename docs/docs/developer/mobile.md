@@ -691,11 +691,11 @@ app/
   screens/      Server, Login, Register, Permissions, KeepAlive, Map, MemberDetail,
                 Live, Places, PlaceEditor, PlaceDetail, Activity, Circle,
                 CircleSettings, Invites, Sharing, NotificationPrefs, You, Devices,
-                PrivacyData, ChangePassword, TrackerLog, Sos, CheckIn, Trips,
-                TripDetail, Admin, CreateCircle, JoinCircle
+                PrivacyData, ChangePassword, MapStyle, TrackerLog, Sos, CheckIn,
+                Trips, TripDetail, Admin, CreateCircle, JoinCircle
   navigators/   AppNavigator (auth gate + stack), MainTabNavigator (Map / Places / Activity / You)
   hooks/        queries.ts (TanStack Query), queryKeys.ts, useActiveCircle.ts,
-                useLiveness.ts, useNearby.ts
+                useLiveness.ts, useMapStyle.ts, useNearby.ts
   services/     api/ (fetch client + typed endpoints), realtime.ts, notifications.ts,
                 health.ts, permissions.ts, location/ (tracker.ts, nativeTracker.ts,
                 control.ts, motion.ts, driveSensors.ts, log.ts)

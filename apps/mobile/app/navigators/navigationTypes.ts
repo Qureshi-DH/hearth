@@ -38,6 +38,7 @@ export type AppStackParamList = {
   TrackerLog: undefined
   PrivacyData: undefined
   ChangePassword: undefined
+  MapStyle: undefined
   Sos: { circleId: string }
   CheckIn: { circleId: string }
   Trips: { circleId: string; userId: string }

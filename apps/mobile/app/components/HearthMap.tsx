@@ -11,7 +11,7 @@ import {
   type MapRef,
 } from "@maplibre/maplibre-react-native"
 
-import { useAuthStore } from "@/stores/auth"
+import { useMapStyleUrl } from "@/hooks/useMapStyle"
 import { useAppTheme } from "@/theme/context"
 import type { FeatureCollection } from "geojson"
 
@@ -22,32 +22,28 @@ export interface HearthMapProps extends Omit<MapProps, "mapStyle" | "style"> {
   cameraRef?: Ref<CameraRef>
   initialCenter?: [number, number]
   initialZoom?: number
+  /** Draws this style in place of the one picked for the theme, for a preview. */
+  styleUrl?: string
   children?: ReactNode
 }
 
 /**
  * Every map in the app goes through here, so swapping tile providers stays a
- * server-side setting and the ornaments stay consistent.
+ * server-side setting, the style picked on the You screen reaches every map,
+ * and the ornaments stay consistent.
  */
 export const HearthMap = forwardRef<MapRef, HearthMapProps>(function HearthMap(
-  { style, cameraRef, initialCenter, initialZoom = 13, children, ...rest },
+  { style, cameraRef, initialCenter, initialZoom = 13, styleUrl, children, ...rest },
   ref,
 ) {
   const { theme } = useAppTheme()
-  const info = useAuthStore((state) => state.serverInfo)
-  // A light basemap under a dark UI is the most jarring thing on the screen,
-  // so follow the app's theme when the server offers a dark style.
-  const styleUrl =
-    (theme.isDark ? (info?.mapStyleUrlDark ?? info?.mapStyleUrl) : info?.mapStyleUrl) ??
-    (theme.isDark
-      ? "https://tiles.openfreemap.org/styles/dark"
-      : "https://tiles.openfreemap.org/styles/liberty")
+  const pickedStyleUrl = useMapStyleUrl()
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.surfaceElevated }, style]}>
       <Map
         ref={ref}
-        mapStyle={styleUrl}
+        mapStyle={styleUrl ?? pickedStyleUrl}
         style={StyleSheet.absoluteFill}
         attribution
         attributionPosition={{ bottom: 8, left: 8 }}

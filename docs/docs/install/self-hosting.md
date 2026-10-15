@@ -367,14 +367,42 @@ Whatever you point it at, it needs backing up separately. See below.
 ### Map tiles
 
 By default the app loads a MapLibre style from OpenFreeMap. No key, no tracking,
-community-run. To be fully independent, host your own tiles with
+community-run. Liberty is the default in light mode and Dark in dark mode, and
+people can switch to Bright or Positron, or to Fiord, under You, Appearance, Map
+style. The choice is per phone.
+
+To be fully independent, host your own tiles with
 [Martin](https://martin.maplibre.org/) or [TileServer GL](https://github.com/maptiler/tileserver-gl)
 and point `MAP_STYLE_URL` at your style JSON, plus `MAP_STYLE_URL_DARK` for the
 app's dark theme. Set both, or a phone in dark mode keeps loading OpenFreeMap.
-The app reads them from `/api/v1/server-info` on launch, so nothing has to be
-rebuilt. The credit line on the map comes from the attribution in your style's
-sources. `MAP_ATTRIBUTION` is published in server-info too, but the app doesn't
-show it.
+Once either one is set to anything but the default, phones get exactly those two and the OpenFreeMap
+alternatives disappear, so nobody's map quietly goes back to a third party.
+
+To offer your own choice of styles, set `MAP_STYLES` to a JSON array. It
+replaces the two URLs above.
+
+```bash
+MAP_STYLES=[{"id":"streets","name":"Streets","url":"https://maps.example.com/streets.json","scheme":"light"},{"id":"night","name":"Night","url":"https://maps.example.com/night.json","scheme":"dark"}]
+```
+
+| Field    | Meaning                                                                    |
+| -------- | -------------------------------------------------------------------------- |
+| `id`     | What phones remember the choice by. Keep it stable when you rename a style |
+| `name`   | What the picker shows                                                      |
+| `url`    | The style JSON, over http or https                                         |
+| `scheme` | `light` or `dark`, the app theme it is drawn under                         |
+
+The first style of each scheme is the default. A list with no dark style draws
+dark mode with the light style the phone picked, or the first light one. The
+server refuses to start on a list that isn't valid JSON, has a style missing a
+field, or uses one id twice, and names the entry at fault. A phone whose chosen
+style has gone from the list goes back to the default. The picker only appears
+when a scheme has more than one style.
+
+The app reads all of this from `/api/v1/server-info` on launch and whenever the
+You screen opens, so nothing has to be rebuilt. The credit line on the map comes
+from the attribution in your style's sources. `MAP_ATTRIBUTION` is published in
+server-info too, but the app doesn't show it.
 
 ### Several API replicas
 

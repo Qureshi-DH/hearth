@@ -1,6 +1,16 @@
-import { ComponentType, ElementType, forwardRef, Ref, useImperativeHandle, useRef } from "react"
+import {
+  ComponentType,
+  ElementType,
+  forwardRef,
+  Ref,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react"
 import {
   ImageStyle,
+  Platform,
+  Pressable,
   StyleProp,
   // eslint-disable-next-line no-restricted-imports
   TextInput,
@@ -10,6 +20,7 @@ import {
   View,
   ViewStyle,
 } from "react-native"
+import { Ionicons } from "@expo/vector-icons"
 
 import { isRTL } from "@/i18n"
 import { translate } from "@/i18n/translate"
@@ -42,7 +53,10 @@ export interface TextFieldProps extends Omit<TextInputProps, "ref"> {
   style?: StyleProp<TextStyle>
   containerStyle?: StyleProp<ViewStyle>
   inputWrapperStyle?: StyleProp<ViewStyle>
-  /** Memoize this. A new component identity remounts the accessory. */
+  /**
+   * Memoize this. A new component identity remounts the accessory. On a
+   * secureTextEntry field it takes the place of the show password toggle.
+   */
   RightAccessory?: ComponentType<TextFieldAccessoryProps>
   /** Memoize this. A new component identity remounts the accessory. */
   LeftAccessory?: ComponentType<TextFieldAccessoryProps>
@@ -77,9 +91,14 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
     style: $inputStyleOverride,
     containerStyle: $containerStyleOverride,
     inputWrapperStyle: $inputWrapperStyleOverride,
+    secureTextEntry,
     ...TextInputProps
   } = props
   const input = useRef<TextInput>(null)
+  const [revealed, setRevealed] = useState(false)
+  // A typo on a phone keyboard is easy to make and impossible to see in a
+  // hidden field, so every password field gets the toggle.
+  const revealable = !!secureTextEntry && !RightAccessory
 
   const {
     themed,
@@ -91,6 +110,7 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
   const placeholderContent = placeholderTx
     ? translate(placeholderTx, placeholderTxOptions)
     : placeholder
+  const labelContent = labelTx ? translate(labelTx, labelTxOptions) : label
 
   const $containerStyles = [$containerStyleOverride]
 
@@ -102,7 +122,7 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
     status === "error" && { borderColor: colors.error },
     TextInputProps.multiline && { minHeight: 112 },
     LeftAccessory && { paddingStart: 0 },
-    RightAccessory && { paddingEnd: 0 },
+    (RightAccessory || revealable) && { paddingEnd: 0 },
     $inputWrapperStyleOverride,
   ]
 
@@ -133,6 +153,9 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
       activeOpacity={1}
       style={$containerStyles}
       onPress={focusInput}
+      // Left accessible, iOS folds the whole field into one element, and the
+      // password toggle inside it could never be reached.
+      accessible={false}
       accessibilityState={{ disabled }}
     >
       {!!(label || labelTx) && (
@@ -141,6 +164,8 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
           text={label}
           tx={labelTx}
           txOptions={labelTxOptions}
+          // VoiceOver hears it from the input instead, and would read it twice.
+          accessibilityElementsHidden={Platform.OS === "ios"}
           {...LabelTextProps}
           style={themed($labelStyles)}
         />
@@ -162,10 +187,43 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
           textAlignVertical="top"
           placeholder={placeholderContent}
           placeholderTextColor={colors.textDim}
+          // On Android the label is its own element and stays off the input,
+          // because TalkBack reads an edit box's description in place of its text.
+          accessibilityLabel={Platform.OS === "ios" ? labelContent : undefined}
+          // A shown password is typed in the open, where the keyboard would
+          // capitalise and correct it into something the server refuses.
+          {...(revealable
+            ? { autoCapitalize: "none", autoCorrect: false, spellCheck: false }
+            : null)}
           {...TextInputProps}
+          secureTextEntry={!!secureTextEntry && !revealed}
+          // Shown on Android, it still asks the keyboard not to learn it.
+          keyboardType={
+            revealable && revealed && Platform.OS === "android"
+              ? "visible-password"
+              : TextInputProps.keyboardType
+          }
           editable={!disabled}
           style={themed($inputStyles)}
         />
+
+        {revealable && (
+          <Pressable
+            onPress={() => setRevealed((value) => !value)}
+            disabled={disabled}
+            hitSlop={8}
+            accessibilityRole="togglebutton"
+            accessibilityLabel={translate("common:showPassword")}
+            accessibilityState={{ checked: revealed, disabled }}
+            style={themed($revealStyle)}
+          >
+            <Ionicons
+              name={revealed ? "eye-off-outline" : "eye-outline"}
+              size={20}
+              color={colors.textDim}
+            />
+          </Pressable>
+        )}
 
         {!!RightAccessory && (
           <RightAccessory
@@ -224,6 +282,14 @@ const $helperStyle: ThemedStyle<TextStyle> = ({ spacing }) => ({
 
 const $rightAccessoryStyle: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   marginEnd: spacing.xs,
+  height: 40,
+  justifyContent: "center",
+  alignItems: "center",
+})
+
+const $revealStyle: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  marginEnd: spacing.xxs,
+  width: 40,
   height: 40,
   justifyContent: "center",
   alignItems: "center",

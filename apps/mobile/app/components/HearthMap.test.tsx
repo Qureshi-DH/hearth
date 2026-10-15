@@ -1,15 +1,22 @@
+import type { ServerInfo } from "@hearth/shared"
 import { render } from "@testing-library/react-native"
 
-import { TrailGapLayer, TrailLayer } from "./HearthMap"
+import { HearthMap, TrailGapLayer, TrailLayer } from "./HearthMap"
+import { useSettingsStore } from "../stores/settings"
 import { ThemeProvider } from "../theme/context"
 
 const mockSources: Array<{ id: string; data: any }> = []
+const mockMapStyles: string[] = []
+let mockServerInfo: Partial<ServerInfo> | null = null
 
 jest.mock("@maplibre/maplibre-react-native", () => {
   const react = require("react")
   const rn = require("react-native")
   return {
-    MapView: ({ children }: { children?: unknown }) => react.createElement(rn.View, null, children),
+    Map: ({ children, mapStyle }: { children?: unknown; mapStyle: string }) => {
+      mockMapStyles.push(mapStyle)
+      return react.createElement(rn.View, null, children)
+    },
     Camera: () => null,
     Layer: () => null,
     GeoJSONSource: ({ id, data, children }: { id: string; data: unknown; children?: unknown }) => {
@@ -19,7 +26,7 @@ jest.mock("@maplibre/maplibre-react-native", () => {
   }
 })
 jest.mock("../stores/auth", () => ({
-  useAuthStore: (selector: (state: unknown) => unknown) => selector({ serverInfo: null }),
+  useAuthStore: (selector: (state: unknown) => unknown) => selector({ serverInfo: mockServerInfo }),
 }))
 
 const a = { lat: 51.45, lon: -2.58 }
@@ -29,6 +36,51 @@ const d = { lat: 51.471, lon: -2.58 }
 
 beforeEach(() => {
   mockSources.length = 0
+  mockMapStyles.length = 0
+  mockServerInfo = null
+})
+
+describe("HearthMap", () => {
+  beforeEach(() => {
+    mockServerInfo = {
+      mapStyleUrl: "https://tiles.example/liberty",
+      mapStyleUrlDark: "https://tiles.example/dark",
+      mapStyles: [
+        { id: "liberty", name: "Liberty", url: "https://tiles.example/liberty", scheme: "light" },
+        {
+          id: "positron",
+          name: "Positron",
+          url: "https://tiles.example/positron",
+          scheme: "light",
+        },
+      ],
+    }
+    useSettingsStore.setState({ mapStyleLight: null, mapStyleDark: null })
+  })
+
+  it("draws the style this phone picked for the theme", () => {
+    useSettingsStore.setState({ mapStyleLight: "positron" })
+
+    render(
+      <ThemeProvider initialContext="light">
+        <HearthMap />
+      </ThemeProvider>,
+    )
+
+    expect(mockMapStyles.at(-1)).toBe("https://tiles.example/positron")
+  })
+
+  it("draws a style it is handed over the picked one, for a preview", () => {
+    useSettingsStore.setState({ mapStyleLight: "positron" })
+
+    render(
+      <ThemeProvider initialContext="light">
+        <HearthMap styleUrl="https://tiles.example/dark" />
+      </ThemeProvider>,
+    )
+
+    expect(mockMapStyles.at(-1)).toBe("https://tiles.example/dark")
+  })
 })
 
 describe("TrailLayer", () => {

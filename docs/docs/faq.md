@@ -74,8 +74,8 @@ Two things reach outside, and neither is required:
 
 - **Map tiles.** The phone fetches them from the style URL your server
   advertises, OpenFreeMap out of the box. With no internet the map data is still
-  correct but the background will not draw. Point `MAP_STYLE_URL` at your own
-  tile server to fix that permanently. Offline map packs are on the
+  correct but the background will not draw. Point `MAP_STYLE_URL` and
+  `MAP_STYLE_URL_DARK` at your own tile server to fix that for good. Offline map packs are on the
   [roadmap](roadmap.md) and are not built.
 - **Push**, only if you configured a provider that is not on your network.
 

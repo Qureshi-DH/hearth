@@ -1,6 +1,9 @@
 import { boundingBox, metersPerDegreeLat, metersPerDegreeLon, type LatLng } from "@hearth/shared"
 import type { Feature, FeatureCollection, Polygon } from "geojson"
 
+/** Where a map opens when nobody has a position yet. */
+export const FALLBACK_CENTER: [number, number] = [-0.1276, 51.5072]
+
 /** MapLibre has no circle geometry, so a circle has to be drawn as a polygon. */
 export function circlePolygon(center: LatLng, radiusMeters: number, steps = 64): Feature<Polygon> {
   const latStep = radiusMeters / metersPerDegreeLat()

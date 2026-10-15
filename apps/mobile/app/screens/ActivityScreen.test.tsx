@@ -1,6 +1,7 @@
 import type { FeedEvent } from "@hearth/shared"
+import { RefreshControl } from "react-native"
 import { SafeAreaProvider } from "react-native-safe-area-context"
-import { act, render } from "@testing-library/react-native"
+import { act, fireEvent, render } from "@testing-library/react-native"
 
 import { ActivityScreen } from "./ActivityScreen"
 import { ThemeProvider } from "../theme/context"
@@ -28,8 +29,27 @@ jest.mock("../utils/time", () => {
   }
 })
 
-let mockCircle = { id: "circle-1", name: "Home", emoji: "🏠", memberCount: 2, unreadEventCount: 0 }
-let mockEventsData: { pages: { items: FeedEvent[] }[] } = { pages: [] }
+type MockCircle = {
+  id: string
+  name: string
+  emoji: string
+  memberCount: number
+  unreadEventCount: number
+}
+const homeCircle: MockCircle = {
+  id: "circle-1",
+  name: "Home",
+  emoji: "🏠",
+  memberCount: 2,
+  unreadEventCount: 0,
+}
+let mockCircle: MockCircle | null = homeCircle
+let mockEventsData: { pages: { items: FeedEvent[] }[] } | undefined = { pages: [] }
+/** What TanStack Query reports about the feed and the circles beside the data. */
+let mockEventsStatus = { isLoading: false, isError: false }
+let mockCirclesStatus = { isLoading: false, isError: false }
+const mockRefetchEvents = jest.fn()
+const mockRefetchCircles = jest.fn()
 const mockListeners = new Set<() => void>()
 const mockSubscribe = (listener: () => void) => {
   mockListeners.add(listener)
@@ -53,11 +73,11 @@ jest.mock("../hooks/queries", () => {
   return {
     useEvents: () => ({
       data: react.useSyncExternalStore(mockSubscribe, mockReadEvents),
-      isLoading: false,
+      ...mockEventsStatus,
       isRefetching: false,
       hasNextPage: false,
       isFetchingNextPage: false,
-      refetch: jest.fn(),
+      refetch: mockRefetchEvents,
       fetchNextPage: jest.fn(),
     }),
     useMarkFeedRead: () => ({ mutate: jest.fn() }),
@@ -68,8 +88,9 @@ jest.mock("../hooks/useActiveCircle", () => {
   return {
     useActiveCircle: () => ({
       circle: react.useSyncExternalStore(mockSubscribe, mockReadCircle),
-      circles: [mockCircle],
-      isLoading: false,
+      circles: mockCircle ? [mockCircle] : [],
+      ...mockCirclesStatus,
+      refetch: mockRefetchCircles,
       setActiveCircle: jest.fn(),
     }),
   }
@@ -81,6 +102,21 @@ jest.mock("../stores/auth", () => ({
 // The screen is not inside a navigator here, and the focus effect only marks
 // the feed read, which the queries mock above swallows.
 jest.mock("@react-navigation/native", () => ({ useFocusEffect: () => {} }))
+// The loading skeleton pulses on reanimated, which has no native side here.
+jest.mock("react-native-reanimated", () => {
+  const react = require("react")
+  const rn = require("react-native")
+  return {
+    __esModule: true,
+    default: { View: rn.View },
+    Easing: { inOut: (fn: unknown) => fn, quad: (value: number) => value },
+    useReducedMotion: () => false,
+    useSharedValue: (initial: number) => react.useRef({ value: initial }).current,
+    useAnimatedStyle: (worklet: () => object) => worklet(),
+    withRepeat: (value: unknown) => value,
+    withTiming: (value: unknown) => value,
+  }
+})
 // Screen pulls this in for its scrolling preset. It reaches for a native module
 // at import time, so it has to be the library's own jest double.
 jest.mock("react-native-keyboard-controller", () =>
@@ -125,8 +161,10 @@ async function renderActivity() {
 describe("ActivityScreen feed", () => {
   beforeEach(() => {
     nextEventId = 0
-    mockCircle = { ...mockCircle, unreadEventCount: 0 }
+    mockCircle = { ...homeCircle }
     mockEventsData = { pages: [] }
+    mockEventsStatus = { isLoading: false, isError: false }
+    mockCirclesStatus = { isLoading: false, isError: false }
     mockDayLabelCalls.length = 0
     mockClockCalls.length = 0
     navigation.navigate.mockClear()
@@ -174,7 +212,7 @@ describe("ActivityScreen feed", () => {
     // A feed frame invalidates the circles query, which lands here even while
     // the user is looking at another tab.
     publish(() => {
-      mockCircle = { ...mockCircle, unreadEventCount: 3 }
+      mockCircle = { ...homeCircle, unreadEventCount: 3 }
     })
 
     expect(mockClockCalls).toEqual([])
@@ -195,5 +233,98 @@ describe("ActivityScreen feed", () => {
     })
 
     expect(mockClockCalls).toEqual([arrived.occurredAt])
+  })
+})
+
+describe("ActivityScreen while loading and after a failure", () => {
+  beforeEach(() => {
+    mockCircle = { ...homeCircle }
+    mockEventsData = undefined
+    mockEventsStatus = { isLoading: false, isError: false }
+    mockCirclesStatus = { isLoading: false, isError: false }
+    mockRefetchEvents.mockClear()
+    mockRefetchCircles.mockClear()
+  })
+
+  it("shows a skeleton, not the empty state, while the feed loads", async () => {
+    mockEventsStatus = { isLoading: true, isError: false }
+
+    const { getByLabelText, queryByText } = await renderActivity()
+
+    expect(getByLabelText(/^activity:loading/)).toBeTruthy()
+    expect(queryByText(/^activity:empty( |$)/)).toBeNull()
+  })
+
+  it("shows the skeleton while it does not yet know which circle to load", async () => {
+    // The feed query waits on the circle, and a query that is waiting is
+    // not loading as far as TanStack Query is concerned.
+    mockCircle = null
+    mockCirclesStatus = { isLoading: true, isError: false }
+
+    const { getByLabelText, queryByText } = await renderActivity()
+
+    expect(getByLabelText(/^activity:loading/)).toBeTruthy()
+    expect(queryByText(/^activity:empty( |$)/)).toBeNull()
+  })
+
+  it("says the feed could not load and tries again when asked", async () => {
+    mockEventsStatus = { isLoading: false, isError: true }
+
+    const { getByText, getByRole, queryByText, queryByLabelText } = await renderActivity()
+
+    expect(getByText(/^activity:failed( |$)/)).toBeTruthy()
+    expect(queryByText(/^activity:empty( |$)/)).toBeNull()
+    expect(queryByLabelText(/^activity:loading/)).toBeNull()
+
+    fireEvent.press(getByRole("button", { name: /^common:retry/ }))
+    expect(mockRefetchEvents).toHaveBeenCalledTimes(1)
+  })
+
+  it("retries the circles when those are what failed", async () => {
+    mockCircle = null
+    mockCirclesStatus = { isLoading: false, isError: true }
+
+    const { getByRole, queryByText } = await renderActivity()
+
+    expect(queryByText(/^activity:empty( |$)/)).toBeNull()
+    fireEvent.press(getByRole("button", { name: /^common:retry/ }))
+    expect(mockRefetchCircles).toHaveBeenCalledTimes(1)
+  })
+
+  // With no circle the feed's query has no id, and refetching it anyway asks
+  // the server for /circles/null/events. That is a 400, which a firewall in
+  // front of the server can answer by locking the whole household out.
+  it("pulls the circles again rather than a feed it has no circle for", async () => {
+    mockCircle = null
+    mockCirclesStatus = { isLoading: false, isError: true }
+
+    const { UNSAFE_getByType } = await renderActivity()
+    await act(async () => {
+      UNSAFE_getByType(RefreshControl).props.onRefresh()
+    })
+
+    expect(mockRefetchCircles).toHaveBeenCalledTimes(1)
+    expect(mockRefetchEvents).not.toHaveBeenCalled()
+  })
+
+  it("keeps the events it has when a later refresh fails", async () => {
+    const kept = eventAt("2026-09-01T09:00:00.000Z")
+    mockEventsData = { pages: [{ items: [kept] }] }
+    mockEventsStatus = { isLoading: false, isError: true }
+
+    const { getByText, queryByText } = await renderActivity()
+
+    expect(getByText(kept.summary)).toBeTruthy()
+    expect(queryByText(/^activity:failed( |$)/)).toBeNull()
+  })
+
+  it("shows the empty state once a load comes back with nothing", async () => {
+    mockEventsData = { pages: [{ items: [] }] }
+
+    const { getByText, queryByLabelText, queryByText } = await renderActivity()
+
+    expect(getByText(/^activity:empty( |$)/)).toBeTruthy()
+    expect(queryByLabelText(/^activity:loading/)).toBeNull()
+    expect(queryByText(/^activity:failed( |$)/)).toBeNull()
   })
 })

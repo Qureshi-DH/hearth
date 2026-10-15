@@ -17,6 +17,23 @@ Notable changes to Hearth. The format is loosely
   shares its domain's origin with the app at the root, which can then act as
   you in the admin portal, so the docs suggest a subdomain unless you trust
   that app as much as Hearth.
+- A choice of map styles, picked per phone under You, Appearance, Map style,
+  with a preview. On the default OpenFreeMap tiles that is Liberty, Bright or
+  Positron in light mode and Dark or Fiord in dark mode. `MAP_STYLES` sets
+  your own list as JSON. A server whose `MAP_STYLE_URL` or
+  `MAP_STYLE_URL_DARK` is set to anything but the default keeps offering just
+  those two.
+  Server-info gains `mapStyles`, and older apps keep using `mapStyleUrl` and
+  `mapStyleUrlDark`, which stay the defaults.
+- Every password field in the app, sign-in included, has a button that shows
+  what you typed.
+
+### Changed
+
+- The Activity tab shows the shape of the feed while it loads, rather than
+  nothing, and says so when the feed couldn't load, with a button to try
+  again. "All quiet" now only appears once the server has answered with no
+  events.
 
 ### Fixed
 
@@ -32,11 +49,19 @@ Notable changes to Hearth. The format is loosely
   Hearth in the background for the tracker, the app's screens never load, and
   they were the only thing that set up the app's text. It now sets itself up
   the first time anything asks for a string.
+- The app's Signed-in devices screen could stay blank. It drew nothing while
+  the list loaded and nothing at all when the list failed to load, say because a
+  firewall in front of the server refused the request. It now shows the list
+  loading, says why it couldn't load with a button to try again, and says so
+  when the server lists no devices.
 - A phone no longer signs itself out when something in front of the server,
   such as a firewall or a proxy, answers a token renewal with its own 401 or
   403 page. Only Hearth's own refusal ends the session now. Anything else is
   retried, as a network failure is. The admin portal does the same, and a phone
   keeps the location fixes such a page refused rather than throwing them away.
+- Pulling the Activity tab down to refresh with no circle loaded asked the
+  server for the feed of a circle called `null`. It now loads the circles
+  again.
 
 ## [1.2.0] - 2026-10-02
 

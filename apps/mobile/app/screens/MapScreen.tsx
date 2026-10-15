@@ -60,10 +60,9 @@ import { useSettingsStore } from "@/stores/settings"
 import { useTrackingStore } from "@/stores/tracking"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { fitBoundsFor } from "@/utils/map"
+import { FALLBACK_CENTER, fitBoundsFor } from "@/utils/map"
 import { groupOverlapping, type MarkerGroup } from "@/utils/markerLayout"
 
-const FALLBACK_CENTER: [number, number] = [-0.1276, 51.5072]
 // The circle switcher row hangs this far below the status bar, and the map
 // controls stop at the same offset when the sheet pushes them up. One constant
 // for both, so neither can drift under the bar on its own.

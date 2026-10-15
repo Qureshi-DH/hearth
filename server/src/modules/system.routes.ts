@@ -3,7 +3,7 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
 import { getDb } from "../db/client"
-import { getConfig } from "../env"
+import { defaultMapStyleUrl, getConfig } from "../env"
 import { uptimeSeconds } from "../runtime"
 import { getServerSettings } from "../services/settings"
 import { storageEnabled } from "../services/storage"
@@ -28,7 +28,7 @@ export const systemRoutes: FastifyPluginAsyncZod = async (app) => {
         description:
           "The first call the app makes against a new server URL. It carries everything the " +
           "client needs to configure itself: whether registration is open, which push " +
-          "transport to use, and which map style to render.",
+          "transport to use, and which map styles to offer.",
       },
     },
     async () => {
@@ -43,8 +43,10 @@ export const systemRoutes: FastifyPluginAsyncZod = async (app) => {
         pushProvider: config.PUSH_PROVIDER,
         webPushPublicKey: config.PUSH_PROVIDER === "webpush" ? config.VAPID_PUBLIC_KEY : null,
         ntfyBaseUrl: config.PUSH_PROVIDER === "ntfy" ? config.NTFY_BASE_URL : null,
-        mapStyleUrl: config.MAP_STYLE_URL,
-        mapStyleUrlDark: config.MAP_STYLE_URL_DARK || config.MAP_STYLE_URL,
+        // Apps from before the list only read these two.
+        mapStyleUrl: defaultMapStyleUrl(config.mapStyles, "light"),
+        mapStyleUrlDark: defaultMapStyleUrl(config.mapStyles, "dark"),
+        mapStyles: config.mapStyles,
         mapAttribution: config.MAP_ATTRIBUTION,
         features: {
           places: true,

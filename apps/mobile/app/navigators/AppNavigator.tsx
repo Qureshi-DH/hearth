@@ -239,6 +239,10 @@ const AppStack = () => {
             options={sheet}
           />
           <Stack.Screen
+            name="MapStyle"
+            getComponent={() => require("@/screens/MapStyleScreen").MapStyleScreen}
+          />
+          <Stack.Screen
             name="Sos"
             getComponent={() => require("@/screens/SosScreen").SosScreen}
             options={{ presentation: "fullScreenModal", headerShown: false }}
