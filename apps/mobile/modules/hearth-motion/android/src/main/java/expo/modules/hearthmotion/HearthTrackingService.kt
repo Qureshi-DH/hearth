@@ -21,14 +21,15 @@ import com.google.android.gms.location.LocationServices
 import org.json.JSONObject
 
 /**
- * The foreground service behind every moving tier, and the "Updating your
- * location" line that goes with it. It owns the location request, so the
+ * The foreground service behind every moving tier and behind a parked phone
+ * somebody is watching live, and the "Updating your location" line that
+ * goes with it. It owns the location request, so the
  * fixes of a journey are taken and kept whether or not JavaScript is up,
  * and it is started natively by the receivers inside the moment Android
  * allows a start from the background: a geofence exit, an activity
  * transition, a high priority push, boot. JavaScript, when it comes,
  * swaps the request for the tier it decides on, and stops the service
- * when the phone parks.
+ * when the phone parks with nobody watching, or the watch ends.
  *
  * Brief is the same service up for one fix: a wake on a parked phone, or
  * a walk being confirmed. It stops itself after the fix's own deadline
@@ -296,7 +297,7 @@ class HearthTrackingService : Service() {
         // The lowest importance: no sound, no status bar icon on most
         // launchers, collapsed in the silent part of the shade.
         val channel = NotificationChannel(CHANNEL_ID, "Location updates", NotificationManager.IMPORTANCE_MIN)
-        channel.description = "Shown while Hearth updates your location on a journey."
+        channel.description = "Shown while Hearth updates your location on a journey, or while someone watches it live."
         channel.setShowBadge(false)
         manager.createNotificationChannel(channel)
       }

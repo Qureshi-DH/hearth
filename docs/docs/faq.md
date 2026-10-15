@@ -139,7 +139,9 @@ that. A phone that has told the server why it cannot report, a permission not
 set to Always, Location Services off, is shown as that under its name instead.
 Opening the map asks anyone quiet for a couple of minutes for a fresh fix, and
 opening somebody's page asks their phone for one too. Live, offered while
-somebody is on the move, has their phone send a fix a second for ten minutes.
+somebody is on the move, has their phone send a fix a second for as long as you
+watch and up to ten minutes after you leave, whether they keep moving or stop. On Android the
+location service's notification shows for that time, parked or not.
 
 Three other things affect it:
 

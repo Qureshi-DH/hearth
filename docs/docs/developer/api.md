@@ -192,8 +192,8 @@ Called while someone has a member's Live page open, and every minute after to
 hold the window. The member's phone is asked to report at full accuracy, a fix
 a second, for `DEFAULTS.watchWindowSeconds`: over its control channel when it
 has one open (see the websocket section), by a silent push otherwise, and by
-its next upload reply either way. A parked Android phone answers with one fix
-instead. The reply is a `WatchResponse`:
+its next upload reply either way. A parked phone goes live too. The reply is a
+`WatchResponse`.
 
 ```json
 {

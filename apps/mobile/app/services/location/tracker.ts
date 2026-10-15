@@ -1386,7 +1386,8 @@ function updateOptions(policy: TrackingPolicy): Location.LocationTaskOptions {
 /**
  * Parked is not silent, but it is quiet. On Android the request stays at
  * Wi-Fi grade with one fix wanted a quarter hour, and no service runs under
- * it: a wake or a watch brings the brief service up for one fix. On iOS it
+ * it. A wake brings the brief service up for one fix, and a watch keeps it
+ * up at the live request until the window ends. On iOS it
  * is a cell-only session with no distance filter: it costs almost nothing,
  * it keeps the process alive so the quarter hour heartbeat and the
  * classifier keep running, and a departure shows in the session's own
@@ -1431,11 +1432,8 @@ function currentOptions(): Location.LocationTaskOptions | null {
   // behind the stop lands on nothing rather than re-registering the service.
   if (!enabled || mode === "off") return null
   if (mode === "stationary") {
-    // A parked Android phone answers a watch with one fix, not a live
-    // request, because a live request carries the service and its
-    // notification for the whole window. A parked iPhone has no such cost
-    // and goes live.
-    if (Platform.OS === "android") return restingOptions()
+    // A phone lying still is as live as a moving one while somebody looks.
+    // One fix and then silence reads as a broken connection on Live.
     return watchedNow() ? liveOptions(Location.Accuracy.High) : restingOptions()
   }
   // Somebody is looking. Full accuracy at the live interval for the window.
@@ -1613,7 +1611,14 @@ async function applyAndroid(
     return "none"
   }
   if (options.foregroundService) {
-    if (await locationUpdatesRunning()) {
+    // A parked phone being watched keeps its resting request under the live
+    // service. A service Android refuses, or kills inside the window, or one
+    // a reboot takes, then leaves it reporting as it did before the watch.
+    if (useTrackingStore.getState().mode === "stationary") {
+      if (!(await locationUpdatesRunning())) {
+        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, restingOptions())
+      }
+    } else if (await locationUpdatesRunning()) {
       await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
     }
     const request = toServiceRequest(options)
@@ -1666,8 +1671,9 @@ export async function reassertService({
 }: { exempt?: boolean } = {}): Promise<void> {
   if (Platform.OS !== "android") return
   const { enabled, mode } = useTrackingStore.getState()
-  // A parked phone wants no location service; a wake runs the wake service.
-  if (!enabled || mode !== "moving") return
+  // A parked phone wants no location service unless somebody is watching
+  // it, and a wake runs the wake service.
+  if (!enabled || (mode !== "moving" && !(mode === "stationary" && watchedNow()))) return
   const before = await foregroundServiceStatus()
   if (before !== "refused" && before !== "none" && before !== "brief") return
   // Brief is the wake's service, up for one fix under a phone that wants
@@ -1710,15 +1716,15 @@ export async function enterWatched(seconds: number): Promise<void> {
   logTracker("watched", { seconds, mode: store.mode })
   store.setWatchedUntil(new Date(Date.now() + seconds * 1000).toISOString())
   armWatchTimer()
-  // The window is held either way, so a departure inside it goes straight
-  // to live. A parked Android phone answers with one fix under the brief
-  // service. The server pushes it again only once the window has run out,
-  // since a phone that answered is held until then.
-  if (Platform.OS === "android" && store.mode === "stationary") {
+  // A parked Android phone goes live under the brief service the watch
+  // push brought up, upgraded in place. Where Android refused it anyway,
+  // the window is still held, so the upload reply cannot ask again and
+  // spin, and the answer is one fix.
+  const status = await applyRegistration()
+  if (Platform.OS === "android" && store.mode === "stationary" && status === "refused") {
     await wakeFix()
     return
   }
-  await applyRegistration()
   await reportNow(
     "nudge",
     store.mode === "stationary" ? Location.Accuracy.Balanced : Location.Accuracy.High,
@@ -2122,8 +2128,8 @@ async function settle(lat: number, lon: number, parkFix: ParkFix): Promise<void>
   // phone parks is usually somebody's home.
   logTracker("stationary", { from: previous })
   syncControl()
-  // A parked phone wants no service, so a death remembered from the drive
-  // is no longer what stands between it and reporting.
+  // A parked phone reports on its resting request, so a death remembered
+  // from the drive is no longer what stands between it and reporting.
   store.setServiceStoppedAt(null)
   // Sampling the accelerometer that hard is only worth its battery inside a
   // moving vehicle. A verdict already scheduled survives this, see

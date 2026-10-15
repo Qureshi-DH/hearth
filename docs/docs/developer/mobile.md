@@ -216,8 +216,9 @@ All of this lives in `app/services/location/tracker.ts`.
    with those options. On Android the moving, driving and live tiers are
    the native tracking service in `modules/hearth-motion`, handed the same
    options as a request (`applyAndroid`, `services/location/nativeTracker.ts`).
-   The parked tier is expo's resting request with no service, and a wake
-   brings the service up for the length of one fix.
+   The parked tier is expo's resting request with no service. A wake brings
+   the service up for the length of one fix, and a watch runs it at the live
+   request on top of the resting one until the window ends.
 3. Each delivery → `toFix()` (adds battery and the tracker's own `activity`)
    → `thin()` (drops near-duplicates, and on Android applies the circle's
    distance filter to what is uploaded) → MMKV-persisted queue → `flush()`
@@ -321,9 +322,11 @@ within minutes on most OEM builds, and a service start refused later except
 at a handful of moments. The family will not have a notification that stays,
 so the service runs while the phone is on the move (moving, driving, live)
 and goes with the stop. A parked phone runs expo's cheap resting request
-with no service, and a wake or a watch brings the service up for the length
-of one fix and drops it with the fix, which is the second-long "Updating
-your location" a messaging app shows when it checks for messages. The
+with no service, and a wake brings the service up for the length of one fix
+and drops it with the fix, which is the second-long "Updating your location"
+a messaging app shows when it checks for messages. A watch keeps the service
+up at the live request for as long as the window lasts, with the resting
+request still running under it. The
 notification is one plain line on a channel the service creates at minimum
 importance (`hearth-wake`, "Location updates"), not ongoing, so from Android
 13 the person can swipe it away and the service runs on without it. The app's
@@ -376,7 +379,8 @@ native Kotlin in `modules/hearth-motion/android`:
 moment: an activity transition, a fence exit, a wake or watch push and the
 app opening at once, and a delivery or the sync task once per ten minutes,
 since re-registering hands back the fix the OS already had and that is
-another delivery. A parked phone wants no service and is left alone. A
+another delivery. A parked phone wants no service and is left alone unless
+somebody is watching it, when its live service is answered the same way. A
 brief service found under a moving phone is upgraded in place. A status of
 `none` while a tier wants the service means it went down without the app
 asking, an OEM battery manager most often. The tracker brings it back,
@@ -549,7 +553,8 @@ fix, gone with it, and stopping itself after the fix's deadline if nothing
 else does. That is the moment Android allows a service to start from the
 background, and the notification it posts is what keeps the app's pushes
 at high priority. The JavaScript task then takes the fix under it
-(`wakeFix` in `tracker.ts`, `startBrief` in `services/location/nativeTracker.ts`).
+(`wakeFix` in `tracker.ts`, `startBrief` in `services/location/nativeTracker.ts`),
+or, for a watch, upgrades that service in place to the live request.
 
 Opening a member's page calls `POST /circles/:id/members/:userId/refresh`
 for one fix now, the way opening the map calls
@@ -576,13 +581,16 @@ answer within twenty seconds is not repeated down the channel on the next
 hold: a socket iOS let die without a close keeps its stamp for minutes, and
 the hold goes by push instead. Either way the phone puts `watchedUntil` in
 its store and `currentOptions()` returns the live tier whatever the phone
-was doing: `High` accuracy, a fix a second, every one uploaded. The one
-exception is a parked Android phone, which answers with one fix under the
-brief service rather than carry the service and its notification for the
-whole window, and goes live if it leaves inside it. iOS has no time interval,
-so the live session has no distance filter either, which is the only session
-shape that delivers to a phone standing still. `ingest` thins the stream at
-the live tier's own pace rather than the circle's. The phone also answers
+was doing: `High` accuracy, a fix a second, every one uploaded. A parked
+Android phone is no exception. The watch push brings the brief service up, the
+live request upgrades it in place, and the window's end takes it down. The
+resting request runs under it the whole time, so a service Android kills inside
+the window, or one a reboot takes, leaves the phone reporting as it was. Where
+Android refuses the service anyway, the phone answers with one fix, and the
+window stays held so the next upload reply doesn't ask again. iOS has no time
+interval, so the live session has no distance filter either, which is the only
+session shape that delivers to a phone standing still. `ingest` thins the
+stream at the live tier's own pace rather than the circle's. The phone also answers
 with one fix straight away. The window ends by a timer and by the first fix past it,
 whichever comes first, and the request steps back to the tier it was in.
 The Live page calls the phone live on any fix from the last thirty seconds,

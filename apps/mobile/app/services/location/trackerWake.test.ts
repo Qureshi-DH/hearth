@@ -225,6 +225,19 @@ describe("a journey starting in the background on Android", () => {
 })
 
 describe("being watched", () => {
+  /** Where the phone was parked, as a fix a GPS at one second would give. */
+  const still = (at: number): Location.LocationObject => ({
+    timestamp: at,
+    coords: {
+      latitude: HOME.lat,
+      longitude: HOME.lon,
+      altitude: 0,
+      accuracy: 10,
+      altitudeAccuracy: 5,
+      heading: 0,
+      speed: 0,
+    },
+  })
   const sample = (at: number): Location.LocationObject => ({
     timestamp: at,
     coords: {
@@ -263,15 +276,101 @@ describe("being watched", () => {
     expect(useTrackingStore.getState().watchedUntil).toBeNull()
   })
 
-  it("answers a watch on a parked phone with one fix and stays on the resting request", async () => {
+  // Somebody opened Live on a phone lying on a table. One fix and silence for
+  // ten minutes read as broken. The family wants the dot every second for as
+  // long as they look, and the phone keeps that up by itself.
+  it("goes live for the window on a parked phone, over the service the watch push brought up", async () => {
     await enterStationary(HOME.lat, HOME.lon)
+    // The high priority push that carried the watch started the brief service.
+    fake.status = "brief"
+    fake.startService.mockClear()
+    await enterWatched(600)
+    expect(requestOf(0)).toEqual({ priority: "high", intervalMs: 1_000, distanceMeters: 0 })
+    expect(fake.status).toBe("running")
+
+    // Every second's fix where the phone lies is kept for upload, and the
+    // phone is still parked after them.
+    const t0 = Date.now() + 1_000
+    await ingest([still(t0), still(t0 + 1_000), still(t0 + 2_000)], "background")
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    const kept = useTrackingStore.getState().queue.filter((fix) => fix.source === "background")
+    expect(kept).toHaveLength(3)
+  })
+
+  // The service runs beside the parked phone's own request, not in its
+  // place. A service an OEM kills inside the window, or one gone with a
+  // reboot, then leaves the phone reporting as it did before the watch.
+  it("keeps the resting request under the live service", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    ;(Location.stopLocationUpdatesAsync as jest.Mock).mockClear()
+    await enterWatched(600)
+    expect(fake.status).toBe("running")
+    expect(Location.stopLocationUpdatesAsync).not.toHaveBeenCalled()
+  })
+
+  // The page showed a speed, so the phone was moving when Live opened, and
+  // then it stopped. Parking must not end what the family is watching.
+  it("stays live when a watched phone parks inside the window, with its resting request under it", async () => {
+    await enterMoving()
+    await enterWatched(600)
+    const running = Location.hasStartedLocationUpdatesAsync as jest.Mock
+    running.mockResolvedValue(false)
+    try {
+      start.mockClear()
+      await enterStationary(HOME.lat, HOME.lon)
+    } finally {
+      running.mockImplementation(async () => true)
+    }
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(lastRequest()).toEqual({ priority: "high", intervalMs: 1_000, distanceMeters: 0 })
+    expect(fake.status).toBe("running")
+    expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(RESTING_HEARTBEAT_MS)
+  })
+
+  it("brings the live service back on a parked phone when it dies inside the window", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    await enterWatched(600)
+    fake.status = "none"
+    fake.startService.mockClear()
+    // A transition is one of the moments Android allows the start.
+    await reassertService({ exempt: true })
+    expect(requestOf(0)).toEqual({ priority: "high", intervalMs: 1_000, distanceMeters: 0 })
+    expect(fake.status).toBe("running")
+  })
+
+  it("leaves a parked phone nobody is watching without a service", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    fake.status = "none"
+    fake.startService.mockClear()
+    await reassertService({ exempt: true })
+    expect(fake.startService).not.toHaveBeenCalled()
+  })
+
+  it("puts the parked phone back to rest, service and all, when the window ends", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    fake.status = "brief"
+    await enterWatched(600)
+    expect(fake.status).toBe("running")
+
+    // The clock alone ends it, with no fix past the window.
+    await jest.advanceTimersByTimeAsync(602_000)
+    expect(useTrackingStore.getState().watchedUntil).toBeNull()
+    expect(fake.status).toBe("none")
+    expect(optionsOf(start.mock.calls.length - 1).timeInterval).toBe(RESTING_HEARTBEAT_MS)
+  })
+
+  it("answers with one fix, still parked and on its resting request, when Android will not let the service run", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    fake.refuse = true
     getPosition.mockClear()
-    start.mockClear()
+    ;(Location.stopLocationUpdatesAsync as jest.Mock).mockClear()
     await enterWatched(600)
     expect(getPosition).toHaveBeenCalledTimes(1)
+    expect(useTrackingStore.getState().queue.map((fix) => fix.source)).toContain("nudge")
     expect(useTrackingStore.getState().mode).toBe("stationary")
-    // The resting request is not touched; the wake service carried the fix.
-    expect(start).not.toHaveBeenCalled()
+    expect(Location.stopLocationUpdatesAsync).not.toHaveBeenCalled()
+    // The window stays held, so the upload reply that names it cannot ask again.
+    expect(useTrackingStore.getState().watchedUntil).not.toBeNull()
   })
 
   it("stays live in the driving tier's place until the window ends", async () => {
@@ -973,7 +1072,7 @@ describe("a watched phone learns so from its own upload", () => {
     expect(held).toBeLessThanOrEqual(600_000)
   })
 
-  it("answers a watch with one fix while parked, as the push would", async () => {
+  it("answers a watch from the upload reply while parked, as it would the push", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     getPosition.mockClear()
     mockUpload.mockResolvedValueOnce(reply(new Date(Date.now() + 600_000).toISOString()))

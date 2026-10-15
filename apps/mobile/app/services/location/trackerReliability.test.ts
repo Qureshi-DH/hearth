@@ -964,16 +964,14 @@ describe("crossing a place", () => {
 })
 
 describe("being watched", () => {
-  it("answers a watch on a parked phone with one fix and stays parked, so no notification stays", async () => {
+  it("answers a watch on a parked phone at once and goes live under the service, still parked", async () => {
     await enterStationary(HOME.lat, HOME.lon)
-    start.mockClear()
     getPosition.mockClear()
     mockUpload.mockClear()
     await enterWatched(600)
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(uploaded()).toHaveLength(1)
-    // The resting request is not touched; the wake service carried the fix.
-    expect(start).not.toHaveBeenCalled()
+    expect(lastRequest()).toEqual({ priority: "high", intervalMs: 1_000, distanceMeters: 0 })
     expect(useTrackingStore.getState().mode).toBe("stationary")
     // The window is held, so a departure inside it goes straight to live.
     expect(useTrackingStore.getState().watchedUntil).not.toBeNull()

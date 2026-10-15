@@ -6,6 +6,16 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Fixed
+
+- Live stays live when the Android phone you're watching is standing still or
+  stops. A parked phone used to answer with one fix, and one that parked while
+  watched dropped back to its resting report, so the page showed a speed and
+  went grey half a minute later. It now sends a fix a second for the whole
+  window, parked or moving, with the location notification up until the window
+  ends. If Android won't start the service, it answers with one fix as before
+  and keeps its quarter-hourly report.
+
 ## [1.2.0] - 2026-10-02
 
 An admin portal at the server's own address, notifications that gather one

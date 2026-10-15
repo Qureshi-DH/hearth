@@ -423,8 +423,8 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           "Called while someone has a member's Live page open. The member's phone is asked " +
           "to report at full accuracy, a fix a second, for the watch window, over its control " +
           "channel when it has one open, by silent push otherwise, and by its next upload " +
-          "reply, and the page keeps calling to hold it. A parked Android phone reports " +
-          "once instead. Only members sharing precisely can be watched. The reply says what " +
+          "reply, and the page keeps calling to hold it. A parked phone goes live too. " +
+          "Only members sharing precisely can be watched. The reply says what " +
           "became of the ask: `socket` when the channel carried it, `sent` when a push was queued by this call, " +
           "`held` when the phone was pushed moments ago or has uploaded since, `no_device` " +
           "when the member has no push token, `unsupported` when the push provider cannot " +

@@ -14,8 +14,9 @@ export type PermissionLevel = "unknown" | "denied" | "foreground" | "always"
  * "moving" is continuous updates in whatever tier the phone is in. "stationary"
  * steps the request down to the resting one and waits on a geofence around
  * the spot the phone stopped. On Android the foreground service runs only
- * while moving. A parked phone has none, because a service that stays is a
- * notification that stays, and a wake or a watch brings it up for one fix.
+ * while moving or watched. A parked phone has none, because a service that
+ * stays is a notification that stays. A wake brings it up for one fix, and a
+ * watch for as long as somebody looks.
  */
 export type TrackingMode = "off" | "moving" | "stationary"
 

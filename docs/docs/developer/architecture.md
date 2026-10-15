@@ -266,16 +266,16 @@ journey, and the trip starts at the last fix at the origin.
 
 Ignite conventions with a few deliberate substitutions:
 
-| Concern             | Choice                                                                               | Why                                                                                                                                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Server state        | TanStack Query                                                                       | cache is written directly by the websocket                                                                                                                                                                           |
-| Client state        | zustand + MMKV                                                                       | synchronous hydration, no flash of empty UI                                                                                                                                                                          |
-| Secrets             | expo-secure-store (`stores/tokenVault.ts`)                                           | refresh tokens never touch MMKV                                                                                                                                                                                      |
-| Map                 | MapLibre RN + OpenFreeMap style                                                      | no Google key, swappable to self-hosted tiles                                                                                                                                                                        |
-| Background location | expo-location + expo-task-manager, and a native service on Android                   | `startLocationUpdatesAsync` on iOS and for a parked Android phone. A moving Android phone runs `HearthTrackingService` from `modules/hearth-motion`, which a manifest receiver can start before the JavaScript is up |
-| Periodic sync       | expo-background-task                                                                 | flushes the offline queue when the OS allows                                                                                                                                                                         |
-| Motion class        | `modules/hearth-motion`, over Core Motion / Play Services                            | on whenever tracking is, so the GPS can sleep without polling                                                                                                                                                        |
-| Crash sensing       | `modules/hearth-motion` (expo-sensors as fallback) + `packages/shared/src/impact.ts` | native batched sampling that keeps going with the screen off, and a verdict testable against recorded traces, off the device                                                                                         |
+| Concern             | Choice                                                                               | Why                                                                                                                                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server state        | TanStack Query                                                                       | cache is written directly by the websocket                                                                                                                                                                                      |
+| Client state        | zustand + MMKV                                                                       | synchronous hydration, no flash of empty UI                                                                                                                                                                                     |
+| Secrets             | expo-secure-store (`stores/tokenVault.ts`)                                           | refresh tokens never touch MMKV                                                                                                                                                                                                 |
+| Map                 | MapLibre RN + OpenFreeMap style                                                      | no Google key, swappable to self-hosted tiles                                                                                                                                                                                   |
+| Background location | expo-location + expo-task-manager, and a native service on Android                   | `startLocationUpdatesAsync` on iOS and for a parked Android phone. A moving or watched Android phone runs `HearthTrackingService` from `modules/hearth-motion`, which a manifest receiver can start before the JavaScript is up |
+| Periodic sync       | expo-background-task                                                                 | flushes the offline queue when the OS allows                                                                                                                                                                                    |
+| Motion class        | `modules/hearth-motion`, over Core Motion / Play Services                            | on whenever tracking is, so the GPS can sleep without polling                                                                                                                                                                   |
+| Crash sensing       | `modules/hearth-motion` (expo-sensors as fallback) + `packages/shared/src/impact.ts` | native batched sampling that keeps going with the screen off, and a verdict testable against recorded traces, off the device                                                                                                    |
 
 ### Location pipeline on the phone (`services/location/tracker.ts`)
 
@@ -300,8 +300,10 @@ quarter of an hour and to hold the control channel open. The server's asks
 are a parked phone's other heartbeat: the wake after half an hour of quiet,
 the map or a member's page being opened, and Live. Live, offered while the
 member is on the move, is the live tier: full accuracy, a fix a second, for
-ten minutes. A parked Android phone answers it with one fix instead, because a
-live request brings the service and its notification with it. The OS motion
+ten minutes. A parked phone goes live too and stays parked. On Android that
+brings the location service and its notification up for the window, and both go
+when it ends. Its resting request keeps running under the service, and if
+Android refuses the service the phone answers with one fix. The OS motion
 classifier, which runs whenever tracking does, makes the moving and
 stationary switch happen sooner in both directions, and a phone that refused
 the permission falls back to working stops out from position.
