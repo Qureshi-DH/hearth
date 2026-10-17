@@ -188,6 +188,29 @@ describe("drive sensor lifecycle", () => {
     expect(driveSensorsRunning()).toBe(true)
   })
 
+  it("reaches its verdict from the samples alone when the app's timers are not running", async () => {
+    // A locked Android phone keeps delivering sensor batches through the
+    // native module while JavaScript timers stand still. The clock moves and
+    // nothing fires, so the samples themselves have to say the wait is over.
+    const events: string[] = []
+    await startDriveSensors((event) => events.push(event.kind))
+    const frozen = (seconds: number, g: () => number) => {
+      for (let elapsed = 0; elapsed < seconds * 1000; elapsed += STEP_MS) {
+        push(g())
+        jest.setSystemTime(Date.now() + STEP_MS)
+      }
+    }
+
+    frozen(6, road)
+    spin(7)
+    push(1 + 9.2)
+    jest.setSystemTime(Date.now() + STEP_MS)
+    spin(0.05)
+    frozen(9, parked)
+
+    expect(events).toEqual(["possibleImpact"])
+  })
+
   it("keeps quiet when nothing violent happened", async () => {
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))

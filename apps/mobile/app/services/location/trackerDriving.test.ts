@@ -204,6 +204,43 @@ describe("the driving tier", () => {
 
   // Speed and heading only come from GPS, and the walking tier never turns
   // it on, so a driver's speed read as noise and their dot sat off the road.
+  // The server's incident check reads the stop off the fixes it is sent, and
+  // the gate held a standing car's fixes back for five minutes, so the first
+  // it heard of a crash was the park fix and the stop never read as sudden.
+  const sentSince = (t0: number) =>
+    useTrackingStore
+      .getState()
+      .queue.filter((fix) => fix.source === "background")
+      .map((fix) => [Date.parse(fix.recordedAt) - t0, fix.speedMps])
+
+  it("sends the first standing fix straight after one at road speed", async () => {
+    const t0 = Date.now()
+    await ingest([sample(HOME.lat, HOME.lon, t0, 27.8)], "background")
+    expect(isDriving()).toBe(true)
+    const stopped = { lat: HOME.lat + 40 / 111_195, lon: HOME.lon }
+    await ingest([sample(stopped.lat, stopped.lon, t0 + 10_000, 0)], "background")
+    await ingest([sample(stopped.lat, stopped.lon, t0 + 20_000, 0)], "background")
+
+    expect(sentSince(t0)).toEqual([
+      [0, 27.8],
+      [10_000, 0],
+    ])
+  })
+
+  // Sending only the stop would hide the slowing down the gate dropped, and an
+  // ordinary arrival would reach the server looking like a car stopped dead.
+  it("sends the slowing down instead when the car slowed before it stopped", async () => {
+    const t0 = Date.now()
+    await ingest([sample(HOME.lat, HOME.lon, t0, 12.5)], "background")
+    await ingest([sample(HOME.lat + 20 / 111_195, HOME.lon, t0 + 10_000, 5)], "background")
+    await ingest([sample(HOME.lat + 25 / 111_195, HOME.lon, t0 + 20_000, 0)], "background")
+
+    expect(sentSince(t0)).toEqual([
+      [0, 12.5],
+      [10_000, 5],
+    ])
+  })
+
   it("turns the GPS on from speed alone, for a phone with no motion permission", async () => {
     const t0 = Date.now()
     await ingest([sample(HOME.lat, HOME.lon, t0, 15)], "background")

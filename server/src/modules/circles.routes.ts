@@ -25,8 +25,10 @@ import {
 } from "../db/schema"
 import type { CircleSettingsJson } from "../db/schema"
 import { badRequest, conflict, forbidden, notFound } from "../lib/errors"
+import { userTopic } from "../lib/bus"
 import { toPublicUser } from "../lib/serialize"
 import { requireAuth, requireMembership } from "../plugins/auth"
+import { getBus } from "../runtime"
 import { recordEvent } from "../services/feed"
 import { acceptInvite, createInvite, inviteUrl, previewInvite } from "../services/invites"
 import {
@@ -397,13 +399,27 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["circles"],
         summary: "Delete a circle",
-        description: "Owner only. Removes its places, invites and activity for everyone.",
+        description:
+          "Owner only. Removes its places, invites and activity for everyone. Each member's " +
+          "open socket is sent a `subscribed` without the circle, so their app stops asking " +
+          "for it.",
         params: circleIdParam,
       },
     },
     async (request) => {
       const membership = await requireMembership(request, request.params.circleId, "owner")
+      const members = await db
+        .select({ userId: circleMembers.userId })
+        .from(circleMembers)
+        .where(eq(circleMembers.circleId, membership.circleId))
       await db.delete(circles).where(eq(circles.id, membership.circleId))
+      // Nothing goes in a feed that no longer exists, so each member's own
+      // topic is told instead. Their app would otherwise poll the circle
+      // until it next reloaded its list, a 403 every time.
+      const bus = getBus()
+      for (const member of members) {
+        await bus?.publish(userTopic(member.userId), { type: "membership_changed" })
+      }
       return { ok: true }
     },
   )

@@ -4,26 +4,56 @@ import {
   haversineMeters,
   QUICK_MESSAGE_KEYS,
   QUICK_MESSAGES,
+  SHARING_STATES,
+  SOS_REASONS,
+  type NudgeResponse,
+  type RaiseSosResponse,
   type SharingState,
+  type SosAlert,
 } from "@hearth/shared"
-import { and, desc, eq, isNull } from "drizzle-orm"
+import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm"
 import { alias } from "drizzle-orm/pg-core"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
 import { getDb } from "../db/client"
-import { checkIns, circleMembers, places, sosAlerts, userPresence, users } from "../db/schema"
-import { badRequest, conflict, forbidden, notFound } from "../lib/errors"
+import {
+  checkIns,
+  circleMembers,
+  circles,
+  events,
+  places,
+  sosAlerts,
+  userPresence,
+  users,
+} from "../db/schema"
+import { badRequest, notFound } from "../lib/errors"
 import { circleTopic, userTopic } from "../lib/bus"
 import { toPublicUser } from "../lib/serialize"
-import { rateLimitKey, requireAuth, requireMembership } from "../plugins/auth"
+import { requireAuth, requireMembership } from "../plugins/auth"
 import { getBus } from "../runtime"
 import { recordEvent } from "../services/feed"
 import { messagesGroup, outingGroup } from "../services/notification-groups"
-import { effectiveSharingState, preciseSinceAfter, projectPresence } from "../services/presence"
+import { effectiveSharingState } from "../services/presence"
 import { enqueuePush } from "../services/push"
+import {
+  alertPosition,
+  assignRecipients,
+  openSosAlerts,
+  sosReason,
+  startSosLive,
+  type SosAlertRow,
+} from "../services/sos"
+import { askPhoneForFix } from "../services/wake"
 
 const circleIdParam = z.object({ circleId: z.string().uuid() })
+
+/**
+ * The same words to the same person inside this long are one ask tapped
+ * twice, or tapped again because nothing seemed to happen, and a second
+ * notification says nothing the first did not.
+ */
+const NUDGE_HELD_MS = 60 * 1000
 
 const resolver = alias(users, "resolver")
 // The row's subject, which is rarely the caller, so it cannot reuse the
@@ -86,6 +116,11 @@ function projectCheckIn(
   }
 }
 
+/** Paused beats approximate beats precise, which is the order SHARING_STATES lists them in. */
+function lessPrecise(a: SharingState, b: SharingState): SharingState {
+  return SHARING_STATES.indexOf(a) >= SHARING_STATES.indexOf(b) ? a : b
+}
+
 export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
 
@@ -93,90 +128,52 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
     "/circles/:circleId/sos",
     {
       preHandler: app.authenticate,
-      // SOS bypasses mutes and fires at top priority, so spamming it must be hard.
       config: {
-        rateLimit: {
-          max: 3,
-          timeWindow: "10 minutes",
-          // Per circle, not per account. Spamming means badgering an audience,
-          // and the audience is one circle. Somebody in four circles holding
-          // the button in each is one emergency reaching everyone who might be
-          // near them, and an account-wide budget answers the last circle 429
-          // and tells nobody in it anything.
-          keyGenerator: (request) => {
-            const account = rateLimitKey(app, request)
-            // An unauthenticated caller falls back to their address, and
-            // splitting that per path parameter would hand anyone an unlimited
-            // supply of fresh buckets by inventing circle ids.
-            if (!account.startsWith("user:")) return account
-            const { circleId } = request.params as { circleId?: string }
-            return `${account}:${circleId ?? ""}`
-          },
-        },
+        // A press on an alert that is already open writes nothing and pushes
+        // nothing, so pressing again on a bad signal, or a phone retrying an
+        // automatic alert, must never meet this. A 429 behind a firewall that
+        // blocks on any 4xx silences every phone in the house. One press
+        // covers every circle, so the budget is the account's. What keeps SOS
+        // from being used to badger people is the cap on fresh alarms in
+        // openSosAlerts, which a repeat never touches.
+        rateLimit: { max: 60, timeWindow: "10 minutes" },
       },
       schema: {
         tags: ["safety"],
         summary: "Raise an SOS alert",
         description:
-          "Notifies every other member at the highest priority the transport allows, and " +
-          "switches the sender's sharing back to precise and leaves it there. An SOS from " +
-          "someone whose location is paused would be useless.",
+          "Raises the caller's alert in every circle they belong to, or with `reason: incident` " +
+          "(a crash prompt nobody answered) in the circles that turned crash alerts on and this " +
+          "one. Every other member of those circles is notified once at the highest priority " +
+          "the transport allows, whatever their mutes, however many of the circles they share " +
+          "with the sender. The sender's sharing goes back to precise in each of those circles " +
+          "and stays there, since an SOS from someone whose location is paused would be " +
+          "useless. While an alert is open the sender's phone is held on live updates, a fix a " +
+          "second, by its control channel and its upload replies, until shortly after it is " +
+          "resolved. Pressing again while it is open raises nothing and answers 200 with what " +
+          "is already open, so a client may retry freely, and 201 means something new was " +
+          "raised. The reply is the alert in this circle, with `alerts` holding one per circle.",
         params: circleIdParam,
-        body: z.object({ note: z.string().max(500).nullish() }),
+        body: z
+          .object({
+            note: z.string().max(500).nullish(),
+            reason: z.enum(SOS_REASONS).optional(),
+          })
+          // Nullish, because a POST with no body reaches validation as null,
+          // and refusing an SOS over its envelope is the worst 400 there is.
+          .nullish(),
       },
     },
     async (request, reply) => {
       const auth = requireAuth(request)
       const membership = await requireMembership(request, request.params.circleId)
+      const now = new Date()
 
-      const alert = await db.transaction(async (tx) => {
-        // An emergency is not the moment to respect ghost mode. Taking this row
-        // first also serialises two alerts racing from the same person, which
-        // the duplicate check below cannot do on its own: a panicked double tap
-        // would otherwise raise two, and resolving the one the app shows would
-        // leave the other lit with nothing able to clear it.
-        await tx
-          .update(circleMembers)
-          // resume_to_state goes with the pause it belonged to. Left behind, the
-          // next pause coalesces onto it, and one raised during an approximate
-          // pause would make an unrelated pause weeks later resume to
-          // approximate rather than to the precise state this line just set.
-          .set({
-            sharingState: "precise",
-            preciseSince: preciseSinceAfter("precise"),
-            pausedUntil: null,
-            resumeToState: null,
-          })
-          .where(
-            and(
-              eq(circleMembers.circleId, membership.circleId),
-              eq(circleMembers.userId, auth.userId),
-            ),
-          )
-
-        const [existing] = await tx
-          .select({ id: sosAlerts.id })
-          .from(sosAlerts)
-          .where(
-            and(
-              eq(sosAlerts.circleId, membership.circleId),
-              eq(sosAlerts.userId, auth.userId),
-              isNull(sosAlerts.resolvedAt),
-            ),
-          )
-          .limit(1)
-        if (existing) throw conflict("You already have an active alert in this circle.")
-
-        const [created] = await tx
-          .insert(sosAlerts)
-          .values({
-            circleId: membership.circleId,
-            userId: auth.userId,
-            note: request.body.note ?? null,
-          })
-          .returning()
-        if (!created) throw badRequest("Could not raise the alert.")
-        return created
+      const raised = await openSosAlerts(db, {
+        userId: auth.userId,
+        circleId: membership.circleId,
+        note: request.body?.note ?? null,
+        reason: sosReason(request.body),
       })
 
       const [actor] = await db
@@ -190,48 +187,64 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(eq(users.id, auth.userId))
         .limit(1)
 
-      // A display name reaches this circle through a push title and a feed
+      // A display name reaches these circles through a push title and a feed
       // line, and it is stored as typed.
       const name = singleLine(actor?.displayName ?? "") || "Someone"
 
-      await recordEvent(db, {
-        circleId: membership.circleId,
-        type: "sos_started",
-        actorUserId: auth.userId,
-        payload: { alertId: alert.id, note: alert.note },
-        summary: singleLine(`${name} raised an SOS`),
-      })
+      for (const alert of raised.created) {
+        await recordEvent(db, {
+          circleId: alert.circleId,
+          type: "sos_started",
+          actorUserId: auth.userId,
+          payload: { alertId: alert.id, note: alert.note },
+          summary: singleLine(`${name} raised an SOS`),
+        })
+      }
+
+      const members = await db
+        .select({ circleId: circleMembers.circleId, userId: circleMembers.userId })
+        .from(circleMembers)
+        .where(
+          inArray(
+            circleMembers.circleId,
+            raised.alerts.map((alert) => alert.circleId),
+          ),
+        )
+      // Somebody in a circle where it was already open was told when it opened.
+      const openBefore = new Set(raised.alreadyOpen.map((alert) => alert.circleId))
+      const told = new Set([
+        auth.userId,
+        ...members.filter((m) => openBefore.has(m.circleId)).map((m) => m.userId),
+      ])
+      const recipients = assignRecipients(raised.created, members, told)
 
       // No mute filter. This is the one alert an earlier "mute this circle" tap
       // is not allowed to silence.
-      const recipients = (
-        await db
-          .select({ userId: circleMembers.userId })
-          .from(circleMembers)
-          .where(eq(circleMembers.circleId, membership.circleId))
-      )
-        .map((row) => row.userId)
-        .filter((userId) => userId !== auth.userId)
-
       await enqueuePush(
         db,
-        recipients.map((userId) => ({
-          userId,
-          circleId: membership.circleId,
-          title: `🚨 SOS from ${name}`,
-          body: singleLine(alert.note ?? "") || "Tap to see their location.",
-          channel: "sos" as const,
-          priority: "high" as const,
-          data: { type: "sos_started", alertId: alert.id, circleId: membership.circleId },
-        })),
+        raised.created.flatMap((alert) =>
+          (recipients.get(alert.id) ?? []).map((userId) => ({
+            userId,
+            circleId: alert.circleId,
+            title: `🚨 SOS from ${name}`,
+            body: singleLine(alert.note ?? "") || "Tap to see their location.",
+            channel: "sos" as const,
+            priority: "high" as const,
+            data: { type: "sos_started", alertId: alert.id, circleId: alert.circleId },
+          })),
+        ),
       )
 
-      await getBus()?.publish(circleTopic(membership.circleId), {
-        type: "sos",
-        circleId: membership.circleId,
-        alertId: alert.id,
-        userId: auth.userId,
-      })
+      for (const alert of raised.created) {
+        await getBus()?.publish(circleTopic(alert.circleId), {
+          type: "sos",
+          circleId: alert.circleId,
+          alertId: alert.id,
+          userId: auth.userId,
+        })
+      }
+
+      await startSosLive(db, auth.userId, now)
 
       const [presence] = await db
         .select({
@@ -243,12 +256,14 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(eq(userPresence.userId, auth.userId))
         .limit(1)
 
-      return reply.code(201).send({
+      // Unprojected, since this reply goes to the person who raised it.
+      const user = toPublicUser(
+        actor ?? { id: auth.userId, displayName: name, avatarColor: "#888888", avatarUrl: null },
+      )
+      const toAlert = (alert: SosAlertRow): SosAlert => ({
         id: alert.id,
         circleId: alert.circleId,
-        user: toPublicUser(
-          actor ?? { id: auth.userId, displayName: name, avatarColor: "#888888", avatarUrl: null },
-        ),
+        user,
         startedAt: alert.startedAt.toISOString(),
         resolvedAt: null,
         resolvedBy: null,
@@ -256,8 +271,15 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         lastLat: presence?.lat ?? null,
         lastLon: presence?.lon ?? null,
         lastFixAt: presence?.recordedAt?.toISOString() ?? null,
-        notifiedMembers: recipients.length,
       })
+      const notified = new Set(members.map((member) => member.userId))
+      notified.delete(auth.userId)
+
+      return reply.code(raised.created.length > 0 ? 201 : 200).send({
+        ...toAlert(raised.alerts[0]!),
+        notifiedMembers: notified.size,
+        alerts: raised.alerts.map(toAlert),
+      } satisfies RaiseSosResponse)
     },
   )
 
@@ -268,7 +290,12 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["safety"],
         summary: "Mark an SOS as resolved",
-        description: "The person who raised it, or any admin of that circle, may resolve it.",
+        description:
+          "The person who raised it, or any admin of that circle, may resolve it. The person " +
+          "who raised it closes their alert in every circle it is open in, since they have one " +
+          "emergency at a time, even through an alert an admin already closed. An admin closes " +
+          "the one in their own circle. Every circle closed gets its own feed entry, and each " +
+          "of its members one notice.",
         params: z.object({ alertId: z.string().uuid() }),
       },
     },
@@ -281,48 +308,83 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(eq(sosAlerts.id, request.params.alertId))
         .limit(1)
       if (!alert) throw notFound("No such alert.")
-      if (alert.resolvedAt) return { ok: true, alreadyResolved: true }
+      const own = alert.userId === auth.userId
+      // An admin may have closed this circle's copy and left the raiser's
+      // others open, and the raiser's app may only know this one's id.
+      if (alert.resolvedAt && !own) return { ok: true, alreadyResolved: true }
 
-      const membership = await requireMembership(
-        request,
-        alert.circleId,
-        alert.userId === auth.userId ? "member" : "admin",
-      )
+      await requireMembership(request, alert.circleId, own ? "member" : "admin")
 
-      // The read above is a courtesy, not a guard: two admins tapping at the
-      // same moment both pass it. Putting the same condition in the WHERE makes
-      // the close itself the arbiter, so only one request writes the row, the
-      // feed entry and the pushes, and the loser gets the answer a retry after
-      // a lost response would have got anyway.
-      const [resolved] = await db
+      // The read above is a courtesy, not a guard, since two admins tapping at
+      // the same moment both pass it. Putting the same condition in the WHERE
+      // makes the close itself the arbiter, so only one request writes each
+      // row, its feed entry and its pushes, and the loser gets the answer a
+      // retry after a lost response would have got anyway.
+      const closed = await db
         .update(sosAlerts)
         .set({ resolvedAt: new Date(), resolvedBy: auth.userId })
-        .where(and(eq(sosAlerts.id, alert.id), isNull(sosAlerts.resolvedAt)))
+        .where(
+          and(
+            own ? eq(sosAlerts.userId, auth.userId) : eq(sosAlerts.id, alert.id),
+            isNull(sosAlerts.resolvedAt),
+          ),
+        )
         .returning()
-      if (!resolved) return { ok: true, alreadyResolved: true }
+      if (closed.length === 0) return { ok: true, alreadyResolved: true }
 
       const [actor] = await db
         .select({ displayName: users.displayName })
         .from(users)
         .where(eq(users.id, auth.userId))
         .limit(1)
+      const name = singleLine(actor?.displayName ?? "") || "Someone"
 
-      await recordEvent(db, {
-        circleId: membership.circleId,
-        type: "sos_resolved",
-        actorUserId: auth.userId,
-        payload: { alertId: alert.id },
-        summary: `${actor?.displayName ?? "Someone"} marked the SOS as resolved`,
-        notify: {
-          title: "SOS resolved",
-          body: `${actor?.displayName ?? "Someone"} marked the alert as resolved.`,
-          channel: "alerts",
-          excludeActor: false,
-          data: { alertId: alert.id },
-        },
-      })
+      // One all clear each, naming the alert their alarm named. An admin
+      // closes one circle's alert, and that whole circle hears it.
+      const notices = own
+        ? assignRecipients(
+            closed,
+            await db
+              .select({ circleId: circleMembers.circleId, userId: circleMembers.userId })
+              .from(circleMembers)
+              .where(
+                inArray(
+                  circleMembers.circleId,
+                  closed.map((row) => row.circleId),
+                ),
+              ),
+            new Set(),
+          )
+        : null
 
-      return { ok: true, resolvedAt: resolved.resolvedAt?.toISOString() ?? null }
+      for (const row of closed) {
+        await recordEvent(db, {
+          circleId: row.circleId,
+          type: "sos_resolved",
+          actorUserId: auth.userId,
+          payload: { alertId: row.id },
+          summary: `${name} marked the SOS as resolved`,
+          notify: {
+            title: "SOS resolved",
+            body: `${name} marked the alert as resolved.`,
+            channel: "alerts",
+            excludeActor: false,
+            data: { alertId: row.id },
+            ...(notices ? { onlyUserIds: notices.get(row.id) ?? [] } : {}),
+          },
+        })
+        // Clears the banner on maps open on a circle other than the one the
+        // resolve came from.
+        await getBus()?.publish(circleTopic(row.circleId), {
+          type: "sos",
+          circleId: row.circleId,
+          alertId: row.id,
+          userId: row.userId,
+        })
+      }
+
+      const answered = closed.find((row) => row.id === alert.id) ?? closed[0]!
+      return { ok: true, resolvedAt: answered.resolvedAt?.toISOString() ?? null }
     },
   )
 
@@ -350,8 +412,16 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
       const now = new Date()
 
       const rows = await db
-        .select({ alert: sosAlerts, user: users, resolver, presence: userPresence, subject })
+        .select({
+          alert: sosAlerts,
+          user: users,
+          resolver,
+          presence: userPresence,
+          subject,
+          settings: circles.settings,
+        })
         .from(sosAlerts)
+        .innerJoin(circles, eq(circles.id, sosAlerts.circleId))
         .innerJoin(users, eq(users.id, sosAlerts.userId))
         .leftJoin(resolver, eq(resolver.id, sosAlerts.resolvedBy))
         .leftJoin(userPresence, eq(userPresence.userId, sosAlerts.userId))
@@ -373,33 +443,16 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .limit(request.query.limit)
 
       return rows.map((row) => {
-        // Raising an SOS un-pauses the raiser by writing sharingState, so an
-        // ordinary open alert still hands the circle an exact live position.
-        // Reading user_presence raw would make it a read-time bypass on top of
-        // that write, and this list would keep tracking somebody who set their
-        // sharing back or left the circle, while the map honoured them.
-        const seen =
-          row.subject && !row.alert.resolvedAt
-            ? projectPresence(
-                {
-                  userId: row.alert.userId,
-                  sharingState: row.subject.sharingState,
-                  pausedUntil: row.subject.pausedUntil,
-                  resumeToState: row.subject.resumeToState,
-                  lat: row.presence?.lat ?? null,
-                  lon: row.presence?.lon ?? null,
-                  accuracyMeters: row.presence?.accuracyMeters ?? null,
-                  recordedAt: row.presence?.recordedAt ?? null,
-                  batteryLevel: row.presence?.batteryLevel ?? null,
-                  isCharging: row.presence?.isCharging ?? null,
-                  activity: row.presence?.activity ?? null,
-                  speedMps: row.presence?.speedMps ?? null,
-                  headingDegrees: row.presence?.headingDegrees ?? null,
-                },
-                auth.userId,
-                { atPlace: null, sosAlertId: row.alert.id, now },
-              )
-            : null
+        const seen = alertPosition(
+          {
+            alert: row.alert,
+            member: row.subject,
+            presence: row.presence,
+            allowSharingPause: row.settings.allowSharingPause,
+          },
+          auth.userId,
+          now,
+        )
 
         return {
           id: row.alert.id,
@@ -488,6 +541,7 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
           lon: request.body.lon,
           note: request.body.note ?? null,
           placeId: match?.id ?? null,
+          sharedAs: shared,
         })
         .returning()
       if (!created) throw badRequest("Could not record the check-in.")
@@ -563,6 +617,11 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["safety"],
         summary: "Recent check-ins",
+        description:
+          "Each one is shown no more exactly than the circle could see its maker when it was " +
+          "made, and no more exactly than it can see them now. Approximate gives the grid cell " +
+          "and no place, paused or gone from the circle gives no position at all. Your own are " +
+          "always exact.",
         params: circleIdParam,
         querystring: z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) }),
       },
@@ -588,18 +647,23 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
       return rows.map((row) => {
         // Read time, like the map: turning sharing down has to take the old
         // check-ins with it, and somebody who has left the circle leaves no
-        // position behind in it. Your own are always yours.
+        // position behind in it. Turning it back up does not bring one back,
+        // since it was made under the state stored with it. Your own are
+        // always yours.
+        const current: SharingState = row.subject
+          ? effectiveSharingState(
+              row.subject.sharingState,
+              row.subject.pausedUntil,
+              now,
+              row.subject.resumeToState,
+            )
+          : "paused"
         const state: SharingState =
           row.checkIn.userId === membership.userId
             ? "precise"
-            : row.subject
-              ? effectiveSharingState(
-                  row.subject.sharingState,
-                  row.subject.pausedUntil,
-                  now,
-                  row.subject.resumeToState,
-                )
-              : "paused"
+            : row.checkIn.sharedAs
+              ? lessPrecise(row.checkIn.sharedAs, current)
+              : current
         const seen = projectCheckIn(
           state,
           { lat: row.checkIn.lat, lon: row.checkIn.lon },
@@ -632,10 +696,16 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "Nudge someone",
         description:
           "Sends one member a notification asking where they are, or a short message, and " +
-          "records it in the circle's feed. An app in the foreground reports a fresh location " +
-          "when it arrives. A phone with the app in the background only shows the notification, " +
-          "so ask for the fix itself with POST /circles/{circleId}/members/{userId}/refresh. " +
-          "Rate limited so it cannot be used to badger someone.",
+          "records it in the circle's feed. A bare ask for a location also asks their phone " +
+          "for a fix, the way POST /circles/{circleId}/members/{userId}/refresh does, and " +
+          "`asked` says what became of that in the same words. A message asks nothing of the " +
+          "phone and reaches a member who paused sharing, since a message is not a location. " +
+          "A bare ask to a paused member sends nothing and answers `notified: paused`, and " +
+          "one to a member sharing approximately is sent without waking the phone and " +
+          "answers `asked: unsupported`, as the refresh route does. Somebody no longer in " +
+          "the circle is sent nothing and answers `notified: gone`. The same words to the " +
+          "same person within a minute are not sent twice (`notified: held`). Rate limited " +
+          "so it cannot be used to badger someone.",
         params: circleIdParam.extend({ userId: z.string().uuid() }),
         body: z
           .object({
@@ -647,9 +717,9 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
           // the original shape of this route.
           .nullish(),
       },
-      config: { rateLimit: { max: 6, timeWindow: "10 minutes" } },
+      config: { rateLimit: { max: DEFAULTS.maxNudgesPerTenMinutes, timeWindow: "10 minutes" } },
     },
-    async (request) => {
+    async (request): Promise<NudgeResponse> => {
       const auth = requireAuth(request)
       const membership = await requireMembership(request, request.params.circleId)
       if (request.params.userId === auth.userId) {
@@ -671,19 +741,45 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
           ),
         )
         .limit(1)
-      if (!target) throw notFound("That person is not in this circle.")
+      const now = new Date()
+      const quickKey = request.body?.quickKey ?? null
+      const messageBody =
+        request.body?.body ??
+        (quickKey ? (QUICK_MESSAGES.find((m) => m.key === quickKey)?.body ?? null) : null)
+      // Their page stays up after they leave, and a 404 for pressing its
+      // button is a 4xx in ordinary use. It says no more than the 404 did.
+      if (!target) return { ok: true, notified: "gone", asked: messageBody ? null : "unsupported" }
+
       // Through the same helper the map reads, so a pause that has run out
-      // stops refusing here at the moment it stops hiding her on the map. A
-      // stale phone during a lapsed pause is the case a nudge is for.
+      // stops counting here at the moment it stops hiding her on the map. A
+      // stale phone during a lapsed pause is the case a nudge is for. A pause
+      // answers a bare ask for a location and nothing else.
       const targetState = effectiveSharingState(
         target.sharingState,
         target.pausedUntil,
-        new Date(),
+        now,
         target.resumeToState,
       )
-      if (targetState === "paused") {
-        throw forbidden("That member has paused location sharing.")
+      if (!messageBody && targetState === "paused") {
+        return { ok: true, notified: "paused", asked: "paused" }
       }
+
+      const recent = await db
+        .select({ payload: events.payload })
+        .from(events)
+        .where(
+          and(
+            eq(events.circleId, membership.circleId),
+            eq(events.type, "nudge_requested"),
+            eq(events.actorUserId, auth.userId),
+            sql`${events.payload}->>'targetUserId' = ${target.userId}`,
+            gte(events.occurredAt, new Date(now.getTime() - NUDGE_HELD_MS)),
+          ),
+        )
+      const repeated = recent.some(
+        (row) => ((row.payload as { body?: string | null }).body ?? null) === messageBody,
+      )
+      if (repeated) return { ok: true, notified: "held", asked: messageBody ? null : "held" }
 
       const [actor] = await db
         .select({
@@ -697,10 +793,6 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .limit(1)
       const name = singleLine(actor?.displayName ?? "") || "Someone"
 
-      const quickKey = request.body?.quickKey ?? null
-      const messageBody =
-        request.body?.body ??
-        (quickKey ? (QUICK_MESSAGES.find((m) => m.key === quickKey)?.body ?? null) : null)
       // The message keeps its own shape in the payload, which the app renders
       // as a block of text. The feed line and the push are one line each.
       const oneLine = messageBody ? singleLine(messageBody) : ""
@@ -739,7 +831,17 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         },
       })
 
-      return { ok: true }
+      // The notification only moves an app that gets to run when it lands,
+      // so a bare ask goes to the phone as well, for a member sharing
+      // precisely. What became of it says whether their phone is connected
+      // or reported a moment ago, which the member's page and Live withhold
+      // from anyone they share less with, so this does too.
+      const asked = messageBody
+        ? null
+        : targetState === "precise"
+          ? await askPhoneForFix(db, target.userId, now)
+          : "unsupported"
+      return { ok: true, notified: "sent", asked }
     },
   )
 }

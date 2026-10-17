@@ -5,11 +5,11 @@ import type {
   DeviceHealth,
   Platform,
 } from "@hearth/shared"
-import { DEFAULTS } from "@hearth/shared"
+import { DEFAULTS, batteryRanOut } from "@hearth/shared"
 import { sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
-import { presenceIssues } from "./presence"
+import { presenceIssues, presenceStale } from "./presence"
 import { heardAt, parked, silentPastCutoff } from "./reporting"
 
 const DAYS = 14
@@ -171,6 +171,10 @@ async function phoneList(db: Database, now: Date): Promise<AdminPhone[]> {
            s.device_name, s.platform, s.app_version,
            ${heardAt} as last_heard_at,
            user_presence.health,
+           user_presence.battery_level,
+           user_presence.is_charging,
+           user_presence.recorded_at,
+           user_presence.activity,
            case
              when s.platform is null then 'none'
              when ${heardAt} is null then 'never'
@@ -199,18 +203,33 @@ async function phoneList(db: Database, now: Date): Promise<AdminPhone[]> {
     app_version: string | null
     last_heard_at: string | Date | null
     health: DeviceHealth | null
+    battery_level: number | null
+    is_charging: boolean | null
+    recorded_at: string | Date | null
+    activity: string | null
     state: AdminPhoneState
   }>
 
-  return rows.map((row) => ({
-    userId: row.id,
-    displayName: row.display_name,
-    avatarColor: row.avatar_color,
-    deviceName: row.device_name,
-    platform: row.platform,
-    appVersion: row.app_version,
-    lastHeardAt: row.last_heard_at ? new Date(row.last_heard_at).toISOString() : null,
-    state: row.state,
-    issues: presenceIssues(row.health),
-  }))
+  return rows.map((row) => {
+    // The same reading, and the same staleness, the app goes by under the
+    // member's name. The portal's own "parked" starts sooner than a parked
+    // phone's quarter hour reports go stale.
+    const recordedAt = row.recorded_at ? new Date(row.recorded_at) : null
+    const ranOut =
+      (row.state === "quiet" || row.state === "parked" || row.state === "offline") &&
+      presenceStale(recordedAt, row.activity, now) &&
+      batteryRanOut(row.battery_level, row.is_charging)
+    return {
+      userId: row.id,
+      displayName: row.display_name,
+      avatarColor: row.avatar_color,
+      deviceName: row.device_name,
+      platform: row.platform,
+      appVersion: row.app_version,
+      lastHeardAt: row.last_heard_at ? new Date(row.last_heard_at).toISOString() : null,
+      state: row.state,
+      issues: presenceIssues(row.health, null, { ranOut }),
+      batteryRanOut: ranOut,
+    }
+  })
 }

@@ -5,7 +5,7 @@ import { z } from "zod"
 
 import { getDb } from "../db/client"
 import { circleMembers, placeEvents, placeMemberships, places, users } from "../db/schema"
-import { badRequest, notFound } from "../lib/errors"
+import { badRequest } from "../lib/errors"
 import { toPlace, toPublicUser } from "../lib/serialize"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { recordEvent } from "../services/feed"
@@ -226,6 +226,9 @@ export const placeRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["places"],
         summary: "Update a place",
+        description:
+          "A place that no longer exists, because somebody deleted it while this list was on " +
+          "screen, answers 200 with `{ id, gone: true }` and changes nothing.",
         params: placeParams,
         body: placePatch,
       },
@@ -239,7 +242,9 @@ export const placeRoutes: FastifyPluginAsyncZod = async (app) => {
         .set({ ...request.body, updatedAt: new Date() })
         .where(and(eq(places.id, request.params.placeId), eq(places.circleId, membership.circleId)))
         .returning()
-      if (!updated) throw notFound("No such place.")
+      // Another phone's list is minutes old, and a 404 for acting on it is a
+      // 4xx in ordinary use.
+      if (!updated) return { id: request.params.placeId, gone: true as const }
 
       // Moving or resizing a fence invalidates who is "inside" it.
       if (
@@ -267,7 +272,13 @@ export const placeRoutes: FastifyPluginAsyncZod = async (app) => {
     "/circles/:circleId/places/:placeId",
     {
       preHandler: app.authenticate,
-      schema: { tags: ["places"], summary: "Delete a place", params: placeParams },
+      schema: {
+        tags: ["places"],
+        summary: "Delete a place",
+        description:
+          "Deleting a place that is already gone answers 200 with `{ ok: true, gone: true }`.",
+        params: placeParams,
+      },
     },
     async (request) => {
       const auth = requireAuth(request)
@@ -277,7 +288,7 @@ export const placeRoutes: FastifyPluginAsyncZod = async (app) => {
         .delete(places)
         .where(and(eq(places.id, request.params.placeId), eq(places.circleId, membership.circleId)))
         .returning({ id: places.id, name: places.name })
-      if (!deleted) throw notFound("No such place.")
+      if (!deleted) return { ok: true, gone: true }
 
       await recordEvent(db, {
         circleId: membership.circleId,

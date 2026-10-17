@@ -134,20 +134,21 @@ async function drivingFamily() {
 
 /** The phone on the M32 at 104 to 108 km/h, fixes 30 s apart. */
 const MOTORWAY_RUN = [
-  { ...northOf(MOTORWAY, 0), recordedAt: at(-320), accuracyMeters: 6, speedMps: 29.0 },
-  { ...northOf(MOTORWAY, 870), recordedAt: at(-290), accuracyMeters: 6, speedMps: 30.0 },
-  { ...northOf(MOTORWAY, 1770), recordedAt: at(-260), accuracyMeters: 6, speedMps: 30.0 },
+  { ...northOf(MOTORWAY, 0), recordedAt: at(-440), accuracyMeters: 6, speedMps: 29.0 },
+  { ...northOf(MOTORWAY, 870), recordedAt: at(-410), accuracyMeters: 6, speedMps: 30.0 },
+  { ...northOf(MOTORWAY, 1770), recordedAt: at(-380), accuracyMeters: 6, speedMps: 30.0 },
 ]
 
 describe("possible incident: both halves of the evidence must come from one device", () => {
   it("raises the alert for one phone that stops dead off the motorway", async () => {
     const { driver, watcher, circle } = await drivingFamily()
 
-    // The same run, and then the phone itself reports the stop and four
+    // The same run, and then the phone itself reports the stop and five
     // minutes of stillness at the roadside. This is what the heuristic is for.
     await uploadFixes(driver.headers, [
       ...MOTORWAY_RUN,
-      { ...northOf(MOTORWAY, 1800), recordedAt: at(-230), accuracyMeters: 8, speedMps: 0 },
+      { ...northOf(MOTORWAY, 1800), recordedAt: at(-350), accuracyMeters: 8, speedMps: 0 },
+      { ...northOf(MOTORWAY, 1800), recordedAt: at(-240), accuracyMeters: 9, speedMps: 0 },
       { ...northOf(MOTORWAY, 1800), recordedAt: at(-140), accuracyMeters: 9, speedMps: 0 },
       { ...northOf(MOTORWAY, 1801), recordedAt: at(-50), accuracyMeters: 8, speedMps: 0 },
       { ...northOf(MOTORWAY, 1800), recordedAt: at(-20), accuracyMeters: 8, speedMps: 0 },
@@ -165,7 +166,7 @@ describe("possible incident: both halves of the evidence must come from one devi
     // stop, which is the ordinary shape of a background upload.
     await uploadFixes(driver.headers, MOTORWAY_RUN)
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 1800), recordedAt: at(-230), accuracyMeters: 8, speedMps: 0 },
+      { ...northOf(MOTORWAY, 1800), recordedAt: at(-350), accuracyMeters: 8, speedMps: 0 },
       { ...northOf(MOTORWAY, 1800), recordedAt: at(-60), accuracyMeters: 9, speedMps: 0 },
       { ...northOf(MOTORWAY, 1800), recordedAt: at(-20), accuracyMeters: 8, speedMps: 0 },
     ])
@@ -187,7 +188,7 @@ describe("possible incident: both halves of the evidence must come from one devi
     // The tablet has sat on the kitchen table all evening, 7 km away, and
     // reports Wi-Fi fixes on its own timer. It has not stopped suddenly. It
     // has not started.
-    await uploadFixes(tablet, [{ ...HOME, recordedAt: at(-200), accuracyMeters: 35, speedMps: 0 }])
+    await uploadFixes(tablet, [{ ...HOME, recordedAt: at(-350), accuracyMeters: 35, speedMps: 0 }])
     await uploadFixes(tablet, [{ ...HOME, recordedAt: at(-20), accuracyMeters: 35, speedMps: 0 }])
 
     expect(await incidentSummaries(watcher.headers, circle.id)).toEqual([])

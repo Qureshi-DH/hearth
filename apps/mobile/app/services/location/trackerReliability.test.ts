@@ -4,6 +4,7 @@ import * as Location from "expo-location"
 
 import { ApiError } from "@/services/api"
 import { useAuthStore } from "@/stores/auth"
+import { useIncidentStore } from "@/stores/incident"
 import { usePlacesStore } from "@/stores/places"
 import { useTrackingStore } from "@/stores/tracking"
 
@@ -162,9 +163,14 @@ jest.mock("./driveSensors", () => ({
 }))
 
 const mockUpload = jest.fn()
+const mockRaiseSos = jest.fn(async (..._args: unknown[]) => ({ id: "alert" }))
 jest.mock("@/services/api", () => ({
   ApiError: jest.requireActual("@/services/api/client").ApiError,
-  endpoints: { locations: { upload: (...args: unknown[]) => mockUpload(...args) } },
+  endpoints: {
+    locations: { upload: (...args: unknown[]) => mockUpload(...args) },
+    safety: { raiseSos: (...args: unknown[]) => mockRaiseSos(...args) },
+    circles: { list: async () => [{ id: "c1", settings: { incidentDetection: true } }] },
+  },
 }))
 let mockHeldTokens: { accessToken: string; refreshToken: string } | null = null
 jest.mock("@/stores/tokenVault", () => ({
@@ -1396,5 +1402,69 @@ describe("diagnostics", () => {
   it("keeps a thousand lines", () => {
     for (let i = 0; i < 1200; i += 1) logTracker("line", { i })
     expect(readTrackerLog().length).toBe(1000)
+  })
+})
+
+describe("an incident alert waiting for a signal", () => {
+  it("goes with the first upload that gets through", async () => {
+    await enterMoving()
+    // Decided on a minute ago, by a countdown that ran out with no signal.
+    useIncidentStore.setState({
+      pending: {
+        detectedAt: Date.now() - 90_000,
+        peakDeltaG: 9,
+        corroborations: 2,
+        escalatedAt: Date.now() - 60_000,
+        triedAt: Date.now() - 1_000,
+        attempts: 1,
+        failure: "network",
+        notice: "waiting",
+      },
+    })
+
+    await taskBodies.get(BACKGROUND_LOCATION_TASK)!({
+      data: { locations: [at(HOME.lat + 0.01, HOME.lon, Date.now(), 12)] },
+      error: null,
+    })
+    await jest.advanceTimersByTimeAsync(0)
+
+    expect(mockUpload).toHaveBeenCalled()
+    expect(mockRaiseSos).toHaveBeenCalledWith("c1", expect.any(String), "incident")
+    expect(useIncidentStore.getState().pending).toBeNull()
+  })
+
+  it("holds the background sync task open until the alert has had its try", async () => {
+    // iOS suspends the app the moment the task returns, and an alert still on
+    // its way at that moment waits for the next wake, a quarter hour or more.
+    let answer!: () => void
+    mockRaiseSos.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = () => resolve({ id: "alert" })
+        }),
+    )
+    useIncidentStore.setState({
+      pending: {
+        detectedAt: Date.now() - 90_000,
+        peakDeltaG: 9,
+        corroborations: 2,
+        escalatedAt: Date.now() - 60_000,
+        triedAt: Date.now() - 60_000,
+        attempts: 1,
+        failure: "network",
+      },
+    })
+
+    let returned = false
+    const run = taskBodies.get(BACKGROUND_SYNC_TASK)!({ data: null, error: null }).then(() => {
+      returned = true
+    })
+    await jest.advanceTimersByTimeAsync(0)
+    expect(mockRaiseSos).toHaveBeenCalled()
+    expect(returned).toBe(false)
+
+    answer()
+    await run
+    expect(useIncidentStore.getState().pending).toBeNull()
   })
 })

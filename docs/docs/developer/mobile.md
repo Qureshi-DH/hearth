@@ -91,6 +91,7 @@ _You → Tracking status_.
 | Precise location               | `NSLocationDefaultAccuracyReduced = false`, full vs reduced detected          | fine vs coarse detected                                     | Places and trips need GPS accuracy                                               | Detected, checklist links to Settings                                           |
 | Notifications                  | runtime, `UIBackgroundModes: remote-notification` for the silent wake         | `POST_NOTIFICATIONS`                                        | Arrivals, battery, **SOS**. Local SOS banners need it even with no push provider | Onboarding, step 2                                                              |
 | Battery optimisation exemption | n/a                                                                           | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`                      | Doze and vendor power managers are the #1 reason background location dies        | Onboarding (Android), opens the system dialog                                   |
+| Do Not Disturb access          | n/a                                                                           | `ACCESS_NOTIFICATION_POLICY`                                | Lets the SOS channel through Do Not Disturb. Optional                            | Checklist (Android), optional, opens the system list                            |
 | Background refresh / tasks     | `UIBackgroundModes: fetch, processing`, `BGTaskSchedulerPermittedIdentifiers` | `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`                       | Flush the offline queue when the OS allows                                       | Declared, checklist explains the iOS toggle                                     |
 | Camera                         | `NSCameraUsageDescription`                                                    | `CAMERA` (via plugin)                                       | Scan an invite QR                                                                | Only when you tap _Scan_                                                        |
 | Local network                  | `NSLocalNetworkUsageDescription`, `NSBonjourServices`                         | n/a                                                         | Self-hosted servers on your LAN                                                  | Prompted by iOS on first LAN connection                                         |
@@ -286,6 +287,11 @@ fifty metre steps. The step is always the one below nine tenths of what the
 car covers in ten seconds, so a steady drive keeps every fix. Rounded to the
 nearest step, the gate came out wider than ten seconds of travel at 50, 70
 and 100 km/h, the OS dropped every other fix, and the trail cut the corners.
+The first fix after one at road speed that has come off it goes up whatever
+the gate says (`thin`). The server's possible-incident check calls a stop
+sudden only from a fix that stands still straight after road speed, and the
+gate held a standing car's fixes back for five minutes. An ordinary stop sends
+its slowing down instead, which is what tells the two apart.
 It ends when the classifier says otherwise, after three
 minutes of crawling, or when the phone parks. The drive, the classifier's last
 verdict and the start of its still streak are persisted in the tracking
@@ -337,8 +343,11 @@ seconds: the arrival fix went with it, there was no heartbeat, and the fence,
 which iOS reports minutes late and not at all with Background App Refresh
 off, was the only way back.
 
-**Live** is the tier for as long as somebody has the member's page open, see
-Watching below.
+**Live** is the tier for as long as somebody has the member's page open, or
+the member has an SOS open, see Watching below. Both reach the phone the same
+way, as a `watchedUntil` on the upload reply and a `watch` down the control
+channel, so the SOS screen only reports by itself on a phone that is not on
+Live.
 
 ### The Android transport
 
@@ -568,6 +577,12 @@ server keeps it on `user_presence.health`, projects it as `issues` on
 presence, and the rows put the first issue under the member's name once the
 phone is stale. Sharing switched off is named at once, whatever the
 staleness, and the member page shows a pill while precise location is off.
+A stale phone whose last reading was 5% or less, off the charger, reads
+"Battery likely ran out" instead (`batteryRanOut` in `packages/shared`). The
+server leaves what a flat battery explains out of its `issues`, power saving,
+battery optimisation and a restricted or stopped service, so an app that
+predates the line says the phone went quiet rather than blaming power saving.
+A switch somebody turned off is still named first.
 The offline sweep reads it too, so a quiet phone that has said why it cannot
 report is reported as that, not as offline.
 
@@ -582,7 +597,10 @@ landed.
 Every fix carries `activity` from the tracker's own tiers, `still` while
 parked and on the arrival fix, `driving` on the GPS tier, the classifier's
 word while walking, so the server knows a still phone is meant to be quiet
-and calls it offline only after twelve hours rather than one.
+and calls it offline only after twelve hours rather than one. An account
+signed in only on Android phones gets about 100 minutes instead, the three
+wakes of a parked phone and the time to answer the last, since Android
+answers a wake even from Doze.
 
 ### Diagnostics
 
@@ -748,6 +766,43 @@ a real SOS, because someone hurt badly enough not to answer is the case the
 feature exists for. The store survives a process kill on purpose: the phone that
 just took the impact is the one most likely to be restarted by it.
 
+What happens next lives in `app/services/incidentAlarm.ts`, not in the prompt.
+`IncidentPrompt` is only mounted while the app is in front, and a phone after a
+crash is usually locked, where JavaScript timers stand still. So nothing waits
+on a timer. `checkIncident()` reads the store and the wall clock and does what
+the incident needs at that moment. It puts the countdown notification up while
+the app is not in front, decides once the 30 seconds are past and the incident
+is under five minutes old, retries an alert that found no signal, or drops one
+an hour old. It is called from the tracker's `flush()`, which every delivery,
+retry and sync pass goes through, with `online: true` from an upload that got
+through, and from the prompt's tick and its AppState listener. The verdict in
+`driveSensors.ts` follows the same rule. It is armed with a timer for the
+foreground, and any sample past its deadline judges too, since native batches
+keep arriving with the screen off.
+
+The alert itself is `raiseSos(circleId, note, "incident")` through a circle
+with incident alerts on, from the query cache or from `GET /circles` when the
+cache is cold. The server raises it in every circle of the caller that has
+them on. Only a network failure, a 5xx, a 429, a firewall's page or a 401 with
+tokens still held is retried, spaced 15 s, 30 s, 1 min and then 2 min apart,
+and at once after a successful upload. Anything else is a refusal and ends it,
+because asking again into a firewall that blocks on a 4xx takes the household
+offline. Nothing is sent without a session, and an incident is dropped if a
+different account signs in. The module requires the tracker for its fix at
+the moment it needs one, rather than importing it, because the tracker imports
+the module and a cycle resolved while the app loads can leave one side
+undefined.
+
+The notification uses the fixed id `hearth-incident`, the SOS channel (on the
+trigger, which is where expo-notifications reads it), interruption level
+`timeSensitive` and a category with one action, `incident-ok`. On Android the
+action does not open the app. expo-notifications runs the registered
+notification task for it, and `NOTIFICATION_WAKE_TASK` in
+`services/notifications.ts` passes it to `answerIncidentResponse()` before
+anything else. On iOS the action opens the app, because a killed app never
+hears a background action. Whatever ends the incident dismisses the
+notification.
+
 The server runs its own, unrelated check on the breadcrumbs it receives, and it
 needs no sensors and no settings on the phone. Fixes half a minute apart cannot
 tell a collision from parking hard, so all it claims is that somebody stopped
@@ -759,6 +814,17 @@ suddenly after driving fast, and it posts that to the circle as a prompt.
 foreground and writes every message straight into the TanStack Query cache.
 It disconnects in the background, where push takes over, and reconnects with
 back-off.
+
+Both that socket and the control channel hand every frame to
+`app/services/socketAlerts.ts`. On a server whose push provider is `none` or
+`webpush`, or where this phone's push setup came back unsupported, it posts a
+local notification on the SOS channel for an `sos` frame about somebody else
+and for an `event` frame of type `possible_incident`. An SOS rings once per
+raiser and `startedAt`, because one press opens an alert in every circle in a
+single transaction and they share its start. The notification comes down again
+on `sos_resolved` once every alert of that press it heard is resolved, which
+only a phone still connected at the time hears. It carries ids only, the same
+`data` a push would.
 
 ## Structure
 

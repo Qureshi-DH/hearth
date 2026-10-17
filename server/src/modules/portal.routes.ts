@@ -8,7 +8,7 @@ import { auditLog, type User } from "../db/schema"
 import { getConfig } from "../env"
 import { readCookie, serializeCookie } from "../lib/cookies"
 import { emailSchema } from "../lib/email"
-import { AppError, forbidden, unauthorized } from "../lib/errors"
+import { AppError, forbidden } from "../lib/errors"
 import { toPortalSession } from "../lib/serialize"
 import { basePath } from "../lib/base-path"
 import { issueSession, revokeSessionByRefreshToken, rotateSession } from "../services/auth"
@@ -124,13 +124,17 @@ export const portalRoutes: FastifyPluginAsyncZod<PortalRouteOptions> = async (ap
       schema: {
         tags: ["auth"],
         summary: "Renew an admin portal session from its cookie",
+        description:
+          "Every open of the portal asks. With no cookie, or one whose session is over, the " +
+          "answer is 200 with `{ signedIn: false }` and the cookie is cleared, rather than a " +
+          "401 a firewall would count against the address.",
         body: z.object({ deviceId: z.string().min(6).max(128) }),
       },
     },
     async (request, reply) => {
       requireOwnOrigin(request)
       const token = readCookie(request, PORTAL_COOKIE)
-      if (!token) throw unauthorized("Sign in to the admin portal.")
+      if (!token) return { signedIn: false as const }
 
       let session
       try {
@@ -144,6 +148,7 @@ export const portalRoutes: FastifyPluginAsyncZod<PortalRouteOptions> = async (ap
         // A cookie for a session that is over is no use to keep.
         if (error instanceof AppError && error.statusCode === 401) {
           reply.header("set-cookie", cookie(request, "", 0))
+          return { signedIn: false as const }
         }
         throw error
       }

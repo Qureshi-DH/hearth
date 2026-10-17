@@ -14,30 +14,33 @@ const at = (lat: number, minutesIn: number): Point => ({
 })
 
 let mockPath: Point[] = []
+let mockGone = false
 const mockTrailProps: Array<{ segments?: unknown; points?: unknown }> = []
 const mockGapProps: Array<{ gaps: unknown }> = []
 const mockNavigation = { navigate: jest.fn(), goBack: jest.fn() }
 
 jest.mock("../hooks/queries", () => ({
   useTrip: () => ({
-    data: {
-      id: "t1",
-      userId: "sam",
-      startedAt: mockPath[0]!.recordedAt,
-      endedAt: mockPath[mockPath.length - 1]!.recordedAt,
-      distanceMeters: 2400,
-      durationSeconds: 300,
-      maxSpeedMps: 11,
-      avgSpeedMps: 8,
-      pointCount: mockPath.length,
-      startLat: mockPath[0]!.lat,
-      startLon: 73.05,
-      endLat: mockPath[mockPath.length - 1]!.lat,
-      endLon: 73.05,
-      startPlaceName: "Home",
-      endPlaceName: null,
-      path: mockPath,
-    },
+    data: mockGone
+      ? { id: "t1", visible: false }
+      : {
+          id: "t1",
+          userId: "sam",
+          startedAt: mockPath[0]!.recordedAt,
+          endedAt: mockPath[mockPath.length - 1]!.recordedAt,
+          distanceMeters: 2400,
+          durationSeconds: 300,
+          maxSpeedMps: 11,
+          avgSpeedMps: 8,
+          pointCount: mockPath.length,
+          startLat: mockPath[0]!.lat,
+          startLon: 73.05,
+          endLat: mockPath[mockPath.length - 1]!.lat,
+          endLon: 73.05,
+          startPlaceName: "Home",
+          endPlaceName: null,
+          path: mockPath,
+        },
   }),
 }))
 jest.mock("../hooks/useNearby", () => ({ useNearby: () => null }))
@@ -128,6 +131,16 @@ beforeEach(() => {
   mockTrailProps.length = 0
   mockGapProps.length = 0
   mockMapLoaded = false
+  mockGone = false
+})
+
+describe("a trip opened from a list that has gone out of date", () => {
+  it("says it is no longer available instead of drawing nothing", async () => {
+    mockGone = true
+    const screen = await renderTrip()
+    expect(screen.getByText("trips:gone")).toBeTruthy()
+    expect(mockTrailProps).toHaveLength(0)
+  })
 })
 
 describe("framing the trip", () => {

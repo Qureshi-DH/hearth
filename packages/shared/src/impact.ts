@@ -90,11 +90,19 @@ export const IMPACT = {
    * Vibration, as the spread of accelerometer magnitude (see jitterG). A
    * vehicle under way shakes even when its speed is steady, and that shaking is
    * what separates "stopped" from "cruising smoothly" on a phone whose GPS has
-   * not reported for a minute. Below restNoiseG the surroundings are at rest.
-   * Above it, something is running.
+   * not reported for a minute. Above driveNoiseG a vehicle is taken to be
+   * under way, and above restNoiseG something certainly is.
    */
   restNoiseG: 0.042,
   driveNoiseG: 0.02,
+  /**
+   * Where no speed says the vehicle stopped, its vibration has to fall to at
+   * most this share of the run up's, or under driveNoiseG. The two bands
+   * overlap, so a smooth motorway shakes less than restNoiseG, and a phone
+   * lying on the floor of a car still on it keeps all of that. A car that has
+   * stopped loses most of it.
+   */
+  restVibrationRatio: 0.5,
   /**
    * How much of the stillness afterwards may be disturbed and still count.
    * Demanding every sample made one knock enough to discard a real crash.
@@ -298,14 +306,20 @@ function cameToRest(after: DriveSample[], peakAt: number, baselineJitter: number
   // that is moving. What it cannot hide is the vehicle's vibration, which is
   // still coming through the floor.
   //
-  // The test is absolute rather than relative to the run up. A stopped vehicle
-  // shakes about the same amount whatever road it had been on, so comparing
-  // the two let road roughness decide whether a crash was reported, and the
-  // same impact was found on a smooth road and missed on a moderate one.
+  // The ceiling is absolute rather than relative to the run up. A stopped
+  // vehicle shakes about the same amount whatever road it had been on, so
+  // comparing the two let road roughness decide whether a crash was reported,
+  // and the same impact was found on a smooth road and missed on a moderate one.
   const restJitter = jitterG(tail)
   if (restJitter > IMPACT.restNoiseG) return false
 
+  // A current speed settles whether the vehicle stopped, and the vibration
+  // only has to stay under the ceiling. Without one, the vibration is the only
+  // witness, and under the ceiling is not enough on its own, because a smooth
+  // road never rises above it. Under driveNoiseG nothing is running whatever
+  // the run up was like, which is the only test a phone in a pocket can pass,
+  // since half of the little a pocket lets through is quieter than a parked car.
   const tailSpeeds = speeds(tail)
-  if (tailSpeeds.length > 0 && Math.max(...tailSpeeds) > IMPACT.restSpeedMps) return false
-  return true
+  if (tailSpeeds.length > 0) return Math.max(...tailSpeeds) <= IMPACT.restSpeedMps
+  return restJitter <= Math.max(IMPACT.driveNoiseG, baselineJitter * IMPACT.restVibrationRatio)
 }

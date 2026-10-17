@@ -26,7 +26,7 @@ function presenceFor(activity: ActivityType, ageMs = 0): MemberPresence {
   }
 }
 
-const mockMember: CircleMember = {
+let mockMember: CircleMember = {
   userId: "omar",
   circleId: "c1",
   user: { id: "omar", displayName: "Omar", avatarUrl: null, avatarColor: "#888" },
@@ -39,18 +39,27 @@ const mockMember: CircleMember = {
 }
 
 let mockPresence: MemberPresence[] = []
+let mockCircle = {
+  id: "c1",
+  name: "Family",
+  role: "member",
+  settings: { allowHistory: true },
+}
+const mockUseTrips = jest.fn((..._args: unknown[]) => ({ data: [] }))
+let mockNudgeAnswer: unknown = { ok: true }
+const mockNudge = jest.fn(async (..._args: unknown[]) => mockNudgeAnswer)
 const mockTrailProps: unknown[] = []
 const mockWatch = jest.fn(async () => ({ watching: true, seconds: 600 }))
 const mockRefreshMember = jest.fn(async () => ({ asked: "socket" }))
 const mockNavigation = { navigate: jest.fn(), goBack: jest.fn() }
 
 jest.mock("../hooks/queries", () => ({
-  useCircle: () => ({ id: "c1", name: "Family", role: "member", settings: { allowHistory: true } }),
+  useCircle: () => mockCircle,
   useMember: () => mockMember,
   usePresence: () => ({ data: mockPresence }),
   usePlaces: () => ({ data: [] }),
-  useTrips: () => ({ data: [] }),
-  useNudge: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  useTrips: (...args: unknown[]) => mockUseTrips(...args),
+  useNudge: () => ({ mutateAsync: mockNudge, isPending: false }),
   useUpdateMember: () => ({ mutate: jest.fn() }),
   useRemoveMember: () => ({ mutateAsync: jest.fn() }),
 }))
@@ -169,11 +178,21 @@ async function renderProfile() {
   return utils
 }
 
+const memberAsFirstSeen = mockMember
+
 beforeEach(() => {
   jest.clearAllMocks()
   mockTrailProps.length = 0
   mockPresence = [presenceFor("driving")]
+  mockMember = memberAsFirstSeen
+  mockCircle = { id: "c1", name: "Family", role: "member", settings: { allowHistory: true } }
+  mockNudgeAnswer = { ok: true }
+  const { remove } = require("../utils/storage") as typeof import("../utils/storage")
+  remove("nudge-budget")
 })
+
+const lastToast = () =>
+  (require("../stores/toast") as typeof import("../stores/toast")).useToastStore.getState().current
 
 describe("saving where they are as a place", () => {
   it("is offered when they are settled somewhere the family has not named", async () => {
@@ -256,6 +275,14 @@ describe("Live on a member's profile", () => {
     expect(mockRefreshMember).toHaveBeenCalledWith("c1", "omar")
   })
 
+  // Somebody removed from the circle while on this page would be refused
+  // with a 403 for asking.
+  it("does not ask for a circle the list no longer holds", async () => {
+    mockCircle = null as never
+    await renderProfile()
+    expect(mockRefreshMember).not.toHaveBeenCalled()
+  })
+
   it("asks even before any presence has arrived for them", async () => {
     mockPresence = []
     await renderProfile()
@@ -308,5 +335,143 @@ describe("a quick message", () => {
     // The translation layer is a stub here, so the key is what can be read.
     expect(shown?.message).toContain("member:messageSent")
     expect(shown?.message).not.toContain("nudged")
+  })
+})
+
+describe("their trips", () => {
+  const asked = () => [...new Set(mockUseTrips.mock.calls.map((call) => call[2]))]
+
+  it("are asked for while they share precisely with a circle that keeps history", async () => {
+    await renderProfile()
+    expect(asked()).toEqual([true])
+  })
+
+  // The server answers these with an empty list, and asking at all is a
+  // request a firewall in front of it may count against the household.
+  it("are not asked for while they share approximately", async () => {
+    mockPresence = [{ ...presenceFor("still"), approximate: true, sharingState: "approximate" }]
+    await renderProfile()
+    expect(asked()).toEqual([false])
+  })
+
+  it("are not asked for while they are paused", async () => {
+    mockPresence = [{ ...presenceFor("still"), lat: null, lon: null, sharingState: "paused" }]
+    await renderProfile()
+    expect(asked()).toEqual([false])
+  })
+
+  it("are not asked for in a circle that has history turned off", async () => {
+    mockCircle = { ...mockCircle, settings: { allowHistory: false } }
+    await renderProfile()
+    expect(asked()).toEqual([false])
+  })
+})
+
+describe("asking for their location", () => {
+  it("says what became of the ask rather than that it worked", async () => {
+    mockNudgeAnswer = { ok: true, notified: "sent", asked: "no_device" }
+    const screen = await renderProfile()
+    fireEvent.press(screen.getByText(/map:nudge/))
+    await act(async () => {})
+    expect(lastToast()?.message).toContain("member:askedNoDevice")
+  })
+
+  it("says the phone is updating when its channel carried the ask", async () => {
+    mockNudgeAnswer = { ok: true, notified: "sent", asked: "socket" }
+    const screen = await renderProfile()
+    fireEvent.press(screen.getByText(/map:nudge/))
+    await act(async () => {})
+    expect(lastToast()).toMatchObject({ tone: "success" })
+    expect(lastToast()?.message).toContain("member:askedSocket")
+  })
+
+  it("says they had already been asked, when the server held a repeat", async () => {
+    mockNudgeAnswer = { ok: true, notified: "held", asked: "held" }
+    const screen = await renderProfile()
+    fireEvent.press(screen.getByText(/map:nudge/))
+    await act(async () => {})
+    expect(lastToast()?.message).toContain("member:nudgeHeld")
+  })
+
+  it("says they are no longer in the circle when they have left it", async () => {
+    mockNudgeAnswer = { ok: true, notified: "gone", asked: "unsupported" }
+    const screen = await renderProfile()
+    fireEvent.press(screen.getByText(/map:nudge/))
+    await act(async () => {})
+    expect(lastToast()?.message).toContain("member:nudgeGone")
+  })
+
+  it("says the same of a message to somebody who has left", async () => {
+    mockNudgeAnswer = { ok: true, notified: "gone", asked: null }
+    const screen = await renderProfile()
+    fireEvent.press(screen.getByText(/messages:messageMember/))
+    fireEvent.press(screen.getByTestId("option-call_me"))
+    await act(async () => {})
+    expect(lastToast()?.message).toContain("member:nudgeGone")
+  })
+
+  it("keeps the old words for a server that only says it is fine", async () => {
+    const screen = await renderProfile()
+    fireEvent.press(screen.getByText(/map:nudge/))
+    await act(async () => {})
+    expect(lastToast()?.message).toContain("map:nudged")
+  })
+
+  it("tells a person tapping to wait, before the server would refuse them", async () => {
+    const { DEFAULTS } = require("@hearth/shared") as typeof import("@hearth/shared")
+    const screen = await renderProfile()
+    for (let i = 0; i <= DEFAULTS.phoneNudgesPerTenMinutes; i += 1) {
+      fireEvent.press(screen.getByText(/map:nudge/))
+      await act(async () => {})
+    }
+    expect(mockNudge).toHaveBeenCalledTimes(DEFAULTS.phoneNudgesPerTenMinutes)
+    expect(lastToast()?.message).toContain("member:nudgeWait")
+  })
+
+  it("shares one budget with quick messages", async () => {
+    const { DEFAULTS } = require("@hearth/shared") as typeof import("@hearth/shared")
+    const screen = await renderProfile()
+    for (let i = 0; i < DEFAULTS.phoneNudgesPerTenMinutes; i += 1) {
+      fireEvent.press(screen.getByText(/map:nudge/))
+      await act(async () => {})
+    }
+    fireEvent.press(screen.getByText(/messages:messageMember/))
+    fireEvent.press(screen.getByTestId("option-call_me"))
+    await act(async () => {})
+    expect(mockNudge).toHaveBeenCalledTimes(DEFAULTS.phoneNudgesPerTenMinutes)
+    expect(lastToast()?.message).toContain("member:nudgeWait")
+  })
+})
+
+describe("a member who has paused sharing", () => {
+  it("can still be sent a message, though not asked for a location", async () => {
+    mockPresence = [{ ...presenceFor("still"), lat: null, lon: null, sharingState: "paused" }]
+    const screen = await renderProfile()
+    fireEvent.press(screen.getByText(/messages:messageMember/))
+    fireEvent.press(screen.getByTestId("option-call_me"))
+    await act(async () => {})
+    expect(mockNudge).toHaveBeenCalledWith({ userId: "omar", quickKey: "call_me" })
+  })
+})
+
+describe("removing a member", () => {
+  it("is not offered to an admin for another admin, which only the owner may do", async () => {
+    mockCircle = { ...mockCircle, role: "admin" }
+    mockMember = { ...memberAsFirstSeen, role: "admin" }
+    const screen = await renderProfile()
+    expect(screen.queryByText(/member:remove/)).toBeNull()
+  })
+
+  it("is offered to an admin for a plain member", async () => {
+    mockCircle = { ...mockCircle, role: "admin" }
+    const screen = await renderProfile()
+    expect(screen.getByText(/member:remove/)).toBeTruthy()
+  })
+
+  it("is offered to the owner for an admin", async () => {
+    mockCircle = { ...mockCircle, role: "owner" }
+    mockMember = { ...memberAsFirstSeen, role: "admin" }
+    const screen = await renderProfile()
+    expect(screen.getByText(/member:remove/)).toBeTruthy()
   })
 })

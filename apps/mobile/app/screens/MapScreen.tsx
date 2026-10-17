@@ -60,6 +60,7 @@ import { useSettingsStore } from "@/stores/settings"
 import { useTrackingStore } from "@/stores/tracking"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
+import { takeMapRefresh } from "@/utils/budget"
 import { FALLBACK_CENTER, fitBoundsFor } from "@/utils/map"
 import { groupOverlapping, type MarkerGroup } from "@/utils/markerLayout"
 
@@ -309,6 +310,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
     useCallback(() => {
       if (!circleId) return
       const ask = () => {
+        if (!takeMapRefresh(circleId)) return
         endpoints.locations.refresh(circleId).catch(() => undefined)
       }
       ask()

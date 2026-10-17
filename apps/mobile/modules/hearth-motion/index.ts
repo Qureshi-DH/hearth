@@ -77,6 +77,11 @@ declare class HearthMotionModule extends NativeModule<{
   /** Android only, iOS rejects. Battery Saver. */
   isPowerSaveModeAsync(): Promise<boolean>
   /**
+   * Android only, iOS rejects. Whether the person let Hearth through Do Not
+   * Disturb, which is what the SOS channel's bypass needs to mean anything.
+   */
+  isNotificationPolicyAccessGrantedAsync(): Promise<boolean>
+  /**
    * Android only, iOS rejects. Raises the system's own "let this app ignore
    * battery optimisation" dialog for this package. Resolves whether the
    * dialog could be launched at all, not what the person chose; the OS

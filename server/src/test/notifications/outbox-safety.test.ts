@@ -5,6 +5,7 @@ import { getDb } from "../../db/client"
 import {
   drainOutbox,
   enqueuePush,
+  pruneOutbox,
   type DeliveryResult,
   type DeliveryTarget,
   type PushDriver,
@@ -126,7 +127,9 @@ describe("a silent push past its lifetime", () => {
 })
 
 describe("news of a place for a circle that stopped seeing it", () => {
-  it("is dropped once the member pauses that circle, and a crash alert is not", async () => {
+  // A crash alert still waiting says where somebody stopped, to a circle
+  // they have since stopped sharing with, so it goes the same way.
+  it("is dropped once the member pauses that circle, a crash alert too", async () => {
     const parent = await registerUser(ctx.app, { displayName: "Parent" })
     const create = await ctx.app.inject({
       method: "POST",
@@ -172,10 +175,8 @@ describe("news of a place for a circle that stopped seeing it", () => {
     const rows = (await getDb().execute(
       sql`select status from notification_outbox where title = 'Clinic' order by id`,
     )) as unknown as Array<{ status: string }>
-    expect(rows.map((row) => row.status)).toEqual(["skipped", "sent"])
-    expect(
-      driver.attempted.filter((message) => message.title === "Clinic").map((m) => m.data?.type),
-    ).toEqual(["possible_incident"])
+    expect(rows.map((row) => row.status)).toEqual(["skipped", "skipped"])
+    expect(driver.attempted.filter((message) => message.title === "Clinic")).toEqual([])
   })
 })
 
@@ -204,5 +205,44 @@ describe("the admin's view of the outbox", () => {
       title: null,
       body: null,
     })
+  })
+})
+
+describe("pruning the outbox", () => {
+  async function aged(statuses: string[]) {
+    const user = await registerUser(ctx.app)
+    await getDb().execute(sql`delete from notification_outbox`)
+    for (const status of statuses) {
+      await getDb().execute(sql`
+        insert into notification_outbox (user_id, title, body, status, created_at)
+        values (${user.user.id}::uuid, 'Hearth', 'Old news', ${status}, now() - interval '30 days')
+      `)
+    }
+  }
+
+  const left = async () =>
+    (
+      (await getDb().execute(
+        sql`select status from notification_outbox order by id`,
+      )) as unknown as Array<{ status: string }>
+    ).map((row) => row.status)
+
+  // One unbounded delete over a busy month of rows holds its locks for as
+  // long as it takes, and every enqueue behind it waits.
+  it("deletes in batches, and leaves what one pass did not reach for the next", async () => {
+    await aged(["sent", "sent", "skipped", "failed", "sent"])
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+
+    expect(await pruneOutbox(getDb(), weekAgo, { batchSize: 2, maxBatches: 2 })).toBe(4)
+    expect(await left()).toHaveLength(1)
+    expect(await pruneOutbox(getDb(), weekAgo, { batchSize: 2, maxBatches: 2 })).toBe(1)
+    expect(await left()).toEqual([])
+  })
+
+  it("never takes a row still waiting to go out", async () => {
+    await aged(["pending", "sending", "sent"])
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    expect(await pruneOutbox(getDb(), weekAgo)).toBe(1)
+    expect(await left()).toEqual(["pending", "sending"])
   })
 })

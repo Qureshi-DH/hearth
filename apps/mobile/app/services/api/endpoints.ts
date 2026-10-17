@@ -21,6 +21,7 @@ import type {
   Paginated,
   Place,
   PlaceEvent,
+  PlaceGone,
   PlaceIcon,
   PushConfig,
   PushProvider,
@@ -30,7 +31,12 @@ import type {
   SessionSummary,
   SharingState,
   SosAlert,
+  SosReason,
+  RaiseSosRequest,
+  RaiseSosResponse,
   Trip,
+  TripDetailResponse,
+  NudgeResponse,
   RefreshMemberResponse,
   WatchResponse,
 } from "@hearth/shared"
@@ -211,9 +217,9 @@ export function createEndpoints(api: ApiClient) {
           radiusMeters: number
           address: string | null
         }>,
-      ) => api.patch<Place>(`/circles/${circleId}/places/${placeId}`, patch),
+      ) => api.patch<Place | PlaceGone>(`/circles/${circleId}/places/${placeId}`, patch),
       remove: (circleId: string, placeId: string) =>
-        api.delete<{ ok: true }>(`/circles/${circleId}/places/${placeId}`),
+        api.delete<{ ok: true; gone?: true }>(`/circles/${circleId}/places/${placeId}`),
       events: (circleId: string, placeId: string, limit = 100) =>
         api.get<PlaceEvent[]>(`/circles/${circleId}/places/${placeId}/events`, {
           query: { limit },
@@ -230,8 +236,13 @@ export function createEndpoints(api: ApiClient) {
     },
 
     safety: {
-      raiseSos: (circleId: string, note?: string | null) =>
-        api.post<SosAlert & { notifiedMembers: number }>(`/circles/${circleId}/sos`, { note }),
+      // Safe to call again after a lost reply, because the server answers with
+      // the alert already open. Without a reason it goes to every circle.
+      raiseSos: (circleId: string, note?: string | null, reason?: SosReason) =>
+        api.post<RaiseSosResponse>(`/circles/${circleId}/sos`, {
+          note,
+          reason,
+        } satisfies RaiseSosRequest),
       resolveSos: (alertId: string) => api.post<{ ok: true }>(`/sos/${alertId}/resolve`),
       sosHistory: (circleId: string, activeOnly = false) =>
         api.get<SosAlert[]>(`/circles/${circleId}/sos`, { query: { activeOnly } }),
@@ -243,19 +254,19 @@ export function createEndpoints(api: ApiClient) {
         circleId: string,
         userId: string,
         message?: { quickKey?: QuickMessageKey; body?: string },
-      ) => api.post<{ ok: true }>(`/circles/${circleId}/nudge/${userId}`, message),
+      ) => api.post<NudgeResponse>(`/circles/${circleId}/nudge/${userId}`, message),
     },
 
     trips: {
       forMember: (circleId: string, userId: string, limit = 50) =>
         api.get<Trip[]>(`/circles/${circleId}/members/${userId}/trips`, { query: { limit } }),
       mine: (limit = 50) => api.get<Trip[]>("/me/trips", { query: { limit } }),
-      get: (tripId: string) =>
-        api.get<
-          Trip & {
-            path: Array<{ recordedAt: string; lat: number; lon: number; speedMps: number | null }>
-          }
-        >(`/trips/${tripId}`),
+      // Soft, so a trip opened from a list that has gone out of date comes
+      // back as not visible rather than as a 403 or a 404.
+      get: (tripId: string, options: { soft?: boolean } = {}) =>
+        api.get<TripDetailResponse>(`/trips/${tripId}`, {
+          query: { soft: options.soft ? "true" : undefined },
+        }),
     },
 
     push: {

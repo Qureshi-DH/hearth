@@ -1,6 +1,8 @@
 import {
   DEFAULTS,
+  batteryRanOut,
   coarsenLocation,
+  issuesBatteryExplains,
   plausibleActivity,
   type EventType,
   type MemberPresence,
@@ -156,10 +158,15 @@ export function sharingSwitchedOff(
 /**
  * What the phone said stands between it and reporting, as a list the app
  * can put under the member's name. Nothing wrong, or nothing said, is empty.
+ * For a phone that went quiet on a flat battery, `ranOut`, what the battery
+ * explains is left out. An app that knows says the battery ran out instead,
+ * and one that does not falls back to saying the phone went quiet, rather
+ * than blaming the power saving the phone turned on by itself.
  */
 export function presenceIssues(
   health: DeviceHealth | null | undefined,
   lastFixAt?: Date | null,
+  options: { ranOut?: boolean } = {},
 ): PresenceIssue[] {
   if (!health) return []
   const issues: PresenceIssue[] = []
@@ -177,7 +184,22 @@ export function presenceIssues(
   if (health.lowPowerMode) issues.push("low_power_mode")
   if (health.backgroundRestricted) issues.push("background_restricted")
   if (health.serviceStopped) issues.push("service_stopped")
-  return issues
+  return options.ranOut ? issues.filter((issue) => !issuesBatteryExplains.includes(issue)) : issues
+}
+
+/**
+ * Whether the circle sees the member's position as out of date. A phone that
+ * said it parked speaks on its heartbeat, not its interval. The admin portal
+ * goes by the same rule wherever it says something only a stale phone earns.
+ */
+export function presenceStale(
+  recordedAt: Date | null,
+  activity: string | null | undefined,
+  now: Date,
+): boolean {
+  const staleAfter =
+    activity === "still" ? DEFAULTS.parkedStaleAfterSeconds : DEFAULTS.staleAfterSeconds
+  return !recordedAt || now.getTime() - recordedAt.getTime() > staleAfter * 1000
 }
 
 export function projectPresence(
@@ -202,10 +224,10 @@ export function projectPresence(
       : effectiveSharingState(row.sharingState, row.pausedUntil, now, row.resumeToState ?? null)
 
   const hasFix = row.lat != null && row.lon != null
-  // A phone that said it parked speaks on its heartbeat, not its interval.
-  const staleAfter =
-    row.activity === "still" ? DEFAULTS.parkedStaleAfterSeconds : DEFAULTS.staleAfterSeconds
-  const stale = !row.recordedAt || now.getTime() - row.recordedAt.getTime() > staleAfter * 1000
+  const stale = presenceStale(row.recordedAt, row.activity, now)
+  const issues = presenceIssues(row.health, row.recordedAt, {
+    ranOut: stale && batteryRanOut(row.batteryLevel, row.isCharging),
+  })
 
   if (state === "paused" || !hasFix) {
     return {
@@ -224,7 +246,7 @@ export function projectPresence(
       stale: state === "paused" ? false : stale,
       atPlace: state === "paused" ? null : extras.atPlace,
       sosAlertId: extras.sosAlertId,
-      issues: state === "paused" ? [] : presenceIssues(row.health, row.recordedAt),
+      issues: state === "paused" ? [] : issues,
     }
   }
 
@@ -254,7 +276,7 @@ export function projectPresence(
     // viewers on the coarse grid do not get it.
     atPlace: approximate ? null : extras.atPlace,
     sosAlertId: extras.sosAlertId,
-    issues: presenceIssues(row.health, row.recordedAt),
+    issues,
   }
 }
 

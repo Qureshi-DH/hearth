@@ -168,16 +168,31 @@ moving, so a parked Android phone is reached by silent push alone.
 transaction. A trigger on that table raises `NOTIFY hearth_outbox`, which
 Postgres delivers only when the transaction commits, and every replica
 listens for it and drains straight away. The drain claims pending rows with
-`UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)`, high priority first,
-which is safe across several API replicas and against an admin "flush now",
+`UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)`, the `sos` channel
+first and then high priority, which is safe across several API replicas and
+against an admin "flush now",
 and sends them through the configured `PushDriver` (`none` / `expo` / `ntfy` /
 `webpush`) 8 at a time. Claims take turns under an advisory lock, and a row
 waits while a sibling for the same recipient and card is still sending, so two
 drains never build one card twice. Before sending, it drops a row whose
-recipient has left the circle, and place news about somebody who no longer
-shares precisely with it (`services/outbox-visibility.ts`). Each provider call
+recipient has left the circle, place news about somebody who no longer
+shares precisely with it, and a `device_offline` row whose phone has been heard
+since the row was queued (`services/outbox-visibility.ts`). Each provider call
 gets 15 s. A failed send is retried with back-off, and after 6 attempts the row
-is marked `failed`. The scheduler tick still drains,
+is marked `failed`. A row on the `sos` channel is the exception. It retries
+every 10 s to 3 min, a `sos_started` until the drain drops it as resolved, and
+anything else on the channel, a `possible_incident`, for an hour. A
+`sos_started` whose alert is resolved or gone is dropped, and so is a
+`possible_incident` whose person no longer shares precisely with the circle
+or has a newer fix, 250 m or sharper, over 300 m from the stop
+(`incidentsMovedOn`). A silent `wake` that ends `failed` takes itself off
+`wake_count`, so a wake that never got out is not an unanswered one. A driver
+reports a 4xx other than 408 or 429 as `rejected`, and a rejected SOS gets the
+ordinary 6 attempts. Every Expo ticket is kept in `push_tickets` with the
+session and the token it went to, for the receipt step below. A send that
+could not reach the provider at all (no answer, a thrown fetch, a 5xx) marks
+the process's `pushProviderFailedSince()`, which the offline sweep reads. The
+scheduler tick still drains,
 for those retries, dead-token cleanup, and re-queueing of rows a crashed
 replica left in `sending`. See [push notifications](../install/push-notifications.md).
 
@@ -221,32 +236,54 @@ running is skipped.
 
 1. Drain push, after putting back rows a crashed replica left in `sending` for
    over 10 minutes.
-2. Lapse expired pauses, restoring whatever mode each member had before.
-3. Wake quiet phones, on a schedule measured from when the phone was last
+2. Read Expo receipts, at most once a quarter hour, through the driver's
+   `readReceipts`. Tickets at least 30 minutes old go to
+   `POST /--/api/v2/push/getReceipts` 1 000 at a time, up to five calls a pass.
+   A `DeviceNotRegistered` receipt clears the session's token if it still holds
+   the token the push went to. Read tickets are deleted, a pass stops at the
+   first call that leaves some unanswered or fails, and tickets over a day old
+   are deleted in 5 000-row batches.
+3. Lapse expired pauses, restoring whatever mode each member had before.
+4. Wake quiet phones, on a schedule measured from when the phone was last
    heard, `greatest(recorded_at, last_heard_at)`. A phone last seen moving is
    asked at 10, 20 and 40 minutes, a parked one every half hour up to three
    times, and `wake_count` resets when the phone uploads anything at all. Each
    ask goes down the control channel when one is open, and otherwise as a
    silent push if the provider is `expo`.
-4. Flag offline devices, over 1 h silent or 12 h for a parked phone. Parked
+5. Flag offline devices, over 1 h silent, 12 h for a parked phone, or for a
+   parked phone on an account signed in only on Android phones, the three
+   parked wakes plus the grace, 100 minutes (`silentPastCutoff` in
+   `services/reporting.ts`). Parked
    means the last fix said "still", or the member is inside a named place, or
    the last fix measured under 1 m/s with an accuracy of 250 m or better. A
    phone the server can push is only called offline once two wakes have gone
    unanswered. Each circle hears it once per outage, with the reason when the
-   phone's own health report gave one. A circle the member paused, or one that
-   allows pausing when the member switched sharing off on the phone, hears
-   nothing. The step is withheld entirely when at
-   least eight phones count and more of them are quiet than reporting, which
-   means the outage was the server's.
-5. Announce returned devices. A circle that was told a phone went quiet gets a
-   `device_online` feed line, with no push, once it reports again.
-6. Detect trips, paged over users with a fix in the last 6 hours, one advisory
+   phone's own health report gave one, or that the battery likely ran out when
+   the last fix was on 5% or less and not charging. A circle the member paused,
+   or one that allows pausing when the member switched sharing off on the
+   phone, hears nothing. The step is withheld entirely when the push provider
+   could not be reached in the last 30 minutes, when a server with fewer than
+   eight phones counting has at least two not yet announced and none fresh,
+   or when at least eight phones count and more of them are quiet than
+   reporting. Each of those means the outage was the server's. Holding writes
+   the `offline_alerts_held` row of `server_settings`, and the step stays
+   withheld for 30 minutes after it, so the first phone back does not expose
+   the rest. Each phone is checked again under its lock before it is
+   announced.
+6. Announce returned devices. A circle that was told a phone went quiet gets a
+   `device_online` feed line once it reports again. Whoever was sent that
+   `device_offline` row, or has it still sending, and does not mute it now
+   gets a push on the `alerts` channel in the phone's card.
+7. Detect trips, paged over users with a fix in the last 6 hours, one advisory
    lock per user so replicas never double-detect.
-7. Prune history: per-circle retention under the server-wide ceiling, in
+8. Prune history: per-circle retention under the server-wide ceiling, in
    5 000-row batches and at most 20 per user per tick, so a big sweep never
    holds locks for minutes.
-8. Prune sent, skipped and failed outbox rows after 7 days.
-9. Prune sessions that have expired, or were revoked over 30 days ago.
+9. Prune sent, skipped and failed outbox rows after 7 days, in 5 000-row
+   batches and at most 20 a pass. A pending row, such as an SOS still being
+   retried, is never pruned, nor a `device_offline` row whose phone is still
+   in that outage, since it is the list of who to tell when it returns.
+10. Prune sessions that have expired, or were revoked over 30 days ago.
 
 The sweep reads the ceiling from `server_settings` on every tick, falling back to
 `MAX_HISTORY_RETENTION_DAYS`. Reading the env value instead was the bug: changing
@@ -299,8 +336,11 @@ next sign-in. The server's response carries the tracking policy (interval /
 distance), which is applied live.
 
 `reportNow(source)` takes an immediate high-accuracy fix for check-ins, SOS
-(every 20 s while the SOS screen is open), and a _nudge_ arriving over the
-websocket.
+(once before the alert is sent, and every 20 s on the SOS screen of a phone
+that is not on Live), and a _nudge_ arriving over the websocket. While its
+owner has an SOS open the phone is on Live. Every upload reply names a two
+minute `watchedUntil` (`liveUntil` in `services/sos.ts`), and the raise sends
+a watch down the control channel.
 
 The tracker is a two-state machine with a live tier on top. Moving means
 continuous updates and, on Android, the foreground-service notification that
@@ -386,7 +426,8 @@ plain SVG and CSS, so the page still loads nothing from anywhere else.
   unknown emails.
 - Authorisation is always "is the caller a member of this circle with role ≥ X",
   computed from the database per request, never from the token.
-- SOS switches a paused sharing state back to precise and leaves it there.
+- SOS switches a paused sharing state back to precise, in every circle it is
+  raised in, and leaves it there.
   Nothing else overrides sharing. Mutes apply only to the alert types a member
   may silence (`MUTABLE_EVENT_TYPES`), so an SOS or a possible crash always
   gets through.

@@ -353,7 +353,7 @@ describe("auth", () => {
 })
 
 describe("nudges", () => {
-  it("puts the message in the recipient's feed, and refuses one aimed outside the circle", async () => {
+  it("puts the message in the recipient's feed, and sends none to somebody outside the circle", async () => {
     const owner = await registerUser(ctx.app, { displayName: "Amina" })
     const circle = await createCircle(owner.headers)
     const driver = await registerUser(ctx.app, { displayName: "Yusuf" })
@@ -385,13 +385,16 @@ describe("nudges", () => {
     expect(nudge?.summary).toBe("Amina: Please slow down.")
 
     const outsider = await registerUser(ctx.app)
-    const rejected = await ctx.app.inject({
+    const outside = await ctx.app.inject({
       method: "POST",
       url: `/api/v1/circles/${circle.id}/nudge/${outsider.user.id}`,
       headers: owner.headers,
       payload: { quickKey: "call_me" },
     })
-    expect(rejected.statusCode).toBe(404)
+    expect([outside.statusCode, outside.json()]).toEqual([
+      200,
+      { ok: true, notified: "gone", asked: null },
+    ])
   })
 
   // A phone at 9% or one that has gone quiet wanted a message of its own.
@@ -821,7 +824,8 @@ describe("privacy of derived data", () => {
       url: `/api/v1/circles/${circle.id}/members/${teen.user.id}/trips`,
       headers: parent.headers,
     })
-    expect(trips.statusCode).toBe(403)
+    expect(trips.statusCode).toBe(200)
+    expect(trips.json()).toEqual([])
   })
 
   it("ignores a retried batch in the geofence engine", async () => {
@@ -943,13 +947,14 @@ describe("locations, presence and privacy", () => {
     expect(hidden.batteryLevel).toBeNull()
     expect(hidden.sharingState).toBe("paused")
 
-    // History is refused while not sharing precisely.
+    // History is withheld while not sharing precisely.
     const history = await ctx.app.inject({
       method: "GET",
       url: `/api/v1/circles/${circle.id}/members/${alice.user.id}/history`,
       headers: bob.headers,
     })
-    expect(history.statusCode).toBe(403)
+    expect(history.statusCode).toBe(200)
+    expect(history.json()).toEqual([])
   })
 
   it("rejects garbage fixes without failing the batch", async () => {
@@ -1235,13 +1240,15 @@ describe("safety", () => {
     expect(seen.lat).not.toBeNull()
     expect(seen.sosAlertId).toBe(sos.json().id)
 
+    // Pressing again finds the alert already open rather than refusing.
     const duplicate = await ctx.app.inject({
       method: "POST",
       url: `/api/v1/circles/${circle.id}/sos`,
       headers: alice.headers,
       payload: {},
     })
-    expect(duplicate.statusCode).toBe(409)
+    expect(duplicate.statusCode).toBe(200)
+    expect(duplicate.json().id).toBe(sos.json().id)
 
     const bobCannotResolve = await ctx.app.inject({
       method: "POST",
@@ -2098,12 +2105,12 @@ describe("driving and battery alerts", () => {
     await setCircleSettings(user.headers, circle.id, { incidentDetection: true })
 
     await uploadFixes(user.headers, [
-      { ...northOf(HOME, 0), recordedAt: iso(-300), accuracyMeters: 8, speedMps: 25 },
-      { ...northOf(HOME, 750), recordedAt: iso(-270), accuracyMeters: 8, speedMps: 24 },
-      // Three minutes of not moving. A red light is not this long, which is
-      // the whole reason the stillness has to have a duration.
-      { ...northOf(HOME, 1000), recordedAt: iso(-240), accuracyMeters: 8, speedMps: 0 },
-      { ...northOf(HOME, 1000), recordedAt: iso(-120), accuracyMeters: 8, speedMps: 0 },
+      { ...northOf(HOME, 0), recordedAt: iso(-420), accuracyMeters: 8, speedMps: 25 },
+      { ...northOf(HOME, 750), recordedAt: iso(-390), accuracyMeters: 8, speedMps: 24 },
+      // Five minutes of not moving. A red light or a petrol pump is not this
+      // long, which is the whole reason the stillness has to have a duration.
+      { ...northOf(HOME, 1000), recordedAt: iso(-360), accuracyMeters: 8, speedMps: 0 },
+      { ...northOf(HOME, 1000), recordedAt: iso(-200), accuracyMeters: 8, speedMps: 0 },
       { ...northOf(HOME, 1000), recordedAt: iso(-30), accuracyMeters: 8, speedMps: 0 },
     ])
 

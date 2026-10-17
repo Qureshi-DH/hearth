@@ -110,11 +110,11 @@ async function signInDevice(email: string, deviceId: string) {
  */
 function driveThenStop(): Fix[] {
   return [
-    { ...northOf(ROAD, 0), recordedAt: iso(-330), accuracyMeters: 9, speedMps: 29 },
-    { ...northOf(ROAD, 870), recordedAt: iso(-300), accuracyMeters: 8, speedMps: 29 },
-    { ...northOf(ROAD, 1710), recordedAt: iso(-270), accuracyMeters: 11, speedMps: 28 },
-    { ...northOf(ROAD, 1940), recordedAt: iso(-240), accuracyMeters: 12, speedMps: 0.4 },
-    { ...northOf(ROAD, 1942), recordedAt: iso(-120), accuracyMeters: 16, speedMps: 0 },
+    { ...northOf(ROAD, 0), recordedAt: iso(-450), accuracyMeters: 9, speedMps: 29 },
+    { ...northOf(ROAD, 870), recordedAt: iso(-420), accuracyMeters: 8, speedMps: 29 },
+    { ...northOf(ROAD, 1710), recordedAt: iso(-390), accuracyMeters: 11, speedMps: 28 },
+    { ...northOf(ROAD, 1940), recordedAt: iso(-360), accuracyMeters: 12, speedMps: 0.4 },
+    { ...northOf(ROAD, 1942), recordedAt: iso(-240), accuracyMeters: 16, speedMps: 0 },
   ]
 }
 

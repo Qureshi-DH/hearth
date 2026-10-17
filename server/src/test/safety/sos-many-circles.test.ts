@@ -2,7 +2,13 @@ import { sql } from "drizzle-orm"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 
 import { getDb } from "../../db/client"
-import { registerUser, startTestApp, type TestContext } from "../helpers"
+import { clearOutbox, registerUser, startTestApp, type TestContext } from "../helpers"
+
+/**
+ * One person in several circles. An emergency is one emergency, so a single
+ * press tells every circle they are in, and somebody who shares more than one
+ * of those circles with them hears about it once.
+ */
 
 let ctx: TestContext
 
@@ -18,7 +24,9 @@ beforeEach(async () => {
   await ctx.reset()
 })
 
-async function createCircle(headers: Record<string, string>, name: string) {
+type Headers = Record<string, string>
+
+async function createCircle(headers: Headers, name: string) {
   const response = await ctx.app.inject({
     method: "POST",
     url: "/api/v1/circles",
@@ -29,7 +37,7 @@ async function createCircle(headers: Record<string, string>, name: string) {
   return response.json() as { id: string; invite: { code: string } }
 }
 
-async function joinCircle(headers: Record<string, string>, code: string) {
+async function joinCircle(headers: Headers, code: string) {
   const response = await ctx.app.inject({
     method: "POST",
     url: `/api/v1/invites/${code}/accept`,
@@ -38,169 +46,510 @@ async function joinCircle(headers: Record<string, string>, code: string) {
   expect(response.statusCode).toBe(200)
 }
 
-function raiseSos(headers: Record<string, string>, circleId: string, note?: string) {
+async function inviteCode(headers: Headers, circleId: string) {
+  const response = await ctx.app.inject({
+    method: "POST",
+    url: `/api/v1/circles/${circleId}/invites`,
+    headers,
+    payload: {},
+  })
+  expect(response.statusCode).toBe(201)
+  return (response.json() as { code: string }).code
+}
+
+function raiseSos(
+  headers: Headers,
+  circleId: string,
+  body: { note?: string | null; reason?: "sos" | "incident" } = { note: null },
+) {
   return ctx.app.inject({
     method: "POST",
     url: `/api/v1/circles/${circleId}/sos`,
     headers,
-    payload: { note: note ?? null },
+    payload: body,
   })
 }
 
-async function sosEventCount(circleId: string) {
-  const rows = await getDb().execute(
-    sql`select count(*)::int as n from events
-        where circle_id = ${circleId} and type = 'sos_started'`,
-  )
+function resolveSos(headers: Headers, alertId: string) {
+  return ctx.app.inject({ method: "POST", url: `/api/v1/sos/${alertId}/resolve`, headers })
+}
+
+async function setSharing(headers: Headers, circleId: string, sharingState: string) {
+  const response = await ctx.app.inject({
+    method: "PATCH",
+    url: `/api/v1/circles/${circleId}/sharing`,
+    headers,
+    payload: { sharingState },
+  })
+  expect(response.statusCode).toBe(200)
+}
+
+async function setIncidentAlerts(headers: Headers, circleId: string) {
+  const response = await ctx.app.inject({
+    method: "PATCH",
+    url: `/api/v1/circles/${circleId}`,
+    headers,
+    payload: { settings: { incidentDetection: true } },
+  })
+  expect(response.statusCode).toBe(200)
+}
+
+async function activeAlerts(headers: Headers, circleId: string) {
+  const response = await ctx.app.inject({
+    method: "GET",
+    url: `/api/v1/circles/${circleId}/sos?activeOnly=true`,
+    headers,
+  })
+  expect(response.statusCode).toBe(200)
+  return response.json() as Array<{ id: string; user: { id: string } }>
+}
+
+async function count(query: ReturnType<typeof sql>) {
+  const rows = await getDb().execute(query)
   return (rows as unknown as Array<{ n: number }>)[0]!.n
 }
 
-async function sosPushCount(userId: string) {
-  const rows = await getDb().execute(
+const feedCount = (circleId: string, type: "sos_started" | "sos_resolved") =>
+  count(
+    sql`select count(*)::int as n from events where circle_id = ${circleId}::uuid and type = ${type}`,
+  )
+
+const sosPushes = (userId: string) =>
+  count(
     sql`select count(*)::int as n from notification_outbox
-        where user_id = ${userId} and channel = 'sos'`,
+        where user_id = ${userId}::uuid and channel = 'sos'`,
   )
-  return (rows as unknown as Array<{ n: number }>)[0]!.n
+
+async function pushedAlertIds(userId: string, type: "sos_started" | "sos_resolved") {
+  const rows = (await getDb().execute(
+    sql`select data->>'alertId' as id from notification_outbox
+        where user_id = ${userId}::uuid and data->>'type' = ${type}
+        order by created_at`,
+  )) as unknown as Array<{ id: string }>
+  return rows.map((row) => row.id)
 }
 
-/**
- * One person in several circles. Nothing caps how many circles an account
- * belongs to, and SOS is raised per circle, so alerting everyone means raising
- * it once in each.
- */
+interface RaiseReply {
+  id: string
+  circleId: string
+  notifiedMembers: number
+  alerts: Array<{ id: string; circleId: string; resolvedAt: string | null }>
+}
+
+/** Yusuf owns one circle per name, and each has one friend of his in it. */
 async function yusufInCircles(names: string[]) {
   const yusuf = await registerUser(ctx.app, { displayName: "Yusuf" })
-  const circles: Array<{ id: string; name: string; witnessUserId: string }> = []
+  const circles: Array<{ id: string; name: string; friend: { id: string; headers: Headers } }> = []
   for (const name of names) {
     const created = await createCircle(yusuf.headers, name)
-    const witness = await registerUser(ctx.app, { displayName: `${name} friend` })
-    await joinCircle(witness.headers, created.invite.code)
-    circles.push({ id: created.id, name, witnessUserId: witness.user.id })
+    const friend = await registerUser(ctx.app, { displayName: `${name} friend` })
+    await joinCircle(friend.headers, created.invite.code)
+    circles.push({
+      id: created.id,
+      name,
+      friend: { id: friend.user.id, headers: friend.headers },
+    })
   }
+  await clearOutbox()
   return { yusuf, circles }
 }
 
-describe("sos", () => {
-  it("alerts every circle when someone in four raises one everywhere", async () => {
+/** His mum, who is in two of his circles. */
+async function addMum(yusufHeaders: Headers, circleIds: string[]) {
+  const mum = await registerUser(ctx.app, { displayName: "Mum" })
+  for (const circleId of circleIds) {
+    await joinCircle(mum.headers, await inviteCode(yusufHeaders, circleId))
+  }
+  await clearOutbox()
+  return mum
+}
+
+describe("one SOS reaches every circle", () => {
+  it("raises in all four of his circles from one press and tells each friend once", async () => {
     const { yusuf, circles } = await yusufInCircles(["Family", "Cousins", "Football", "Flatmates"])
 
-    const codes: number[] = []
-    const bodies: string[] = []
-    for (const circle of circles) {
-      const response = await raiseSos(
-        yusuf.headers,
-        circle.id,
-        "I've been hit, I'm on Gloucester Rd",
-      )
-      codes.push(response.statusCode)
-      bodies.push(response.body)
-    }
+    const raised = await raiseSos(yusuf.headers, circles[1]!.id, { note: "Hit on Gloucester Rd" })
+    const reply = raised.json() as RaiseReply
 
-    // Every circle he raised in should hold exactly one alert, and the other
-    // member of each should have exactly one SOS push waiting.
-    const counts = await Promise.all(circles.map((circle) => sosEventCount(circle.id)))
-    const pushes = await Promise.all(circles.map((circle) => sosPushCount(circle.witnessUserId)))
+    expect({
+      code: raised.statusCode,
+      pathCircle: reply.circleId,
+      circles: reply.alerts.map((alert) => alert.circleId).sort(),
+      feed: await Promise.all(circles.map((circle) => feedCount(circle.id, "sos_started"))),
+      pushes: await Promise.all(circles.map((circle) => sosPushes(circle.friend.id))),
+      notifiedMembers: reply.notifiedMembers,
+    }).toEqual({
+      code: 201,
+      pathCircle: circles[1]!.id,
+      circles: circles.map((circle) => circle.id).sort(),
+      feed: [1, 1, 1, 1],
+      pushes: [1, 1, 1, 1],
+      notifiedMembers: 4,
+    })
+    expect(reply.alerts.find((alert) => alert.circleId === circles[1]!.id)!.id).toBe(reply.id)
+    for (const circle of circles) {
+      expect((await activeAlerts(circle.friend.headers, circle.id)).length).toBe(1)
+    }
+  })
+
+  it("tells somebody who shares two of his circles about it once", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins", "Football"])
+    const mum = await addMum(yusuf.headers, [circles[0]!.id, circles[1]!.id])
+
+    const raised = await raiseSos(yusuf.headers, circles[2]!.id, { note: "car hit me" })
+    expect(raised.statusCode).toBe(201)
+
+    expect({
+      mum: await sosPushes(mum.user.id),
+      friends: await Promise.all(circles.map((circle) => sosPushes(circle.friend.id))),
+      notifiedMembers: (raised.json() as RaiseReply).notifiedMembers,
+    }).toEqual({ mum: 1, friends: [1, 1, 1], notifiedMembers: 4 })
+  })
+
+  it("switches him back to precise in every circle it is raised in", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins", "Football"])
+    await setSharing(yusuf.headers, circles[1]!.id, "approximate")
+    await setSharing(yusuf.headers, circles[2]!.id, "paused")
+
+    expect((await raiseSos(yusuf.headers, circles[0]!.id)).statusCode).toBe(201)
+
+    const states: string[] = []
+    for (const circle of circles) {
+      const response = await ctx.app.inject({
+        method: "GET",
+        url: `/api/v1/circles/${circle.id}/members`,
+        headers: circle.friend.headers,
+      })
+      const rows = response.json() as Array<{ userId: string; sharingState: string }>
+      states.push(rows.find((row) => row.userId === yusuf.user.id)!.sharingState)
+    }
+    expect(states).toEqual(["precise", "precise", "precise"])
+  })
+
+  it("answers an old app pressing in each circle in turn with the alert already open", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins", "Football", "Flatmates"])
+
+    // An app from before one press covered every circle sends no reason.
+    const codes: number[] = []
+    for (const circle of circles) {
+      const response = await ctx.app.inject({
+        method: "POST",
+        url: `/api/v1/circles/${circle.id}/sos`,
+        headers: yusuf.headers,
+        payload: { note: "I need help" },
+      })
+      codes.push(response.statusCode)
+    }
 
     expect({
       codes,
-      counts,
-      pushes,
-      refused: bodies.filter((body) => body.includes("too_many_requests")),
+      feed: await Promise.all(circles.map((circle) => feedCount(circle.id, "sos_started"))),
+      pushes: await Promise.all(circles.map((circle) => sosPushes(circle.friend.id))),
+    }).toEqual({ codes: [201, 200, 200, 200], feed: [1, 1, 1, 1], pushes: [1, 1, 1, 1] })
+  })
+
+  it("recognises an older app's unanswered crash prompt by its note", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins", "Football"])
+    await setIncidentAlerts(yusuf.headers, circles[0]!.id)
+
+    // What an app from before `reason` sends when nobody answers the prompt.
+    const raised = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circles[1]!.id}/sos`,
+      headers: yusuf.headers,
+      payload: { note: "Possible collision detected automatically. No answer from the phone." },
+    })
+
+    expect({
+      code: raised.statusCode,
+      circles: (raised.json() as RaiseReply).alerts.map((alert) => alert.circleId).sort(),
+      football: await feedCount(circles[2]!.id, "sos_started"),
     }).toEqual({
-      codes: [201, 201, 201, 201],
-      counts: [1, 1, 1, 1],
-      pushes: [1, 1, 1, 1],
-      refused: [],
+      code: 201,
+      circles: [circles[0]!.id, circles[1]!.id].sort(),
+      football: 0,
     })
   })
 
-  it("still alerts the third circle after a panicked double tap in the first", async () => {
-    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins", "Football"])
+  it("raises a crash alert only where crash alerts are on, and in the circle it came from", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins", "Football", "Flatmates"])
+    const [family, cousins, football, flatmates] = circles as [
+      (typeof circles)[0],
+      (typeof circles)[0],
+      (typeof circles)[0],
+      (typeof circles)[0],
+    ]
+    await setIncidentAlerts(yusuf.headers, family.id)
+    await setIncidentAlerts(yusuf.headers, flatmates.id)
+    const mum = await addMum(yusuf.headers, [family.id, football.id])
 
-    // The raise takes a row lock, so the second press is answered 409 and
-    // writes nothing.
-    const first = await raiseSos(yusuf.headers, circles[0]!.id, "car hit me")
-    const doubleTap = await raiseSos(yusuf.headers, circles[0]!.id, "car hit me")
-    const second = await raiseSos(yusuf.headers, circles[1]!.id, "car hit me")
-    const third = await raiseSos(yusuf.headers, circles[2]!.id, "car hit me")
+    const incident = await raiseSos(yusuf.headers, cousins.id, {
+      note: "Possible collision detected automatically.",
+      reason: "incident",
+    })
+    expect(incident.statusCode).toBe(201)
+    expect((incident.json() as RaiseReply).alerts.map((alert) => alert.circleId).sort()).toEqual(
+      [family.id, cousins.id, flatmates.id].sort(),
+    )
+    expect(await feedCount(football.id, "sos_started")).toBe(0)
 
-    const counts = await Promise.all(circles.map((circle) => sosEventCount(circle.id)))
+    // He gets to the phone and presses SOS himself. Football hears for the
+    // first time. Mum heard through Family already.
+    const manual = await raiseSos(yusuf.headers, cousins.id, { note: "I'm hurt" })
+    expect(manual.statusCode).toBe(201)
 
     expect({
-      first: first.statusCode,
-      doubleTap: doubleTap.statusCode,
-      second: second.statusCode,
-      third: third.statusCode,
-      counts,
-    }).toEqual({
-      first: 201,
-      doubleTap: 409,
-      second: 201,
-      third: 201,
-      counts: [1, 1, 1],
+      feed: await Promise.all(circles.map((circle) => feedCount(circle.id, "sos_started"))),
+      friends: await Promise.all(circles.map((circle) => sosPushes(circle.friend.id))),
+      mum: await sosPushes(mum.user.id),
+    }).toEqual({ feed: [1, 1, 1, 1], friends: [1, 1, 1, 1], mum: 1 })
+  })
+})
+
+describe("pressing again", () => {
+  it("raises from a request that carries no body at all", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins"])
+
+    const raised = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circles[0]!.id}/sos`,
+      headers: yusuf.headers,
     })
+
+    expect({
+      code: raised.statusCode,
+      circles: (raised.json() as RaiseReply).alerts?.length,
+    }).toEqual({ code: 201, circles: 2 })
+  })
+
+  it("answers a repeat with the alert already open and writes nothing", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins"])
+
+    const first = await raiseSos(yusuf.headers, circles[0]!.id, { note: "car hit me" })
+    const again = await raiseSos(yusuf.headers, circles[0]!.id, { note: "car hit me" })
+
+    expect({
+      codes: [first.statusCode, again.statusCode],
+      sameAlert: (again.json() as RaiseReply).id === (first.json() as RaiseReply).id,
+      feed: await Promise.all(circles.map((circle) => feedCount(circle.id, "sos_started"))),
+      pushes: await Promise.all(circles.map((circle) => sosPushes(circle.friend.id))),
+    }).toEqual({ codes: [201, 200], sameAlert: true, feed: [1, 1], pushes: [1, 1] })
+  })
+
+  it("answers twenty presses on a bad signal without refusing one", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins"])
+
+    const codes: number[] = []
+    for (let press = 0; press < 20; press += 1) {
+      codes.push((await raiseSos(yusuf.headers, circles[0]!.id, { note: "help" })).statusCode)
+    }
+
+    expect({
+      codes,
+      feed: await Promise.all(circles.map((circle) => feedCount(circle.id, "sos_started"))),
+      pushes: await Promise.all(circles.map((circle) => sosPushes(circle.friend.id))),
+    }).toEqual({
+      codes: [201, ...Array.from({ length: 19 }, () => 200)],
+      feed: [1, 1],
+      pushes: [1, 1],
+    })
+  })
+
+  it("raises once when two of his devices press at the same moment", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins", "Football"])
+    const login = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: {
+        email: yusuf.email,
+        password: "correct-horse-battery",
+        device: { deviceId: "device-yusuf-tablet", deviceName: "Tablet", platform: "android" },
+      },
+    })
+    expect(login.statusCode).toBe(200)
+    const tablet = {
+      authorization: `Bearer ${(login.json() as { accessToken: string }).accessToken}`,
+    }
+
+    const [phone, other] = await Promise.all([
+      raiseSos(yusuf.headers, circles[0]!.id, { note: "Help" }),
+      raiseSos(tablet, circles[2]!.id, { note: "Help" }),
+    ])
+
+    expect({
+      codes: [phone.statusCode, other.statusCode].sort(),
+      feed: await Promise.all(circles.map((circle) => feedCount(circle.id, "sos_started"))),
+      pushes: await Promise.all(circles.map((circle) => sosPushes(circle.friend.id))),
+    }).toEqual({ codes: [200, 201], feed: [1, 1, 1], pushes: [1, 1, 1] })
   })
 
   /**
    * The budget belongs to the account, not to the address behind it. Yusuf
-   * raises one in each of his four circles from the same phone on the same
-   * connection, and Amina, a different account on that same connection, is
-   * still heard the first time she asks.
+   * spends all of his from the same connection, and Amina, a different
+   * account on that same connection, is still heard the first time she asks.
    */
   it("keeps each account's budget to itself", async () => {
-    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins", "Football", "Flatmates"])
+    const { yusuf, circles } = await yusufInCircles(["Family"])
     const amina = await registerUser(ctx.app, { displayName: "Amina" })
+    await joinCircle(amina.headers, await inviteCode(yusuf.headers, circles[0]!.id))
 
-    // Amina joins the fourth circle, the last one Yusuf raises in.
-    const fourth = circles[3]!
-    const invite = await ctx.app.inject({
-      method: "POST",
-      url: `/api/v1/circles/${fourth.id}/invites`,
-      headers: yusuf.headers,
-      payload: {},
-    })
-    expect(invite.statusCode).toBe(201)
-    await joinCircle(amina.headers, (invite.json() as { code: string }).code)
+    const codes = new Set<number>()
+    for (let press = 0; press < 60; press += 1) {
+      codes.add((await raiseSos(yusuf.headers, circles[0]!.id)).statusCode)
+    }
+    const yusufOver = await raiseSos(yusuf.headers, circles[0]!.id)
+    const aminaFirst = await raiseSos(amina.headers, circles[0]!.id, { note: "I'm with him" })
 
-    for (const circle of circles) await raiseSos(yusuf.headers, circle.id, "hit by a car")
-
-    const aminaFirst = await raiseSos(amina.headers, fourth.id, "I'm with him, we need help")
-
-    // Two alerts from two people in the fourth circle, his and hers. An
-    // account-wide budget would have refused his fourth raise.
     expect({
+      yusuf: [...codes].sort(),
+      yusufOver: yusufOver.statusCode,
       aminaFirst: aminaFirst.statusCode,
-      fourthCircleAlerts: await sosEventCount(fourth.id),
-    }).toEqual({ aminaFirst: 201, fourthCircleAlerts: 2 })
+      alerts: (await activeAlerts(amina.headers, circles[0]!.id)).length,
+    }).toEqual({ yusuf: [200, 201], yusufOver: 429, aminaFirst: 201, alerts: 2 })
   })
 
   /**
-   * The other side of the same budget. Keying it per circle must not amount to
-   * turning it off: one circle is still an audience, and holding the button at
-   * it is still badgering, so the fourth press inside ten minutes is refused.
+   * Somewhere else on the server a write to several of his member rows takes
+   * them in another order, and Postgres breaks the deadlock by failing one
+   * side. The SOS is the side that must not fail.
    */
-  it("still refuses a fourth raise at the same circle inside ten minutes", async () => {
+  it("still raises when a deadlock over his member rows aborts the first try", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins"])
+    const [low, high] = circles.map((circle) => circle.id).sort() as [string, string]
+    const row = (circleId: string) =>
+      sql`update circle_members set sharing_state = sharing_state
+          where circle_id = ${circleId}::uuid and user_id = ${yusuf.user.id}::uuid`
+
+    let raising!: ReturnType<typeof raiseSos>
+    await getDb().transaction(async (tx) => {
+      // The other writer holds the row the raise takes last, and then wants
+      // the one the raise takes first.
+      await tx.execute(row(high))
+      raising = raiseSos(yusuf.headers, low, { note: "help" })
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      await tx.execute(row(low))
+    })
+    const raised = await raising
+
+    expect({
+      code: raised.statusCode,
+      feed: await Promise.all(circles.map((circle) => feedCount(circle.id, "sos_started"))),
+    }).toEqual({ code: 201, feed: [1, 1] })
+  })
+})
+
+describe("fresh alarms are still limited", () => {
+  it("lets him raise, resolve and raise again five times, and refuses a sixth", async () => {
     const { yusuf, circles } = await yusufInCircles(["Family"])
     const family = circles[0]!
 
     const codes: number[] = []
-    for (let i = 0; i < 4; i += 1) {
-      const response = await raiseSos(yusuf.headers, family.id, "help")
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const response = await raiseSos(yusuf.headers, family.id, { note: "help" })
       codes.push(response.statusCode)
-      // Cleared between presses, so each one is a real raise rather than the
-      // 409 an alert that is still open would answer with.
       if (response.statusCode !== 201) continue
-      const resolved = await ctx.app.inject({
-        method: "POST",
-        url: `/api/v1/sos/${(response.json() as { id: string }).id}/resolve`,
-        headers: yusuf.headers,
-      })
-      expect(resolved.statusCode).toBe(200)
+      expect((await resolveSos(yusuf.headers, (response.json() as RaiseReply).id)).statusCode).toBe(
+        200,
+      )
     }
 
-    expect({ codes, alerts: await sosEventCount(family.id) }).toEqual({
-      codes: [201, 201, 201, 429],
-      alerts: 3,
+    expect({ codes, alerts: await feedCount(family.id, "sos_started") }).toEqual({
+      codes: [201, 201, 201, 201, 201, 429],
+      alerts: 5,
     })
+  })
+
+  it("still answers a press on an open alert once the fresh ones are spent", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family"])
+    const family = circles[0]!
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const raised = await raiseSos(yusuf.headers, family.id)
+      await resolveSos(yusuf.headers, (raised.json() as RaiseReply).id)
+    }
+    const open = await raiseSos(yusuf.headers, family.id, { note: "this one is real" })
+    const repeats: number[] = []
+    for (let press = 0; press < 5; press += 1) {
+      repeats.push((await raiseSos(yusuf.headers, family.id)).statusCode)
+    }
+
+    expect({ open: open.statusCode, repeats }).toEqual({
+      open: 201,
+      repeats: [200, 200, 200, 200, 200],
+    })
+  })
+})
+
+describe("resolving", () => {
+  it("lets him close the rest after an admin closed one circle's copy", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins"])
+    const sami = await registerUser(ctx.app, { displayName: "Sami" })
+    for (const circle of circles) {
+      await joinCircle(sami.headers, await inviteCode(yusuf.headers, circle.id))
+    }
+    const raised = (await raiseSos(sami.headers, circles[0]!.id)).json() as RaiseReply
+    // Yusuf runs Family and closes Sami's alert there.
+    expect((await resolveSos(yusuf.headers, raised.id)).statusCode).toBe(200)
+
+    // Sami's app still holds the Family alert's id.
+    const resolved = await resolveSos(sami.headers, raised.id)
+
+    expect({
+      code: resolved.statusCode,
+      closedNow: Boolean((resolved.json() as { resolvedAt?: string }).resolvedAt),
+      cousins: (await activeAlerts(sami.headers, circles[1]!.id)).length,
+      cousinsFeed: await feedCount(circles[1]!.id, "sos_resolved"),
+    }).toEqual({ code: 200, closedNow: true, cousins: 0, cousinsFeed: 1 })
+  })
+
+  it("closes his alert in every circle when he resolves it, with an entry in each", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins", "Football"])
+    const mum = await addMum(yusuf.headers, [circles[0]!.id, circles[2]!.id])
+
+    const raised = (await raiseSos(yusuf.headers, circles[1]!.id)).json() as RaiseReply
+    const resolved = await resolveSos(yusuf.headers, raised.id)
+    expect(resolved.statusCode).toBe(200)
+
+    expect({
+      open: await Promise.all(
+        circles.map(
+          async (circle) => (await activeAlerts(circle.friend.headers, circle.id)).length,
+        ),
+      ),
+      feed: await Promise.all(circles.map((circle) => feedCount(circle.id, "sos_resolved"))),
+      friends: await Promise.all(
+        circles.map(
+          async (circle) => (await pushedAlertIds(circle.friend.id, "sos_resolved")).length,
+        ),
+      ),
+    }).toEqual({ open: [0, 0, 0], feed: [1, 1, 1], friends: [1, 1, 1] })
+
+    // One all clear for Mum, naming the alert her alarm named, so her phone
+    // puts one in place of the other.
+    const alarm = await pushedAlertIds(mum.user.id, "sos_started")
+    const allClear = await pushedAlertIds(mum.user.id, "sos_resolved")
+    expect({ alarms: alarm.length, allClear }).toEqual({ alarms: 1, allClear: alarm })
+  })
+
+  it("closes only an admin's own circle when the admin resolves it", async () => {
+    const { yusuf, circles } = await yusufInCircles(["Family", "Cousins"])
+    const raiser = await registerUser(ctx.app, { displayName: "Sami" })
+    for (const circle of circles) {
+      await joinCircle(raiser.headers, await inviteCode(yusuf.headers, circle.id))
+    }
+
+    const raised = (await raiseSos(raiser.headers, circles[0]!.id)).json() as RaiseReply
+    expect(raised.alerts).toHaveLength(2)
+
+    // Yusuf owns Family, and closes Sami's alert there.
+    const resolved = await resolveSos(yusuf.headers, raised.id)
+    expect(resolved.statusCode).toBe(200)
+
+    expect({
+      family: (await activeAlerts(yusuf.headers, circles[0]!.id)).length,
+      cousins: (await activeAlerts(yusuf.headers, circles[1]!.id)).length,
+      familyFeed: await feedCount(circles[0]!.id, "sos_resolved"),
+      cousinsFeed: await feedCount(circles[1]!.id, "sos_resolved"),
+    }).toEqual({ family: 0, cousins: 1, familyFeed: 1, cousinsFeed: 0 })
   })
 })

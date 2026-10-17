@@ -255,24 +255,30 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["admin"],
         summary: "Sign one of an account's devices out",
-        description: "For a lost or stolen phone. The device has to sign in again.",
+        description:
+          "For a lost or stolen phone. The device has to sign in again. One that is already " +
+          "signed out answers 200 with `alreadySignedOut: true`.",
         params: userParams.extend({ sessionId: z.string().uuid() }),
       },
     },
     async (request) => {
       const auth = requireAuth(request)
       const [session] = await db
-        .select({ id: sessions.id, deviceName: sessions.deviceName })
+        .select({
+          id: sessions.id,
+          userId: sessions.userId,
+          deviceName: sessions.deviceName,
+          revokedAt: sessions.revokedAt,
+        })
         .from(sessions)
-        .where(
-          and(
-            eq(sessions.id, request.params.sessionId),
-            eq(sessions.userId, request.params.userId),
-            isNull(sessions.revokedAt),
-          ),
-        )
+        .where(eq(sessions.id, request.params.sessionId))
         .limit(1)
-      if (!session) throw notFound("That device is not signed in.")
+      if (session && session.userId !== request.params.userId) {
+        throw notFound("That device is not signed in.")
+      }
+      // The list on screen was read once, and the phone may have signed out
+      // or in again since. A 404 for that is a 4xx in ordinary use.
+      if (!session || session.revokedAt) return { ok: true, alreadySignedOut: true }
       await revokeSession(db, session.id)
       await db.insert(auditLog).values({
         actorUserId: auth.userId,
@@ -388,13 +394,18 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["admin"],
         summary: "The portal's dashboard: activity by day and whether each phone is reporting",
+        description:
+          "Days are drawn in `tz`, the browser's zone. A zone the database does not know, or " +
+          "a bare offset, is drawn in UTC instead, and `timeZone` says which was used.",
         querystring: z.object({ tz: z.string().max(64).optional() }),
       },
     },
     async (request) => {
-      const timeZone = request.query.tz ?? "UTC"
-      if (!(await isTimeZone(db, timeZone))) throw badRequest(`${timeZone} is not a time zone.`)
-      return adminOverview(db, timeZone)
+      // UTC rather than a 400. The page polls every minute, and a browser that
+      // reports a zone the database lacks would be refused every time.
+      const asked = request.query.tz ?? "UTC"
+      const timeZone = (await isTimeZone(db, asked)) ? asked : "UTC"
+      return { ...(await adminOverview(db, timeZone)), timeZone }
     },
   )
 }
@@ -406,7 +417,7 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
  * would shift.
  */
 async function isTimeZone(db: Database, name: string): Promise<boolean> {
-  if (!/^(?:UTC|[A-Za-z]+(?:\/[A-Za-z0-9_+-]+)+)$/.test(name)) return false
+  if (!/^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+)*$/.test(name)) return false
   zoneNames ??= db
     .execute(sql`select name from pg_timezone_names`)
     .then((rows) => new Set((rows as unknown as Array<{ name: string }>).map((row) => row.name)))

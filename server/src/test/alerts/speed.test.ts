@@ -361,6 +361,114 @@ describe("speed alerts: the consecutive-fix rule", () => {
   })
 })
 
+describe("speed alerts: the speed has to be held, not just read twice", () => {
+  /** Live uploads every fix as it comes, a request a second. */
+  async function uploadOneByOne(headers: Record<string, string>, points: ReturnType<typeof drive>) {
+    for (const point of points) await uploadFixes(headers, [point])
+  }
+
+  it("ignores two spikes in a row on a Live drive", async () => {
+    const teen = await registerUser(ctx.app, { displayName: "Teen" })
+    const parent = await registerUser(ctx.app, { displayName: "Parent" })
+    const circle = await createCircle(teen.headers)
+    await joinCircle(parent.headers, circle.invite.code)
+    await setCircleSettings(teen.headers, circle.id, { speedAlertKmh: 100 })
+
+    // 58 km/h through town with somebody watching, so a fix a second, and
+    // two readings of 133 km/h back to back from a reflection off a lorry.
+    // Two fixes at Live's rate are one second of driving.
+    const points = drive({
+      from: OFFICE,
+      startSecondsAgo: -30,
+      count: 30,
+      speedMps: 16.1,
+      intervalSeconds: 1,
+    })
+    points[12]!.speedMps = 36.9
+    points[13]!.speedMps = 36.9
+    await uploadOneByOne(teen.headers, points)
+
+    const alerts = await speedAlerts(parent.headers, circle.id)
+    expect(alerts.map((alert) => alert.summary)).toEqual([])
+  })
+
+  it("alerts once a fast drive at a fix a second has held for long enough", async () => {
+    const teen = await registerUser(ctx.app, { displayName: "Teen" })
+    const parent = await registerUser(ctx.app, { displayName: "Parent" })
+    const circle = await createCircle(teen.headers)
+    await joinCircle(parent.headers, circle.invite.code)
+    await setCircleSettings(teen.headers, circle.id, { speedAlertKmh: 120 })
+
+    // 126 km/h on Live. Ten seconds of it is still shorter than anything the
+    // rule will call a held speed, and twenty is not.
+    const points = drive({
+      from: MOTORWAY,
+      startSecondsAgo: -20,
+      count: 20,
+      speedMps: 35,
+      intervalSeconds: 1,
+    })
+    await uploadOneByOne(teen.headers, points.slice(0, 10))
+    expect(await speedAlerts(parent.headers, circle.id)).toHaveLength(0)
+
+    await uploadOneByOne(teen.headers, points.slice(10))
+    const alerts = await speedAlerts(parent.headers, circle.id)
+    expect(alerts.map((alert) => alert.payload.speedKmh)).toEqual([126])
+  })
+
+  it("alerts on a motorway drive that reports a fix a minute", async () => {
+    const teen = await registerUser(ctx.app, { displayName: "Teen" })
+    const parent = await registerUser(ctx.app, { displayName: "Parent" })
+    const circle = await createCircle(teen.headers)
+    await joinCircle(parent.headers, circle.invite.code)
+    await setCircleSettings(teen.headers, circle.id, { speedAlertKmh: 120 })
+
+    // Two fixes a minute apart, both at 140 km/h, each its own upload. They
+    // span a minute of driving, which is a held speed however few fixes
+    // carried it.
+    const points = drive({
+      from: MOTORWAY,
+      startSecondsAgo: -120,
+      count: 2,
+      speedMps: 38.9,
+      intervalSeconds: 60,
+    })
+    await uploadOneByOne(teen.headers, points)
+
+    const alerts = await speedAlerts(parent.headers, circle.id)
+    expect(alerts.map((alert) => alert.payload.speedKmh)).toEqual([140])
+  })
+
+  it("does not quote a speed the positions rule out", async () => {
+    const teen = await registerUser(ctx.app, { displayName: "Teen" })
+    const parent = await registerUser(ctx.app, { displayName: "Parent" })
+    const circle = await createCircle(teen.headers)
+    await joinCircle(parent.headers, circle.invite.code)
+    await setCircleSettings(teen.headers, circle.id, { speedAlertKmh: 120 })
+
+    // A real 125 km/h on Live, held for long enough to alert, with two
+    // readings of 200 km/h early in it. The fixes are 4 m sharp and 35 m
+    // apart, and no car covers 43 m at most in a second while doing 56 m/s
+    // at both ends of it.
+    const points = drive({
+      from: MOTORWAY,
+      startSecondsAgo: -25,
+      count: 25,
+      speedMps: 34.7,
+      intervalSeconds: 1,
+      accuracyMeters: 4,
+    })
+    points[3]!.speedMps = 55.6
+    points[4]!.speedMps = 55.6
+    await uploadOneByOne(teen.headers, points)
+
+    const [alert] = await speedAlerts(parent.headers, circle.id)
+    expect(alert).toBeDefined()
+    expect(alert!.payload.speedKmh).toBeGreaterThanOrEqual(125)
+    expect(alert!.payload.speedKmh).toBeLessThan(160)
+  })
+})
+
 describe("speed alerts: what the alert claims", () => {
   it("does not report a speed only one fix ever saw", async () => {
     const user = await registerUser(ctx.app)

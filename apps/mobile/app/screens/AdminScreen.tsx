@@ -280,7 +280,9 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
             }
             icon={user.isAdmin ? "shield-checkmark-outline" : "person-outline"}
             iconTone={user.isAdmin ? "tint" : "neutral"}
-            onPress={() => setManaging(user)}
+            // The server refuses deactivating yourself and removing your own
+            // admin with a 400, and those are all the sheet offers.
+            onPress={user.id === me?.id ? undefined : () => setManaging(user)}
           />
         ))}
       </ListGroup>

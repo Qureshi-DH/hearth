@@ -19,6 +19,8 @@ function fakeServer() {
   const state = {
     token: 0,
     refreshWorks: true,
+    /** Answer a missing session the way this server does, with a 200 rather than a 401. */
+    refreshSaysSignedOut: false,
     refreshFails: null as Failure,
     logoutFails: false,
     statsRejects: 0,
@@ -73,6 +75,7 @@ function fakeServer() {
       if (state.refreshFails === 502) return json(502, { error: { code: "bad_gateway" } })
       if (state.refreshFails === 429)
         return json(429, { error: { code: "blocked", message: "Blocked." } })
+      if (!state.refreshWorks && state.refreshSaysSignedOut) return json(200, { signedIn: false })
       if (!state.refreshWorks)
         return json(401, { error: { code: "unauthorized", message: "Sign in." } })
       state.token += 1
@@ -132,6 +135,8 @@ function client(
       fetch: server.fetch as unknown as typeof globalThis.fetch,
       storage: memoryStorage(),
       onSignedOut,
+      // A real BroadcastChannel would carry one test's sign-out into the next.
+      channel: null,
       ...extra,
     }),
   }
@@ -166,6 +171,23 @@ function fakeLocks(server: ReturnType<typeof fakeServer>) {
 
 const refreshes = (server: ReturnType<typeof fakeServer>) =>
   server.calls.filter((call) => call.url.endsWith("/refresh"))
+
+/** What BroadcastChannel is between the tabs of one browser. Nobody hears their own message. */
+function fakeTabs() {
+  const listeners: Array<{ id: number; listener: (event: { data: unknown }) => void }> = []
+  let next = 0
+  return () => {
+    const id = (next += 1)
+    return {
+      postMessage(data: unknown) {
+        for (const entry of listeners) if (entry.id !== id) entry.listener({ data })
+      },
+      addEventListener(_type: "message", listener: (event: { data: unknown }) => void) {
+        listeners.push({ id, listener })
+      },
+    }
+  }
+}
 
 describe("the portal's API client", () => {
   it("signs in and sends the token with every call after", async () => {
@@ -256,6 +278,67 @@ describe("the portal's API client", () => {
     expect((await api.resume())?.displayName).toBe("Daniyal")
     server.state.refreshWorks = false
     expect(await client(server).api.resume()).toBeNull()
+  })
+
+  it("finds no session when the server says there is none, without being refused", async () => {
+    const server = fakeServer()
+    server.state.refreshWorks = false
+    server.state.refreshSaysSignedOut = true
+    const { api, onSignedOut } = client(server)
+    expect(await api.resume()).toBeNull()
+    expect(refreshes(server)).toHaveLength(1)
+    expect(onSignedOut).not.toHaveBeenCalled()
+  })
+
+  it("says the session ended when a renewal finds none", async () => {
+    const server = fakeServer()
+    const { api, onSignedOut } = client(server)
+    await api.signIn("d@example.com", "pw")
+    server.state.statsRejects = 1
+    server.state.refreshWorks = false
+    server.state.refreshSaysSignedOut = true
+    await expect(api.request("/admin/stats")).rejects.toMatchObject({ status: 401 })
+    expect(onSignedOut).toHaveBeenCalledWith("expired")
+  })
+
+  describe("more than one tab", () => {
+    // The tabs share one session, so signing out in one ends the others'
+    // tokens too. Each would find out from a 401 on its next poll, one per
+    // query, and a firewall in front of the server counts every one.
+    it("tells the other tabs it signed out, and they stop without asking the server", async () => {
+      const server = fakeServer()
+      const tab = fakeTabs()
+      const first = client(server, vi.fn(), { channel: tab() })
+      const second = client(server, vi.fn(), { channel: tab() })
+      await first.api.signIn("d@example.com", "pw")
+      await second.api.resume()
+      const before = server.calls.length
+
+      await first.api.signOut()
+
+      expect(second.onSignedOut).toHaveBeenCalledWith("signed-out")
+      expect(server.calls.slice(before).map((call) => call.url)).toEqual([
+        expect.stringMatching(/\/auth\/portal\/logout$/),
+      ])
+      await expect(second.api.request("/admin/stats")).rejects.toMatchObject({ status: 401 })
+      expect(server.calls.slice(before)).toHaveLength(1)
+    })
+
+    it("tells them when it finds the session has ended on its own", async () => {
+      const server = fakeServer()
+      const tab = fakeTabs()
+      const first = client(server, vi.fn(), { channel: tab() })
+      const second = client(server, vi.fn(), { channel: tab() })
+      await first.api.signIn("d@example.com", "pw")
+      await second.api.resume()
+      server.state.statsRejects = 1
+      server.state.refreshWorks = false
+      server.state.refreshSaysSignedOut = true
+
+      await first.api.request("/admin/stats").catch(() => null)
+
+      expect(second.onSignedOut).toHaveBeenCalledWith("expired")
+    })
   })
 
   it("passes the server's own words on", async () => {

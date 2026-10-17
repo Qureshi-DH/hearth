@@ -35,8 +35,8 @@ or account in between.
 - **Sharing modes, per circle.** Precise, approximate or paused. Approximate
   snaps you to a 750 metre grid and hides your trail, your trips and which place
   you are at. Paused shares nothing. Everyone can see which mode you picked.
-- **SOS.** Hold for three seconds and the circle gets a high-priority alert with
-  your position, refreshed every 20 seconds while the SOS screen is open. SOS
+- **SOS.** Hold for three seconds and every circle you're in gets a
+  high-priority alert with your position, live until you say you're safe. SOS
   overrides a paused state, because an emergency is not the moment to respect
   ghost mode.
 - **Check-ins, nudges and quick messages.** One tap to say you are fine, a way

@@ -168,3 +168,27 @@ describe("a renewal refused by something in front of the server", () => {
     expect(tokens()).toBeNull()
   })
 })
+
+describe("a 401 about something other than the token", () => {
+  // A wrong password is a 401 too. Renewing does not make it right, and
+  // sending it again is a second 401 for the firewall to count.
+  it("comes straight back for a wrong password, without renewing or asking again", async () => {
+    const { client, calls, expired } = setup([
+      () => ({
+        status: 401,
+        body: { error: { code: "wrong_password", message: "That password is not right." } },
+      }),
+    ])
+    await expect(
+      client.post("/auth/password", { currentPassword: "nope", newPassword: "a-new-one" }),
+    ).rejects.toMatchObject({ status: 401, code: "wrong_password" })
+    expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual(["POST /auth/password"])
+    expect(expired).not.toHaveBeenCalled()
+  })
+
+  it("comes straight back for a 401 page from something in front of the server", async () => {
+    const { client, calls } = setup([() => ({ status: 401, body: "<html>Denied</html>" })])
+    await expect(client.get("/circles")).rejects.toMatchObject({ status: 401 })
+    expect(calls).toHaveLength(1)
+  })
+})

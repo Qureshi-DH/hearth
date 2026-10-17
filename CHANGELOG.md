@@ -40,9 +40,53 @@ Notable changes to Hearth. The format is loosely
   show under the name once the phone goes quiet, as they do in the admin
   portal. Health reports gain `preciseLocation`, `motionPermission` and
   `sharingEnabled`, and an older server ignores them.
+- On Android the setup checklist has an optional step that gives Hearth Do
+  Not Disturb access. The SOS channel always asked to override Do Not
+  Disturb, and Android ignores that for an app without the access, so an SOS
+  or a possible-crash alert stayed quiet in it. Hearth uses the access for
+  those alerts and nothing else, and puts the SOS channel through again once
+  it is granted. The app now declares `ACCESS_NOTIFICATION_POLICY`.
+- On a server with no push provider, the app rings for somebody else's SOS or
+  possible crash when it hears one over its own connection to the server.
+  That is while Hearth is open, on an iPhone while it shares its location,
+  and on an Android phone while it is on the move. It rings once per SOS,
+  even one opened in two circles you share, on the SOS channel and never for
+  your own. It takes the notification down again only if it is still
+  connected when the SOS is resolved. The setup checklist and notification
+  settings say what such a server can and cannot do.
+- When the family was sent "phone offline", they now hear when it is
+  reporting again. Through Expo the line joins the notification that said it
+  went quiet. Only people the alert actually reached get it, and muting
+  "Phone offline" silences both. It goes on the alerts channel.
+- Through Expo, the server reads each send's receipt about half an hour later
+  and clears the token of a phone the app was uninstalled from, so nothing
+  more is sent to it until the app registers again. Tickets are kept in the
+  new `push_tickets` table, read a thousand at a time every quarter hour, and
+  dropped after a day.
 
 ### Changed
 
+- One SOS press alerts every circle you're in, not only the one on screen, and
+  somebody who shares two of those circles with you hears about it once. It
+  switches you back to precise in each of them, paused and approximate ones
+  included. A crash alert nobody answered goes only to the circles that have
+  crash alerts on. Resolving it yourself closes it everywhere, with an entry
+  in each circle's feed and one notice per person, and an admin still closes
+  it only in their own circle. `POST /circles/:id/sos` takes `reason`, `sos`
+  or `incident`, and its reply gains `alerts`, one per circle. With
+  `incident` the server raises it in every circle of the caller with crash
+  alerts on and in the circle the request names, and the app always names one
+  that has them on. An older app sends no reason, so its crash alert is
+  recognised by the note its prompt puts on it, and anything else it sends is
+  a press that reaches every circle.
+- While your SOS is open your phone is on Live, a fix a second wherever the
+  app is, until a couple of minutes after you resolve it. It used to report
+  every 20 seconds, and only while the SOS screen was open. The SOS screen
+  uploads a fresh fix before it sends the alert, waiting up to five seconds
+  for one, and says so when _Share my location_ is off on the phone, since
+  then your circles only see where you were last. The upload reply's
+  `watchedUntil` is set while the uploader has an SOS open, without touching
+  the window a viewer's watch holds.
 - The Activity tab shows the shape of the feed while it loads, rather than
   nothing, and says so when the feed couldn't load, with a button to try
   again. "All quiet" now only appears once the server has answered with no
@@ -62,9 +106,47 @@ Notable changes to Hearth. The format is loosely
   rather than three for every fix, and each line is written on its own rather
   than rewriting all thousand. A Live window used to push the night's evidence
   out of the log within minutes.
+- A crash alert nobody answered goes through a circle that has crash alerts
+  on, rather than through whichever circle was on screen, and a phone with no
+  circle selected no longer drops it. When nothing has loaded the circles,
+  the app asks the server for them. The app sends `reason: "incident"`.
+- A parked Android phone is called offline once it has let the server's three
+  wakes go unanswered, about 100 minutes after it was last heard, rather than
+  after twelve hours. It reports every quarter of an hour and Android
+  delivers a wake even from Doze, so by then it is not coming back by itself.
+  A parked iPhone keeps the twelve hours, because iOS holds silent pushes
+  back, and so does an account signed in on an iPhone and an Android phone.
+  The admin portal shows the phone as stopped reporting at the same moment.
+- A phone that went quiet on 5% battery or less is reported as "Battery
+  likely ran out" rather than as power saving being on, which a nearly flat
+  phone turns on by itself. A switch the phone said was off, such as the
+  location permission, is still named first.
+- "Ask for location" says what became of it rather than that it worked. It
+  says their phone is updating now, or has been asked, or reported a moment
+  ago, or that no phone of theirs can be woken from here, that you asked a
+  moment ago, that they paused sharing, or that they are no longer in the
+  circle. For somebody sharing precisely the ask wakes their phone for a fix
+  as well, the same way opening their page does, since the alert on its own
+  moves only an app that gets to run. The nudge reply gains `notified` and
+  `asked` beside `ok: true`, and the same words to the same person within a
+  minute are sent once. A nudge to somebody who has left answers
+  `notified: "gone"` where it was a 404.
+- Quick messages reach somebody who has paused sharing, since a message says
+  nothing about where they are. A bare ask for their location is not sent and
+  answers 200 with `notified: "paused"`, where a 403 used to refuse it.
+- The app keeps every phone to six nudges and quick messages in ten minutes,
+  and says how long to wait rather than send one the server would refuse.
+  The server takes ten per account, up from six.
 
 ### Fixed
 
+- Pressing SOS again after a reply was lost on a weak signal got a 409, and a
+  fourth press inside ten minutes a 429, which a firewall in front of the
+  server can answer by cutting off every phone in the house. A press on an
+  alert that is already open now answers 200 with that alert and sends nothing
+  twice. 201 means something new was raised. The limit counts fresh alarms,
+  five per person in ten minutes, and the route takes 60 requests per account
+  in that time.
 - Tracking starts again on its own once it can. After a session expired and
   you signed back in, after a change of server, or after you fixed the
   location permission in Settings, the switch stayed on and the phone shared
@@ -132,6 +214,148 @@ Notable changes to Hearth. The format is loosely
 - Pulling the Activity tab down to refresh with no circle loaded asked the
   server for the feed of a circle called `null`. It now loads the circles
   again.
+- A crash alert on a phone with no signal is no longer lost. It was tried
+  once, the moment the countdown ran out, and a failed call was never tried
+  again. The alert now waits on the phone, survives a restart, and goes as
+  soon as the server can be reached, at once after any location upload that
+  gets through. "I'm okay" cancels it until then, and after an hour it is
+  dropped.
+- A crash on a locked phone now escalates. The countdown and the detector's
+  verdict ran on the app's timers, which stand still while the phone is
+  locked. Both are decided on the wall clock at the next moment the app runs,
+  which on a drive is the next location fix or batch of sensor samples. While
+  Hearth isn't in front, a notification says what time the alert will go and
+  has an I'm okay button, which on Android answers without opening the app.
+  The notification goes when the incident does, however it ends.
+- The "Are you okay?" alarm was posted on an ordinary notification channel,
+  because the channel was set where expo-notifications ignores it, so Do Not
+  Disturb silenced it. It goes on the SOS channel now.
+- "Phone offline" could arrive after the phone was back. An alert held up by
+  a push provider outage is now dropped if the phone has reported since it
+  was queued.
+- A home server whose own internet connection went down told a small family
+  that every phone had died, because the outage guard needed eight phones
+  before it did anything. Offline alerts now wait while the server can't
+  reach the push provider, and on a server with fewer than eight phones while
+  two or more not yet announced count and not one is reporting. Once they
+  have waited for an outage they keep waiting for half an hour after, through
+  a restart, so the other phones can get back through after the first. A
+  wake that never reached the push provider no longer counts as asking the
+  phone. A server with a single phone still says when it goes quiet.
+- An SOS stopped being retried after six tries, about 80 minutes, when the
+  push provider was down. It is now retried every few minutes, never more
+  than three apart, until it is delivered, resolved or deleted with the
+  account that raised it. A possible crash alert is retried the same way for
+  up to an hour, and dropped sooner if the person has since driven on or
+  stopped sharing precisely with that circle. A provider that refuses the
+  message itself with a 4xx still gets only the six tries.
+- An SOS or a possible crash waited its turn behind every ordinary
+  notification queued before it, since nearly everything goes out at high
+  priority. They now go first. Ordinary news keeps its high priority.
+- "Ask for location" didn't get a fix from a parked iPhone until somebody
+  opened Hearth on it. Through Expo the request is now marked
+  content-available on iOS, at the priority iOS allows for a push that shows
+  an alert, so the app takes a fix in the background as it does for a wake.
+  iOS still decides when to run it.
+- A quiet phone whose last reading was 5% or less, off the charger, read "Low
+  Power Mode is on" under its name, and "Power saving mode is on" in the admin
+  portal, when a dying phone turns that on by itself. Both now say the battery
+  likely ran out, and a switch somebody turned off is still named first.
+  Presence leaves power saving, battery optimisation and a restricted or
+  stopped service out of `issues` for such a phone, so an older app says it
+  went quiet instead. The admin overview's phones gain `batteryRanOut`.
+- An Expo send answered `InvalidCredentials` cleared the phone's push token,
+  though the fault is in the Expo project's FCM or APNs keys, so one expired
+  key unregistered every phone on the server. Only `DeviceNotRegistered`, and a
+  Web Push 404 or 410, clears a token now. A credentials refusal counts as a
+  failed send, is retried, and is logged as an error, from a receipt too.
+- Pruning week-old rows from the push queue deleted them all in one
+  statement. It now goes in batches of 5 000, at most 20 a pass, like the
+  other prunes.
+- A check-in made while a circle saw you approximately, or not at all, became
+  exact for that circle once you went back to precise. It now keeps the
+  precision it was made with, which is what the privacy page always said.
+  Turning sharing down still takes older check-ins down with it. Check-ins
+  record `shared_as`, and ones from before keep answering to your sharing now.
+- Opening the page of somebody sharing approximately or paused, or in a circle
+  with history off, asked for their trips and got a 403, which a firewall in
+  front of the server can answer by cutting off every phone in the house. The
+  page no longer asks, and the trips and history routes answer an empty list
+  in those cases, and for somebody who has left the circle.
+- A trip opened from a list that had gone out of date, because their sharing
+  changed or a late backlog folded the trip into its neighbour, was a blank
+  page and a 403 or 404. It now says the trip is no longer available. The app
+  sends `soft=true` to `GET /trips/:tripId`, which then answers
+  `{ id, visible: false }`. Without it the old answers stay, for older apps.
+- More requests the app makes in ordinary use no longer get a 4xx. A face
+  whose picture was just replaced loads one transparent pixel instead of a
+  404 page. Editing or deleting a place somebody else just deleted says so, and
+  the editor offers nothing to save. A member's page opened again for
+  somebody who just left answers that they cannot be asked. The map and a
+  member's page can be revisited as often as anyone likes, at 120 and 180
+  asks per ten minutes. Somebody removed from a circle is told an old invite
+  can't bring them back before they press Join. A plain admin is no longer
+  offered removing another admin, which only the owner can do. A geocoded
+  name too long for a place is cut to fit, and a code carried in by a link is
+  cleaned the way a typed one is.
+- In the admin portal, opening it signed out, or after the session ended, got
+  a 401 every time, and other tabs each got one more after signing out in one.
+  The refresh route answers `{ signedIn: false }`, and a tab that signs out
+  tells the others. The dashboard draws a time zone the database doesn't know
+  in UTC rather than being refused every minute, signing out a device that
+  already signed out answers that it did, "Send me a test" says to wait before
+  the server would refuse it, and the account search stops at the 120
+  characters the server reads.
+- A wrong password when deleting your account is answered with
+  `wrong_password`, as the other password checks are, rather than as a
+  session that ran out.
+- After somebody removed you from a circle, or deleted it, the app went on
+  asking the server about it every half minute while it stayed open, and was
+  refused each time. The server now tells your open app at once, and the app
+  drops the circle, moves the map to another and stops asking. A refusal for
+  a circle the app missed hearing about makes it check its circles once. The
+  socket's `subscribed` is sent again whenever the circles it carries change,
+  deletion included.
+- Leaving a circle no longer asks for its members on the way out.
+- A wrong password, or a 401 page from something in front of the server, is
+  no longer renewed and sent again, which made one wrong password two
+  refusals. The app retries no 4xx at all, where a 409 or 429 used to go
+  twice more.
+- Exporting your data and sending a test notification say how long to wait
+  before the server would refuse another, and the map asks for its quiet
+  phones' fixes at most once in half a minute per circle.
+- The admin screen in the app no longer offers deactivating your own account
+  or removing your own admin, which the server refuses.
+- The "Signed out of Hearth" notice goes on the alerts channel on Android. It
+  named the channel where Android doesn't read it, and landed on the default.
+- A phone dropped into the footwell on a smooth motorway could read as a
+  crash. A smooth road shakes the car less than a stopped one is allowed to,
+  so the phone lying on the mat passed for a car that had stopped, and its
+  tumble on the way down was the second signal. With no current GPS speed to
+  say the car stopped, the vibration after the jolt now has to drop to half of
+  what it was before or less.
+- "Check on _name_" no longer goes out for an ordinary stop, like three and a
+  half minutes at a petrol pump after a 45 km/h approach. It comes on the SOS
+  channel and through mutes, so a false one costs a lot. The car now has to go
+  from cruising speed to stopped between one fix and the next, at most 40
+  seconds apart, or two minutes when only rough fixes follow, as in a tunnel.
+  On Live it has to shed its speed faster than firm braking does. It has to
+  stay put for five minutes rather than three, and not be at one of the
+  circle's places or within 40 metres of it. Each circle goes by its own
+  places, and only the first 200 metres of a place's radius count.
+- A phone in a car sends the first fix after it comes off road speed straight
+  away, whatever its distance gate says. It held back every fix of a car
+  standing still for five minutes, so after a crash the server's first word
+  was the park fix and "Check on _name_" could not call the stop sudden. A
+  phone on 1.2.0 or earlier still holds that fix back, so the server's check
+  rarely fires for it. The crash detector on the phone is not affected.
+- A speed alert no longer fires on two GPS spikes in a row. On Live, with a
+  fix a second, two spiking fixes are one second of driving, and a 58 km/h
+  drive was announced at 133 km/h. The speed now has to stay over the limit
+  for 15 seconds of the drive, however few fixes carry it, so a phone that
+  reports once a minute on the motorway still raises one. The speed quoted,
+  and the trip card's top speed with it, is never faster than the ground
+  between two sharp fixes allows.
 
 ## [1.2.0] - 2026-10-02
 

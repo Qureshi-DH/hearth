@@ -136,6 +136,19 @@ export async function previewInvite(
       )
       .limit(1)
     if (existing) return { ...base, valid: false, reason: "already_member" }
+
+    // The same rule acceptInvite applies, said here, so the join button is
+    // never offered for a code that pressing it would be refused with.
+    const [removal] = await db
+      .select({ removedAt: circleRemovals.removedAt })
+      .from(circleRemovals)
+      .where(
+        and(eq(circleRemovals.circleId, row.invite.circleId), eq(circleRemovals.userId, viewerId)),
+      )
+      .limit(1)
+    if (removal && row.invite.createdAt.getTime() <= removal.removedAt.getTime()) {
+      return { ...base, valid: false, reason: "removed" }
+    }
   }
 
   return { ...base, valid: true }

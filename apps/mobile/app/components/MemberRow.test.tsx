@@ -50,6 +50,26 @@ describe("statusLine", () => {
     expect(statusLine({ ...presence, stale: false })).toMatch(/map:atPlace/)
   })
 
+  // A phone running out turns power saving on by itself, so the battery is
+  // the better reason, and an older server that still sends the issue is
+  // read the same way.
+  it("says the battery likely ran out for a quiet phone last read nearly flat", () => {
+    const flat = { ...quietWith(["low_power_mode"]), batteryLevel: 0.04 }
+    expect(statusLine(flat)).toMatch(/^map:batteryRanOut · /)
+    expect(statusLine({ ...flat, issues: [] })).toMatch(/^map:batteryRanOut · /)
+  })
+
+  it("still names a switch somebody turned off before the battery", () => {
+    const flat = { ...quietWith(["location_permission"]), batteryLevel: 0.04 }
+    expect(statusLine(flat)).toMatch(/map:issue_location_permission/)
+  })
+
+  it("does not blame the battery of a phone on the charger or still reporting", () => {
+    const flat = { ...quietWith([]), batteryLevel: 0.04 }
+    expect(statusLine({ ...flat, isCharging: true })).toMatch(/^map:stale/)
+    expect(statusLine({ ...flat, stale: false })).not.toMatch(/batteryRanOut/)
+  })
+
   it("says sharing was switched off even while the last fix is fresh", () => {
     const presence = {
       ...quietWith(["sharing_off", "precise_location"]),

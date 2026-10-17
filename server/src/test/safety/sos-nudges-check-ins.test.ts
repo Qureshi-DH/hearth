@@ -373,8 +373,10 @@ describe("sos", () => {
       raiseSos(bob.headers, circle.id, "Help"),
       raiseSos(tablet, circle.id, "Help"),
     ])
+    // The second finds the first one's alert open and answers with it.
     const codes = [first.statusCode, second.statusCode].sort()
-    expect(codes).toEqual([201, 409])
+    expect(codes).toEqual([200, 201])
+    expect(first.json().id).toBe(second.json().id)
 
     expect(await activeSos(alice.headers, circle.id)).toHaveLength(1)
     const started = (await feedItems(carol.headers, circle.id)).filter(
@@ -599,7 +601,7 @@ describe("sos", () => {
     )
     const before = (await outbox()).length
 
-    // The SOS screen calls reportNow every twenty seconds while the alert is up.
+    // The SOS screen of a phone that is not on Live reports every twenty seconds.
     const pings = Array.from({ length: 6 }, (_, i) => ({
       ...HOME,
       recordedAt: new Date(Date.now() - (6 - i) * 20_000).toISOString(),
@@ -635,7 +637,7 @@ describe("sos", () => {
     expect(seen.lat).toBeCloseTo(HOME.lat, 5)
   })
 
-  it("still alerts the fourth circle when someone in several raises one everywhere", async () => {
+  it("alerts all four circles of someone in several from one press", async () => {
     const kid = await registerUser(ctx.app, { displayName: "Yusuf" })
     const circleIds: string[] = []
     for (const name of ["Family", "Cousins", "Football", "Flatmates"]) {
@@ -648,9 +650,16 @@ describe("sos", () => {
     const results: Array<number | string> = []
     for (const circleId of circleIds) {
       const response = await raiseSos(kid.headers, circleId, "I need help")
-      results.push(response.statusCode === 201 ? 201 : `${response.statusCode} ${response.body}`)
+      results.push(response.statusCode < 300 ? response.statusCode : response.body)
     }
-    expect(results).toEqual([201, 201, 201, 201])
+    expect(results).toEqual([201, 200, 200, 200])
+    for (const circleId of circleIds) {
+      expect(
+        (await getDb().execute(
+          sql`select id from sos_alerts where circle_id = ${circleId} and resolved_at is null`,
+        )) as unknown as unknown[],
+      ).toHaveLength(1)
+    }
   })
 
   /**
@@ -800,21 +809,24 @@ describe("nudges", () => {
     expect(await outbox()).toHaveLength(0)
   })
 
-  it("refuses a nudge aimed at someone outside the circle", async () => {
+  it("sends nothing to someone outside the circle, and says they are not in it", async () => {
     const { alice, circle } = await household()
     const stranger = await registerUser(ctx.app, { displayName: "Stranger" })
 
     const sent = await nudge(alice.headers, circle.id, stranger.user.id, { quickKey: "call_me" })
-    expect(sent.statusCode).toBe(404)
+    expect(sent.statusCode).toBe(200)
+    expect(sent.json()).toMatchObject({ notified: "gone" })
     expect(await outbox()).toHaveLength(0)
   })
 
-  it("refuses a nudge to a member who has paused sharing", async () => {
+  it("sends nothing to a member who has paused sharing when only a location was asked for", async () => {
     const { alice, bob, circle } = await household()
     await setSharing(bob.headers, circle.id, { sharingState: "paused" })
+    await clearOutbox()
 
-    const sent = await nudge(alice.headers, circle.id, bob.user.id, { quickKey: "where_are_you" })
-    expect(sent.statusCode).toBe(403)
+    const sent = await nudge(alice.headers, circle.id, bob.user.id)
+    expect(sent.statusCode).toBe(200)
+    expect(sent.json()).toMatchObject({ notified: "paused" })
     expect(await outbox()).toHaveLength(0)
   })
 
@@ -866,20 +878,22 @@ describe("nudges", () => {
     expectNoCoordinates(rows)
   })
 
-  it("stops a seventh nudge inside ten minutes, and records nothing for it", async () => {
+  it("stops an eleventh nudge inside ten minutes, and records nothing for it", async () => {
     const { alice, bob, circle } = await household()
 
-    for (let i = 0; i < 6; i += 1) {
-      const sent = await nudge(alice.headers, circle.id, bob.user.id, { quickKey: "call_me" })
+    // Different words each time, since the same words twice in a minute are
+    // held rather than sent.
+    for (let i = 0; i < 10; i += 1) {
+      const sent = await nudge(alice.headers, circle.id, bob.user.id, { body: `Message ${i}` })
       expect(sent.statusCode).toBe(200)
     }
-    const seventh = await nudge(alice.headers, circle.id, bob.user.id, { quickKey: "call_me" })
-    expect(seventh.statusCode).toBe(429)
+    const eleventh = await nudge(alice.headers, circle.id, bob.user.id, { body: "One more" })
+    expect(eleventh.statusCode).toBe(429)
 
     expect(
       (await feedItems(bob.headers, circle.id)).filter((item) => item.type === "nudge_requested"),
-    ).toHaveLength(6)
-    expect(await outbox()).toHaveLength(6)
+    ).toHaveLength(10)
+    expect(await outbox()).toHaveLength(10)
   })
 
   /**

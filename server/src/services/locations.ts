@@ -18,6 +18,7 @@ import {
   circles,
   events,
   locationPoints,
+  places,
   userPresence,
   users,
   type CircleSettingsJson,
@@ -51,9 +52,63 @@ const INCIDENT_MOVING_AT_STOP_MPS = 2
  * or a car park before its fixes went dark is a car arriving somewhere.
  */
 const INCIDENT_MOVING_AT_COARSE_STOP_MPS = DEFAULTS.incidentMinSpeedMps
-/** Bounds the window read. The tracker's 30 s cadence fills 300 s with ten. */
-const INCIDENT_WINDOW_MAX_FIXES = 200
-/** Bounds the read of the run so far. Two consecutive fixes make a run. */
+/**
+ * A collision takes a car from cruising speed to nothing in under a second, so
+ * at the tracker's slower cadences the drop has to fall between one fix and
+ * the next. An ordinary stop usually shows its slowing down in a fix of its
+ * own, like the 4 m/s across a forecourt, and the tracker sends the first fix
+ * off road speed whatever its distance gate says, so that fix is there to
+ * see. The ceiling takes in the thirty seconds a moving phone reports at by
+ * default, with room for a fix that lands late, and the driving tier's ten
+ * comfortably. A car that pulled up inside one of those intervals still
+ * passes, and nothing here can tell it from a crash.
+ */
+const INCIDENT_STOP_GAP_SECONDS = 40
+/**
+ * The same gap when every fix after the stop is too coarse to place a street.
+ * A phone that lost the sky in a tunnel or a cutting is placed again when the
+ * network gets round to it, which can take over a minute, and the coarse stop
+ * already has to have come off road speed at the last measurement.
+ */
+const INCIDENT_COARSE_STOP_GAP_SECONDS = 120
+/**
+ * The speed a car was cruising at is the fastest it held in this long before
+ * it came off road speed, and a fix within the tolerance of it is still
+ * cruising. Measured from there, because measured from the moment it dropped
+ * through 35 km/h every firm stop from 45 looks sudden.
+ */
+const INCIDENT_CRUISE_LOOKBACK_SECONDS = 15
+const INCIDENT_CRUISE_TOLERANCE = 0.15
+/**
+ * Live's fix a second can show the stop itself, so there it is judged by how
+ * fast the car shed its cruising speed, averaged to the first fix standing
+ * still. Firm braking for a light is about 4 m/s², and averaged that way it
+ * comes out under this wherever the fixes fall. A collision comes out over
+ * it, even with the car sliding on for a few seconds and the GPS lagging.
+ * Time alone cannot do this, because a slide from 90 km/h and a firm stop
+ * from 45 both take about four seconds.
+ */
+const INCIDENT_SUDDEN_DECELERATION_MPS2 = 4.5
+/**
+ * A stop this far outside one of the circle's named places is still at it, like
+ * a car parked in the lane past the edge of the circle drawn round a house, or
+ * at the far pump of the station. The same margin the geofence wants cleared
+ * before it calls somebody gone. A place can be drawn kilometres wide, round a
+ * whole town, and that says the family is about rather than where they would
+ * pull up, so only this much of its radius counts.
+ */
+const INCIDENT_PLACE_BUFFER_METERS = DEFAULTS.geofenceExitBufferMeters
+const INCIDENT_PLACE_MAX_RADIUS_METERS = 200
+/**
+ * Bounds the window read. Live sends a fix a second, still or moving, so the
+ * window has to hold one for every second of it with room to spare, or the
+ * road speed the stop came off falls out of the read as the stillness matures.
+ */
+const INCIDENT_WINDOW_MAX_FIXES = 2 * DEFAULTS.incidentDecelerationWindowSeconds
+/**
+ * Bounds the read of the run so far. At Live's fix a second that is over three
+ * minutes of it, far longer than a speed has to be held.
+ */
 const SPEED_RUN_MAX_PRIOR_FIXES = 200
 
 /**
@@ -532,9 +587,12 @@ async function maybeRaiseDrivingAlerts(
     // A run is a streak of over-threshold fixes, with whatever measured no
     // speed in between: a cell-derived fix reports none mid-drive, and it
     // confirms nothing, but reading it as a zero would break a run the car
-    // never came out of. The run that satisfied the streak rule decides both
-    // the speed reported and which circles hear it, through the same rule the
-    // trip card uses, so the family is never told a number the card denies.
+    // never came out of. It counts once it has held for long enough in
+    // recorded time, never by how many fixes it holds, because Live sends a
+    // fix a second and two of them are one second of driving. The run that
+    // held decides both the speed reported and which circles hear it, through
+    // the same rule the trip card uses, so the family is never told a number
+    // the card denies.
     let streak = 0
     let run: RunFix[] = []
 
@@ -543,11 +601,13 @@ async function maybeRaiseDrivingAlerts(
     // about that stretch, so it is worded and dated from it rather than from
     // whatever the batch happened to end with.
     let runActivities = new Set<ActivityType>()
+    let runStartAt: Date | null = null
     let runEndAt: Date | null = null
     let alertActivities = new Set<ActivityType>()
     let alertAt: Date | null = null
     const closeRun = () => {
-      if (streak < DEFAULTS.speedAlertConsecutiveFixes) return
+      if (!runStartAt || !runEndAt) return
+      if (runEndAt.getTime() - runStartAt.getTime() < DEFAULTS.speedAlertHeldSeconds * 1000) return
       const runPeakMps = agreedMaxSpeedMps(run, DEFAULTS.staleAfterSeconds * 1000) ?? 0
       if (runPeakMps > alertPeakMps) {
         alertPeakMps = runPeakMps
@@ -557,7 +617,7 @@ async function maybeRaiseDrivingAlerts(
     }
 
     // The timestamps apply the gap rule: a gap means that run ended, or one
-    // fast fix on Friday and another on Monday add up to a streak.
+    // fast fix on Friday and another on Monday add up to a held speed.
     let previousAt: number | null = null
 
     const breakRun = () => {
@@ -565,6 +625,7 @@ async function maybeRaiseDrivingAlerts(
       streak = 0
       run = []
       runActivities = new Set()
+      runStartAt = null
       runEndAt = null
     }
 
@@ -585,6 +646,7 @@ async function maybeRaiseDrivingAlerts(
       if (speedMps * 3.6 > lowestThresholdKmh) {
         streak += 1
         run.push(fix)
+        runStartAt ??= fix.recordedAt
         // A fix with no label at all is not a dissenting opinion about how the
         // run was travelling, so it does not force the wording back to driving.
         if (fix.activity) runActivities.add(fix.activity)
@@ -734,13 +796,64 @@ async function maybeRaiseDrivingAlerts(
   // somebody looks at the map. It says nothing about how the phone came to a
   // stop, so it neither anchors this check nor counts towards the stillness.
   // Otherwise a car pulling onto the drive with the app on the mount reads as
-  // three minutes of not having moved, right behind the fixes that had it at
+  // five minutes of not having moved, right behind the fixes that had it at
   // road speed a minute earlier, and every ordinary arrival becomes an alert.
   if (latest.source === "heartbeat") return
 
   const windowStart = new Date(
     latest.recordedAt.getTime() - DEFAULTS.incidentDecelerationWindowSeconds * 1000,
   )
+  const thisDevice = and(
+    eq(locationPoints.userId, userId),
+    eq(locationPoints.deviceId, deviceId),
+    gte(locationPoints.recordedAt, windowStart),
+    lte(locationPoints.recordedAt, latest.recordedAt),
+    ne(locationPoints.source, "heartbeat"),
+  )
+
+  // A still phone on Live asks this every second, so the cheap answers come
+  // first. With no moving fix in the window there is no stop to judge, and
+  // with one too recent the stillness behind it cannot have lasted yet.
+  const [movedLast] = await db
+    .select({ recordedAt: locationPoints.recordedAt })
+    .from(locationPoints)
+    .where(and(thisDevice, gt(locationPoints.speedMps, DEFAULTS.incidentStoppedSpeedMps)))
+    .orderBy(desc(locationPoints.recordedAt))
+    .limit(1)
+  if (!movedLast) return
+  const sinceMovedMs = latest.recordedAt.getTime() - movedLast.recordedAt.getTime()
+  if (sinceMovedMs < DEFAULTS.incidentStillnessSeconds * 1000) return
+
+  // People stop at the places they named. Each circle goes by its own, since
+  // one family's Gran's is another circle's stretch of country lane. Judged
+  // from where the phone stands now, which is where it stopped if the rest of
+  // this holds, so a stop at home costs this one small read and no more.
+  const namedPlaces = await db
+    .select({
+      circleId: places.circleId,
+      lat: places.lat,
+      lon: places.lon,
+      radiusMeters: places.radiusMeters,
+    })
+    .from(places)
+    .where(
+      inArray(
+        places.circleId,
+        incidentCircles.map((circle) => circle.id),
+      ),
+    )
+  const atAPlace = new Set(
+    namedPlaces
+      .filter(
+        (place) =>
+          haversineMeters(latest, place) <=
+          Math.min(place.radiusMeters, INCIDENT_PLACE_MAX_RADIUS_METERS) +
+            INCIDENT_PLACE_BUFFER_METERS,
+      )
+      .map((place) => place.circleId),
+  )
+  const telling = incidentCircles.filter((circle) => !atAPlace.has(circle.id))
+  if (telling.length === 0) return
 
   // One device's own history. The stop and the speed it came off have to be the
   // same phone, or a tablet on the kitchen table supplies the stillness for a
@@ -756,15 +869,7 @@ async function maybeRaiseDrivingAlerts(
         accuracyMeters: locationPoints.accuracyMeters,
       })
       .from(locationPoints)
-      .where(
-        and(
-          eq(locationPoints.userId, userId),
-          eq(locationPoints.deviceId, deviceId),
-          gte(locationPoints.recordedAt, windowStart),
-          lte(locationPoints.recordedAt, latest.recordedAt),
-          ne(locationPoints.source, "heartbeat"),
-        ),
-      )
+      .where(thisDevice)
       .orderBy(desc(locationPoints.recordedAt))
       .limit(INCIDENT_WINDOW_MAX_FIXES)
   ).reverse()
@@ -794,7 +899,7 @@ async function maybeRaiseDrivingAlerts(
   // Movement between two fixes belongs to the interval, not to the fix that
   // ended it, so the earliest the stillness can have begun is the later of the
   // two. Without this a drive on cell coverage, which reports no speed at all,
-  // reads as three minutes of not having moved while the car covers six
+  // reads as five minutes of not having moved while the car covers six
   // kilometres of tunnel.
   let stillFromIndex = lastMovingIndex + 1
   for (let i = stillFromIndex + 1; i < windowFixes.length; i += 1) {
@@ -814,9 +919,8 @@ async function maybeRaiseDrivingAlerts(
   // stretch somewhere behind it. An arrival decelerates through this band and a
   // collision does not.
   const lastMoving = windowFixes[lastMovingIndex]!
-  const stopBarMps = settled.some(believable)
-    ? INCIDENT_MOVING_AT_STOP_MPS
-    : INCIDENT_MOVING_AT_COARSE_STOP_MPS
+  const coarseStop = !settled.some(believable)
+  const stopBarMps = coarseStop ? INCIDENT_MOVING_AT_COARSE_STOP_MPS : INCIDENT_MOVING_AT_STOP_MPS
   if ((lastMoving.speedMps ?? 0) < stopBarMps) return
 
   // And the stop has to have come off real speed. A second fix agreeing is the
@@ -826,7 +930,9 @@ async function maybeRaiseDrivingAlerts(
   // nothing contradicts nothing, and at the mouth of a tunnel that lone reading
   // is the only speed anybody will ever have. The search ends at the stop, so a
   // fix taken after it can never supply the speed the stop is blamed on.
+  const supportedMps = windowFixes.map(() => 0)
   let fromMps = 0
+  let lastRoadIndex = -1
   for (let i = 0; i <= lastMovingIndex; i += 1) {
     const fix = windowFixes[i]!
     if (fix.speedMps == null || !believable(fix)) continue
@@ -839,9 +945,34 @@ async function maybeRaiseDrivingAlerts(
             agreedSpeedMps(before, fix.speedMps) ?? 0,
             agreedSpeedMps(fix.speedMps, after) ?? 0,
           )
+    supportedMps[i] = supported
     if (supported > fromMps) fromMps = supported
+    if (supported >= DEFAULTS.incidentMinSpeedMps) lastRoadIndex = i
   }
   if (fromMps < DEFAULTS.incidentMinSpeedMps) return
+
+  // Sudden, measured from the last fix still near cruising speed to the first
+  // of the stillness. A forecourt approach at 45 km/h, a fix at 4 m/s and then
+  // the pump is a minute of slowing down.
+  const lastRoadAt = windowFixes[lastRoadIndex]!.recordedAt.getTime()
+  let lookbackFrom = lastRoadIndex
+  while (
+    lookbackFrom > 0 &&
+    lastRoadAt - windowFixes[lookbackFrom - 1]!.recordedAt.getTime() <=
+      INCIDENT_CRUISE_LOOKBACK_SECONDS * 1000
+  ) {
+    lookbackFrom -= 1
+  }
+  const cruiseMps = Math.max(...supportedMps.slice(lookbackFrom, lastRoadIndex + 1))
+  let cruiseIndex = lookbackFrom
+  for (let i = lookbackFrom; i <= lastMovingIndex; i += 1) {
+    if (supportedMps[i]! >= cruiseMps * (1 - INCIDENT_CRUISE_TOLERANCE)) cruiseIndex = i
+  }
+  const dropMs = stopFix.recordedAt.getTime() - windowFixes[cruiseIndex]!.recordedAt.getTime()
+  const gapMs = (coarseStop ? INCIDENT_COARSE_STOP_GAP_SECONDS : INCIDENT_STOP_GAP_SECONDS) * 1000
+  const oneGap = stillFromIndex === cruiseIndex + 1 && dropMs <= gapMs
+  const shedMps2 = supportedMps[cruiseIndex]! / (dropMs / 1000)
+  if (!oneGap && shedMps2 < INCIDENT_SUDDEN_DECELERATION_MPS2) return
 
   // Claiming the cooldown is the emit decision, the same way the speed alert
   // above claims its own. Read it first and two devices reporting the same stop
@@ -862,7 +993,7 @@ async function maybeRaiseDrivingAlerts(
   if (claimed.length === 0) return
 
   const fromKmh = Math.round(fromMps * 3.6)
-  for (const circle of incidentCircles) {
+  for (const circle of telling) {
     await recordEvent(db, {
       circleId: circle.id,
       type: "possible_incident",

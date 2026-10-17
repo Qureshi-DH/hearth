@@ -1,18 +1,27 @@
 import type postgres from "postgres"
 import { MUTABLE_EVENT_TYPES, type PushProvider } from "@hearth/shared"
-import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm"
+import { and, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm"
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core"
+import type { FastifyBaseLogger } from "fastify"
 
 import type { Database } from "../db/client"
 import {
   circleMembers,
+  events,
   notificationOutbox,
+  pushTickets,
   sessions,
   sosAlerts,
+  userPresence,
   type OutboxRow,
 } from "../db/schema"
 import { ALREADY_SHOWN, composeCard, type PushGroup } from "./notification-groups"
-import { placeNewsNoLongerShared, rowsForFormerMembers } from "./outbox-visibility"
+import {
+  incidentsMovedOn,
+  offlineNewsOvertaken,
+  placeNewsNoLongerShared,
+  rowsForFormerMembers,
+} from "./outbox-visibility"
 import type { AppConfig } from "../env"
 import { publicOnlyAgent } from "../lib/net"
 
@@ -56,17 +65,56 @@ export interface DeliveryResult {
   ok: boolean
   /** The token is dead. Clear it rather than retrying it forever. */
   invalidToken?: boolean
+  /**
+   * The provider turned this message down and would turn it down again. Some
+   * providers sit behind a firewall that blocks an address after a 4xx, so
+   * asking again and again is worse than pointless.
+   */
+  rejected?: boolean
+  /** The provider could not be reached at all. No connection, no answer, or a 5xx. */
+  unreachable?: boolean
+  /**
+   * The provider refused the server's own push credentials. Nothing about the
+   * phone is wrong, and every send fails the same way until somebody fixes
+   * the keys.
+   */
+  credentialsRefused?: boolean
+  /** Expo's ticket, which its receipt is read by later. */
+  ticketId?: string
+  error?: string
+}
+
+/** What Expo learnt from APNs or FCM about one earlier send. */
+export interface PushReceipt {
+  status: "ok" | "error"
   error?: string
 }
 
 export interface PushDriver {
   readonly provider: PushProvider
   send(target: DeliveryTarget, message: PushMessage): Promise<DeliveryResult>
+  /** The receipts for earlier tickets, by id. Null when the provider could not be asked. */
+  readReceipts?(ids: string[]): Promise<Record<string, PushReceipt> | null>
 }
 
 const MAX_ATTEMPTS = 6
 /** Backoff in seconds, indexed by attempt count. */
 const BACKOFF = [10, 60, 300, 900, 3600, 21600]
+/**
+ * An SOS is tried until it is resolved, however long the provider is out,
+ * and never waits long between tries. Every minute it sits in the queue
+ * after the provider is back is a minute longer the family does not know.
+ */
+const SOS_BACKOFF = [10, 30, 60, 120, 180]
+/**
+ * A possible incident goes on the SOS channel too, but nothing resolves it.
+ * "Have not moved since" an hour late is a different message, and the
+ * phone's own prompt forgets an incident after an hour for the same reason.
+ */
+const UNRESOLVED_SOS_CHANNEL_MS = 60 * 60 * 1000
+
+/** A location request asks the phone for a fix as well as telling its owner. */
+const ANSWERED_IN_BACKGROUND = new Set(["nudge_requested"])
 
 /**
  * How long a silent push may wait for the phone before the provider drops
@@ -122,19 +170,22 @@ class ExpoDriver implements PushDriver {
 
   constructor(private readonly accessToken?: string) {}
 
-  async send(target: DeliveryTarget, message: PushMessage): Promise<DeliveryResult> {
+  private headers(): Record<string, string> {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       accept: "application/json",
       "accept-encoding": "gzip, deflate",
     }
     if (this.accessToken) headers.authorization = `Bearer ${this.accessToken}`
+    return headers
+  }
 
+  async send(target: DeliveryTarget, message: PushMessage): Promise<DeliveryResult> {
     const ttl = silentTtlSeconds(message.data)
     const queuedAt = Math.floor((message.queuedAt?.getTime() ?? Date.now()) / 1000)
     const response = await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
-      headers,
+      headers: this.headers(),
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
       body: JSON.stringify([
         message.silent
@@ -166,6 +217,14 @@ class ExpoDriver implements PushDriver {
               channelId: message.channel ?? "default",
               // So an SOS is still shown when the recipient already has the app open.
               _displayInForeground: message.channel === "sos",
+              // iOS hands a visible push to the app in the background only
+              // when it is flagged content-available, and at priority 10 that
+              // is allowed for a push that shows an alert. Android passes every
+              // Expo push to the app's task as it is.
+              ...(target.platform === "ios" &&
+              ANSWERED_IN_BACKGROUND.has(String(message.data?.type))
+                ? { _contentAvailable: true }
+                : {}),
               // iOS replaces a card by collapse id. Android replaces by tag,
               // and is not given a collapse id: there it becomes an FCM
               // collapse key, and FCM keeps only four of those for a phone
@@ -180,23 +239,61 @@ class ExpoDriver implements PushDriver {
     })
 
     if (!response.ok) {
-      return { ok: false, error: `expo http ${response.status}: ${await safeText(response)}` }
+      return {
+        ok: false,
+        ...httpFailure(response.status),
+        error: `expo http ${response.status}: ${await safeText(response)}`,
+      }
     }
 
     const payload = (await response.json()) as {
-      data?: Array<{ status: string; message?: string; details?: { error?: string } }>
+      data?: Array<{ status: string; id?: string; message?: string; details?: { error?: string } }>
     }
     const ticket = payload.data?.[0]
     if (!ticket) return { ok: false, error: "expo returned no ticket" }
-    if (ticket.status === "ok") return { ok: true }
+    if (ticket.status === "ok") return { ok: true, ticketId: ticket.id }
 
     const detail = ticket.details?.error
     return {
       ok: false,
-      invalidToken: detail === "DeviceNotRegistered" || detail === "InvalidCredentials",
-      error: `expo ${ticket.status}: ${ticket.message ?? detail ?? "unknown"}`,
+      invalidToken: detail === "DeviceNotRegistered",
+      credentialsRefused: detail === "InvalidCredentials",
+      rejected: detail === "MessageTooBig",
+      error: `expo ${ticket.status}${detail ? ` ${detail}` : ""}: ${ticket.message ?? "unknown"}`,
     }
   }
+
+  async readReceipts(ids: string[]): Promise<Record<string, PushReceipt> | null> {
+    if (ids.length === 0) return {}
+    const response = await fetch("https://exp.host/--/api/v2/push/getReceipts", {
+      method: "POST",
+      headers: this.headers(),
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+      body: JSON.stringify({ ids }),
+    })
+    if (!response.ok) return null
+    const payload = (await response.json()) as {
+      data?: Record<string, { status?: string; details?: { error?: string } }>
+    }
+    const receipts: Record<string, PushReceipt> = {}
+    for (const [id, receipt] of Object.entries(payload.data ?? {})) {
+      receipts[id] =
+        receipt.status === "ok"
+          ? { status: "ok" }
+          : { status: "error", error: receipt.details?.error }
+    }
+    return receipts
+  }
+}
+
+/**
+ * A 5xx is the provider down. A 4xx other than a timeout or a rate limit is
+ * this message refused, and would be refused again.
+ */
+function httpFailure(status: number): Pick<DeliveryResult, "rejected" | "unreachable"> {
+  if (status >= 500) return { unreachable: true }
+  if (status === 408 || status === 429) return {}
+  return { rejected: true }
 }
 
 /**
@@ -233,7 +330,11 @@ class NtfyDriver implements PushDriver {
     })
 
     if (!response.ok) {
-      return { ok: false, error: `ntfy http ${response.status}: ${await safeText(response)}` }
+      return {
+        ok: false,
+        ...httpFailure(response.status),
+        error: `ntfy http ${response.status}: ${await safeText(response)}`,
+      }
     }
     return { ok: true }
   }
@@ -284,9 +385,11 @@ class WebPushDriver implements PushDriver {
       return { ok: true }
     } catch (error) {
       const status = (error as { statusCode?: number }).statusCode
+      const gone = status === 404 || status === 410
       return {
         ok: false,
-        invalidToken: status === 404 || status === 410,
+        invalidToken: gone,
+        rejected: !gone && status !== undefined && httpFailure(status).rejected,
         error: `webpush ${status ?? "error"}: ${(error as Error).message}`,
       }
     }
@@ -451,10 +554,34 @@ async function runWithConcurrency<T>(
   await Promise.all(workers)
 }
 
+/**
+ * When this process last failed to reach the push provider at all. A home
+ * server whose own uplink is down cannot reach the provider and hears from
+ * no phone either, and the offline sweep reads this to tell that apart from
+ * a family whose phones all went dark. Each replica keeps its own, since
+ * each has its own way out.
+ */
+let providerFailedAt: number | null = null
+
+/** Whether a send failed for want of the provider since that moment. */
+export function pushProviderFailedSince(moment: Date): boolean {
+  return providerFailedAt !== null && providerFailedAt >= moment.getTime()
+}
+
+export function forgetPushProviderFailures(): void {
+  providerFailedAt = null
+}
+
 export async function drainOutbox(
   db: Database,
   driver: PushDriver,
-  options: { batchSize?: number; concurrency?: number; now?: Date; sendTimeoutMs?: number } = {},
+  options: {
+    batchSize?: number
+    concurrency?: number
+    now?: Date
+    sendTimeoutMs?: number
+    log?: Pick<FastifyBaseLogger, "error">
+  } = {},
 ): Promise<DrainSummary> {
   const batchSize = options.batchSize ?? 50
   const concurrency = options.concurrency ?? DEFAULT_SEND_CONCURRENCY
@@ -466,7 +593,9 @@ export async function drainOutbox(
 
   const members = await dropRowsForFormerMembers(db, allClaimed, now, summary)
   const shared = await dropPlaceNewsNoLongerShared(db, members, now, summary)
-  const claimed = await dropSosAlreadyResolved(db, shared, now, summary)
+  const live = await dropSosAlreadyResolved(db, shared, now, summary)
+  const current = await dropOfflineNewsOvertaken(db, live, now, summary)
+  const claimed = await dropIncidentsOvertaken(db, current, now, summary)
   if (claimed.length === 0) return summary
 
   if (driver.provider === "none") {
@@ -567,6 +696,7 @@ export async function drainOutbox(
     const expiresAt = head.createdAt.getTime() + silentTtlSeconds(head.data) * 1000
     if (head.silent && now.getTime() >= expiresAt) {
       await settle(lane, { status: "failed", lastError: "expired before it could be delivered" })
+      await uncountWakes(db, lane)
       summary.failed += lane.length
       return
     }
@@ -615,10 +745,25 @@ export async function drainOutbox(
         try {
           return await withDeadline(driver.send(target, message), options.sendTimeoutMs)
         } catch (error) {
-          return { ok: false, error: (error as Error).message } satisfies DeliveryResult
+          return {
+            ok: false,
+            unreachable: true,
+            error: (error as Error).message,
+          } satisfies DeliveryResult
         }
       }),
     )
+    // Web Push sends to as many endpoints as there are subscriptions, and one
+    // that never answers says nothing about the rest.
+    if (driver.provider !== "webpush" && results.some((result) => result.unreachable)) {
+      providerFailedAt = Date.now()
+    }
+    if (results.some((result) => result.credentialsRefused)) {
+      options.log?.error(
+        { provider: driver.provider, error: results.find((r) => r.credentialsRefused)?.error },
+        "the push provider refused this server's push credentials; check the FCM and APNs keys of the Expo project the app was built with",
+      )
+    }
 
     const deadTokens = targets
       .filter((_, index) => results[index]?.invalidToken)
@@ -638,21 +783,29 @@ export async function drainOutbox(
         groupThread,
       })
       summary.sent += carried.length
+      await keepTickets(db, targets, results)
       return
     }
 
     const lastError = results.find((result) => result.error)?.error ?? "delivery failed"
+    const rejected = results.every((result) => result.rejected || result.invalidToken)
     for (const row of carried) {
       const attempts = row.attempts + 1
-      const delaySeconds = BACKOFF[Math.min(attempts - 1, BACKOFF.length - 1)] ?? 3600
+      const urgent = row.channel === "sos" && !rejected
+      const backoff = urgent ? SOS_BACKOFF : BACKOFF
+      const delaySeconds = backoff[Math.min(attempts - 1, backoff.length - 1)] ?? 3600
       const retryAt = Date.now() + delaySeconds * 1000
-      const exhausted = attempts >= MAX_ATTEMPTS || (row.silent && retryAt >= expiresAt)
+      const exhausted = urgent
+        ? row.data.type !== "sos_started" &&
+          now.getTime() - row.createdAt.getTime() >= UNRESOLVED_SOS_CHANNEL_MS
+        : attempts >= MAX_ATTEMPTS || (row.silent && retryAt >= expiresAt)
       await settle([row], {
         status: exhausted ? "failed" : "pending",
         attempts,
         lastError,
         nextAttemptAt: new Date(retryAt),
       })
+      if (exhausted) await uncountWakes(db, [row])
     }
     summary.failed += carried.length
   }
@@ -746,7 +899,11 @@ async function claimDue(db: Database, batchSize: number, now: Date): Promise<Out
           )`,
         ),
       )
+      // Nearly everything travels at high priority, since that is what gets
+      // through Doze, so the SOS channel has to be its own rank here. An SOS
+      // or a possible incident goes ahead of a backlog of ordinary news.
       .orderBy(
+        sql`(${notificationOutbox.channel} = 'sos') desc`,
         sql`(${notificationOutbox.priority} = 'high') desc`,
         notificationOutbox.nextAttemptAt,
       )
@@ -761,10 +918,11 @@ async function claimDue(db: Database, batchSize: number, now: Date): Promise<Out
   // RETURNING hands rows back in heap order, whatever the subselect asked
   // for, so the claim decides which rows make the batch and this decides who
   // goes first within it. Ids climb with enqueue order.
-  return claimed.sort(
-    (a, b) => Number(b.priority === "high") - Number(a.priority === "high") || a.id - b.id,
-  )
+  return claimed.sort((a, b) => claimRank(b) - claimRank(a) || a.id - b.id)
 }
+
+const claimRank = (row: OutboxRow) =>
+  (row.channel === "sos" ? 2 : 0) + (row.priority === "high" ? 1 : 0)
 
 /** Whether the driver can replace a notification already on the phone. */
 export const canReplace = (driver: Pick<PushDriver, "provider">): boolean =>
@@ -802,7 +960,12 @@ function withDeadline(
   let timer: ReturnType<typeof setTimeout> | undefined
   const deadline = new Promise<DeliveryResult>((resolve) => {
     timer = setTimeout(
-      () => resolve({ ok: false, error: `no answer from the push provider in ${ms / 1000} s` }),
+      () =>
+        resolve({
+          ok: false,
+          unreachable: true,
+          error: `no answer from the push provider in ${ms / 1000} s`,
+        }),
       ms,
     )
   })
@@ -832,9 +995,11 @@ async function dropPlaceNewsNoLongerShared(
 }
 
 /**
- * An SOS still queued once it was resolved, typically a retry after a
+ * An SOS still queued once it is no longer open, typically a retry after a
  * provider outage. Sent now it would sound the alarm for something that is
  * over, and on a phone that replaces by key it would cover the all clear.
+ * An alert that is gone altogether, with the account that raised it, is
+ * over too, and would otherwise be retried for ever.
  */
 async function dropSosAlreadyResolved(
   db: Database,
@@ -845,17 +1010,17 @@ async function dropSosAlreadyResolved(
   const raised = claimed.filter((row) => row.data.type === "sos_started" && isSos(row))
   if (raised.length === 0) return claimed
 
-  const resolved = await db
+  const open = await db
     .select({ id: sosAlerts.id })
     .from(sosAlerts)
     .where(
       and(
         inArray(sosAlerts.id, [...new Set(raised.map((row) => String(row.data.alertId)))]),
-        isNotNull(sosAlerts.resolvedAt),
+        isNull(sosAlerts.resolvedAt),
       ),
     )
-  const over = new Set(resolved.map((row) => row.id))
-  const stale = raised.filter((row) => over.has(String(row.data.alertId)))
+  const stillOpen = new Set(open.map((row) => row.id))
+  const stale = raised.filter((row) => !stillOpen.has(String(row.data.alertId)))
   if (stale.length === 0) return claimed
 
   await db
@@ -871,6 +1036,82 @@ async function dropSosAlreadyResolved(
   summary.skipped += stale.length
   const dropped = new Set(stale.map((row) => row.id))
   return claimed.filter((row) => !dropped.has(row.id))
+}
+
+/**
+ * A possible incident whose person has since moved on, or stopped sharing
+ * precisely with that circle. Either way "they have not moved since" is no
+ * longer the news, and the second is precise information they withdrew.
+ */
+async function dropIncidentsOvertaken(
+  db: Database,
+  claimed: OutboxRow[],
+  now: Date,
+  summary: DrainSummary,
+): Promise<OutboxRow[]> {
+  if (!claimed.some((row) => row.data.type === "possible_incident")) return claimed
+  const stale = new Set([
+    ...(await placeNewsNoLongerShared(db, claimed, now, INCIDENT_NEWS)),
+    ...(await incidentsMovedOn(db, claimed)),
+  ])
+  if (stale.size === 0) return claimed
+
+  await db
+    .update(notificationOutbox)
+    .set({ status: "skipped", sentAt: now, lastError: "overtaken before it could be delivered" })
+    .where(inArray(notificationOutbox.id, [...stale]))
+  summary.processed += stale.size
+  summary.skipped += stale.size
+  return claimed.filter((row) => !stale.has(row.id))
+}
+
+const INCIDENT_NEWS = new Set(["possible_incident"])
+
+/**
+ * A wake that never reached the provider asked the phone nothing, so it is
+ * taken off the count the offline sweep reads. Left on, a server whose own
+ * connection was down for an hour has "asked" every phone three times by the
+ * time it is back, and calls them all offline before they can get through.
+ * Only while it is still the latest wake. Otherwise a newer one, or the
+ * phone speaking, has moved the count on already.
+ */
+async function uncountWakes(db: Database, rows: OutboxRow[]): Promise<void> {
+  for (const row of rows) {
+    if (!row.silent || row.data.type !== "wake") continue
+    const sentBy = new Date(row.createdAt.getTime() + 60_000).toISOString()
+    await db
+      .update(userPresence)
+      .set({ wakeCount: sql`${userPresence.wakeCount} - 1` })
+      .where(
+        and(
+          eq(userPresence.userId, row.userId),
+          gt(userPresence.wakeCount, 0),
+          sql`${userPresence.wakeRequestedAt} <= ${sentBy}::timestamptz`,
+        ),
+      )
+  }
+}
+
+async function dropOfflineNewsOvertaken(
+  db: Database,
+  claimed: OutboxRow[],
+  now: Date,
+  summary: DrainSummary,
+): Promise<OutboxRow[]> {
+  const stale = await offlineNewsOvertaken(db, claimed)
+  if (stale.size === 0) return claimed
+
+  await db
+    .update(notificationOutbox)
+    .set({
+      status: "skipped",
+      sentAt: now,
+      lastError: "the phone reported again before this went out",
+    })
+    .where(inArray(notificationOutbox.id, [...stale]))
+  summary.processed += stale.size
+  summary.skipped += stale.size
+  return claimed.filter((row) => !stale.has(row.id))
 }
 
 const isSos = (row: OutboxRow) =>
@@ -897,21 +1138,178 @@ export async function requeueStuckSends(db: Database, claimedBefore: Date): Prom
   return rows.length
 }
 
-export async function pruneOutbox(db: Database, olderThan: Date): Promise<number> {
-  const deleted = await db
-    .delete(notificationOutbox)
-    .where(
-      and(
-        or(
-          eq(notificationOutbox.status, "sent"),
-          eq(notificationOutbox.status, "skipped"),
-          eq(notificationOutbox.status, "failed"),
+/**
+ * In bounded batches, like every bulk delete here. A busy month of rows in
+ * one statement holds its locks for as long as it takes, and every enqueue
+ * behind it waits. What a pass does not reach is there for the next tick.
+ * A row still pending or sending, an SOS being retried among them, is never
+ * taken. Nor is an offline alert while its phone is still out, since it is
+ * the record of who to tell when the phone comes back.
+ */
+export async function pruneOutbox(
+  db: Database,
+  olderThan: Date,
+  options: { batchSize?: number; maxBatches?: number } = {},
+): Promise<number> {
+  const batchSize = options.batchSize ?? 5000
+  const maxBatches = options.maxBatches ?? 20
+  let total = 0
+  for (let batch = 0; batch < maxBatches; batch += 1) {
+    const deleted = await db
+      .delete(notificationOutbox)
+      .where(
+        inArray(
+          notificationOutbox.id,
+          db
+            .select({ id: notificationOutbox.id })
+            .from(notificationOutbox)
+            .where(
+              and(
+                inArray(notificationOutbox.status, ["sent", "skipped", "failed"]),
+                lte(notificationOutbox.createdAt, olderThan),
+                sql`not (
+                  ${notificationOutbox.data}->>'type' = 'device_offline'
+                  and exists (
+                    select 1 from ${events} e
+                    join ${userPresence} out on out.user_id = e.actor_user_id
+                    where e.id = case when ${notificationOutbox.data}->>'eventId' ~ '^[0-9]+$'
+                        then (${notificationOutbox.data}->>'eventId')::bigint end
+                      and out.offline_notified_at is not null
+                      and e.occurred_at >= out.offline_notified_at
+                  )
+                )`,
+              ),
+            )
+            .limit(batchSize),
         ),
-        lte(notificationOutbox.createdAt, olderThan),
-      ),
-    )
-    .returning({ id: notificationOutbox.id })
-  return deleted.length
+      )
+      .returning({ id: notificationOutbox.id })
+    total += deleted.length
+    if (deleted.length < batchSize) break
+  }
+  return total
+}
+
+/**
+ * Only a receipt says an app was uninstalled. Losing a ticket costs no more
+ * than a dead token kept a little longer, so a failure here never touches
+ * the send it belongs to.
+ */
+async function keepTickets(
+  db: Database,
+  targets: DeliveryTarget[],
+  results: DeliveryResult[],
+): Promise<void> {
+  const tickets = targets.flatMap((target, index) => {
+    const id = results[index]?.ticketId
+    return id ? [{ id, sessionId: target.sessionId, token: target.token }] : []
+  })
+  if (tickets.length === 0) return
+  try {
+    await db.insert(pushTickets).values(tickets).onConflictDoNothing()
+  } catch {
+    // The session was deleted while the push was on its way.
+  }
+}
+
+/**
+ * Expo has a receipt for most tickets within minutes, and promises one only
+ * after half an hour. It keeps receipts for a day.
+ */
+export const RECEIPT_READY_MS = 30 * 60 * 1000
+export const RECEIPT_KEPT_MS = 24 * 60 * 60 * 1000
+/** The most ids Expo takes in one call. More is a 400. */
+const RECEIPTS_PER_CALL = 1000
+const RECEIPT_CALLS_PER_PASS = 5
+const STALE_TICKET_BATCH = 5000
+
+/**
+ * Reads what became of earlier sends and clears the token of an app that
+ * was uninstalled. APNs and FCM tell Expo only after the send was accepted,
+ * so a dead token never shows up in the send itself. Nothing is retried on
+ * a failed call. The tickets wait for the next pass, and age out after a
+ * day if the receipts never come.
+ */
+export async function checkPushReceipts(
+  db: Database,
+  driver: PushDriver,
+  options: { now?: Date; log?: Pick<FastifyBaseLogger, "error"> } = {},
+): Promise<{ read: number; cleared: number }> {
+  const outcome = { read: 0, cleared: 0 }
+  if (!driver.readReceipts) return outcome
+  const now = options.now ?? new Date()
+
+  const expired = new Date(now.getTime() - RECEIPT_KEPT_MS)
+  for (let batch = 0; batch < 20; batch += 1) {
+    const dropped = await db
+      .delete(pushTickets)
+      .where(
+        inArray(
+          pushTickets.id,
+          db
+            .select({ id: pushTickets.id })
+            .from(pushTickets)
+            .where(lt(pushTickets.createdAt, expired))
+            .limit(STALE_TICKET_BATCH),
+        ),
+      )
+      .returning({ id: pushTickets.id })
+    if (dropped.length < STALE_TICKET_BATCH) break
+  }
+
+  const ready = new Date(now.getTime() - RECEIPT_READY_MS)
+  for (let call = 0; call < RECEIPT_CALLS_PER_PASS; call += 1) {
+    const due = await db
+      .select()
+      .from(pushTickets)
+      .where(lte(pushTickets.createdAt, ready))
+      .orderBy(pushTickets.createdAt, pushTickets.id)
+      .limit(RECEIPTS_PER_CALL)
+    if (due.length === 0) break
+
+    let receipts: Record<string, PushReceipt> | null
+    try {
+      receipts = await driver.readReceipts(due.map((ticket) => ticket.id))
+    } catch {
+      receipts = null
+    }
+    if (!receipts) break
+
+    const answered = due.filter((ticket) => receipts[ticket.id])
+    const refused = answered.filter(
+      (ticket) => receipts[ticket.id]!.error === "InvalidCredentials",
+    ).length
+    if (refused > 0) {
+      options.log?.error(
+        { provider: driver.provider, receipts: refused },
+        "APNs or FCM refused this server's push credentials; check the keys of the Expo project the app was built with",
+      )
+    }
+    for (const ticket of answered) {
+      if (receipts[ticket.id]!.error !== "DeviceNotRegistered") continue
+      // Only the token the push went to. The app may have registered a new
+      // one on that session since, and that one is alive.
+      const cleared = await db
+        .update(sessions)
+        .set({ pushToken: null, pushProvider: null })
+        .where(and(eq(sessions.id, ticket.sessionId), eq(sessions.pushToken, ticket.token)))
+        .returning({ id: sessions.id })
+      outcome.cleared += cleared.length
+    }
+    if (answered.length > 0) {
+      await db.delete(pushTickets).where(
+        inArray(
+          pushTickets.id,
+          answered.map((ticket) => ticket.id),
+        ),
+      )
+    }
+    outcome.read += answered.length
+    // The rest have no receipt yet, and asking again straight away gets the
+    // same answer.
+    if (answered.length < due.length) break
+  }
+  return outcome
 }
 
 async function safeText(response: Response): Promise<string> {

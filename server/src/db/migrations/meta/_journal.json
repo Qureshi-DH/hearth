@@ -85,6 +85,13 @@
       "when": 1790859567631,
       "tag": "0011_notification_groups",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792253379645,
+      "tag": "0012_push_tickets_check_in_precision",
+      "breakpoints": true
     }
   ]
 }

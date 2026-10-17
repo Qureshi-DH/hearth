@@ -5,7 +5,8 @@ import type { FeedEvent, MemberPresence, Paginated, WsServerMessage } from "@hea
 import { queryKeys } from "@/hooks/queryKeys"
 import { api } from "@/services/api"
 import { reportNow } from "@/services/location/tracker"
-import { queryClient } from "@/services/queryClient"
+import { queryClient, recheckCircles } from "@/services/queryClient"
+import { noticeSocketAlert } from "@/services/socketAlerts"
 import { useAuthStore } from "@/stores/auth"
 import { useNudgeStore } from "@/stores/nudge"
 
@@ -24,7 +25,8 @@ type Listener = (message: WsServerMessage) => void
  *
  * Incoming frames are written straight into the React Query cache. Screens
  * render query data and never subscribe to the socket. A quick message is the
- * exception: nothing keeps it, so it goes to the store the banner reads.
+ * exception. Nothing keeps it, so it goes to the store the banner reads. An SOS
+ * on a server with no push is the other one, because it has to ring.
  */
 class RealtimeClient {
   private socket: WebSocket | null = null
@@ -134,6 +136,7 @@ class RealtimeClient {
   }
 
   private handle(message: WsServerMessage) {
+    noticeSocketAlert(message)
     switch (message.type) {
       case "presence":
         queryClient.setQueryData<MemberPresence[]>(
@@ -184,6 +187,21 @@ class RealtimeClient {
         void queryClient.invalidateQueries({ queryKey: queryKeys.sos(message.circleId) })
         void queryClient.invalidateQueries({ queryKey: queryKeys.presence(message.circleId) })
         break
+
+      case "subscribed": {
+        // The app never narrows its subscription, so this is every circle the
+        // server has it in. One the list holds that is missing here was left,
+        // lost to a removal or deleted, and the list is asked for again so
+        // the hooks stop polling it. Asked, not trimmed here, because a
+        // circle joined a moment ago can be missing from this too.
+        const circles = queryClient.getQueryData<Array<{ id: string }>>(queryKeys.circles)
+        const got = new Set(message.circleIds)
+        const differs =
+          circles !== undefined &&
+          (circles.some((circle) => !got.has(circle.id)) || got.size !== circles.length)
+        if (differs) recheckCircles()
+        break
+      }
 
       case "nudge":
         // Two things at once: report a fresh position, and put the sender's

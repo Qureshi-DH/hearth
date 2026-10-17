@@ -60,15 +60,20 @@ goes into an `HttpOnly`, `SameSite=Strict` cookie named `hearth_portal`, scoped
 to `/api/v1/auth/portal`, and `Secure` when the request is HTTPS or reached the
 https public address. The session ends twelve hours after sign-in, and renewing
 does not extend it. Refresh reads and rotates the cookie, refuses a request
-whose `Origin` names another site, clears the cookie when the session is over,
-and ends the session if the account is no longer an administrator. Logout needs
+whose `Origin` names another site, and ends the session if the account is no
+longer an administrator. Every open of the portal asks, so with no cookie, or
+one whose session is over, it answers `200` with `{ signedIn: false }` and
+clears the cookie, rather than a `401`. A tab that signs out, or finds the
+session over, tells the browser's other tabs, so they stop without each
+learning it from a refused request. Logout needs
 only the cookie and refuses another site's `Origin` too. A non-administrator
 gets a `403` from login and no session is created. Each sign-in is written to
 the audit log.
 
 `POST /admin/users/:id/password` takes `{ password, currentPassword }`, where
-`currentPassword` is the administrator's own. A wrong password, here and at
-`POST /auth/password`, answers `401` with the code `wrong_password`, so a client
+`currentPassword` is the administrator's own. A wrong password, here, at
+`POST /auth/password` and at `DELETE /me`, answers `401` with the code
+`wrong_password`, so a client
 can tell it from a session that ran out (`unauthorized`). Ten wrong guesses in a
 quarter of an hour answer `429` until the quarter is up.
 
@@ -84,7 +89,7 @@ quarter of an hour answer `429` until the quarter is up.
 | Places    | `GET/POST /circles/:id/places`, `PATCH/DELETE /circles/:id/places/:placeId`, `GET /circles/:id/places/:placeId/events`                                                                                                                                                                                                                                                                                |
 | Events    | `GET /circles/:id/events?limit&cursor`, `POST /circles/:id/events/read`, `GET /circles/:id/events/unread-count`                                                                                                                                                                                                                                                                                       |
 | Nudges    | `POST /circles/:id/nudge/:userId` (one member, no history)                                                                                                                                                                                                                                                                                                                                            |
-| Safety    | `POST /circles/:id/sos` (3 per 10 min), `POST /sos/:alertId/resolve`, `GET /circles/:id/sos?activeOnly=true`, `POST /circles/:id/check-in`, `GET /circles/:id/check-ins`                                                                                                                                                                                                                              |
+| Safety    | `POST /circles/:id/sos` ([one press, every circle](#raising-an-sos)), `POST /sos/:alertId/resolve`, `GET /circles/:id/sos?activeOnly=true`, `POST /circles/:id/check-in`, `GET /circles/:id/check-ins`                                                                                                                                                                                                |
 | Trips     | `GET /circles/:id/members/:userId/trips`, `GET /me/trips`, `GET /trips/:tripId`                                                                                                                                                                                                                                                                                                                       |
 | Push      | `GET /push/config`, `POST/DELETE /push/register`, `POST /push/test`                                                                                                                                                                                                                                                                                                                                   |
 | Admin     | `GET/PATCH /admin/settings`, `GET /admin/users`, `PATCH /admin/users/:id`, `GET /admin/users/:id/sessions`, `DELETE /admin/users/:id/sessions/:sessionId`, `POST /admin/users/:id/sessions/revoke-all`, `POST /admin/users/:id/password`, `GET /admin/circles`, `GET /admin/checks`, `GET /admin/overview`, `GET /admin/stats`, `GET /admin/push/queue`, `POST /admin/push/drain`, `GET /admin/audit` |
@@ -105,22 +110,46 @@ A quick message goes to one person, never to the circle.
 POST /circles/:circleId/nudge/:userId    { quickKey?, body? }
 ```
 
-The `:userId` in the path has to be another member of that circle, and one who
-has paused sharing can't be nudged (`403`). The text is either a `quickKey`
-from `QUICK_MESSAGES` in `packages/shared` ("Please slow down.", "On my way.")
-or a short line of your own, and a `200` returns `{ ok: true }`. Sending one
-records a `nudge_requested` event in the circle's activity feed, queues a
-visible alert on the `alerts` channel for the recipient alone, and publishes a
-`nudge` frame on the recipient's own topic. Nothing is kept as a conversation,
-so there is no endpoint to list them back. The feed entry names the sender and
-quotes the line, so this is a short word in front of the family rather than a
-private channel.
+The `:userId` in the path has to be another member of that circle. The text is
+either a `quickKey` from `QUICK_MESSAGES` in `packages/shared` ("Please slow
+down.", "On my way.") or a short line of your own. With neither, it is a bare
+ask for a location. Sending one records a `nudge_requested` event in the
+circle's activity feed, queues a visible alert on the `alerts` channel for the
+recipient alone, and publishes a `nudge` frame on the recipient's own topic.
+Nothing is kept as a conversation, so there is no endpoint to list them back.
+The feed entry names the sender and quotes the line, so this is a short word in
+front of the family rather than a private channel.
 
-An app in the foreground takes a fix when the frame or the alert arrives. A
-phone with the app in the background only shows the alert, because a visible
-push runs no app code there. Opening the member's page is what asks for a fresh
-fix. See [below](#asking-one-phone-for-a-fix) and
-[push notifications](../install/push-notifications.md).
+A bare ask also asks the phone for a fix, the same way
+[opening the member's page](#asking-one-phone-for-a-fix) does, because a
+visible alert moves only an app that gets to run when it lands. The reply is a
+`NudgeResponse`.
+
+```json
+{ "ok": true, "notified": "sent", "asked": "pushed" }
+```
+
+`notified` is `sent`, or `held` when the same sender sent the same words, or
+the same bare ask, to the same person within the last minute, in which case
+nothing is sent twice. `asked` takes the refresh route's words, which are
+`socket`, `pushed`, `held`, `fresh`, `no_device` and `unsupported`. It is
+`null` for a message, which asks nothing of the phone. Only a member sharing
+precisely has their phone asked. For one sharing approximately the alert goes
+and `asked` is `unsupported`, as on the refresh route, because the rest would
+say whether their phone is connected or reported a moment ago.
+
+A message reaches a member who has paused sharing, since it says nothing about
+where they are. A bare ask to them sends nothing and answers
+`{ ok: true, notified: "paused", asked: "paused" }` rather than a refusal.
+Somebody no longer in the circle, whose page may still be open, is sent
+nothing and answered `notified: "gone"`. A server from before these fields
+answers `{ ok: true }` alone.
+
+The route takes `DEFAULTS.maxNudgesPerTenMinutes` per account, nudges and
+messages together. The app keeps to `DEFAULTS.phoneNudgesPerTenMinutes` from
+each phone and tells the person to wait rather than send one the server would
+refuse. See [push notifications](../install/push-notifications.md) for what the
+alert does on each provider.
 
 ## Uploading location
 
@@ -160,7 +189,8 @@ tick as the fix that settled the phone and shares its timestamp. Implausible
 points (future, >7 days old, out of range) get counted in `rejected` without
 failing the whole batch. `policy` is the strictest setting across the
 caller's circles, and the device is expected to apply it. `watchedUntil` is
-set while somebody has the member's page open, see [watching](#watching-a-member).
+set while somebody has the member's page open, see [watching](#watching-a-member),
+and while the member has an SOS open, see [raising an SOS](#raising-an-sos).
 
 Every authenticated upload, whatever it carried, records that the phone was
 heard (`user_presence.last_heard_at`). The offline sweep, the wake schedule
@@ -231,12 +261,54 @@ now, over its control channel when it has one open and by silent push
 otherwise, at most once per half minute per phone whoever is looking. The
 reply is `{ asked }`: `socket`, `pushed`, `held` (pushed moments ago),
 `fresh` (heard from in the last half minute, left alone), `no_device` or
-`unsupported`. A member who isn't sharing precisely gets `unsupported`.
+`unsupported`. A member who isn't sharing precisely gets `unsupported`, and so
+does somebody who has just left the circle, since the page asks on every
+visit.
 
 `POST /circles/:id/locations/refresh` does the same for a whole circle when the
 map opens. It asks every member not heard from for two minutes, skips anyone
 who has paused, and pushes any one phone at most once every ten minutes. The
 reply is `{ asked }`, the number of phones it asked.
+
+## Raising an SOS
+
+```http
+POST /api/v1/circles/:id/sos
+{ "note": "Hit on Gloucester Rd", "reason": "sos" }
+```
+
+One press raises the caller's alert in every circle they are in. With
+`reason: "incident"`, which the crash prompt sends when nobody answers it, it
+goes to the circles that turned crash alerts on and to the one in the path,
+and the app always sends it through one that has them on. Leaving `reason` out
+means `"sos"`, except for the exact note an older app's crash prompt sends,
+"Possible collision detected automatically. No answer from the phone.", which
+is taken as `"incident"`. Every other member of those circles gets
+one push, however many of the circles they share with the sender, and each
+circle gets a `sos_started` entry. The sender's sharing goes back to precise in
+each of them.
+
+The reply is a `RaiseSosResponse`, which is the path circle's `SosAlert` with
+`notifiedMembers` added and `alerts`, one `SosAlert` per circle it is open in.
+It is `201` when something new was raised and `200` when everything was
+already open. A press on an open alert writes nothing and pushes nothing, so a
+client retries freely after a lost reply. The route takes 60 requests per
+account per ten minutes, and a sixth fresh alert inside ten minutes, raised
+after five that were resolved, is answered `429`.
+
+While an alert is open the sender's phone is on Live. Every upload reply names
+`watchedUntil` two minutes ahead, and the raise sends a `watch` down the
+phone's control channel when one is open. The window never shortens or moves
+the one a viewer's [watch](#watching-a-member) holds, and the phone falls back
+to its own cadence within two minutes of the alert being resolved.
+
+`POST /sos/:alertId/resolve` from the person who raised it closes their alert
+in every circle, each with its own `sos_resolved` entry, and everyone in those
+circles gets one notice naming the alert their alarm named. An admin closes the
+alert in their own circle only. From the person who raised it, an alert an
+admin already closed still closes the rest of theirs, so an app that only
+knows that one's id can end the emergency. A resolve with nothing left open
+answers `{ ok: true, alreadyResolved: true }`.
 
 ## Websocket
 
@@ -253,7 +325,7 @@ Server → client messages (`WsServerMessage` in the shared package):
 | `presence`   | `{ circleId, presences[] }`, sent once per circle on connect |
 | `location`   | `{ circleId, presence }`, one member moved                   |
 | `event`      | `{ circleId, event }`, new activity-feed entry               |
-| `sos`        | `{ circleId, alert }`                                        |
+| `sos`        | `{ circleId, alert }`, an alert raised or resolved           |
 | `nudge`      | `{ circleId, nudge }`, on the recipient's own topic          |
 | `control`    | `{ command, seconds? }`, to the phone's control channel only |
 | `pong`       | `{ serverTime }`                                             |
@@ -271,6 +343,12 @@ and drops a socket that hasn't answered one ping by the time the next is due.
 Each answered ping renews the channel's stamp on the presence row, valid for 5
 minutes, which is what the routes read to choose the channel over a push.
 
+`subscribed` is sent again whenever the circles a socket gets change, which is
+when the user joins one, is removed from one, or one they were in is deleted. A client
+that never narrows its subscription can read it as the whole of its
+membership, and the app asks for its circles list again when the two differ,
+so it stops polling a circle it is no longer in.
+
 A socket is closed with `4401` when its token or session is no longer good,
 which tells the client to get a fresh token before reconnecting. An account
 holds at most twelve sockets, and opening another closes the oldest with
@@ -285,6 +363,50 @@ grant `admin` or demote an admin.
 `{ role: "owner" }` performs an atomic transfer, promoting the target and
 demoting the caller to admin in one transaction. A transfer to a non-member is
 a `404` and changes nothing.
+
+## Answers in place of refusals
+
+A home server often sits behind a firewall that blocks an address for a while
+after any `4xx`, and every phone in the house shares that address. So a request
+the app makes in ordinary use, from a screen that was right a minute ago, is
+answered `200` with what became of it. Bad input, a wrong password and a
+missing session are still errors.
+
+- `GET /circles/:id/members/:userId/trips` and `.../history` answer `[]` for a
+  member sharing approximately or paused, in a circle with history off, or who
+  has left the circle.
+- `GET /trips/:tripId?soft=true` answers `{ id, visible: false }` for a trip
+  the caller can no longer see, or one that is gone because a late backlog
+  folded it into its neighbour. Without `soft=true` those stay `403` and `404`,
+  which is what older apps handle. A trip that is served carries
+  `visible: true`.
+- `PATCH /circles/:id/places/:placeId` answers `{ id, gone: true }` for a place
+  somebody else deleted, and `DELETE` answers `{ ok: true, gone: true }`.
+- `GET /media/*` answers a picture that is no longer stored with one transparent
+  pixel, `x-hearth-media: missing` and `cache-control: no-store`. Other phones
+  hold the old address until their roster refreshes. Storage that is failing
+  answers `503` instead, since a phone keeps an image under its address and
+  would go on showing the blank once storage is back.
+- `POST /circles/:id/nudge/:userId` answers `notified: "gone"` for somebody no
+  longer in the circle.
+- `GET /invites/:code` says `reason: "removed"` to a signed-in viewer the circle
+  removed, holding a code made before that, so the app never offers a join
+  that would be refused.
+- `GET /admin/overview?tz=` draws a zone the database does not know in UTC and
+  says so in `timeZone`.
+- `DELETE /admin/users/:id/sessions/:sessionId` answers a device that already
+  signed out with `{ ok: true, alreadySignedOut: true }`.
+- `DELETE /me` with a wrong password answers `wrong_password`, so the app does
+  not mistake it for a token that ran out and send it twice.
+- `POST /auth/portal/refresh` and the nudge and refresh routes are described in
+  their own sections above.
+
+The app does its share. It renews and resends only on a `401` whose code is
+`unauthorized`, never retries a `4xx` other than a `408`, stops asking about a
+circle once its circles list no longer holds it, and asks for that list again,
+at most once in half a minute, when a circle's query is answered `403`. It
+keeps nudges, exports, test notifications and the map's asks for fresh fixes
+under the routes' limits and tells the person to wait instead.
 
 ## Pagination
 
@@ -310,15 +432,15 @@ Routes with their own budget:
 | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/password`, `DELETE /me` | 30 per minute, or `RATE_LIMIT_MAX / 20` if that is more |
 | `POST /locations/batch`                                                                              | 240 per minute                                          |
-| `POST /circles/:id/locations/refresh`                                                                | 30 per 10 min                                           |
-| `POST /circles/:id/members/:userId/refresh`                                                          | 60 per 10 min                                           |
+| `POST /circles/:id/locations/refresh`                                                                | 120 per 10 min                                          |
+| `POST /circles/:id/members/:userId/refresh`                                                          | 180 per 10 min                                          |
 | `POST /circles/:id/members/:userId/watch`                                                            | 60 per 10 min                                           |
 | `GET /media/*`                                                                                       | 600 per minute                                          |
 | `GET /join/:code`                                                                                    | 60 per minute                                           |
 | `POST /auth/me/avatar`                                                                               | 10 per minute                                           |
 | `GET /me/export`                                                                                     | 3 per 10 min                                            |
-| `POST /circles/:id/nudge/:userId`                                                                    | 6 per 10 min                                            |
-| `POST /circles/:id/sos`                                                                              | 3 per 10 min, counted per circle                        |
+| `POST /circles/:id/nudge/:userId`                                                                    | 10 per 10 min, and the app keeps to 6 per phone         |
+| `POST /circles/:id/sos`                                                                              | 60 per 10 min, and 5 fresh alerts                       |
 | `POST /push/test`                                                                                    | 5 per 5 min                                             |
 
 Sign-in is also held to 8 attempts per 5 minutes for one email from one

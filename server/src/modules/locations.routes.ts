@@ -24,6 +24,8 @@ import {
 } from "../services/presence"
 import { CONTROL_ANSWER_GRACE_MS, sendControl } from "../services/control"
 import { enqueuePush, recentSilentPushes } from "../services/push"
+import { liveUntil } from "../services/sos"
+import { askPhoneForFix } from "../services/wake"
 
 // Accuracy fields are deliberately not constrained here. A platform sentinel
 // in one optional field would otherwise fail the whole array, and the client
@@ -68,12 +70,6 @@ const isoTimestamp = z
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000
 /** A phone heard from this recently has nothing new to say. */
 const FRESH_ENOUGH_MS = 2 * 60 * 1000
-/**
- * A page opened on one person asks their phone at once, and again on the
- * next open, but not twice in the same half minute: the fix takes a few
- * seconds and the channel or the push has already carried the ask.
- */
-const MEMBER_REFRESH_FRESH_MS = 30 * 1000
 /**
  * Watching is spent more freely: a page open on one person is worth more
  * than a glance at everyone. The page calls every minute to hold the window,
@@ -176,7 +172,10 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           "Accepts a batch of fixes from one device. A duplicate (same device and timestamp) " +
           "changes nothing, except that one re-reported as still takes that activity, so a " +
           "client may safely retry a failed upload. The response carries the tracking policy " +
-          "the device should apply from now on.",
+          "the device should apply from now on, and `watchedUntil` while the device should " +
+          "report live, because somebody has the member's page open or the member has an SOS " +
+          "open in a circle they share precisely with. For an SOS the window is two minutes ahead and " +
+          "named again on every upload, so it ends soon after the alert is resolved.",
         body: z.object({
           points: z.array(fixSchema).min(1).max(DEFAULTS.maxLocationBatchSize),
         }),
@@ -217,13 +216,9 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         ? Math.min(...policyRows.map((row) => row.settings.distanceFilterMeters))
         : DEFAULTS.distanceFilterMeters
 
-      const [watch] = await db
-        .select({ until: userPresence.watchedUntil })
-        .from(userPresence)
-        .where(eq(userPresence.userId, auth.userId))
-        .limit(1)
-      const watchedUntil =
-        watch?.until && watch.until.getTime() > Date.now() ? watch.until.toISOString() : null
+      // An open SOS rides the same field as a watch, because every app that
+      // reads it already goes Live on it.
+      const watchedUntil = (await liveUntil(db, auth.userId))?.toISOString() ?? null
 
       return {
         accepted: result.accepted,
@@ -243,7 +238,10 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
     "/circles/:circleId/locations/refresh",
     {
       preHandler: app.authenticate,
-      config: { rateLimit: { max: 30, timeWindow: "10 minutes" } },
+      // Generous, because every phone is already held to one ask per ten
+      // minutes, and the map asks on each return to it. A 429 here is a 4xx
+      // in ordinary use, which a firewall can answer by locking the house out.
+      config: { rateLimit: { max: 120, timeWindow: "10 minutes" } },
       schema: {
         tags: ["locations"],
         summary: "Ask the circle's quiet phones for a fresh fix",
@@ -316,7 +314,9 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
     "/circles/:circleId/members/:userId/refresh",
     {
       preHandler: app.authenticate,
-      config: { rateLimit: { max: 60, timeWindow: "10 minutes" } },
+      // Generous for the same reason as the map's. The phone is held to one
+      // ask per half minute whoever opens the page, however often.
+      config: { rateLimit: { max: 180, timeWindow: "10 minutes" } },
       schema: {
         tags: ["locations"],
         summary: "Ask one person's phone for a fresh fix now",
@@ -324,7 +324,8 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           "Called when someone opens a member's page. The phone is asked over its control " +
           "channel when it has one open, and by silent push otherwise, at most once per half " +
           "minute per phone whoever is looking. A phone heard from in the last half minute is " +
-          "left alone (`fresh`). Only members sharing precisely are asked.",
+          "left alone (`fresh`). Only members sharing precisely are asked. Anyone else, and " +
+          "somebody who has left the circle, is answered `unsupported`.",
         params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
         response: {
           200: z.object({
@@ -344,11 +345,8 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           sharingState: circleMembers.sharingState,
           pausedUntil: circleMembers.pausedUntil,
           resumeToState: circleMembers.resumeToState,
-          recordedAt: userPresence.recordedAt,
-          lastHeardAt: userPresence.lastHeardAt,
         })
         .from(circleMembers)
-        .leftJoin(userPresence, eq(userPresence.userId, circleMembers.userId))
         .where(
           and(
             eq(circleMembers.circleId, membership.circleId),
@@ -356,7 +354,9 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           ),
         )
         .limit(1)
-      if (!target) throw notFound("That person is not in this circle.")
+      // The page asks on every focus, including the one that follows her
+      // leaving, and a 404 there is a 4xx in ordinary use.
+      if (!target) return { asked: "unsupported" } satisfies RefreshMemberResponse
       const now = new Date()
       const state = effectiveSharingState(
         target.sharingState,
@@ -365,49 +365,9 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         target.resumeToState,
       )
       if (state !== "precise") return { asked: "unsupported" } satisfies RefreshMemberResponse
-      const heardAt = Math.max(
-        target.recordedAt?.getTime() ?? 0,
-        target.lastHeardAt?.getTime() ?? 0,
-      )
-      if (now.getTime() - heardAt < MEMBER_REFRESH_FRESH_MS) {
-        return { asked: "fresh" } satisfies RefreshMemberResponse
-      }
-      if (await sendControl(db, request.params.userId, { command: "wake" }, now)) {
-        return { asked: "socket" } satisfies RefreshMemberResponse
-      }
-      if (getPushDriver()?.provider !== "expo") {
-        return { asked: "unsupported" } satisfies RefreshMemberResponse
-      }
-      const [device] = await db
-        .select({ id: sessions.id })
-        .from(sessions)
-        .where(
-          and(
-            eq(sessions.userId, request.params.userId),
-            isNull(sessions.revokedAt),
-            eq(sessions.pushProvider, "expo"),
-            isNotNull(sessions.pushToken),
-          ),
-        )
-        .limit(1)
-      if (!device) return { asked: "no_device" } satisfies RefreshMemberResponse
-      const askedLately = await recentSilentPushes(
-        db,
-        request.params.userId,
-        "wake",
-        new Date(now.getTime() - MEMBER_REFRESH_FRESH_MS),
-      )
-      if (askedLately.length > 0) return { asked: "held" } satisfies RefreshMemberResponse
-      await enqueuePush(db, [
-        {
-          userId: request.params.userId,
-          title: "",
-          body: "",
-          silent: true,
-          data: { type: "wake" },
-        },
-      ])
-      return { asked: "pushed" } satisfies RefreshMemberResponse
+      return {
+        asked: await askPhoneForFix(db, request.params.userId, now),
+      } satisfies RefreshMemberResponse
     },
   )
 
@@ -557,7 +517,8 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "Breadcrumb history for one member",
         description:
           "Only available when the circle allows history, and never for a member who is " +
-          "currently sharing approximately or not at all.",
+          "currently sharing approximately or not at all. In those cases, and for somebody " +
+          "who has left the circle, the answer is an empty list rather than a refusal.",
         params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
         querystring: z.object({
           from: isoTimestamp.optional(),
@@ -580,9 +541,10 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           .from(circles)
           .where(eq(circles.id, circleId))
           .limit(1)
-        if (circle && !circle.settings.allowHistory) {
-          throw forbidden("This circle has location history turned off.")
-        }
+        // Empty rather than refused, like the trips list. A refusal is a 4xx,
+        // and a firewall in front of the server can answer one by locking out
+        // every phone behind the address.
+        if (circle && !circle.settings.allowHistory) return []
 
         const [target] = await db
           .select({
@@ -595,11 +557,9 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           .from(circleMembers)
           .where(and(eq(circleMembers.circleId, circleId), eq(circleMembers.userId, userId)))
           .limit(1)
-        if (!target) throw forbidden("That person is not in this circle.")
+        if (!target) return []
         const stretch = preciseStretch(target, new Date())
-        if (!stretch) {
-          throw forbidden("That member is not sharing precise location with this circle.")
-        }
+        if (!stretch) return []
         // Accepting an invite does not hand the circle everything from before
         // you joined, a pause does not become visible once it is over, and a
         // circle never sees further back than its own retention even when

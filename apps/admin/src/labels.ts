@@ -56,3 +56,6 @@ export const ISSUE_LABEL: Record<PresenceIssue, string> = {
   background_restricted: "Background activity is restricted",
   service_stopped: "The location service was stopped",
 }
+
+/** Under the name of a phone that went quiet on a nearly flat battery. */
+export const BATTERY_RAN_OUT_LABEL = "The battery has most likely run out"

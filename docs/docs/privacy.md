@@ -59,7 +59,15 @@ turned sharing off, with your last position.
 
 Going back to precise does not open up the time in between. History and trips
 recorded while a circle saw you paused or approximate stay out of that circle's
-view, and a place you crossed then is never announced to it.
+view, and a place you crossed then is never announced to it. A check-in keeps
+the precision it was made with. One made while a circle saw you approximately
+stays a grid cell with no place name there, and one made while paused stays
+without a position. Turning sharing down still takes older check-ins down with
+it. Check-ins from before this rule was kept answer to your sharing now.
+
+A pause hides where you are, not you. Quick messages still reach you while you
+are paused, because a message says nothing about your position. A bare _Ask for
+location_ is not sent, and the person asking is told you paused.
 
 You always see yourself exactly. Circle admins get _no_ extra visibility into
 members' locations. Roles only govern circle management.
@@ -85,8 +93,10 @@ signing in, however often it is used, so a browser left open does not stay a
 way in.
 
 SOS is the one exception. Raising an SOS switches the sender to precise sharing
-in that circle and notifies everyone regardless of mutes. The sender (or an
-admin) resolves it, and sharing stays precise after that until they set it back
+in every circle they are in, paused and approximate ones included, and notifies
+everyone in them regardless of mutes. While it is open their phone reports a
+fix a second. The sender resolves it everywhere at once, or an admin in their
+own circle, and sharing stays precise after that until the sender sets it back
 themselves.
 
 A quick message wakes only the person it names, but the circle's activity feed
@@ -157,6 +167,12 @@ The app only ever asks from that checklist, with the reason on screen first.
 You can refuse it. The app then works the stop out from position, which costs
 more battery, and crash detection cannot run on that phone because nothing
 tells it a drive has started.
+
+On Android the checklist also offers Do Not Disturb access, as an optional
+step. It lets an SOS or a possible-crash alert through Do Not Disturb and
+nothing else. Android shows it as access to Do Not Disturb, which would also
+let an app change your Do Not Disturb settings. Hearth never reads or changes
+them.
 
 Hearth never requests contacts, microphone, Bluetooth or an advertising
 identifier. Crash detection needs no permission of its own beyond that one. The

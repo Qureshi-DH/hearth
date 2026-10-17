@@ -490,13 +490,13 @@ describe("mutes", () => {
   })
 })
 
-/** 90 km/h on the ring road, then stopped and motionless for four minutes. */
+/** 90 km/h on the ring road, then stopped and motionless for five minutes. */
 async function hardStopAfterMotorwaySpeed(headers: Headers) {
   await uploadFixes(headers, [
-    { ...northOf(HOME, 0), recordedAt: iso(-330), accuracyMeters: 8, speedMps: 25 },
-    { ...northOf(HOME, 750), recordedAt: iso(-300), accuracyMeters: 8, speedMps: 24 },
-    { ...northOf(HOME, 1000), recordedAt: iso(-270), accuracyMeters: 8, speedMps: 0 },
-    { ...northOf(HOME, 1000), recordedAt: iso(-120), accuracyMeters: 8, speedMps: 0 },
+    { ...northOf(HOME, 0), recordedAt: iso(-420), accuracyMeters: 8, speedMps: 25 },
+    { ...northOf(HOME, 750), recordedAt: iso(-390), accuracyMeters: 8, speedMps: 24 },
+    { ...northOf(HOME, 1000), recordedAt: iso(-360), accuracyMeters: 8, speedMps: 0 },
+    { ...northOf(HOME, 1000), recordedAt: iso(-200), accuracyMeters: 8, speedMps: 0 },
     { ...northOf(HOME, 1000), recordedAt: iso(-30), accuracyMeters: 8, speedMps: 0 },
   ])
 }

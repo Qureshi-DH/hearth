@@ -1,4 +1,4 @@
-import { AppState, Platform } from "react-native"
+import { AppState } from "react-native"
 import * as Notifications from "expo-notifications"
 
 import { translate } from "@/i18n/translate"
@@ -29,9 +29,10 @@ export async function sessionExpired(): Promise<void> {
         title: translate("session:signedOutTitle"),
         body: translate("session:signedOutBody"),
         data: { type: "signed_out" },
-        ...(Platform.OS === "android" ? { channelId: "alerts" } : {}),
       },
-      trigger: null,
+      // On the trigger, which is where Android reads the channel from. iOS
+      // shows it at once.
+      trigger: { channelId: "alerts" },
     })
   } catch {
     // No notification permission. The sign-in screen says it next time.

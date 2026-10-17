@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify"
 import { z } from "zod"
 
 import { getDb } from "../db/client"
-import { circleMembers, sosAlerts, userPresence, users } from "../db/schema"
+import { circleMembers, circles, sosAlerts, userPresence, users } from "../db/schema"
 import { circleTopic, userTopic, type BusEnvelope } from "../lib/bus"
 import { toPublicUser } from "../lib/serialize"
 import { extractToken, resolveSession, type AccessTokenClaims } from "../plugins/auth"
@@ -14,9 +14,9 @@ import { CONTROL_HEARTBEAT_MS, clearControlSeen, markControlSeen } from "../serv
 import {
   getCirclePresence,
   projectCirclePresence,
-  projectPresence,
   type RawCirclePresence,
 } from "../services/presence"
+import { alertPosition } from "../services/sos"
 
 const HEARTBEAT_MS = 30_000
 const REAUTH_MS = 60_000
@@ -246,14 +246,22 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
 
       const previous = memberOf
       memberOf = await loadMemberships()
+      let lost = false
       for (const circleId of [...subscribed]) {
-        if (!memberOf.has(circleId)) subscribed.delete(circleId)
+        if (!memberOf.has(circleId)) {
+          subscribed.delete(circleId)
+          lost = true
+        }
       }
 
       // Only circles gained since the last pass are added, so a client that
-      // narrowed its own subscription keeps that choice.
+      // narrowed its own subscription keeps that choice. A circle lost is
+      // said too, since the app goes on asking for one it was not told about.
       const gained = [...memberOf].filter((circleId) => !previous.has(circleId))
-      if (gained.length === 0) return
+      if (gained.length === 0) {
+        if (lost) send({ type: "subscribed", circleIds: [...subscribed] })
+        return
+      }
 
       for (const circleId of gained) subscribed.add(circleId)
       send({ type: "subscribed", circleIds: [...subscribed] })
@@ -282,6 +290,11 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
             if (typeof revoked !== "string" || revoked === sessionId) {
               socket.close(4401, "unauthorized")
             }
+            break
+          }
+          case "membership_changed": {
+            // A circle was deleted, which leaves no feed entry to carry it.
+            if (isMine) void reauthorise()
             break
           }
           case "location": {
@@ -329,8 +342,10 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
                 resolver,
                 presence: userPresence,
                 member: alertMember,
+                settings: circles.settings,
               })
               .from(sosAlerts)
+              .innerJoin(circles, eq(circles.id, sosAlerts.circleId))
               .innerJoin(users, eq(users.id, sosAlerts.userId))
               .leftJoin(resolver, eq(resolver.id, sosAlerts.resolvedBy))
               .leftJoin(userPresence, eq(userPresence.userId, sosAlerts.userId))
@@ -350,33 +365,16 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
             if (!alert) break
 
             // The same projection the REST list uses, because the same map
-            // screen reads both. Raising an SOS un-pauses the raiser by
-            // writing their sharing state, so an open alert already hands the
-            // circle an exact position. Reading user_presence raw on top of
-            // that would keep tracking somebody who set their sharing back or
-            // left the circle, while every other surface honoured them.
-            const seen =
-              alert.member && !alert.alert.resolvedAt
-                ? projectPresence(
-                    {
-                      userId: alert.alert.userId,
-                      sharingState: alert.member.sharingState,
-                      pausedUntil: alert.member.pausedUntil,
-                      resumeToState: alert.member.resumeToState,
-                      lat: alert.presence?.lat ?? null,
-                      lon: alert.presence?.lon ?? null,
-                      accuracyMeters: alert.presence?.accuracyMeters ?? null,
-                      recordedAt: alert.presence?.recordedAt ?? null,
-                      batteryLevel: alert.presence?.batteryLevel ?? null,
-                      isCharging: alert.presence?.isCharging ?? null,
-                      activity: alert.presence?.activity ?? null,
-                      speedMps: alert.presence?.speedMps ?? null,
-                      headingDegrees: alert.presence?.headingDegrees ?? null,
-                    },
-                    userId,
-                    { atPlace: null, sosAlertId: alert.alert.id },
-                  )
-                : null
+            // screen reads both.
+            const seen = alertPosition(
+              {
+                alert: alert.alert,
+                member: alert.member,
+                presence: alert.presence,
+                allowSharingPause: alert.settings.allowSharingPause,
+              },
+              userId,
+            )
 
             send({
               type: "sos",

@@ -1,6 +1,11 @@
 import { Platform } from "react-native"
 
-import { NOTIFICATION_WAKE_TASK, pushType, setupChannels } from "./notifications"
+import {
+  NOTIFICATION_WAKE_TASK,
+  attachNotificationListeners,
+  pushType,
+  setupChannels,
+} from "./notifications"
 
 const mockSetChannel = jest.fn()
 const mockDeleteChannel = jest.fn(async (..._args: unknown[]) => {})
@@ -10,6 +15,21 @@ jest.mock("expo-notifications", () => ({
   setNotificationChannelAsync: (...args: unknown[]) => mockSetChannel(...args),
   deleteNotificationChannelAsync: (...args: unknown[]) => mockDeleteChannel(...args),
   AndroidImportance: { MIN: 3, LOW: 4, DEFAULT: 5, HIGH: 6, MAX: 7 },
+  addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  addNotificationResponseReceivedListener: (listener: (response: unknown) => void) => {
+    mockResponseListener = listener
+    return { remove: jest.fn() }
+  },
+  getLastNotificationResponseAsync: async () => null,
+}))
+let mockResponseListener: ((response: unknown) => void) | null = null
+const mockAnswer = jest.fn(async (payload: unknown) => {
+  const request = (payload as { notification?: { request?: { identifier?: string } } }).notification
+    ?.request
+  return request?.identifier === "hearth-incident"
+})
+jest.mock("@/services/incidentAlarm", () => ({
+  answerIncidentResponse: (payload: unknown) => mockAnswer(payload),
 }))
 jest.mock("expo-application", () => ({ applicationId: "com.binary.rewind.hearth" }))
 type TaskBody = (body: { data: unknown; error: unknown }) => Promise<void>
@@ -128,5 +148,67 @@ describe("the wake task", () => {
     await task()({ data: { data: { type: "wake" } }, error: { message: "no" } })
     expect(mockReportNow).not.toHaveBeenCalled()
     expect(mockReassert).not.toHaveBeenCalled()
+  })
+
+  // The server flags a location request content-available for an iPhone, so
+  // a parked one answers it without being opened. The task then gets the
+  // visible push in the shape expo-notifications gives iOS, alert and all.
+  it("answers a location request an iPhone shows, with a fix", async () => {
+    const nudge = { type: "nudge_requested", circleId: "c1", eventId: "7" }
+    await task()({
+      data: {
+        data: { body: nudge, dataString: JSON.stringify(nudge) },
+        aps: { "alert": { title: "Location requested" }, "content-available": 1 },
+        notification: { title: "Location requested" },
+      },
+      error: null,
+    })
+    expect(mockReportNow).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("the incident's own notification", () => {
+  const okTapped = {
+    actionIdentifier: "incident-ok",
+    notification: {
+      request: { identifier: "hearth-incident", content: { data: { type: "incident" } } },
+    },
+  }
+
+  beforeEach(() => {
+    mockAnswer.mockClear()
+    mockReportNow.mockClear()
+  })
+
+  // Android runs this task for a notification button with the app in the
+  // background or not running, which is how I'm okay works from the lock screen.
+  it("answers I'm okay from the task, without the app", async () => {
+    await mockTasks().get(NOTIFICATION_WAKE_TASK)!({ data: okTapped, error: null })
+    expect(mockAnswer).toHaveBeenCalledWith(okTapped)
+    expect(mockReportNow).not.toHaveBeenCalled()
+  })
+
+  it("is answered rather than opened as a screen when the app hears it", async () => {
+    const onOpen = jest.fn()
+    attachNotificationListeners(onOpen)
+    mockResponseListener!(okTapped)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mockAnswer).toHaveBeenCalledWith(okTapped)
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  it("still opens everything else", async () => {
+    const onOpen = jest.fn()
+    attachNotificationListeners(onOpen)
+    mockResponseListener!({
+      actionIdentifier: "expo.modules.notifications.actions.DEFAULT",
+      notification: {
+        request: { identifier: "x", content: { data: { type: "sos_started", circleId: "c1" } } },
+      },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(onOpen).toHaveBeenCalledWith({ type: "sos_started", circleId: "c1" })
   })
 })

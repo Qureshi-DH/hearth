@@ -249,19 +249,19 @@ describe("possible_incident fires for a real crash", () => {
     const watcher = await registerUser(ctx.app, { displayName: "Watcher" })
     await joinCircle(watcher.headers, circle.invite.code)
 
-    // 110 km/h north up the M32, then a stop, then three and a half minutes on
+    // 110 km/h north up the M32, then a stop, then over five minutes on
     // the same coordinate. Fixes 30 s apart, the tracker's minimum interval,
     // and GPS accuracies a handset returns on an open motorway.
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-300), accuracyMeters: 6, speedMps: 30.5 },
-      { ...northOf(MOTORWAY, 915), recordedAt: at(-270), accuracyMeters: 6, speedMps: 30.9 },
-      { ...northOf(MOTORWAY, 1830), recordedAt: at(-240), accuracyMeters: 7, speedMps: 30.2 },
-      { ...northOf(MOTORWAY, 1930), recordedAt: at(-210), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-420), accuracyMeters: 6, speedMps: 30.5 },
+      { ...northOf(MOTORWAY, 915), recordedAt: at(-390), accuracyMeters: 6, speedMps: 30.9 },
+      { ...northOf(MOTORWAY, 1830), recordedAt: at(-360), accuracyMeters: 7, speedMps: 30.2 },
+      { ...northOf(MOTORWAY, 1930), recordedAt: at(-330), accuracyMeters: 9, speedMps: 0 },
     ])
 
     // The phone is upright and still reporting, so the fixes keep coming from
     // the same spot. Each is its own request, the way the tracker sends them.
-    for (const seconds of [-150, -90, -45, -15]) {
+    for (const seconds of [-270, -210, -150, -90, -45, -15]) {
       await uploadFixes(driver.headers, [
         { ...northOf(MOTORWAY, 1930), recordedAt: at(seconds), accuracyMeters: 9, speedMps: 0 },
       ])
@@ -928,12 +928,12 @@ describe("possible_incident survives an accuracy gate", () => {
     // cell network with accuracies in the hundreds of metres. The car has not
     // moved, and the last thing anybody measured was motorway speed.
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-290), accuracyMeters: 6, speedMps: 30.5 },
-      { ...northOf(MOTORWAY, 915), recordedAt: at(-260), accuracyMeters: 6, speedMps: 30.9 },
-      { ...northOf(MOTORWAY, 1830), recordedAt: at(-230), accuracyMeters: 7, speedMps: 30.2 },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-410), accuracyMeters: 6, speedMps: 30.5 },
+      { ...northOf(MOTORWAY, 915), recordedAt: at(-380), accuracyMeters: 6, speedMps: 30.9 },
+      { ...northOf(MOTORWAY, 1830), recordedAt: at(-350), accuracyMeters: 7, speedMps: 30.2 },
     ])
 
-    for (const seconds of [-200, -140, -80, -20]) {
+    for (const seconds of [-320, -260, -200, -140, -80, -20]) {
       await uploadFixes(driver.headers, [
         {
           ...northOf(MOTORWAY, 1900),

@@ -1,5 +1,6 @@
 import { useEffect } from "react"
 import type {
+  Circle,
   CircleInvite,
   CircleMember,
   CircleSettings,
@@ -12,9 +13,16 @@ import type {
   QuickMessageKey,
   SharingState,
 } from "@hearth/shared"
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 
 import { endpoints } from "@/services/api"
+import { forgetCircle } from "@/services/queryClient"
 import { useAuthStore } from "@/stores/auth"
 import { refreshMotionWatch } from "@/services/location/tracker"
 import { useSettingsStore } from "@/stores/settings"
@@ -125,6 +133,23 @@ export function useCircle(circleId: string | null) {
   return circles?.find((circle) => circle.id === circleId) ?? null
 }
 
+/**
+ * Whether the circles list still holds this circle, read without asking for
+ * the list. Until it has loaded nothing says the circle is gone. A circle
+ * the person left or lost answers every ask with a 403, which a firewall in
+ * front of a home server can answer by locking the house out, so the hooks
+ * below stop asking.
+ */
+function useInCircles(circleId: string | null): boolean {
+  const { data } = useQuery({
+    queryKey: queryKeys.circles,
+    queryFn: endpoints.circles.list,
+    enabled: false,
+    select: (circles: Circle[]) => circles.some((circle) => circle.id === circleId),
+  })
+  return data ?? true
+}
+
 export function useCreateCircle() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -151,15 +176,19 @@ export function useDeleteCircle() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (circleId: string) => endpoints.circles.remove(circleId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.circles }),
+    onSuccess: (_result, circleId) => {
+      forgetCircle(circleId)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.circles })
+    },
   })
 }
 
 export function useMembers(circleId: string | null) {
+  const inCircles = useInCircles(circleId)
   return useQuery({
     queryKey: queryKeys.members(circleId ?? ""),
     queryFn: () => endpoints.circles.members(circleId!),
-    enabled: Boolean(circleId),
+    enabled: Boolean(circleId) && inCircles,
   })
 }
 
@@ -187,8 +216,10 @@ export function useRemoveMember(circleId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (userId: string) => endpoints.circles.removeMember(circleId, userId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.members(circleId) })
+    onSuccess: (_result, userId) => {
+      // Having left, every ask about the circle is a 403, its members first.
+      if (userId === useAuthStore.getState().user?.id) forgetCircle(circleId)
+      else void queryClient.invalidateQueries({ queryKey: queryKeys.members(circleId) })
       void queryClient.invalidateQueries({ queryKey: queryKeys.circles })
     },
   })
@@ -216,10 +247,11 @@ export function useSetNotifications(circleId: string) {
 }
 
 export function useInvites(circleId: string | null, enabled = true) {
+  const inCircles = useInCircles(circleId)
   return useQuery({
     queryKey: queryKeys.invites(circleId ?? ""),
     queryFn: () => endpoints.circles.invites(circleId!),
-    enabled: Boolean(circleId) && enabled,
+    enabled: Boolean(circleId) && enabled && inCircles,
   })
 }
 
@@ -268,10 +300,11 @@ export function useAcceptInvite() {
 }
 
 export function usePresence(circleId: string | null) {
+  const inCircles = useInCircles(circleId)
   return useQuery({
     queryKey: queryKeys.presence(circleId ?? ""),
     queryFn: () => endpoints.locations.presence(circleId!),
-    enabled: Boolean(circleId),
+    enabled: Boolean(circleId) && inCircles,
     // The socket keeps this fresh. The poll is only a fallback for a dead socket.
     refetchInterval: 60_000,
     staleTime: 15_000,
@@ -279,10 +312,11 @@ export function usePresence(circleId: string | null) {
 }
 
 export function usePlaces(circleId: string | null) {
+  const inCircles = useInCircles(circleId)
   return useQuery({
     queryKey: queryKeys.places(circleId ?? ""),
     queryFn: () => endpoints.places.list(circleId!),
-    enabled: Boolean(circleId),
+    enabled: Boolean(circleId) && inCircles,
     staleTime: 5 * 60_000,
   })
 }
@@ -321,21 +355,23 @@ export function useDeletePlace(circleId: string) {
 }
 
 export function usePlaceEvents(circleId: string | null, placeId: string | null) {
+  const inCircles = useInCircles(circleId)
   return useQuery({
     queryKey: queryKeys.placeEvents(circleId ?? "", placeId ?? ""),
     queryFn: () => endpoints.places.events(circleId!, placeId!),
-    enabled: Boolean(circleId && placeId),
+    enabled: Boolean(circleId && placeId) && inCircles,
   })
 }
 
 export function useEvents(circleId: string | null) {
+  const inCircles = useInCircles(circleId)
   return useInfiniteQuery({
     queryKey: queryKeys.events(circleId ?? ""),
     queryFn: ({ pageParam }) =>
       endpoints.events.list(circleId!, { limit: 50, cursor: pageParam as string | undefined }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last: Paginated<FeedEvent>) => last.nextCursor ?? undefined,
-    enabled: Boolean(circleId),
+    enabled: Boolean(circleId) && inCircles,
     staleTime: 30_000,
   })
 }
@@ -349,33 +385,72 @@ export function useMarkFeedRead(circleId: string) {
 }
 
 export function useActiveSos(circleId: string | null) {
+  const inCircles = useInCircles(circleId)
   return useQuery({
     queryKey: queryKeys.sos(circleId ?? ""),
     queryFn: () => endpoints.safety.sosHistory(circleId!, true),
-    enabled: Boolean(circleId),
+    enabled: Boolean(circleId) && inCircles,
     refetchInterval: 30_000,
   })
+}
+
+/**
+ * The caller's own open alert, in this circle or any other they are in. An
+ * admin can close one circle's copy and leave the rest open, and "I'm safe
+ * now" has to stay within reach from whichever circle the screen opened on.
+ * Each circle's entry is the one its map banner reads, so this asks nothing
+ * the maps were not asking already.
+ */
+export function useMyOpenSos(circleId: string) {
+  const me = useAuthStore((state) => state.user?.id ?? null)
+  const { data: circles } = useQuery({
+    queryKey: queryKeys.circles,
+    queryFn: endpoints.circles.list,
+    enabled: false,
+  })
+  const ids = circles
+    ? [circleId, ...circles.map((circle) => circle.id).filter((id) => id !== circleId)].filter(
+        (id) => circles.some((circle) => circle.id === id),
+      )
+    : [circleId]
+  const results = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: queryKeys.sos(id),
+      queryFn: () => endpoints.safety.sosHistory(id, true),
+      refetchInterval: 30_000,
+    })),
+  })
+  for (const result of results) {
+    const mine = result.data?.find((alert) => alert.user.id === me)
+    if (mine) return mine
+  }
+  return null
+}
+
+/**
+ * One press raises it in every circle and switches sharing back to precise in
+ * each, and resolving it closes it everywhere, so every circle's alerts, map
+ * and member list are out of date afterwards, not only this one's.
+ */
+function invalidateEverySos(queryClient: ReturnType<typeof useQueryClient>) {
+  for (const root of ["sos", "presence", "members"]) {
+    void queryClient.invalidateQueries({ queryKey: [root] })
+  }
 }
 
 export function useRaiseSos(circleId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (note?: string | null) => endpoints.safety.raiseSos(circleId, note),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sos(circleId) })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.presence(circleId) })
-    },
+    onSuccess: () => invalidateEverySos(queryClient),
   })
 }
 
-export function useResolveSos(circleId: string) {
+export function useResolveSos() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (alertId: string) => endpoints.safety.resolveSos(alertId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sos(circleId) })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.presence(circleId) })
-    },
+    onSuccess: () => invalidateEverySos(queryClient),
   })
 }
 
@@ -402,11 +477,12 @@ export function useNudge(circleId: string) {
   })
 }
 
-export function useTrips(circleId: string | null, userId: string | null) {
+export function useTrips(circleId: string | null, userId: string | null, enabled = true) {
+  const inCircles = useInCircles(circleId)
   return useQuery({
     queryKey: queryKeys.trips(circleId ?? "", userId ?? ""),
     queryFn: () => endpoints.trips.forMember(circleId!, userId!),
-    enabled: Boolean(circleId && userId),
+    enabled: Boolean(circleId && userId) && enabled && inCircles,
     staleTime: 5 * 60_000,
   })
 }
@@ -414,7 +490,7 @@ export function useTrips(circleId: string | null, userId: string | null) {
 export function useTrip(tripId: string | null) {
   return useQuery({
     queryKey: queryKeys.trip(tripId ?? ""),
-    queryFn: () => endpoints.trips.get(tripId!),
+    queryFn: () => endpoints.trips.get(tripId!, { soft: true }),
     enabled: Boolean(tripId),
     staleTime: Infinity,
   })

@@ -20,8 +20,10 @@ contact emergency services, and nothing in it is a certified crash sensor.
 This is the whole design, so it goes first.
 
 When the phone thinks it has been in a collision it does not alert anybody. It
-puts a full-screen prompt on the phone, sounds a loud notification, and waits
-**30 seconds**.
+asks, and waits **30 seconds**. With Hearth on screen the question is a
+full-screen prompt. Otherwise, which after a crash is the usual case, it is a
+loud notification on the lock screen that says what time the alert will go,
+with an **I'm okay** button.
 
 - **"I'm okay"** dismisses it. Nothing is sent. Nobody is told anything.
 - **"Alert my circle now"** raises the SOS immediately.
@@ -53,7 +55,10 @@ event fits:
 3. **The vehicle then stopped, and stayed stopped for several seconds.** Not
    "the phone went still". A phone lying on the floor of a car that is still
    driving is also still, but the vehicle's vibration keeps coming through the
-   floor, and that is what gives it away.
+   floor, and that is what gives it away. When no current GPS speed says the
+   car stopped, its vibration has to drop to half of what it was before the
+   jolt or less. A smooth motorway shakes a car less than a stopped one is
+   allowed to, so a phone dropped in the footwell there would otherwise pass.
 4. **At least one further signal agreed.** Either the phone was spun hard, or
    cabin pressure rose sharply in the second or two after the jolt, which is
    what an airbag inflating does to a closed car.
@@ -103,7 +108,9 @@ held in a rolling window in memory on the device. The verdict is reached on the
 device. A detection is written to the phone's own storage and nowhere else, and
 dismissing it deletes it. No accelerometer reading, no impact severity and no
 record that a prompt appeared is ever uploaded. The first thing the server hears
-about any of it is the SOS itself, if one is raised.
+about any of it is the SOS itself, if one is raised. The phone's own tracker log
+notes that an incident happened and how it ended, with no readings in it, and
+that log only leaves the phone if you share it.
 
 The detection is stored rather than kept in memory for one reason: the phone
 that has just taken an impact is the one most likely to be restarted by it, and
@@ -140,28 +147,55 @@ If the countdown runs out, the phone:
 
 1. Takes a fresh highest-accuracy location fix and uploads it, so the alert
    carries where the person is now rather than where they were.
-2. Raises a normal SOS in the currently selected circle, with the note
-   "Possible collision detected automatically. No answer from the phone."
+2. Raises an SOS in every circle you're in that has crash alerts turned on,
+   with the note "Possible collision detected automatically. No answer from
+   the phone." A circle that left crash alerts off is not told.
 
 From there it is an ordinary SOS, described below.
 
-The countdown is measured against the wall clock rather than counted down tick
-by tick, because a phone is very likely to be locked or backgrounded after a
-crash and a counter frozen at 14 would be the one failure this feature cannot
-have. The escalation is still sent by the app itself, so it goes out when the
-app is running: at the deadline if it is, and otherwise the moment the phone is
-next picked up.
+**Nothing waits on a timer.** A locked phone does not run the app's timers, and
+a phone is very likely to be locked after a crash. So the countdown is a time on
+the wall clock, and the decision is taken at the next moment the app runs at
+all. That is a location fix arriving, an upload, the operating system's periodic
+background task, the notification's button, or the app coming to the front. On
+a drive the location service is delivering fixes, so in practice that is within
+seconds of the deadline. The detector's own verdict works the same way. It is
+reached by the next batch of sensor samples past its deadline, which the native
+sampler keeps delivering with the screen off.
 
-There are two time limits after that:
+**"I'm okay" on the lock screen.** On Android the button answers without
+opening the app. On an iPhone it opens Hearth and answers there, because iOS
+only passes a button press to an app that is still running, and one that had
+been closed would never hear the answer and would send the alert anyway.
+Tapping the notification itself opens the prompt.
+
+**No signal.** If the alert can't reach the server, the phone keeps it, and it
+survives the app being closed or the phone restarting. The notification changes
+to say it is waiting for a connection, and "I'm okay" still cancels it, since
+nothing has gone out. It is tried again at most every 15 seconds, then 30
+seconds, a minute, and every two minutes after that, and at once whenever the
+phone manages to upload a location fix, because that proves the server can be
+reached. A refusal from the server, such as an account that has been
+deactivated, is not tried again. The app says so if it is open, and nothing
+else happens.
+
+There are two time limits.
 
 - **After five minutes**, escalation stops being automatic. The person may have
   walked away, been driven off, or the app may only now be coming back from a
   restart, and a location from a different quarter of an hour would send help to
-  the wrong place. The prompt stays on screen and says so, and the "Alert my
-  circle now" button still works.
-- **After an hour**, the prompt is dropped without asking. A phone that comes
-  back that long afterwards should not open on "Are you okay?" about something
-  the person plainly walked away from.
+  the wrong place. The prompt and the notification say so, and the "Alert my
+  circle now" button still works. This only applies to deciding. An alert the
+  countdown already decided on before the five minutes were up keeps trying to
+  get through.
+- **After an hour**, the incident is dropped without asking, along with its
+  notification. A phone that comes back that long afterwards should not open on
+  "Are you okay?" about something the person plainly walked away from. That
+  includes an alert that has been waiting an hour for a signal, which is
+  dropped rather than sent that late.
+
+The notification goes away when the incident ends, whether it was answered,
+sent, refused or dropped.
 
 One verdict per incident. After a possible impact is reported, further verdicts
 are suppressed for a minute so a single crash does not report itself repeatedly.
@@ -171,40 +205,107 @@ are suppressed for a minute so a single crash does not report itself repeatedly.
 The manual version, and the thing crash detection escalates into.
 
 **Sending one.** Hold the SOS button for three seconds. A plain tap is far too
-easy to hit through a pocket. An optional note goes with it.
+easy to hit through a pocket. An optional note goes with it. The phone takes a
+fresh highest-accuracy fix first and uploads it, so the alert carries where you
+are now. It waits up to five seconds for that fix and then sends the alert
+anyway. A phone indoors can take far longer, and the fix uploads when it comes.
 
-**What the server does.** In one transaction it forces your sharing state in
-that circle to precise and cancels any pause, then creates the alert. An SOS
-from somebody whose location is paused would be useless, so the emergency wins
-over the privacy setting. Resolving the alert does not put the old setting
-back, so somebody who was paused or approximate has to set it again. A second
-SOS while one is already active is refused rather than duplicated.
+**Where it goes.** To every circle you're in, not only the one on screen. One
+emergency is one emergency, and the person who could help might be in any of
+them. Somebody who shares two of those circles with you is told once.
 
-**Who is told.** Every other member of that circle, at the highest priority the
-transport allows, as "🚨 SOS from _name_" with your note as the body, or "Tap to
-see their location." without one. Notification mutes never apply to it, so
-somebody who muted the circle last Tuesday still gets it. With Expo push it
-arrives on Android on a maximum-importance channel that bypasses Do Not
-Disturb, and on iOS it is marked time sensitive. Through ntfy it goes out at
-ntfy's highest priority, and the ntfy app decides how to show it.
+**What the server does.** In one transaction it opens the alert in each of your
+circles and forces your sharing state in each of them to precise, cancelling
+any pause. An SOS from somebody whose location is paused would be useless, so
+the emergency wins over the privacy setting. That includes a circle you had
+paused or set to approximate on purpose. It sees your exact position while the
+alert is open, and afterwards too, because resolving the alert does not put the
+old setting back. Set it again yourself once you're safe.
 
-A locked phone only hears about an SOS if the server has a push provider set
-up. With `PUSH_PROVIDER=none`, the default, nobody is buzzed. The alert shows
-as the red banner described below, on phones that have Hearth open or open it
-later. [Push notifications](install/push-notifications.md) covers the options
-and what each one needs.
+Pressing again while an alert is open raises nothing new. The server answers
+with the alert that is already open, so a press that seemed to fail on a weak
+signal can be repeated without alerting anybody twice.
 
-**While it is open.** With the SOS screen up the phone takes a highest-accuracy
-fix every 20 seconds on top of its normal cadence, so the circle sees movement
-in near real time. A red banner sits on the circle's map for as long as the
-alert is open, and tapping it jumps to that person.
+**Who is told.** Every other member of those circles, once each, at the highest
+priority the transport allows, as "🚨 SOS from _name_" with your note as the
+body, or "Tap to see their location." without one. Notification mutes never
+apply to it, so somebody who muted the circle last Tuesday still gets it. With
+Expo push it arrives on Android on a maximum-importance channel that bypasses
+Do Not Disturb, and on iOS it is marked time sensitive. Through ntfy it goes
+out at ntfy's highest priority, and the ntfy app decides how to show it.
 
-**Ending it.** The person who raised it, or any admin of the circle, marks it
-resolved. A resolution notice then goes to the circle, the person who raised it
-included. Like the SOS itself, that notice ignores notification mutes.
+An SOS goes ahead of every other notification waiting to be sent. If the push
+provider can't be reached, the server keeps trying, never more than three
+minutes apart, until it gets through or the alert is resolved. One resolved
+before it could be delivered is never sent late.
 
-**Limits on it.** Three alerts per person in each circle per ten minutes, since
-an SOS bypasses mutes and fires at top priority.
+A closed app only hears about an SOS if the server has a push provider set up.
+With `PUSH_PROVIDER=none`, the default, the server can only tell a phone over
+its own connection to it, and the app rings for the alert itself when one
+arrives that way. That covers a phone with Hearth open, an iPhone that is
+sharing its location, which keeps its connection while it does, and an Android
+phone that is on the move. It rings once per SOS, even one open in two
+circles you share, on the same SOS channel, and never for your own. A parked
+Android phone, or one where Hearth was closed, hears nothing until Hearth is
+opened, and then the alert shows as the red banner described below. The same
+goes for a server set to push through a transport this phone can't receive,
+such as a build with no push project in it.
+[Push notifications](install/push-notifications.md) covers the options and what
+each one needs.
+
+**How loud it is.** On an iPhone an SOS is a Time Sensitive notification, not a
+Critical Alert. Time Sensitive gets through any Focus that allows it, Do Not
+Disturb included, and skips the scheduled summary, but it obeys the ring/silent
+switch and the volume. A phone on silent shows it without a sound. Critical
+Alerts, the kind that sound on a silenced phone, need an entitlement Apple
+grants to an app on request, and Hearth does not have one, so it does not
+pretend to. To make the most of what there is, keep Time Sensitive
+Notifications on for Hearth under Settings, Notifications, Hearth, and in each
+Focus you use, allow time sensitive notifications or add Hearth to the apps it
+lets through. The ring/silent switch is the one thing that has to be left on
+for it to make a sound.
+
+On Android an SOS goes on Hearth's SOS channel, at the highest importance and
+set to override Do Not Disturb. Android only lets an app's channel through Do
+Not Disturb once the person has given that app Do Not Disturb access, so the
+setup checklist has an optional step for it that opens the page where it's
+granted. Hearth uses the access for the SOS channel and nothing else, which
+carries an SOS, a possible crash and the server's "Check on" prompt. If you
+changed the SOS channel's own settings by hand, Android keeps your choice, and
+the switch to look for, usually called "Override Do Not Disturb", is on that
+channel in Hearth's notification settings.
+
+**While it is open.** Your phone is on Live, a fix a second, each one uploaded
+as it comes, wherever the app is. The server holds it there by naming a two
+minute window in the reply to every upload, and asks the phone at once over its
+control channel when one is open. A family member's own Live watch is left as
+it was. Turn a circle back down to approximate or paused, or leave it, and that
+circle no longer holds the phone on Live. Once no circle with an open alert sees
+you precisely, the phone steps down.
+
+A phone whose tracker can't run in the background, because it only has
+location permission while the app is in use, gets a fix every 20 seconds from
+the SOS screen instead, and only while that screen is open. With _Share my
+location_ switched off no fix leaves the phone, not even the alert's own. The
+alert still goes out, the SOS screen says so, and your circles see where you
+were last.
+
+A red banner sits on the map of every circle the alert is open in, and tapping
+it jumps to that person.
+
+**Ending it.** The person who raised it marks it resolved, which closes it in
+every circle at once. Any admin of a circle can close it in that circle, and
+only there. Each circle gets its own entry in its feed, and a resolution notice
+goes to everyone in it, the person who raised it included. Somebody in several
+of those circles gets one notice. Like the SOS itself, that notice ignores
+notification mutes. The phone leaves Live within two minutes of the alert being
+resolved.
+
+**Limits on it.** Five fresh alerts per person per ten minutes, since an SOS
+bypasses mutes and fires at top priority. Pressing again on an alert that is
+already open doesn't count, so the limit only meets somebody who has raised and
+resolved five in a row. The route itself takes 60 requests per account per ten
+minutes.
 
 ## The server-side check, which is a different thing
 
@@ -213,23 +314,52 @@ the server against uploaded location fixes. It is worth knowing about, because
 it produces a notification that looks similar and means something quite
 different.
 
-When it sees that somebody was driving at roughly 35 km/h or faster within the
-last five minutes, their latest fix has them stopped, and nothing has moved for
-three minutes, it tells the circle: "Check on _name_. They stopped suddenly
+It looks for four things together.
+
+- Somebody was driving at roughly 35 km/h or faster.
+- The very next fix after their cruising speed had them stopped, no more than
+  40 seconds later. When every fix after the stop is too rough to place a
+  street, as in a tunnel, the next fix may take two minutes. A car that slowed
+  down first, like one pulling onto a petrol station forecourt, shows that in
+  a fix of its own and doesn't count. On Live, where the phone sends a fix a
+  second, the slowing down itself is in the fixes, so there the car has to
+  shed its cruising speed faster than firm braking does, at 4.5 m/s² or more
+  on average.
+- Nothing has moved for five minutes since.
+- The stop isn't at one of the circle's places, or within 40 metres of its
+  edge. Each circle goes by its own places, so a stop at Gran's still reaches
+  a circle that has no place there. Only the first 200 metres of a place's
+  radius count, so a place drawn round a whole town doesn't hide a stop on the
+  bypass through it.
+
+The phone has to send the stop for any of this to work. A phone in a car
+holds back the fixes of a car that isn't going anywhere, and the app sends
+the first fix off road speed straight away for this check. An app from 1.2.0
+or earlier holds that fix back too, so the server's first word after a crash
+is the park fix five minutes later, and this check rarely fires for it. The
+detector on the phone itself doesn't depend on any of this.
+
+When all four hold, the circle is told "Check on _name_. They stopped suddenly
 after driving at _N_ km/h and have not moved since."
 
 Understand what that is. Fixes 30 seconds apart cannot tell a collision from
 parking hard. It is a prompt to check on somebody, not a claim that anything
 happened, and the wording in the app says so. It fires at most once an hour per
 person, it never becomes an SOS on its own, and it does not ask the person
-anything first. It is sent on the same notification channel as an SOS, and
-notification mutes don't silence it. It only reaches circles that person shares
-precisely with, since telling a circle they stopped hard somewhere is precise
-information about somebody who may have chosen to be approximate.
+anything first. It is sent on the same notification channel as an SOS, goes
+ahead of other notifications the same way, and is retried through a push
+outage for up to an hour, unless they have since driven on or stopped sharing
+precisely with that circle. Notification mutes don't silence it. It only
+reaches circles that person shares precisely with, since telling a circle they
+stopped hard somewhere is precise information about somebody who may have
+chosen to be approximate.
 
 The on-phone detector described above is the accurate one. This is the fallback
 that works when the phone cannot sample for itself, and it runs whether or not
 the on-phone detector does.
+
+On a server with no push provider, a phone that hears this check over its own
+connection rings for it the way it rings for an SOS, as [SOS](#sos) describes.
 
 ## Limits
 
@@ -258,15 +388,17 @@ seen. Neither is anything at all while the circle setting is off, which is the
 default state.
 
 **Escalation needs a working phone and a working connection.** A phone that is
-destroyed, out of battery, or has no route to your server sends nothing. If the
-call to the server fails, the app shows the error and leaves the prompt on
-screen with the button, but it does not retry on its own. A self-hosted server
+destroyed, out of battery, or has no route to your server sends nothing. With
+no signal the alert waits on the phone and goes as soon as the server can be
+reached, but only for an hour after the incident, and a phone that is switched
+off or has been force-stopped is not running to send it. A self-hosted server
 that is down is a server that cannot forward an SOS. And one with no push
-provider can only show it to phones that have Hearth open, as [SOS](#sos)
-explains.
+provider can only ring on phones that are still connected to it, as
+[SOS](#sos) explains.
 
-**It needs a selected circle.** If no circle is currently selected in the app,
-the prompt clears without alerting anyone.
+**It needs a circle with crash alerts on.** The alert goes to the circles that
+turned them on. If none of your circles has them on any more by the time it is
+sent, it is dropped without alerting anyone.
 
 **It is tuned to miss rather than to shout.** Every threshold in it was chosen
 so that ordinary driving stays silent, and each one of those choices is a case

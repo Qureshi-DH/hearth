@@ -1,6 +1,11 @@
 import { Pressable, View } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import type { CircleMember, MemberPresence } from "@hearth/shared"
+import {
+  batteryRanOut,
+  issuesBatteryExplains,
+  type CircleMember,
+  type MemberPresence,
+} from "@hearth/shared"
 
 import { Avatar, type AvatarRing } from "@/components/Avatar"
 import { BatteryPill } from "@/components/BatteryPill"
@@ -44,12 +49,17 @@ export function statusLine(presence: MemberPresence | undefined, nearby?: string
   // What the phone said is wrong with it comes before where it last was:
   // "location permission off" is the sentence a parent can act on. Sharing
   // switched off says so however fresh the last fix is, since no more come.
-  const issue = presence.issues?.[0]
+  // A phone that went quiet on a flat battery turned power saving on by
+  // itself, so the battery is the better reason. The server leaves those
+  // issues out already, and an older one that does not is read the same way.
+  const ranOut = presence.stale && batteryRanOut(presence.batteryLevel, presence.isCharging)
+  const issue = presence.issues?.find((each) => !(ranOut && issuesBatteryExplains.includes(each)))
   if (issue && (issue === "sharing_off" || presence.stale || !presence.recordedAt)) {
     return translate(`map:issue_${issue}` as const)
   }
   if (presence.recordedAt && presence.stale) {
-    return `${translate("map:stale")} · ${relativeTime(presence.recordedAt)}`
+    const said = ranOut ? translate("map:batteryRanOut") : translate("map:stale")
+    return `${said} · ${relativeTime(presence.recordedAt)}`
   }
   if (presence.atPlace) {
     const since = presence.atPlace.since ? sinceTime(presence.atPlace.since) : null

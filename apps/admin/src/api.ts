@@ -1,4 +1,9 @@
-import { API_PREFIX, type CurrentUser, type PortalSession } from "@hearth/shared"
+import {
+  API_PREFIX,
+  type CurrentUser,
+  type PortalRefreshResponse,
+  type PortalSession,
+} from "@hearth/shared"
 
 /** What the server said went wrong, in its own words. */
 export class ApiError extends Error {
@@ -20,6 +25,12 @@ interface KeyValueStore {
   getItem(key: string): string | null
   setItem(key: string, value: string): void
   removeItem(key: string): void
+}
+
+/** The part of BroadcastChannel the client needs. */
+export interface TabChannel {
+  postMessage(message: unknown): void
+  addEventListener(type: "message", listener: (event: { data: unknown }) => void): void
 }
 
 /** The part of navigator.locks the client needs. */
@@ -44,6 +55,11 @@ export interface ClientOptions {
    * not a secure context and has no navigator.locks. Null renews without one.
    */
   locks?: LockRunner | null
+  /**
+   * How the other tabs hear that the session ended. Defaults to a
+   * BroadcastChannel where the browser has one. Null keeps it to this tab.
+   */
+  channel?: TabChannel | null
   onSignedOut?: (reason: SignOutReason) => void
 }
 
@@ -60,6 +76,8 @@ const DEVICE_KEY = "hearth.portal.device"
  * the same cookie twice, which the server reads as a stolen token.
  */
 const RENEW_LOCK = "hearth-portal-renew"
+
+const SESSION_CHANNEL = "hearth-portal-session"
 
 /**
  * How long before the access token runs out it is renewed. Sent after that it
@@ -80,6 +98,7 @@ export function createClient(options: ClientOptions = {}) {
   const apiRoot = `${options.base ?? ""}${API_PREFIX}`
   const locks = options.locks === undefined ? browserLocks(options.storage) : options.locks
   const deviceId = browserDeviceId(options.storage)
+  const channel = options.channel === undefined ? browserChannel() : options.channel
   let accessToken: string | null = null
   let renewing: Promise<CurrentUser | null> | null = null
   /** When to renew, counted on this browser's clock from when the token came. */
@@ -89,6 +108,23 @@ export function createClient(options: ClientOptions = {}) {
    * Sent again it would only be refused again, another 4xx for the firewall.
    */
   let refused = false
+
+  // The tabs share one session, so when it ends in one it has ended in all
+  // of them. Told here, the others stop at once rather than each learning
+  // from a 401 on its next poll, which a firewall would count.
+  channel?.addEventListener("message", (event) => {
+    const told = event.data as { type?: string; reason?: SignOutReason } | null
+    if (told?.type !== "signed-out" || !accessToken) return
+    accessToken = null
+    refused = false
+    options.onSignedOut?.(told.reason === "expired" ? "expired" : "signed-out")
+  })
+
+  function ended(reason: SignOutReason) {
+    accessToken = null
+    options.onSignedOut?.(reason)
+    channel?.postMessage({ type: "signed-out", reason })
+  }
 
   async function call<T>(path: string, init: RequestOptions, token: string | null): Promise<T> {
     const headers: Record<string, string> = { accept: "application/json" }
@@ -136,13 +172,16 @@ export function createClient(options: ClientOptions = {}) {
    */
   async function refresh(): Promise<CurrentUser | null> {
     try {
-      return adopt(
-        await call<PortalSession>(
-          "/auth/portal/refresh",
-          { method: "POST", body: { deviceId } },
-          null,
-        ),
+      const answer = await call<PortalRefreshResponse>(
+        "/auth/portal/refresh",
+        { method: "POST", body: { deviceId } },
+        null,
       )
+      if ("signedIn" in answer && answer.signedIn === false) {
+        accessToken = null
+        return null
+      }
+      return adopt(answer as PortalSession)
     } catch (error) {
       if (
         error instanceof ApiError &&
@@ -191,15 +230,19 @@ export function createClient(options: ClientOptions = {}) {
       // under way here, and takes the lock against one in another tab.
       if (renewing) await renewing.catch(() => null)
       await withLock(() => call("/auth/portal/logout", { method: "POST" }, null))
-      accessToken = null
-      options.onSignedOut?.("signed-out")
+      ended("signed-out")
     },
 
     async request<T>(path: string, init: RequestOptions = {}): Promise<T> {
+      // Every administrator route needs a token, so without one the answer
+      // is already known, and asking would only add a 401.
+      if (!accessToken && path.startsWith("/admin/")) {
+        throw new ApiError(401, "unauthorized", "Sign in again.")
+      }
       if (accessToken && (refused || Date.now() >= renewAt)) {
         try {
           if (!(await renew())) {
-            options.onSignedOut?.("expired")
+            ended("expired")
             throw new ApiError(401, "unauthorized", "Sign in again.")
           }
         } catch (error) {
@@ -220,10 +263,18 @@ export function createClient(options: ClientOptions = {}) {
         if (accessToken && accessToken !== token) return call<T>(path, init, accessToken)
         refused = true
         if (await renew()) return call<T>(path, init, accessToken)
-        options.onSignedOut?.("expired")
+        ended("expired")
         throw error
       }
     },
+  }
+}
+
+function browserChannel(): TabChannel | null {
+  try {
+    return typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(SESSION_CHANNEL)
+  } catch {
+    return null
   }
 }
 

@@ -70,6 +70,12 @@ let window: DriveSample[] = []
 let windowStart = 0
 let latestRotation = 0
 let latestPressure: number | undefined
+/**
+ * When the pending verdict is due, on the wall clock. The timer below only
+ * runs while the app is in front, and a locked phone is the usual state after
+ * a crash, so every sample that arrives past this time judges too.
+ */
+let verdictDueAt: number | null = null
 let verdictTimer: ReturnType<typeof setTimeout> | null = null
 let lastVerdictAt = 0
 let firstSpikeAt = 0
@@ -148,7 +154,9 @@ function forget(): void {
  * everything else, which is that the car then stopped.
  */
 function judge(): void {
+  if (verdictTimer !== null) clearTimeout(verdictTimer)
   verdictTimer = null
+  verdictDueAt = null
   const since = firstSpikeAt - VERDICT_CONTEXT_MS
   const event = detectDriveEvent(liveSamples().filter((sample) => sample.t >= since))
   const suppressed = event.kind === "possibleImpact" && Date.now() - lastVerdictAt < COOLDOWN_MS
@@ -178,6 +186,11 @@ function record(sample: SensorSample): void {
   })
   trim(now)
 
+  if (verdictDueAt !== null && now >= verdictDueAt) {
+    judge()
+    if (!sampling()) return
+  }
+
   // A spike starts the clock rather than deciding anything. The detector reads
   // the aftermath from the LARGEST jolt, so if a bigger one lands later, the
   // clock has to follow it: a kerb then a tree, a spin then a barrier. Judging
@@ -187,20 +200,24 @@ function record(sample: SensorSample): void {
   const delta = Math.abs(sample.accelG - 1)
   if (delta < IMPACT.impactG) return
 
-  if (verdictTimer === null) {
+  if (verdictDueAt === null) {
     firstSpikeAt = now
     peakSinceSpike = delta
-    verdictTimer = setTimeout(judge, VERDICT_DELAY_MS)
+    armVerdict(now, now + VERDICT_DELAY_MS)
     return
   }
 
   if (delta <= peakSinceSpike) return
   peakSinceSpike = delta
   const deadline = Math.min(now + VERDICT_DELAY_MS, firstSpikeAt + MAX_VERDICT_DEFER_MS)
-  const wait = deadline - now
-  if (wait <= 0) return
-  clearTimeout(verdictTimer)
-  verdictTimer = setTimeout(judge, wait)
+  if (deadline <= now) return
+  armVerdict(now, deadline)
+}
+
+function armVerdict(now: number, deadline: number): void {
+  verdictDueAt = deadline
+  if (verdictTimer !== null) clearTimeout(verdictTimer)
+  verdictTimer = setTimeout(judge, deadline - now)
 }
 
 const magnitude = (v: { x: number; y: number; z: number }): number =>
@@ -240,7 +257,7 @@ export async function startDriveSensors(handler: (event: DriveEvent) => void): P
     // A verdict still outstanding is holding the only copy of the evidence. The
     // first native batch is a whole cadence away, so this still lands ahead of
     // every sample either source has to offer.
-    if (verdictTimer === null) {
+    if (verdictDueAt === null) {
       window = []
       windowStart = 0
       latestRotation = 0
@@ -294,7 +311,7 @@ export function stopDriveSensors(): void {
   // waiting for, and the reclassification that stops us is usually the crashed
   // car reading as still. So keep sampling until it has decided.
   startEpoch += 1
-  if (verdictTimer !== null) {
+  if (verdictDueAt !== null) {
     stopRequested = true
     return
   }

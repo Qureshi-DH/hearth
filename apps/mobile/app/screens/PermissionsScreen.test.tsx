@@ -3,6 +3,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context"
 import { act, fireEvent, render } from "@testing-library/react-native"
 
 import { PermissionsScreen } from "./PermissionsScreen"
+import { useAuthStore } from "../stores/auth"
 import { useSettingsStore } from "../stores/settings"
 import { ThemeProvider } from "../theme/context"
 
@@ -17,6 +18,9 @@ let mockRefresh: "available" | "restricted" | "denied" | "n/a" = "available"
 let mockManufacturer: string | null = "google"
 let mockRestricted = false
 let mockLowPower = false
+let mockDnd: "granted" | "denied" | "unknown" | "n/a" = "n/a"
+const mockSetupChannels = jest.fn(async () => {})
+const mockOpenDnd = jest.fn(async () => {})
 
 jest.mock("../services/permissions", () => ({
   getPermissionSnapshot: jest.fn(async () => ({
@@ -30,15 +34,20 @@ jest.mock("../services/permissions", () => ({
     lowPowerMode: mockLowPower,
     manufacturer: mockManufacturer,
     serviceStopped: false,
+    dndAccess: mockDnd,
   })),
   // The real one, because a copy in a mock would be a second list of makes
   // to keep in step with the first.
   vendorFor: jest.requireActual("../services/permissions").vendorFor,
   openAppSettings: jest.fn(async () => {}),
   openBatterySaverSettings: jest.fn(async () => {}),
+  openDndAccessSettings: () => mockOpenDnd(),
   openLocationSettings: jest.fn(async () => {}),
   requestBatteryExemption: jest.fn(async () => {}),
   requestNotifications: jest.fn(async () => "granted"),
+}))
+jest.mock("../services/notifications", () => ({
+  setupChannels: () => mockSetupChannels(),
 }))
 jest.mock("../services/location/motion", () => ({
   motionPermission: jest.fn(async () => {
@@ -124,7 +133,9 @@ describe("PermissionsScreen", () => {
     mockManufacturer = "google"
     mockRestricted = false
     mockLowPower = false
+    mockDnd = "n/a"
     useSettingsStore.setState({ incidentDetection: false })
+    useAuthStore.setState({ serverInfo: { pushProvider: "expo" } as never })
   })
 
   /** Runs the body on one platform and puts the other back whatever happens. */
@@ -299,5 +310,54 @@ describe("PermissionsScreen", () => {
     expect(mockCalls).toEqual(["refreshMotionWatch"])
     expect(queryByText("permissions:stateTodo")).toBeNull()
     expect(getByText("common:done")).toBeTruthy()
+  })
+
+  describe("Do Not Disturb", () => {
+    it("offers the access on Android as a step that does not hold the checklist open", async () => {
+      await on("android", async () => {
+        mockMotion = "granted"
+        mockBattery = "exempt"
+        mockDnd = "denied"
+        const { getByText } = await renderScreen()
+
+        expect(getByText("permissions:dndTitle")).toBeTruthy()
+        expect(getByText("permissions:dndBody")).toBeTruthy()
+        // Optional, so it reads Check and the checklist can still be Done.
+        expect(getByText("common:done")).toBeTruthy()
+        await act(async () => {
+          fireEvent.press(getByText(/permissions:dndOpen/))
+        })
+        expect(mockOpenDnd).toHaveBeenCalled()
+      })
+    })
+
+    it("puts the SOS channel through again once the access is there", async () => {
+      await on("android", async () => {
+        mockDnd = "granted"
+        const { getByText, queryByText } = await renderScreen()
+
+        expect(getByText("permissions:dndGrantedBody")).toBeTruthy()
+        expect(queryByText(/permissions:dndOpen/)).toBeNull()
+        // Android only lets a channel through Do Not Disturb when it is written
+        // with the access already granted.
+        expect(mockSetupChannels).toHaveBeenCalled()
+      })
+    })
+
+    it("is not on an iPhone's checklist, which has no such switch", async () => {
+      await on("ios", async () => {
+        const { queryByText } = await renderScreen()
+        expect(queryByText("permissions:dndTitle")).toBeNull()
+        expect(mockSetupChannels).not.toHaveBeenCalled()
+      })
+    })
+  })
+
+  it("says what notifications cannot do on a server without push", async () => {
+    useAuthStore.setState({ serverInfo: { pushProvider: "none" } as never })
+    const { getByText, queryByText } = await renderScreen()
+
+    expect(getByText("permissions:notificationsNoPushBody")).toBeTruthy()
+    expect(queryByText("permissions:notificationsBody")).toBeNull()
   })
 })

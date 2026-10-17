@@ -8,6 +8,7 @@ import { ThemeProvider } from "../theme/context"
 import { storage } from "../utils/storage"
 
 const mockDeleteAccount = jest.fn(async (_password: string) => ({ ok: true as const }))
+const mockExport = jest.fn(async () => ({}))
 const mockSignedOut = jest.fn()
 
 jest.mock("../hooks/queries", () => ({
@@ -17,7 +18,7 @@ jest.mock("../services/api", () => ({
   endpoints: {
     auth: {
       deleteAccount: (password: string) => mockDeleteAccount(password),
-      exportData: jest.fn(),
+      exportData: () => mockExport(),
     },
     locations: { eraseMine: jest.fn() },
   },
@@ -110,5 +111,41 @@ describe("PrivacyDataScreen delete account", () => {
     expect(mockSignedOut).not.toHaveBeenCalled()
     expect(useTrackingStore.getState().queue).toHaveLength(1)
     expect(queueKeys().length).toBeGreaterThan(0)
+  })
+})
+
+describe("PrivacyDataScreen export", () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    storage.clearAll()
+  })
+
+  // The server takes three in ten minutes and answers the fourth with a 429,
+  // which a firewall in front of it can answer by locking the house out.
+  it("asks the person to wait rather than ask for a third export inside ten minutes", async () => {
+    const { getByText } = render(
+      <ThemeProvider>
+        <SafeAreaProvider
+          initialMetrics={{
+            frame: { x: 0, y: 0, width: 390, height: 844 },
+            insets: { top: 0, left: 0, right: 0, bottom: 0 },
+          }}
+        >
+          <PrivacyDataScreen
+            navigation={navigation as never}
+            route={{ key: "privacy", name: "PrivacyData" } as never}
+          />
+        </SafeAreaProvider>
+      </ThemeProvider>,
+    )
+    await act(async () => {})
+    for (let i = 0; i < 3; i += 1) {
+      await act(async () => {
+        fireEvent.press(getByText("settings:export"))
+      })
+    }
+    const { useToastStore } = require("../stores/toast") as typeof import("../stores/toast")
+    expect(mockExport).toHaveBeenCalledTimes(2)
+    expect(useToastStore.getState().current?.message).toContain("settings:exportWait")
   })
 })

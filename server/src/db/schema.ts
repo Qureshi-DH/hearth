@@ -473,6 +473,12 @@ export const checkIns = pgTable(
     lon: doublePrecision("lon").notNull(),
     note: text("note"),
     placeId: uuid("place_id").references(() => places.id, { onDelete: "set null" }),
+    /**
+     * How closely the circle could see her when she checked in. A check-in
+     * is never shown more exactly than this, whatever sharing becomes later.
+     * Null rows answer to the sharing state at read time alone.
+     */
+    sharedAs: text("shared_as").$type<SharingState>(),
     createdAt: createdAt(),
   },
   (table) => [
@@ -561,6 +567,28 @@ export const notificationOutbox = pgTable(
   ],
 )
 
+/**
+ * Expo answers a send with a ticket and only learns later whether APNs or FCM
+ * took it. The receipt is where an uninstalled app shows up, so each ticket
+ * waits here until its receipt has been read.
+ */
+export const pushTickets = pgTable(
+  "push_tickets",
+  {
+    id: text("id").primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    /** The token it went to, so a receipt never clears a token registered since. */
+    token: text("token").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index("push_tickets_created_idx").on(table.createdAt),
+    index("push_tickets_session_idx").on(table.sessionId),
+  ],
+)
+
 export const auditLog = pgTable(
   "audit_log",
   {
@@ -601,4 +629,5 @@ export type FeedEventRow = typeof events.$inferSelect
 export type SosAlertRow = typeof sosAlerts.$inferSelect
 export type TripRow = typeof trips.$inferSelect
 export type OutboxRow = typeof notificationOutbox.$inferSelect
+export type PushTicketRow = typeof pushTickets.$inferSelect
 export type AuditRow = typeof auditLog.$inferSelect

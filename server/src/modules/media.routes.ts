@@ -1,11 +1,17 @@
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
-import { notFound } from "../lib/errors"
+import { AppError, notFound } from "../lib/errors"
 import { AVATAR_PREFIX, getObject, storageEnabled } from "../services/storage"
 
 /** The 128 random bits in the name are what stands in for a permission. */
 const KEY_PATTERN = /^avatars\/[0-9a-f]{32}\.(jpg|png|webp)$/
+
+/** One transparent pixel. */
+const EMPTY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=",
+  "base64",
+)
 
 /**
  * Serving objects through the API keeps the bucket off the public internet, so
@@ -28,18 +34,37 @@ export const mediaRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["system"],
         summary: "Fetch a stored image",
+        description:
+          "A picture that is no longer stored, because its owner replaced or removed it or " +
+          "the server's storage was switched off, answers 200 with one transparent pixel, " +
+          "`x-hearth-media: missing` and `cache-control: no-store`. Other phones keep the old " +
+          "address until their roster refreshes, and a 404 for each would be a 4xx in " +
+          "ordinary use. Storage that is failing answers 503, which no phone keeps. An " +
+          "address the server could never have made is still a 404.",
         params: z.object({ "*": z.string().max(200) }),
       },
       config: { rateLimit: { max: 600, timeWindow: "1 minute" } },
     },
     async (request, reply) => {
       const key = request.params["*"]
-      if (!storageEnabled() || !key.startsWith(AVATAR_PREFIX) || !KEY_PATTERN.test(key)) {
-        throw notFound()
-      }
+      if (!key.startsWith(AVATAR_PREFIX) || !KEY_PATTERN.test(key)) throw notFound()
 
-      const object = await getObject(key)
-      if (!object) throw notFound()
+      let object: Awaited<ReturnType<typeof getObject>> = null
+      try {
+        object = storageEnabled() ? await getObject(key) : null
+      } catch (error) {
+        // A 5xx, which a phone does not keep, rather than the blank, which it
+        // would go on showing under this address once storage is back.
+        request.log.warn({ err: error }, "image storage did not answer")
+        throw new AppError(503, "storage_unavailable", "Image storage is not answering.")
+      }
+      if (!object) {
+        return reply
+          .header("content-type", "image/png")
+          .header("x-hearth-media", "missing")
+          .header("cache-control", "no-store")
+          .send(EMPTY_PNG)
+      }
 
       reply.header("content-type", object.contentType)
       if (object.contentLength) reply.header("content-length", String(object.contentLength))

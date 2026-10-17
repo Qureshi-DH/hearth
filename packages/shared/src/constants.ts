@@ -144,6 +144,15 @@ export const REGISTRATION_MODES = ["open", "invite", "closed"] as const
 export type RegistrationMode = (typeof REGISTRATION_MODES)[number]
 
 /**
+ * Why an SOS was raised. A person pressing the button wants everyone they are
+ * in a circle with. A crash prompt nobody answered is raised in the circles
+ * that turned crash alerts on and in the one the request names, which the app
+ * always picks from among those.
+ */
+export const SOS_REASONS = ["sos", "incident"] as const
+export type SosReason = (typeof SOS_REASONS)[number]
+
+/**
  * What a nudge can carry. A family tracker needs a short, urgent word rather
  * than a conversation, so a nudge is either a bare request for someone's
  * location or one of these attached to it. There is no chat and nothing to
@@ -230,10 +239,24 @@ export const DEFAULTS = {
   sosPingIntervalSeconds: 20,
   maxLocationBatchSize: 200,
   maxMessageLength: 500,
+  /**
+   * Nudges and quick messages one account may send in ten minutes before the
+   * server answers 429. The phone keeps to its own smaller budget, so a
+   * person tapping is told to wait before any request leaves the phone, and
+   * a second phone signed in to the same account still has room.
+   */
+  maxNudgesPerTenMinutes: 10,
+  phoneNudgesPerTenMinutes: 6,
   /** Off until a circle opts in. A motorway commute would alert every day. */
   defaultSpeedAlertKmh: 0,
-  /** So one GPS spike cannot raise an alert. */
-  speedAlertConsecutiveFixes: 2,
+  /**
+   * How long the speed has to stay over the threshold, in recorded time. A
+   * GPS spike lasts a few seconds at most, and at Live's fix a second two
+   * spiking fixes in a row are one second. Fifteen seconds is three fixes of
+   * the driving tier, and any two at the thirty second cadence or slower, so
+   * a sparse drive that holds the speed is still told about.
+   */
+  speedAlertHeldSeconds: 15,
   speedAlertCooldownSeconds: 30 * 60,
   /**
    * Incident heuristic. Travelling at least incidentMinSpeedMps, then dropping
@@ -241,12 +264,17 @@ export const DEFAULTS = {
    *
    * The deceleration window has to be wider than the stillness it then demands,
    * or the two can never both hold: the fast fix would always have aged out of
-   * the window by the time enough stillness had accumulated behind it.
+   * the window by the time enough stillness had accumulated behind it. The
+   * slack past the stillness is for an upload that lands a few minutes late.
+   *
+   * Five minutes of stillness, because three is a red light, a level crossing
+   * or a petrol pump, and a family told to check on somebody who is filling up
+   * learns to ignore the alert that comes on the SOS channel.
    */
   incidentMinSpeedMps: 9.7,
   incidentStoppedSpeedMps: 1,
-  incidentDecelerationWindowSeconds: 300,
-  incidentStillnessSeconds: 180,
+  incidentDecelerationWindowSeconds: 10 * 60,
+  incidentStillnessSeconds: 5 * 60,
 } as const
 
 /**

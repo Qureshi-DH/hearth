@@ -9,6 +9,7 @@ import type {
   PushProvider,
   RegistrationMode,
   SharingState,
+  SosReason,
   QuickMessageKey,
   WsMessageType,
 } from "./constants"
@@ -100,6 +101,12 @@ export interface AuthResponse extends AuthTokens {
 /** What the admin portal holds after signing in. Its refresh token stays in a cookie. */
 export type PortalSession = Omit<AuthResponse, "refreshToken">
 
+/**
+ * POST /auth/portal/refresh. `{ signedIn: false }` when there is no cookie or
+ * its session is over. A server from before this answers those with a 401.
+ */
+export type PortalRefreshResponse = PortalSession | { signedIn: false }
+
 export interface SessionSummary {
   id: string
   deviceName: string | null
@@ -187,7 +194,11 @@ export interface InvitePreview {
   role: CircleRole
   expiresAt: string | null
   valid: boolean
-  reason?: "expired" | "revoked" | "exhausted" | "not_found" | "already_member"
+  /**
+   * "removed" is for a signed-in viewer the circle removed, holding a code
+   * made before that. Joining needs one made since.
+   */
+  reason?: "expired" | "revoked" | "exhausted" | "not_found" | "already_member" | "removed"
 }
 
 /* ------------------------------------------------------------------ */
@@ -228,8 +239,8 @@ export interface LocationBatchResponse {
     distanceFilterMeters: number
   }
   /**
-   * Somebody has this member's page open until then, so the phone should
-   * report live. Null when nobody is looking.
+   * The phone should report live until then, because somebody has this
+   * member's page open or the member has an SOS open. Null when neither.
    */
   watchedUntil: string | null
 }
@@ -342,6 +353,15 @@ export interface Place {
   membersInside: string[]
 }
 
+/**
+ * What an edit of a place answers when somebody else deleted it first. A
+ * server from before this answers 404 instead.
+ */
+export interface PlaceGone {
+  id: string
+  gone: true
+}
+
 export interface PlaceEvent {
   id: string
   placeId: string
@@ -396,6 +416,29 @@ export interface SosAlert {
   lastFixAt: string | null
 }
 
+/**
+ * POST /circles/:circleId/sos. A server from before `reason` ignores it and
+ * raises in that circle only.
+ */
+export interface RaiseSosRequest {
+  note?: string | null
+  /** "sos" when it is left out. */
+  reason?: SosReason
+}
+
+/**
+ * The alert in the circle the request named, with everything the raise did.
+ * 201 when it raised something new, 200 when every alert was already open, so
+ * pressing again after a lost reply is safe. A server from before one press
+ * covered every circle leaves `alerts` out and answers a repeat with 409.
+ */
+export interface RaiseSosResponse extends SosAlert {
+  /** Everybody it reaches, once each however many circles they share with the raiser. */
+  notifiedMembers: number
+  /** One per circle the alert is open in, the named circle's included. */
+  alerts?: SosAlert[]
+}
+
 export interface CheckIn {
   id: string
   circleId: string
@@ -429,6 +472,21 @@ export interface Trip {
   startPlaceName: string | null
   endPlaceName: string | null
 }
+
+export interface TripPathPoint {
+  recordedAt: string
+  lat: number
+  lon: number
+  speedMps: number | null
+}
+
+/**
+ * GET /trips/:tripId. With `soft=true` a trip the viewer can no longer see,
+ * or one that is gone, comes back as `{ id, visible: false }` instead of a
+ * 403 or a 404. A server from before that answer leaves `visible` out.
+ */
+export type TripDetailResponse =
+  (Trip & { visible?: true; path: TripPathPoint[] }) | { id: string; visible: false }
 
 /* ------------------------------------------------------------------ */
 /* Push                                                                */
@@ -499,6 +557,11 @@ export interface AdminCircleSummary {
  * Counts and times, never a position.
  */
 export interface AdminOverview {
+  /**
+   * The zone the days are drawn in. The viewer's, or UTC when the database
+   * does not know theirs. A server from before this leaves it out.
+   */
+  timeZone?: string
   /** The window's days in the viewer's time zone, oldest first, as YYYY-MM-DD. */
   days: string[]
   /** Fixes recorded on each day. */
@@ -534,6 +597,11 @@ export interface AdminPhone {
   state: AdminPhoneState
   /** What the phone itself said stands between it and reporting. */
   issues: PresenceIssue[]
+  /**
+   * The phone is no longer reporting and its last reading was nearly flat,
+   * off the charger. What the battery explains is left out of `issues`.
+   */
+  batteryRanOut?: boolean
 }
 
 export type AdminCheckId =
@@ -634,6 +702,27 @@ export type WsClientMessage =
  */
 export interface RefreshMemberResponse {
   asked: "socket" | "pushed" | "held" | "fresh" | "no_device" | "unsupported"
+}
+
+/**
+ * POST /circles/:circleId/nudge/:userId. A server from before these fields
+ * answers `{ ok: true }` alone.
+ */
+export interface NudgeResponse {
+  ok: true
+  /**
+   * The notification. "held" when the sender asked the same person the same
+   * thing moments ago, so they were not notified twice. "paused" when a bare
+   * ask for a location went to somebody who paused sharing, and nothing went.
+   * "gone" when they are no longer in the circle, and nothing went either.
+   */
+  notified?: "sent" | "held" | "paused" | "gone"
+  /**
+   * The ask for a fresh fix that goes with a bare ask for a location, in the
+   * words of RefreshMemberResponse. Null for a message, which asks nothing of
+   * the phone.
+   */
+  asked?: RefreshMemberResponse["asked"] | "paused" | null
 }
 
 export type { WsMessageType }

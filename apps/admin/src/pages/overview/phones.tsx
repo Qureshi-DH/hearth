@@ -3,7 +3,7 @@ import type { AdminPhone, AdminPhoneState } from "@hearth/shared"
 import { Avatar } from "../../components/ui"
 import { phonesSummary, sortPhones, statusOf } from "../../dashboard"
 import { ago, dateTime } from "../../format"
-import { ISSUE_LABEL, PHONE_STATE_LABEL, PLATFORM_LABEL } from "../../labels"
+import { BATTERY_RAN_OUT_LABEL, ISSUE_LABEL, PHONE_STATE_LABEL, PLATFORM_LABEL } from "../../labels"
 import type { OverviewQuery } from "../../queries"
 import { Failed, MoreLink, Tile, Widget } from "./parts"
 
@@ -85,11 +85,12 @@ function PhoneRow({ phone, now }: { phone: AdminPhone; now: number }) {
           <Avatar name={phone.displayName} color={phone.avatarColor} size={30} />
           <div className="person-text">
             <p className="person-name">{phone.displayName}</p>
-            {phone.issues.length > 0 ? (
+            {phone.issues.length > 0 || phone.batteryRanOut ? (
               <ul className="phone-issues">
                 {phone.issues.map((issue) => (
                   <li key={issue}>{ISSUE_LABEL[issue]}</li>
                 ))}
+                {phone.batteryRanOut ? <li>{BATTERY_RAN_OUT_LABEL}</li> : null}
               </ul>
             ) : null}
           </div>

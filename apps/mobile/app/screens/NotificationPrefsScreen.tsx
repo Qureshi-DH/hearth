@@ -20,6 +20,7 @@ import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { eventVisual } from "@/utils/activity"
+import { minutesToWait, takePushTest } from "@/utils/budget"
 import { formatWhen } from "@/utils/time"
 import { useHeader } from "@/utils/useHeader"
 
@@ -175,6 +176,11 @@ function PushTransport() {
   const [testing, setTesting] = useState(false)
 
   const sendTest = async () => {
+    const waitMs = takePushTest()
+    if (waitMs > 0) {
+      toast.info(translate("notifications:testWait", { minutes: minutesToWait(waitMs) }))
+      return
+    }
     setTesting(true)
     try {
       await endpoints.push.test()

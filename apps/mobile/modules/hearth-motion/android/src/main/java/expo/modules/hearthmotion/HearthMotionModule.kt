@@ -2,6 +2,7 @@ package expo.modules.hearthmotion
 
 import android.Manifest
 import android.app.ActivityManager
+import android.app.NotificationManager
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.ComponentName
@@ -150,6 +151,8 @@ class HearthMotionModule : Module() {
 
     AsyncFunction("isPowerSaveModeAsync") { powerSaveMode() }
 
+    AsyncFunction("isNotificationPolicyAccessGrantedAsync") { notificationPolicyAccess() }
+
     AsyncFunction("requestIgnoreBatteryOptimizationsAsync") { requestIgnoreBatteryOptimizations() }
 
     AsyncFunction("openVendorPowerManagerAsync") { openVendorPowerManager() }
@@ -237,6 +240,11 @@ class HearthMotionModule : Module() {
   private fun powerSaveMode(): Boolean {
     val manager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
     return manager?.isPowerSaveMode ?: false
+  }
+
+  private fun notificationPolicyAccess(): Boolean {
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+    return manager?.isNotificationPolicyAccessGranted ?: false
   }
 
   private fun startObservingPower() {

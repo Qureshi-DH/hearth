@@ -26,6 +26,8 @@ import { circlePolygon, zoomForRadius } from "@/utils/map"
 import { useHeader } from "@/utils/useHeader"
 
 const RADIUS_STEPS = [50, 100, 150, 250, 400, 600, 1000, 1500, 2500, 5000]
+/** In code points, as the server counts a name. */
+const MAX_NAME = 80
 
 /**
  * The map is the control. The place sits under a fixed crosshair and the user
@@ -41,6 +43,9 @@ export const PlaceEditorScreen: FC<AppStackScreenProps<"PlaceEditor">> = ({
   const lastFix = useTrackingStore((state) => state.lastFix)
   const { data: places } = usePlaces(circleId)
   const existing = places?.find((place) => place.id === placeId)
+  // Deleted on another phone while this one's list was minutes old. Saving
+  // would only be told it is gone.
+  const gone = Boolean(placeId && places && !existing)
   const save = useSavePlace(circleId)
   const remove = useDeletePlace(circleId)
 
@@ -48,7 +53,11 @@ export const PlaceEditorScreen: FC<AppStackScreenProps<"PlaceEditor">> = ({
   const cameraRef = useRef<CameraRef>(null)
   // A name the caller suggested, such as the street the geocoder gave for
   // the spot somebody is standing on, is a draft the person edits.
-  const [name, setName] = useState(existing?.name ?? route.params.name ?? "")
+  // The field's own limit does not shorten a value it is handed, and a
+  // street and a town from the geocoder can run past what the server keeps.
+  const [name, setName] = useState(
+    existing?.name ?? [...(route.params.name ?? "")].slice(0, MAX_NAME).join(""),
+  )
   const [icon, setIcon] = useState<PlaceIcon>(existing?.icon ?? "home")
   const [radius, setRadius] = useState(existing?.radiusMeters ?? DEFAULTS.defaultPlaceRadiusMeters)
   const [center, setCenter] = useState<{ lat: number; lon: number }>(() => {
@@ -102,8 +111,9 @@ export const PlaceEditorScreen: FC<AppStackScreenProps<"PlaceEditor">> = ({
   }
 
   const submit = async () => {
+    if (gone) return
     try {
-      await save.mutateAsync({
+      const saved = await save.mutateAsync({
         placeId,
         name: name.trim(),
         icon,
@@ -111,6 +121,11 @@ export const PlaceEditorScreen: FC<AppStackScreenProps<"PlaceEditor">> = ({
         lon: center.lon,
         radiusMeters: radius,
       })
+      if ("gone" in saved) {
+        toast.info(translate("places:gone"))
+        navigation.navigate("Main", { screen: "Places" })
+        return
+      }
       toast.success(translate("common:done"))
       navigation.goBack()
     } catch (error) {
@@ -127,7 +142,8 @@ export const PlaceEditorScreen: FC<AppStackScreenProps<"PlaceEditor">> = ({
         style: "destructive",
         onPress: async () => {
           try {
-            await remove.mutateAsync(existing.id)
+            const removed = await remove.mutateAsync(existing.id)
+            if (removed.gone) toast.info(translate("places:gone"))
             navigation.navigate("Main", { screen: "Places" })
           } catch (error) {
             toast.error((error as Error).message)
@@ -195,7 +211,7 @@ export const PlaceEditorScreen: FC<AppStackScreenProps<"PlaceEditor">> = ({
           onChangeText={setName}
           labelTx="places:name"
           placeholderTx="places:namePlaceholder"
-          maxLength={80}
+          maxLength={MAX_NAME}
           inputWrapperStyle={themed($input)}
         />
 
@@ -255,11 +271,12 @@ export const PlaceEditorScreen: FC<AppStackScreenProps<"PlaceEditor">> = ({
           />
         </View>
 
+        {gone ? <Text size="sm" tx="places:gone" style={{ color: theme.colors.textDim }} /> : null}
         <PrimaryButton
           tx="common:save"
           onPress={submit}
           loading={save.isPending}
-          disabled={!name.trim()}
+          disabled={!name.trim() || gone}
         />
         {existing ? <PrimaryButton tx="common:delete" variant="ghost" onPress={destroy} /> : null}
       </ScrollView>

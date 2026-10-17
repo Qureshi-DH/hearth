@@ -311,3 +311,66 @@ describe("the silent push envelope", () => {
     expect(sent[0]).toMatchObject({ priority: "high", title: "Phone offline" })
   })
 })
+
+describe("a location request", () => {
+  const sent: Array<Record<string, unknown>> = []
+
+  function stubExpo() {
+    sent.length = 0
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: { body: string }) => {
+        sent.push(...(JSON.parse(init.body) as Array<Record<string, unknown>>))
+        return Response.json({ data: [{ status: "ok", id: "ticket" }] })
+      }),
+    )
+    return createPushDriver({ PUSH_PROVIDER: "expo" } as unknown as AppConfig)
+  }
+
+  const target = (platform: "ios" | "android"): DeliveryTarget => ({
+    sessionId: "s",
+    token: "ExponentPushToken[x]",
+    provider: "expo",
+    platform,
+  })
+
+  const nudge: PushMessage = {
+    userId: "u",
+    title: "Location requested",
+    body: "Sami asked where you are.",
+    channel: "alerts",
+    priority: "high",
+    data: { type: "nudge_requested", circleId: "c", eventId: "1" },
+  }
+
+  // A parked iPhone runs the app in the background for a visible push only
+  // when it is flagged content-available. Without it the ask waits until
+  // somebody opens Hearth on that phone.
+  it("wakes the app on an iPhone as well as showing, at the priority an alert travels at", async () => {
+    const driver = stubExpo()
+    await driver.send(target("ios"), nudge)
+    expect(sent[0]).toMatchObject({
+      _contentAvailable: true,
+      priority: "high",
+      title: "Location requested",
+    })
+    expect(sent[0]).not.toHaveProperty("ttl")
+  })
+
+  it("needs no flag on Android, where the app's task sees every push", async () => {
+    const driver = stubExpo()
+    await driver.send(target("android"), nudge)
+    expect(sent[0]).not.toHaveProperty("_contentAvailable")
+    expect(sent[0]).toMatchObject({ priority: "high" })
+  })
+
+  it("leaves every other visible notification to the phone's owner", async () => {
+    const driver = stubExpo()
+    await driver.send(target("ios"), {
+      ...nudge,
+      title: "Phone offline",
+      data: { type: "device_offline" },
+    })
+    expect(sent[0]).not.toHaveProperty("_contentAvailable")
+  })
+})

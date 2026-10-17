@@ -46,6 +46,20 @@ describe("a session ending", () => {
     expect(request.content.title.length).toBeGreaterThan(0)
   })
 
+  // expo-notifications reads the Android channel from the trigger and
+  // ignores one on the content, where the notice lands on the default
+  // channel rather than the alerts one the family set up.
+  it("puts the notice on the alerts channel, where Android reads it from", async () => {
+    AppState.currentState = "background"
+    await sessionExpired()
+    const request = mockSchedule.mock.calls[0]![0] as {
+      content: Record<string, unknown>
+      trigger: { channelId?: string } | null
+    }
+    expect(request.trigger).toEqual({ channelId: "alerts" })
+    expect(request.content.channelId).toBeUndefined()
+  })
+
   it("lets the tracker finish stopping before it clears the queue", async () => {
     useTrackingStore.getState().enqueue([
       {

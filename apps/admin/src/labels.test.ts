@@ -2,6 +2,7 @@ import { PLATFORMS, PRESENCE_ISSUES, PUSH_PROVIDERS, REGISTRATION_MODES } from "
 import { describe, expect, it } from "vitest"
 
 import {
+  BATTERY_RAN_OUT_LABEL,
   ISSUE_LABEL,
   PHONE_STATE_LABEL,
   PLATFORM_LABEL,
@@ -51,6 +52,13 @@ describe("the portal's labels", () => {
       background_restricted: "Background activity is restricted",
       service_stopped: "The location service was stopped",
     })
+  })
+
+  // The app says the same under the member's name, and the offline alert
+  // says it too, so nobody reads "Power saving mode is on" for a dead phone.
+  it("say a quiet phone's battery likely ran out", () => {
+    expect(BATTERY_RAN_OUT_LABEL).toBe("The battery has most likely run out")
+    readsAsWords(BATTERY_RAN_OUT_LABEL)
   })
 
   it("use one wording for sign-up, wherever it is shown", () => {

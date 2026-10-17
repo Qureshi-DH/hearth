@@ -1,10 +1,13 @@
 import type { AdminOutboxEntry } from "@hearth/shared"
 import { useState } from "react"
 
-import { client } from "../client"
+import { pushTestBudget } from "../budget"
+import { browserStorage, client } from "../client"
 import { Badge, Button, Card, Empty, Loading, Problem, useToast } from "../components/ui"
 import { ago, count } from "../format"
 import { OUTBOX_EVERY_MS, useAdminAction, useOutbox, useStats } from "../queries"
+
+const takeTest = pushTestBudget(browserStorage())
 
 const FILTERS: Array<{ value: AdminOutboxEntry["status"] | "all"; label: string }> = [
   { value: "all", label: "All" },
@@ -75,6 +78,12 @@ export function Notifications({ myId }: { myId: string }) {
             <Button
               busy={test.isPending}
               onClick={async () => {
+                const waitMs = takeTest()
+                if (waitMs > 0) {
+                  const minutes = Math.max(1, Math.ceil(waitMs / 60_000))
+                  toast(`That's a few tests already. Try again in ${minutes} min.`)
+                  return
+                }
                 try {
                   await test.mutateAsync(undefined)
                   toast("A test notification is on its way to your own devices.")

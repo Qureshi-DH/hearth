@@ -114,6 +114,12 @@ export interface StoredObject {
   contentLength?: number
 }
 
+/**
+ * Null only when storage says there is no such object. Anything else, a
+ * refused connection or a restart, is thrown, because a caller that took it
+ * for "missing" would hand out a blank that a phone keeps after storage is
+ * back.
+ */
 export async function getObject(key: string): Promise<StoredObject | null> {
   const config = getConfig()
   try {
@@ -126,8 +132,9 @@ export async function getObject(key: string): Promise<StoredObject | null> {
       contentType: result.ContentType ?? "application/octet-stream",
       contentLength: result.ContentLength,
     }
-  } catch {
-    return null
+  } catch (error) {
+    if ((error as { name?: string }).name === "NoSuchKey") return null
+    throw error
   }
 }
 

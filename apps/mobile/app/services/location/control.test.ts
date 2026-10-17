@@ -5,6 +5,10 @@ jest.mock("@/services/api", () => ({
 }))
 
 let mockUrl: string | null = "wss://hearth.test/api/v1/ws?access_token=t"
+const mockNotice = jest.fn()
+jest.mock("@/services/socketAlerts", () => ({
+  noticeSocketAlert: (...args: unknown[]) => mockNotice(...args),
+}))
 const mockRefreshTokens = jest.fn(async (): Promise<{ accessToken: string } | null> => null)
 
 /** Every socket the channel opened, in order. */
@@ -64,6 +68,14 @@ afterEach(() => {
 })
 
 describe("the control channel", () => {
+  it("hands an SOS it hears to the alerts, since it is the line a locked phone keeps", () => {
+    control.setWanted(true)
+    sockets[0]!.accept()
+    const sos = { type: "sos", circleId: "c1", alert: { id: "a1" } }
+    sockets[0]!.receive(sos)
+    expect(mockNotice).toHaveBeenCalledWith(sos)
+  })
+
   it("opens when wanted and declares itself the phone's channel", () => {
     control.setWanted(true)
     expect(sockets).toHaveLength(1)

@@ -798,19 +798,38 @@ describe("freshness", () => {
     mockLastFix = null
     mockRefresh.mockClear()
     ;(AppState.addEventListener as jest.Mock).mockClear()
+    const { storage } = require("../utils/storage") as typeof import("../utils/storage")
+    storage.clearAll()
   })
+
+  const appListeners = () =>
+    (AppState.addEventListener as jest.Mock).mock.calls.map(
+      ([, listener]) => listener as (state: string) => void,
+    )
+  const comeBack = () => {
+    act(() => appListeners().forEach((listener) => listener("background")))
+    act(() => appListeners().forEach((listener) => listener("active")))
+  }
 
   it("asks the server for the quiet phones' fixes when the map opens, and again on return", async () => {
     await renderMap()
     expect(mockRefresh).toHaveBeenCalledTimes(1)
     expect(mockRefresh).toHaveBeenCalledWith("circle-1")
 
-    const listeners = (AppState.addEventListener as jest.Mock).mock.calls.map(
-      ([, listener]) => listener as (state: string) => void,
-    )
-    act(() => listeners.forEach((listener) => listener("background")))
-    act(() => listeners.forEach((listener) => listener("active")))
+    const later = Date.now() + 31_000
+    const clock = jest.spyOn(Date, "now").mockReturnValue(later)
+    comeBack()
+    clock.mockRestore()
     expect(mockRefresh).toHaveBeenCalledTimes(2)
+  })
+
+  // The server already holds each phone to one ask in ten minutes, so asking
+  // again inside half a minute changes nothing, and enough of them reach the
+  // route's own limit and a 429.
+  it("does not ask again for the same circle inside half a minute, however often it comes back", async () => {
+    await renderMap()
+    for (let i = 0; i < 5; i += 1) comeBack()
+    expect(mockRefresh).toHaveBeenCalledTimes(1)
   })
 
   it("draws the phone's own newest fix before the server has it", async () => {

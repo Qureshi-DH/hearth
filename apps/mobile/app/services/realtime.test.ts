@@ -2,6 +2,8 @@ import type { FeedEvent, MemberPresence } from "@hearth/shared"
 
 import { queryKeys } from "@/hooks/queryKeys"
 import { queryClient } from "@/services/queryClient"
+import { useAuthStore } from "@/stores/auth"
+import { usePushStore } from "@/stores/push"
 
 import { realtime } from "./realtime"
 
@@ -9,6 +11,13 @@ jest.mock("@/services/api", () => ({
   api: { websocketUrl: () => "wss://hearth.test/api/v1/ws" },
 }))
 jest.mock("@/services/location/tracker", () => ({ reportNow: jest.fn() }))
+const mockSchedule = jest.fn(async (..._args: unknown[]) => "id")
+const mockDismiss = jest.fn(async (..._args: unknown[]) => {})
+jest.mock("expo-notifications", () => ({
+  scheduleNotificationAsync: (...args: unknown[]) => mockSchedule(...args),
+  dismissNotificationAsync: (...args: unknown[]) => mockDismiss(...args),
+  AndroidNotificationPriority: { MAX: "max" },
+}))
 
 /** Every socket the client opened, in order. */
 const sockets: FakeSocket[] = []
@@ -237,5 +246,187 @@ describe("a socket the server refused for its token", () => {
     realtime.refresh()
 
     expect(sockets).toHaveLength(2)
+  })
+})
+
+describe("an alert over the socket on a server without push", () => {
+  const sam = { id: "sam", displayName: "Sam", avatarColor: "#888888", avatarUrl: null }
+  // One press opens an alert in each circle in the same transaction, so they
+  // share a start. Separate presses never do.
+  let pressed = 0
+  const sos = (
+    id: string,
+    user = sam,
+    circleId = "c1",
+    startedAt = new Date(Date.UTC(2026, 0, 1) + (pressed += 1) * 60_000).toISOString(),
+  ) => ({
+    type: "sos",
+    circleId,
+    alert: {
+      id,
+      circleId,
+      user,
+      startedAt,
+      resolvedAt: null,
+      resolvedBy: null,
+      note: null,
+      lastLat: 51.45,
+      lastLon: -2.58,
+      lastFixAt: new Date().toISOString(),
+    },
+  })
+  const scheduled = () => mockSchedule.mock.calls.map(([request]) => request as Record<string, any>)
+
+  beforeEach(() => {
+    mockSchedule.mockClear()
+    mockDismiss.mockClear()
+    useAuthStore.setState({
+      user: { id: "me" } as never,
+      serverInfo: { pushProvider: "none" } as never,
+    })
+    usePushStore.setState({ setup: { kind: "none" } })
+    realtime.connect()
+    sockets[0]!.accept()
+  })
+
+  afterEach(() => {
+    useAuthStore.setState({ user: null, serverInfo: null })
+    usePushStore.setState({ setup: null })
+  })
+
+  it("rings for somebody else's SOS on the SOS channel, with no position in it", () => {
+    sockets[0]!.receive(sos("a1"))
+
+    expect(scheduled()).toHaveLength(1)
+    const [request] = scheduled()
+    expect(request!.trigger).toEqual({ channelId: "sos" })
+    expect(request!.content.interruptionLevel).toBe("timeSensitive")
+    expect(request!.content.data).toEqual({ type: "sos_started", alertId: "a1", circleId: "c1" })
+    expect(JSON.stringify(request)).not.toContain("51.45")
+  })
+
+  it("rings once for an alert, however many times the frame arrives", () => {
+    const frame = sos("a2")
+    sockets[0]!.receive(frame)
+    sockets[0]!.receive(frame)
+    expect(scheduled()).toHaveLength(1)
+  })
+
+  it("never rings for your own SOS", () => {
+    sockets[0]!.receive(sos("a3", { ...sam, id: "me" }))
+    expect(scheduled()).toHaveLength(0)
+  })
+
+  it("leaves it to push when the server has a provider", () => {
+    useAuthStore.setState({ serverInfo: { pushProvider: "expo" } as never })
+    usePushStore.setState({ setup: { kind: "registered", provider: "expo" } })
+    sockets[0]!.receive(sos("a4"))
+    expect(scheduled()).toHaveLength(0)
+  })
+
+  it("rings when push is configured but cannot reach this phone", () => {
+    useAuthStore.setState({ serverInfo: { pushProvider: "expo" } as never })
+    usePushStore.setState({ setup: { kind: "unsupported", reason: "no project id" } })
+    sockets[0]!.receive(sos("a5"))
+    expect(scheduled()).toHaveLength(1)
+  })
+
+  it("rings for the server's possible-incident check, which arrives as a feed event", () => {
+    sockets[0]!.receive({
+      type: "event",
+      circleId: "c1",
+      event: {
+        ...event("e1", 0),
+        type: "possible_incident",
+        actor: sam,
+        summary: "Sam stopped suddenly after driving at 60 km/h",
+      },
+    })
+
+    expect(scheduled()).toHaveLength(1)
+    const [request] = scheduled()
+    expect(request!.trigger).toEqual({ channelId: "sos" })
+    expect(request!.content.body).toBe("Sam stopped suddenly after driving at 60 km/h")
+    expect(request!.content.data).toEqual(
+      expect.objectContaining({ type: "possible_incident", circleId: "c1", userId: "sam" }),
+    )
+  })
+
+  it("rings once for one press, though it opened an alert in each circle", () => {
+    const at = "2026-02-01T09:00:00.000Z"
+    sockets[0]!.receive(sos("a7", sam, "c1", at))
+    sockets[0]!.receive(sos("a8", sam, "c2", at))
+    expect(scheduled()).toHaveLength(1)
+    const [request] = scheduled()
+
+    // An admin closing it in one circle leaves it open in the other.
+    sockets[0]!.receive({
+      type: "event",
+      circleId: "c1",
+      event: { ...event("e3", 0), type: "sos_resolved", payload: { alertId: "a7" } },
+    })
+    expect(mockDismiss).not.toHaveBeenCalled()
+    sockets[0]!.receive({
+      type: "event",
+      circleId: "c2",
+      event: {
+        ...event("e4", 0),
+        circleId: "c2",
+        type: "sos_resolved",
+        payload: { alertId: "a8" },
+      },
+    })
+    expect(mockDismiss).toHaveBeenCalledWith(request!.identifier)
+  })
+
+  it("takes the SOS away again once it is resolved", () => {
+    sockets[0]!.receive(sos("a6"))
+    const [request] = scheduled()
+    sockets[0]!.receive({
+      type: "event",
+      circleId: "c1",
+      event: { ...event("e2", 0), type: "sos_resolved", payload: { alertId: "a6" } },
+    })
+    expect(mockDismiss).toHaveBeenCalledWith(request!.identifier)
+  })
+})
+
+describe("the circles the socket says it got", () => {
+  // The server says so when somebody removes you or deletes a circle. Left
+  // in the list, the circle goes on being polled, a 403 every time.
+  it("asks for the circles again when one the app holds is missing", () => {
+    queryClient.setQueryData(queryKeys.circles, [{ id: "c1" }, { id: "c2" }])
+    const fetchSpy = jest.fn(async () => [{ id: "c1" }])
+    queryClient.getQueryCache().find({ queryKey: queryKeys.circles })!.setOptions({
+      queryKey: queryKeys.circles,
+      queryFn: fetchSpy,
+    })
+    realtime.connect()
+    sockets[0]!.accept()
+
+    sockets[0]!.receive({ type: "subscribed", circleIds: ["c1"] })
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it("leaves the list alone when the socket agrees with it", () => {
+    queryClient.setQueryData(queryKeys.circles, [{ id: "c1" }])
+    const fetchSpy = jest.fn(async () => [{ id: "c1" }])
+    queryClient.getQueryCache().find({ queryKey: queryKeys.circles })!.setOptions({
+      queryKey: queryKeys.circles,
+      queryFn: fetchSpy,
+    })
+    realtime.connect()
+    sockets[0]!.accept()
+
+    sockets[0]!.receive({ type: "subscribed", circleIds: ["c1"] })
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it("ignores a message it has never heard of, as an older app does", () => {
+    realtime.connect()
+    sockets[0]!.accept()
+    expect(() => sockets[0]!.receive({ type: "something_new", circleId: "c1" })).not.toThrow()
   })
 })

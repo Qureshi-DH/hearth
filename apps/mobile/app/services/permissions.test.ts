@@ -6,6 +6,7 @@ import * as Location from "expo-location"
 import {
   addPowerStateListener,
   getPermissionSnapshot,
+  openDndAccessSettings,
   openVendorPowerManager,
   requestBatteryExemption,
   vendorFor,
@@ -24,6 +25,7 @@ jest.mock("../../modules/hearth-motion", () => ({
     openVendorPowerManagerAsync: jest.fn(async () => "com.miui.securitycenter/AutoStart"),
     addListener: jest.fn(() => ({ remove: jest.fn() })),
     getBackgroundRefreshStatusAsync: jest.fn(async () => "available"),
+    isNotificationPolicyAccessGrantedAsync: jest.fn(async () => false),
   },
 }))
 
@@ -34,7 +36,8 @@ type NativeMock = Record<
   | "requestIgnoreBatteryOptimizationsAsync"
   | "openVendorPowerManagerAsync"
   | "addListener"
-  | "getBackgroundRefreshStatusAsync",
+  | "getBackgroundRefreshStatusAsync"
+  | "isNotificationPolicyAccessGrantedAsync",
   jest.Mock
 >
 
@@ -66,6 +69,7 @@ jest.mock("expo-intent-launcher", () => ({
   ActivityAction: {
     LOCATION_SOURCE_SETTINGS: "android.settings.LOCATION_SOURCE_SETTINGS",
     BATTERY_SAVER_SETTINGS: "android.settings.BATTERY_SAVER_SETTINGS",
+    NOTIFICATION_POLICY_ACCESS_SETTINGS: "android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS",
   },
   startActivityAsync: jest.fn(async () => ({ resultCode: 0 })),
 }))
@@ -91,6 +95,7 @@ beforeEach(() => {
   native.isLowPowerModeAsync.mockResolvedValue(false)
   native.requestIgnoreBatteryOptimizationsAsync.mockResolvedValue(true)
   native.openVendorPowerManagerAsync.mockResolvedValue("com.miui.securitycenter/AutoStart")
+  native.isNotificationPolicyAccessGrantedAsync.mockResolvedValue(false)
   ;(Linking.openSettings as jest.Mock).mockResolvedValue(undefined)
 })
 
@@ -204,6 +209,38 @@ describe("getPermissionSnapshot", () => {
     const snapshot = await getPermissionSnapshot()
 
     expect(snapshot.manufacturer).toBeNull()
+  })
+})
+
+describe("Do Not Disturb access", () => {
+  it("reads what Android says about it", async () => {
+    onPlatform("android")
+    expect((await getPermissionSnapshot()).dndAccess).toBe("denied")
+    native.isNotificationPolicyAccessGrantedAsync.mockResolvedValue(true)
+    expect((await getPermissionSnapshot()).dndAccess).toBe("granted")
+  })
+
+  it("says unknown, rather than guessing, on a build whose module cannot tell", async () => {
+    onPlatform("android")
+    native.isNotificationPolicyAccessGrantedAsync.mockRejectedValue(new TypeError("not a function"))
+    expect((await getPermissionSnapshot()).dndAccess).toBe("unknown")
+  })
+
+  it("is not a question on iOS", async () => {
+    onPlatform("ios")
+    expect((await getPermissionSnapshot()).dndAccess).toBe("n/a")
+    expect(native.isNotificationPolicyAccessGrantedAsync).not.toHaveBeenCalled()
+  })
+
+  it("opens the page where it is granted, or the app's page when that is missing", async () => {
+    onPlatform("android")
+    await openDndAccessSettings()
+    expect(IntentLauncher.startActivityAsync).toHaveBeenCalledWith(
+      "android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS",
+    )
+    ;(IntentLauncher.startActivityAsync as jest.Mock).mockRejectedValueOnce(new Error("none"))
+    await openDndAccessSettings()
+    expect(Linking.openSettings).toHaveBeenCalledTimes(1)
   })
 })
 

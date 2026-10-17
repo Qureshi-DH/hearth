@@ -26,6 +26,7 @@ import {
   notFound,
   tooManyRequests,
   unauthorized,
+  wrongPassword,
 } from "../lib/errors"
 import { emailSchema } from "../lib/email"
 import { avatarColorFor, normalizeEmail } from "../lib/ids"
@@ -736,7 +737,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     async (request) => {
       const user = await loadCurrentUser(request)
       if (!(await verifyPassword(request.body.password, user.passwordHash))) {
-        throw unauthorized("Password is incorrect.")
+        throw wrongPassword("Password is incorrect.")
       }
 
       const owned = await db

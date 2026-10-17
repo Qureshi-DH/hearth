@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FC } from "react"
 import { View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
-import { QUICK_MESSAGES } from "@hearth/shared"
+import { QUICK_MESSAGES, type NudgeResponse } from "@hearth/shared"
 import { useFocusEffect } from "@react-navigation/native"
 
 import { Avatar } from "@/components/Avatar"
@@ -39,6 +39,7 @@ import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { activityIconName, atUnnamedSpot, onTheMove } from "@/utils/activity"
+import { minutesToWait, takeNudge } from "@/utils/budget"
 import { quickMessagesFor, sendQuickMessage } from "@/utils/quickMessages"
 import { availableDirectionsApps, openDirections, type DirectionsApp } from "@/utils/directions"
 import { formatSpeed } from "@/utils/format"
@@ -57,7 +58,6 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   const member = useMember(circleId, userId)
   const { data: presence } = usePresence(circleId)
   const { data: places } = usePlaces(circleId)
-  const { data: trips } = useTrips(circleId, userId)
   const nudge = useNudge(circleId)
   const updateMember = useUpdateMember(circleId)
   const removeMember = useRemoveMember(circleId)
@@ -72,8 +72,12 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   const liveAvailable = !isSelf && !entry?.approximate && onTheMove(entry)
   // Opening the page asks their phone for one fresh fix, the way opening the
   // map asks everyone's. The server holds it to one ask per half minute.
-  // The server decides for a member whose presence has not arrived yet.
-  const askable = !isSelf && (!entry || (entry.sharingState === "precise" && !entry.approximate))
+  // The server decides for a member whose presence has not arrived yet. A
+  // circle gone from the list would answer with a 403.
+  const askable =
+    Boolean(circle) &&
+    !isSelf &&
+    (!entry || (entry.sharingState === "precise" && !entry.approximate))
   // Settled somewhere nobody has named. Naming it turns every future
   // arrival into "at the clinic" rather than a pin on a road.
   const unnamedSpot = atUnnamedSpot(entry) ? entry : null
@@ -87,6 +91,7 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
     entry?.sharingState === "precise" &&
     !entry.approximate &&
     (isSelf || circle?.settings.allowHistory)
+  const { data: trips } = useTrips(circleId, userId, Boolean(canSeeHistory))
 
   const name = member?.nickname ?? member?.user.displayName ?? ""
   useHeader({ title: name, leftIcon: "back", onLeftPress: () => navigation.goBack() }, [
@@ -113,10 +118,20 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
     else setChoosingDirections(true)
   }
 
+  // One budget for every nudge and message from this phone, so a person
+  // tapping is told to wait before the server would answer 429.
+  const withinBudget = () => {
+    const waitMs = takeNudge()
+    if (waitMs === 0) return true
+    toast.info(translate("member:nudgeWait", { minutes: minutesToWait(waitMs) }))
+    return false
+  }
+
   const askNudge = async () => {
+    if (!withinBudget()) return
     try {
-      await nudge.mutateAsync({ userId })
-      toast.success(translate("map:nudged", { name }))
+      const answer = await nudge.mutateAsync({ userId })
+      announceAsk(answer, name)
     } catch (error) {
       toast.error((error as Error).message)
     }
@@ -124,9 +139,20 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
 
   const [choosingMessage, setChoosingMessage] = useState(false)
   const sendQuick = async (quick: (typeof QUICK_MESSAGES)[number]) => {
+    if (!withinBudget()) return
     try {
-      await sendQuickMessage((message) => nudge.mutateAsync({ userId, ...message }), quick)
-      toast.success(translate("member:messageSent", { name, body: quick.body }))
+      let answer: unknown
+      await sendQuickMessage(async (message) => {
+        answer = await nudge.mutateAsync({ userId, ...message })
+      }, quick)
+      const notified = (answer as NudgeResponse | undefined)?.notified
+      if (notified === "gone") {
+        toast.info(translate("member:nudgeGone", { name }))
+      } else if (notified === "held") {
+        toast.info(translate("member:messageHeld", { name }))
+      } else {
+        toast.success(translate("member:messageSent", { name, body: quick.body }))
+      }
     } catch (error) {
       toast.error((error as Error).message)
     }
@@ -176,6 +202,10 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   if (!member) return <Screen preset="fixed" />
 
   const canManage = circle?.role === "owner" || circle?.role === "admin"
+  // Only the owner removes an admin. The server refuses anyone else.
+  const canRemove =
+    member.role !== "owner" &&
+    (isSelf || circle?.role === "owner" || (circle?.role === "admin" && member.role !== "admin"))
   const speed = entry?.approximate ? null : formatSpeed(entry?.speedMps, units)
   const activityIcon = entry?.approximate
     ? null
@@ -400,7 +430,7 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
             onPress={() => navigation.navigate("Sharing", { circleId })}
           />
         ) : null}
-        {member.role !== "owner" && (canManage || isSelf) ? (
+        {canRemove ? (
           <ListRow
             tx={isSelf ? "member:leave" : "member:remove"}
             icon="person-remove-outline"
@@ -444,6 +474,32 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
       />
     </Screen>
   )
+}
+
+/**
+ * What became of an ask for a location, in the words the server chose. A
+ * server from before those words says only that it is fine, and keeps the
+ * old line.
+ */
+function announceAsk(answer: NudgeResponse | undefined, name: string) {
+  if (answer?.notified === "paused") return toast.info(translate("member:nudgePaused", { name }))
+  if (answer?.notified === "held") return toast.info(translate("member:nudgeHeld", { name }))
+  if (answer?.notified === "gone") return toast.info(translate("member:nudgeGone", { name }))
+  switch (answer?.asked) {
+    case "socket":
+      return toast.success(translate("member:askedSocket", { name }))
+    case "pushed":
+    case "held":
+      return toast.success(translate("member:askedPushed", { name }))
+    case "fresh":
+      return toast.success(translate("member:askedFresh", { name }))
+    case "no_device":
+      return toast.info(translate("member:askedNoDevice", { name }))
+    case "unsupported":
+      return toast.info(translate("member:askedUnsupported", { name }))
+    default:
+      return toast.success(translate("map:nudged", { name }))
+  }
 }
 
 const $container: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({

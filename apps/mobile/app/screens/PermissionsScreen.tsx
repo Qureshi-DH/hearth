@@ -12,16 +12,19 @@ import { reportHealth } from "@/services/health"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { refreshMotionWatch, requestPermissions, startTracking } from "@/services/location/tracker"
 import { ensureMotionPermission, motionPermission } from "@/services/location/motion"
+import { setupChannels } from "@/services/notifications"
 import {
   getPermissionSnapshot,
   openAppSettings,
   openBatterySaverSettings,
+  openDndAccessSettings,
   openLocationSettings,
   requestBatteryExemption,
   requestNotifications,
   vendorFor,
   type PermissionSnapshot,
 } from "@/services/permissions"
+import { useAuthStore } from "@/stores/auth"
 import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
 import { useTrackingStore } from "@/stores/tracking"
@@ -55,6 +58,7 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
   )
   const [snapshot, setSnapshot] = useState<PermissionSnapshot | null>(null)
   const incidentDetection = useSettingsStore((state) => state.incidentDetection)
+  const pushProvider = useAuthStore((state) => state.serverInfo?.pushProvider)
   // The classifier runs whenever tracking does, so the motion row is asked of
   // everyone. It only disappears where the phone cannot classify motion at
   // all, and there is nothing to ask for.
@@ -76,6 +80,9 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
     // to the foreground, rather than through Allow, and a tracker already
     // running would otherwise stay GPS-only until the next launch.
     if (motionState === "granted") void refreshMotionWatch()
+    // Android lets a channel through Do Not Disturb only if the channel is
+    // written while the access is held, and the grant was made in Settings.
+    if (next.dndAccess === "granted") void setupChannels()
   }, [])
 
   // Users flip toggles in Settings and come straight back. That return is not
@@ -222,7 +229,13 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
           key: "notifications",
           icon: "notifications",
           title: translate("permissions:notificationsTitle"),
-          body: translate("permissions:notificationsBody"),
+          // Without push the server cannot reach a phone whose app is closed,
+          // and saying "SOS alerts" here without that would be a promise.
+          body: translate(
+            pushProvider === "none" || pushProvider === "webpush"
+              ? "permissions:notificationsNoPushBody"
+              : "permissions:notificationsBody",
+          ),
           state:
             snapshot.notifications === "granted"
               ? "done"
@@ -243,6 +256,27 @@ export const PermissionsScreen: FC<AppStackScreenProps<"Permissions">> = ({ navi
                     },
                   },
         },
+        // Optional, so it reads Check rather than Needed and never keeps the
+        // checklist from Done. Only Android has the switch.
+        ...((Platform.OS === "android" && snapshot.dndAccess !== "n/a"
+          ? [
+              {
+                key: "dnd",
+                icon: "moon" as IoniconName,
+                title: translate("permissions:dndTitle"),
+                body: translate(
+                  snapshot.dndAccess === "granted"
+                    ? "permissions:dndGrantedBody"
+                    : "permissions:dndBody",
+                ),
+                state: (snapshot.dndAccess === "granted" ? "done" : "info") as ItemState,
+                action:
+                  snapshot.dndAccess === "granted"
+                    ? undefined
+                    : { label: translate("permissions:dndOpen"), onPress: openDndAccessSettings },
+              },
+            ]
+          : []) as Item[]),
         ...((Platform.OS === "android"
           ? [
               {

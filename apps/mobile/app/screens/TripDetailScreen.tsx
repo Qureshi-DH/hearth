@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "reac
 import { View, type ViewStyle } from "react-native"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
 
+import { EmptyState } from "@/components/EmptyState"
 import { HearthMap, TrailGapLayer, TrailLayer } from "@/components/HearthMap"
 import { Screen } from "@/components/Screen"
 import { StatTile } from "@/components/StatTile"
@@ -24,7 +25,11 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
   const { tripId } = route.params
   const { themed, theme } = useAppTheme()
   const units = useSettingsStore((state) => state.units)
-  const { data: trip } = useTrip(tripId)
+  const { data } = useTrip(tripId)
+  // A list on screen outlives the sharing it was read under, and a trip can
+  // be folded into the next one when a late backlog lands.
+  const gone = data?.visible === false
+  const trip = data && data.visible !== false ? data : null
   const cameraRef = useRef<CameraRef>(null)
   const startNearby = useNearby(
     trip && !trip.startPlaceName ? trip.startLat : null,
@@ -63,6 +68,17 @@ export const TripDetailScreen: FC<AppStackScreenProps<"TripDetail">> = ({ naviga
     }
   }, [trip?.id, mapReady]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  if (gone) {
+    return (
+      <Screen preset="fixed" safeAreaEdges={["bottom"]} contentContainerStyle={themed($container)}>
+        <EmptyState
+          headingTx="trips:gone"
+          contentTx="trips:goneBody"
+          style={{ paddingTop: theme.spacing.xxl }}
+        />
+      </Screen>
+    )
+  }
   if (!trip) return <Screen preset="fixed" />
 
   const endpointDot = (color: string) => (

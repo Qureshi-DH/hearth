@@ -14,6 +14,7 @@ import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
+import { cleanInviteCode } from "@/utils/inviteCode"
 
 /** Accepts a URL, a deep link, or a bare code, since a QR could hold any of them. */
 export function extractInviteCode(raw: string): string | null {
@@ -26,7 +27,7 @@ export const JoinCircleScreen: FC<AppStackScreenProps<"JoinCircle">> = ({ naviga
   const status = useAuthStore((state) => state.status)
   const setPendingInvite = useAuthStore((state) => state.setPendingInvite)
   const setActiveCircle = useSettingsStore((state) => state.setActiveCircle)
-  const [code, setCode] = useState((route.params?.code ?? "").toUpperCase())
+  const [code, setCode] = useState(cleanInviteCode(route.params?.code ?? ""))
   const [scanning, setScanning] = useState(false)
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
 
@@ -71,7 +72,9 @@ export const JoinCircleScreen: FC<AppStackScreenProps<"JoinCircle">> = ({ naviga
             ? translate("join:alreadyMember")
             : reason === "not_found"
               ? translate("join:notFound")
-              : null
+              : reason === "removed"
+                ? translate("join:removed")
+                : null
 
   return (
     <SheetScreen scroll>
@@ -106,7 +109,7 @@ export const JoinCircleScreen: FC<AppStackScreenProps<"JoinCircle">> = ({ naviga
 
         <SheetTextField
           value={code}
-          onChangeText={(value) => setCode(value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+          onChangeText={(value) => setCode(cleanInviteCode(value))}
           labelTx="join:codeLabel"
           autoCapitalize="characters"
           autoCorrect={false}

@@ -13,7 +13,7 @@ export const client = createClient({
 })
 
 /** Reading localStorage throws in some locked-down browsers rather than returning null. */
-function browserStorage(): Storage | undefined {
+export function browserStorage(): Storage | undefined {
   try {
     return window.localStorage
   } catch {

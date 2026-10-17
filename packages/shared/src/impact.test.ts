@@ -33,6 +33,8 @@ function noise(seed: number): () => number {
 
 /** Road and engine vibration, which is a car under way. */
 const ROAD_G = 0.2
+/** A motorway smooth enough to shake the car less than IMPACT.restNoiseG. */
+const SMOOTH_ROAD_G = 0.08
 const PARKED_G = 0.017
 
 const cruising = (speedMps: number) => (): Omit<DriveSample, "t"> => ({
@@ -349,6 +351,61 @@ describe("detectDriveEvent", () => {
     expect(detectDriveEvent(samples).kind).toBe("none")
   })
 
+  it("ignores a phone dropped in the footwell on a smooth motorway", () => {
+    // A smooth road shakes the car less than a stopped one is allowed to, so
+    // the phone on the mat passes every absolute test of rest. It tumbled on
+    // the way down, and with no GPS speed nothing rules the spin out. All
+    // that gives it away is that the road is still coming through the floor
+    // as strongly as it did through the seat.
+    const rng = noise(37)
+    const samples = [
+      ...trace(6, () => ({ accelG: 1 + SMOOTH_ROAD_G * rng(), rotationRps: 0.2, pressure: 1013 })),
+      { t: 6000, accelG: 1 + 8, rotationRps: 9, pressure: 1013 },
+      ...trace(8, () => ({ accelG: 1 + 0.07 * rng(), rotationRps: 0.05, pressure: 1013 }), 6100),
+    ]
+    expect(detectDriveEvent(samples).kind).toBe("none")
+  })
+
+  it("still catches a crash on that smooth motorway, where the car stops shaking", () => {
+    const rng = noise(41)
+    const samples = [
+      ...trace(6, () => ({ accelG: 1 + SMOOTH_ROAD_G * rng(), rotationRps: 0.2, pressure: 1013 })),
+      { t: 6000, accelG: 1 + 9.2, rotationRps: 7, pressure: 1014.3 },
+      ...trace(0.4, () => ({ accelG: 1 + 1.1, rotationRps: 2.2, pressure: 1014.1 }), 6020),
+      ...trace(
+        8,
+        () => ({ accelG: 1 + PARKED_G * rng(), rotationRps: 0.03, pressure: 1014 }),
+        6500,
+      ),
+    ]
+    expect(detectDriveEvent(samples).kind).toBe("possibleImpact")
+  })
+
+  it("still catches a crash on a phone that barely felt the road", () => {
+    // In a coat pocket, so the drive hardly shook it, and GPS had it at
+    // motorway speed until the impact and then went quiet. The aftermath is
+    // as still as a parked car. Half of almost nothing is less than any
+    // parked car manages, so it has to be enough to sit under what counts as
+    // a vehicle under way at all.
+    const rng = noise(43)
+    const samples = [
+      ...trace(6, () => ({
+        accelG: 1 + 0.03 * rng(),
+        rotationRps: 0.2,
+        pressure: 1013,
+        speedMps: 27,
+      })),
+      { t: 6000, accelG: 1 + 9.2, rotationRps: 7, pressure: 1014.3, speedMps: 27 },
+      ...trace(0.4, () => ({ accelG: 1 + 1.1, rotationRps: 2.2, pressure: 1014.1 }), 6020),
+      ...trace(
+        8,
+        () => ({ accelG: 1 + PARKED_G * rng(), rotationRps: 0.03, pressure: 1014 }),
+        6500,
+      ),
+    ]
+    expect(detectDriveEvent(samples).kind).toBe("possibleImpact")
+  })
+
   it("ignores a door slammed on a parked car, pressure rise and all", () => {
     // Nothing was moving before it, so nothing came to rest after it. Without
     // that check the cabin pressurising is a free corroboration.
@@ -370,7 +427,8 @@ describe("detectDriveEvent", () => {
     // Identical impact, identical aftermath, and only the roughness of the run
     // up changes. How rough the road was says nothing about what disturbs a
     // wreck once it has stopped, so it must not decide whether the crash is
-    // reported at all.
+    // reported at all. GPS saw the car stop, so the vibration is not the only
+    // witness to it.
     const outcomes = [0.05, 0.1, 0.2, 0.3, 0.5].map((roadG) => {
       const rng = noise(29)
       const samples = [

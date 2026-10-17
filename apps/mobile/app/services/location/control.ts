@@ -1,6 +1,7 @@
 import type { WsServerMessage } from "@hearth/shared"
 
 import { api } from "@/services/api"
+import { noticeSocketAlert } from "@/services/socketAlerts"
 
 import { logTracker } from "./log"
 
@@ -88,6 +89,9 @@ class ControlChannel {
       } catch {
         return
       }
+      // The screens' socket is closed in the background, so on a server with
+      // no push this is the only line an SOS can reach a locked phone on.
+      noticeSocketAlert(message)
       if (message.type !== "control" || !handler) return
       if (message.command === "watch") {
         logTracker("control", { command: "watch", seconds: message.seconds })

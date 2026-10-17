@@ -1,26 +1,44 @@
-import { DEFAULTS, type DeviceHealth, type FeedEvent } from "@hearth/shared"
+import { DEFAULTS, batteryRanOut, type DeviceHealth, type FeedEvent } from "@hearth/shared"
 import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm"
 import type { FastifyBaseLogger } from "fastify"
 
 import { getSql, type Database } from "../db/client"
 import { CONTROL_FRESH_MS, controlOpenSql, sendControl } from "../services/control"
-import { circleMembers, circles, events, sessions, userPresence, users } from "../db/schema"
+import {
+  circleMembers,
+  circles,
+  events,
+  serverSettings,
+  sessions,
+  userPresence,
+  users,
+} from "../db/schema"
 import type { AppConfig } from "../env"
 import { getPushDriver } from "../runtime"
 import { broadcastEvent, recordEvent } from "../services/feed"
 import { phoneGroup } from "../services/notification-groups"
-import { heardAt, parked, silentPastCutoff } from "../services/reporting"
+import {
+  heardAt,
+  parked,
+  silentPastCutoff,
+  WAKE_GAPS_MOVING_MS,
+  WAKE_GAPS_PARKED_MS,
+  WAKE_GRACE_MS,
+} from "../services/reporting"
 import {
   effectiveSharingState,
   preciseSinceOnLapse,
   sharingSwitchedOff,
 } from "../services/presence"
 import {
+  checkPushReceipts,
   drainOutbox,
   enqueuePush,
   listenForOutbox,
   pruneOutbox,
+  pushProviderFailedSince,
   requeueStuckSends,
+  resolveCircleRecipients,
   type PushDriver,
 } from "../services/push"
 import { getServerSettings } from "../services/settings"
@@ -33,6 +51,7 @@ export interface JobReport {
   pushSent: number
   pushFailed: number
   pushSkipped: number
+  deadTokensCleared: number
   tripsDetected: number
   offlineFlagged: number
   phonesWoken: number
@@ -123,19 +142,45 @@ async function pruneSessions(db: Database): Promise<number> {
 const OUTAGE_MIN_REPORTING = 8
 /** How long a phone announced offline still counts towards an outage. */
 const OUTAGE_WINDOW_HOURS = 6
-
 /**
- * How long a quiet phone is given before each silent wake: the first counted
- * from when it was last heard, the rest from the wake before. A phone last
- * seen moving that goes quiet is the one worth finding quickly. A parked
- * phone is expected to be quiet, and iOS drops silent pushes past a few an
- * hour, so it is asked at a walking pace. After the last gap the server
- * stops asking; a phone that ignored three wakes will not answer a fourth.
+ * How long offline alerts wait after the push provider could last not be
+ * reached, or after the sweep last held them for an outage. Long enough for
+ * every phone to get through once the server's own connection is back. A
+ * parked phone reports a quarter of an hour apart, and its queue goes with
+ * it.
  */
-const WAKE_GAPS_MOVING_MS = [10, 10, 20].map((minutes) => minutes * 60 * 1000)
-const WAKE_GAPS_PARKED_MS = [30, 30, 30].map((minutes) => minutes * 60 * 1000)
-/** How long a woken phone gets to answer before the offline sweep may go ahead. */
-const WAKE_GRACE_MS = 10 * 60 * 1000
+const PROVIDER_OUTAGE_HOLD_MS = 30 * 60 * 1000
+/**
+ * Where the sweep notes that it held its alerts. In the database rather than
+ * in memory, so a restart or a quiet half hour of the provider does not lift
+ * it the moment the first phone gets back.
+ */
+const OUTAGE_HOLD_KEY = "offline_alerts_held"
+
+async function noteOutageHold(db: Database): Promise<void> {
+  await db
+    .insert(serverSettings)
+    .values({ key: OUTAGE_HOLD_KEY, value: {}, updatedAt: sql`now()` })
+    .onConflictDoUpdate({ target: serverSettings.key, set: { updatedAt: sql`now()` } })
+}
+
+async function outageHeldLately(db: Database): Promise<boolean> {
+  const [row] = await db
+    .select({ key: serverSettings.key })
+    .from(serverSettings)
+    .where(
+      and(
+        eq(serverSettings.key, OUTAGE_HOLD_KEY),
+        gt(
+          serverSettings.updatedAt,
+          sql`now() - make_interval(secs => ${PROVIDER_OUTAGE_HOLD_MS / 1000})`,
+        ),
+      ),
+    )
+    .limit(1)
+  return Boolean(row)
+}
+
 /**
  * One lost push is one lost push: FCM defers a data message in Doze, and
  * iOS keeps only the newest undelivered one. Two, ten minutes apart, is a
@@ -226,10 +271,17 @@ export async function wakeQuietPhones(db: Database, driver: PushDriver | null): 
   return woken
 }
 
-/** The first thing the phone said stands between it and reporting, in words. */
+/**
+ * The first thing the phone said stands between it and reporting, in words.
+ * A switch somebody turned off comes before a nearly flat battery, since
+ * that is what a parent can put right. A flat battery explains the silence
+ * better than anything after it, and a phone running out turns power saving
+ * on by itself.
+ */
 export function healthReason(
   health: DeviceHealth | null | undefined,
   lastFixAt?: Date | null,
+  options: { flatBattery?: boolean } = {},
 ): string | null {
   if (!health) return null
   if (sharingSwitchedOff(health, lastFixAt)) return "location sharing is turned off"
@@ -240,6 +292,7 @@ export function healthReason(
   if (health.backgroundRefresh && health.backgroundRefresh !== "available") {
     return "Background App Refresh is off"
   }
+  if (options.flatBattery) return null
   if (health.batteryOptimised) return "battery optimisation is still on"
   if (health.lowPowerMode) return "power saving mode is on"
   if (health.backgroundRestricted) return "background activity is restricted"
@@ -274,6 +327,7 @@ async function flagOfflineDevices(
 
   const counts = {
     reporting: sql<number>`count(*) filter (where ${userPresence.recordedAt} is not null)::int`,
+    unannounced: sql<number>`count(*) filter (where ${userPresence.recordedAt} is not null and ${userPresence.offlineNotifiedAt} is null)::int`,
     stale: sql<number>`count(*) filter (where ${quietFor})::int`,
     fresh: sql<number>`count(*) filter (where ${userPresence.recordedAt} is not null and not (${quietFor}))::int`,
   }
@@ -283,16 +337,28 @@ async function flagOfflineDevices(
     .innerJoin(users, and(eq(users.id, userPresence.userId), eq(users.isActive, true)))
   if (!totals || totals.stale === 0) return 0
 
+  // A home server whose own connection is down hears from no phone and
+  // reaches no push provider, and every phone in the family looks dead at
+  // once. The provider failing is the surest sign, and the hold outlasts it
+  // so the phones can get back through before anyone is judged.
+  if (pushProviderFailedSince(new Date(Date.now() - PROVIDER_OUTAGE_HOLD_MS))) {
+    await noteOutageHold(db)
+    log.warn("offline alerts withheld; the push provider could not be reached")
+    return 0
+  }
+
   // Most of the server quiet at once is evidence about the server, not about
   // any one phone, and the first handset to come back is the outage ending
-  // rather than proof the rest have broken. Keying this on nothing at all
-  // being fresh meant one phone reconnecting told every other family their
-  // phone was dead. So the guard holds while the quiet outnumber the reporting
-  // and lifts as the crowd returns, which is also when a phone still dark has
-  // stopped having an excuse. It needs a server big enough for a majority to
-  // mean anything: in a family of three, all three being quiet says nothing,
-  // and one phone that genuinely went dark must never be silenced by two
-  // siblings who merely missed a background window.
+  // rather than proof the rest have broken. So on a big server the guard
+  // holds while the quiet outnumber the reporting and lifts as the crowd
+  // returns, which is also when a phone still dark has stopped having an
+  // excuse. Lifting it at the first phone back would tell every other family
+  // their phone was dead. A family-sized server is too small for a majority
+  // to mean anything, and there the guard holds only while not one phone is
+  // reporting. Every phone past its cutoff at once is far more often the
+  // server cut off than a family that lost every phone together. One phone
+  // has nothing to be compared with, so its silence is still reported, and
+  // a phone already announced is not part of this outage at all.
   // The guard counts the phones that could be part of an outage now: not a
   // deactivated account, and not one whose phone was announced offline long
   // ago and never came back. Those would otherwise outvote the phones that
@@ -309,11 +375,23 @@ async function flagOfflineDevices(
         sql`${userPresence.offlineNotifiedAt} > now() - make_interval(hours => ${OUTAGE_WINDOW_HOURS})`,
       ),
     )
-  if (outage && outage.reporting >= OUTAGE_MIN_REPORTING && outage.stale > outage.fresh) {
+  const serverWide =
+    outage &&
+    (outage.reporting >= OUTAGE_MIN_REPORTING
+      ? outage.stale > outage.fresh
+      : outage.unannounced >= 2 && outage.fresh === 0)
+  if (serverWide) {
+    await noteOutageHold(db)
     log.warn(
       { reporting: outage.reporting, stale: outage.stale, fresh: outage.fresh },
       "offline alerts withheld; most of the server has stopped reporting",
     )
+    return 0
+  }
+  // Either guard lifts with the first phone back, before the rest have had
+  // their quarter hour to report.
+  if (await outageHeldLately(db)) {
+    log.info("offline alerts withheld while the phones get back through after an outage")
     return 0
   }
 
@@ -329,6 +407,8 @@ async function flagOfflineDevices(
       notifiedAt: userPresence.offlineNotifiedAt,
       health: userPresence.health,
       recordedAt: userPresence.recordedAt,
+      batteryLevel: userPresence.batteryLevel,
+      isCharging: userPresence.isCharging,
     })
     .from(userPresence)
     .innerJoin(users, eq(users.id, userPresence.userId))
@@ -406,32 +486,30 @@ async function flagOfflineDevices(
       )) as unknown as { ok: boolean }[]
       if (!lock?.ok) return
 
+      // The phone may have spoken since the stale read, and an upload does
+      // not wait for this lock.
+      const [stillQuiet] = await tx
+        .select({ userId: userPresence.userId })
+        .from(userPresence)
+        .where(and(eq(userPresence.userId, row.userId), quietFor))
+        .limit(1)
+      if (!stillQuiet) return
+
       const confirmed = await alreadyToldThisOutage(tx as unknown as Database, [row.userId])
       for (const membership of pending) {
         if (confirmed.has(outageKey(row.userId, membership.circleId))) continue
-        // The phone may have said why it cannot report, and that is the
-        // useful sentence: "Sami's location permission is off" is something
-        // a parent can act on, "phone offline" is a worry.
-        const reason = healthReason(row.health, row.recordedAt)
+        const words = offlineWords(row)
         const event = await recordEvent(tx as unknown as Database, {
           deferBroadcast: true,
           circleId: membership.circleId,
           type: "device_offline",
           actorUserId: row.userId,
-          summary: reason
-            ? `${row.displayName}'s phone cannot report: ${reason}`
-            : `${row.displayName}'s phone stopped reporting`,
+          summary: words.summary,
           notify: {
-            title: reason ? "Phone cannot report" : "Phone offline",
-            body: reason
-              ? `${row.displayName}'s phone says its ${reason}.`
-              : `${row.displayName}'s phone has not reported in for a while.`,
+            title: words.title,
+            body: words.body,
             channel: "alerts",
-            group: phoneGroup(
-              row.userId,
-              row.displayName,
-              reason ? `Says its ${reason}` : "Has not reported in for a while",
-            ),
+            group: phoneGroup(row.userId, row.displayName, words.line),
           },
         })
         broadcasts.push({ circleId: membership.circleId, event })
@@ -444,6 +522,48 @@ async function flagOfflineDevices(
   }
 
   return flagged
+}
+
+/**
+ * The phone may have said why it cannot report, and that is the useful
+ * sentence. "Sami's location permission is off" is something a parent can
+ * act on, "phone offline" is a worry. A battery nearly flat at the last fix
+ * is the next best, since nothing the phone said can be true of a phone
+ * that is off.
+ */
+function offlineWords(row: {
+  displayName: string
+  health: DeviceHealth | null
+  recordedAt: Date | null
+  batteryLevel: number | null
+  isCharging: boolean | null
+}): { summary: string; title: string; body: string; line: string } {
+  const name = row.displayName
+  const flatBattery = batteryRanOut(row.batteryLevel, row.isCharging)
+  const reason = healthReason(row.health, row.recordedAt, { flatBattery })
+  if (reason) {
+    return {
+      summary: `${name}'s phone cannot report: ${reason}`,
+      title: "Phone cannot report",
+      body: `${name}'s phone says its ${reason}.`,
+      line: `Says its ${reason}`,
+    }
+  }
+  if (flatBattery) {
+    const percent = Math.round(row.batteryLevel! * 100)
+    return {
+      summary: `${name}'s phone stopped reporting on ${percent}% battery`,
+      title: "Battery likely ran out",
+      body: `${name}'s phone stopped reporting on ${percent}% battery. It has most likely run out.`,
+      line: `Stopped reporting on ${percent}% battery`,
+    }
+  }
+  return {
+    summary: `${name}'s phone stopped reporting`,
+    title: "Phone offline",
+    body: `${name}'s phone has not reported in for a while.`,
+    line: "Has not reported in for a while",
+  }
 }
 
 const outageKey = (userId: string, circleId: string) => `${userId}:${circleId}`
@@ -473,6 +593,8 @@ interface OwedReturn {
   circle_id: string
   user_id: string
   display_name: string
+  /** The feed row that said the phone had stopped reporting. */
+  offline_event_id: string
 }
 
 /**
@@ -505,17 +627,39 @@ async function circlesOwedReturnNews(db: Database, userIds?: string[]): Promise<
         ${only}
     ),
     latest as (
-      select distinct on (e.circle_id, e.actor_user_id) e.circle_id, e.actor_user_id, e.type
+      select distinct on (e.circle_id, e.actor_user_id) e.id, e.circle_id, e.actor_user_id, e.type
       from events e
       join returned r on r.user_id = e.actor_user_id
       where e.type in ('device_offline', 'device_online')
       order by e.circle_id, e.actor_user_id, e.id desc
     )
-    select latest.circle_id, latest.actor_user_id as user_id, returned.display_name
+    select latest.circle_id, latest.actor_user_id as user_id, returned.display_name,
+           latest.id::text as offline_event_id
     from latest
     join returned on returned.user_id = latest.actor_user_id
     where latest.type = 'device_offline'
   `)) as unknown as OwedReturn[]
+}
+
+/**
+ * Who was actually sent the offline alert in that feed row, and would still
+ * be told one now. Somebody whose copy was dropped, because the phone came
+ * back before it went out, was never worried and needs no all clear.
+ */
+async function toldItWentQuiet(db: Database, owed: OwedReturn): Promise<string[]> {
+  const sent = (await db.execute(sql`
+    select distinct user_id from notification_outbox
+    where status in ('sent', 'sending')
+      and data->>'type' = 'device_offline'
+      and data->>'eventId' = ${owed.offline_event_id}
+  `)) as unknown as Array<{ user_id: string }>
+  if (sent.length === 0) return []
+  // The mute that silenced the alert silences its all clear too, so neither
+  // is a notification somebody cannot turn off.
+  const listening = new Set(
+    await resolveCircleRecipients(db, owed.circle_id, "device_offline", [owed.user_id]),
+  )
+  return sent.map((row) => row.user_id).filter((userId) => listening.has(userId))
 }
 
 /**
@@ -573,15 +717,25 @@ async function announceReturnedDevices(db: Database): Promise<number> {
       )
       for (const row of visible) {
         if (!confirmed.has(row.circle_id)) continue
-        // No push. device_online is not one of the types a member may silence,
-        // so a notification here would be one nobody could ever turn off, and
-        // "the phone is fine again" has not earned that.
+        // Pushed only to whoever the alert reached, joining the notification
+        // that said the phone had gone quiet, so it ends on the good news.
+        const told = await toldItWentQuiet(tx as unknown as Database, row)
         const event = await recordEvent(tx as unknown as Database, {
           deferBroadcast: true,
           circleId: row.circle_id,
           type: "device_online",
           actorUserId: userId,
           summary: `${row.display_name}'s phone is reporting again`,
+          notify:
+            told.length === 0
+              ? undefined
+              : {
+                  title: "Phone reporting again",
+                  body: `${row.display_name}'s phone is reporting again.`,
+                  channel: "alerts",
+                  onlyUserIds: told,
+                  group: phoneGroup(userId, row.display_name, "Reporting again"),
+                },
         })
         broadcasts.push({ circleId: row.circle_id, event })
       }
@@ -669,6 +823,13 @@ async function detectRecentTrips(db: Database): Promise<number> {
   return detected
 }
 
+/**
+ * A receipt that is not ready is asked about again on the next pass, so
+ * asking every tick would ask Expo about the same tickets once a minute.
+ */
+const RECEIPTS_EVERY_MS = 15 * 60 * 1000
+let receiptsDueAt = 0
+
 /** Steps are isolated, so one failing job never stops the rest of the pass. */
 export async function runJobs(
   db: Database,
@@ -682,6 +843,7 @@ export async function runJobs(
     pushSent: 0,
     pushFailed: 0,
     pushSkipped: 0,
+    deadTokensCleared: 0,
     tripsDetected: 0,
     offlineFlagged: 0,
     phonesWoken: 0,
@@ -703,11 +865,18 @@ export async function runJobs(
     await requeueStuckSends(db, new Date(Date.now() - 10 * 60 * 1000))
     let summary
     do {
-      summary = await drainOutbox(db, driver, { batchSize: 100 })
+      summary = await drainOutbox(db, driver, { batchSize: 100, log })
       report.pushSent += summary.sent
       report.pushFailed += summary.failed
       report.pushSkipped += summary.skipped
     } while (summary.waiting)
+  })
+
+  await step("push.receipts", async () => {
+    const driver = getPushDriver()
+    if (!driver?.readReceipts || Date.now() < receiptsDueAt) return
+    receiptsDueAt = Date.now() + RECEIPTS_EVERY_MS
+    report.deadTokensCleared = (await checkPushReceipts(db, driver, { log })).cleared
   })
 
   await step("pauses.resume", async () => {
@@ -772,7 +941,7 @@ export function createOutboxDrainer(
       if (!driver) return
       let summary
       do {
-        summary = await drainOutbox(db, driver, { batchSize })
+        summary = await drainOutbox(db, driver, { batchSize, log })
       } while (summary.processed === batchSize || summary.waiting)
     } while (again)
   }

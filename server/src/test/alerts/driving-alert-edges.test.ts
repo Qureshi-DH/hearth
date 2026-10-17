@@ -266,16 +266,19 @@ describe("possible incident: the evidence has to be about this stop", () => {
   it("says nothing when the car is still moving with no speed to report", async () => {
     const { driver, watcher, circle } = await drivingFamily()
 
-    // Into a 6 km tunnel at 99 km/h. GPS is gone, so the fused provider falls
-    // back to cell: no speed, accuracy in kilometres, and coordinates that
-    // keep advancing at 27 m/s.
+    // Into ten kilometres of tunnels and cuttings at 99 km/h. GPS is gone, so
+    // the fused provider falls back to cell, with no speed, accuracy in
+    // kilometres, and coordinates that keep advancing at 27 m/s for six
+    // minutes.
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-260), accuracyMeters: 7, speedMps: 27.5 },
-      { ...northOf(MOTORWAY, 820), recordedAt: at(-230), accuracyMeters: 1400, speedMps: null },
-      { ...northOf(MOTORWAY, 2450), recordedAt: at(-170), accuracyMeters: 1600, speedMps: null },
-      { ...northOf(MOTORWAY, 4080), recordedAt: at(-110), accuracyMeters: 1500, speedMps: null },
-      { ...northOf(MOTORWAY, 5700), recordedAt: at(-50), accuracyMeters: 1400, speedMps: null },
-      { ...northOf(MOTORWAY, 6510), recordedAt: at(-20), accuracyMeters: 1300, speedMps: null },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-400), accuracyMeters: 7, speedMps: 27.5 },
+      { ...northOf(MOTORWAY, 820), recordedAt: at(-370), accuracyMeters: 1400, speedMps: null },
+      { ...northOf(MOTORWAY, 2440), recordedAt: at(-310), accuracyMeters: 1600, speedMps: null },
+      { ...northOf(MOTORWAY, 4060), recordedAt: at(-250), accuracyMeters: 1500, speedMps: null },
+      { ...northOf(MOTORWAY, 5680), recordedAt: at(-190), accuracyMeters: 1400, speedMps: null },
+      { ...northOf(MOTORWAY, 7300), recordedAt: at(-130), accuracyMeters: 1300, speedMps: null },
+      { ...northOf(MOTORWAY, 8920), recordedAt: at(-70), accuracyMeters: 1500, speedMps: null },
+      { ...northOf(MOTORWAY, 10540), recordedAt: at(-10), accuracyMeters: 1400, speedMps: null },
     ])
 
     expect(await eventsOfType(watcher.headers, circle.id, "possible_incident")).toEqual([])
@@ -310,10 +313,11 @@ describe("possible incident: the evidence has to be about this stop", () => {
     // except one sample where the provider switched and claimed 101 km/h.
     await uploadFixes(driver.headers, [
       { ...HOME, recordedAt: at(-900), accuracyMeters: 14, speedMps: 0 },
-      { ...northOf(HOME, 4), recordedAt: at(-400), accuracyMeters: 16, speedMps: 0.1 },
-      { ...northOf(HOME, -3), recordedAt: at(-300), accuracyMeters: 15, speedMps: 0 },
-      { ...northOf(HOME, 8), recordedAt: at(-260), accuracyMeters: 22, speedMps: 28.0 },
-      { ...northOf(HOME, 2), recordedAt: at(-230), accuracyMeters: 15, speedMps: 0 },
+      { ...northOf(HOME, 4), recordedAt: at(-700), accuracyMeters: 16, speedMps: 0.1 },
+      { ...northOf(HOME, -3), recordedAt: at(-560), accuracyMeters: 15, speedMps: 0 },
+      { ...northOf(HOME, 8), recordedAt: at(-520), accuracyMeters: 22, speedMps: 28.0 },
+      { ...northOf(HOME, 2), recordedAt: at(-490), accuracyMeters: 15, speedMps: 0 },
+      { ...northOf(HOME, -2), recordedAt: at(-320), accuracyMeters: 15, speedMps: 0 },
       { ...northOf(HOME, -5), recordedAt: at(-150), accuracyMeters: 15, speedMps: 0 },
       { ...northOf(HOME, 1), recordedAt: at(-60), accuracyMeters: 14, speedMps: 0 },
       { ...HOME, recordedAt: at(-20), accuracyMeters: 14, speedMps: 0 },
@@ -327,15 +331,15 @@ describe("possible incident: the evidence has to be about this stop", () => {
     const tablet = await signInDevice(driver.email, "device-kitchen-tablet")
 
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-320), accuracyMeters: 6, speedMps: 29.0 },
-      { ...northOf(MOTORWAY, 870), recordedAt: at(-290), accuracyMeters: 6, speedMps: 30.0 },
-      { ...northOf(MOTORWAY, 1770), recordedAt: at(-260), accuracyMeters: 6, speedMps: 30.0 },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-440), accuracyMeters: 6, speedMps: 29.0 },
+      { ...northOf(MOTORWAY, 870), recordedAt: at(-410), accuracyMeters: 6, speedMps: 30.0 },
+      { ...northOf(MOTORWAY, 1770), recordedAt: at(-380), accuracyMeters: 6, speedMps: 30.0 },
     ])
 
     // Somebody picks the tablet up in the kitchen, 8 km away. A Wi-Fi fix has
     // no speed sensor behind it, so it reports none.
     await uploadFixes(tablet, [
-      { ...HOME, recordedAt: at(-200), accuracyMeters: 35, speedMps: 0 },
+      { ...HOME, recordedAt: at(-350), accuracyMeters: 35, speedMps: 0 },
       { ...HOME, recordedAt: at(-20), accuracyMeters: 42, speedMps: null, source: "manual" },
     ])
 
@@ -378,10 +382,11 @@ describe("possible incident: the evidence has to be about this stop", () => {
     const { driver, watcher, circle } = await drivingFamily()
 
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-300), accuracyMeters: 6, speedMps: 30.5 },
-      { ...northOf(MOTORWAY, 915), recordedAt: at(-270), accuracyMeters: 6, speedMps: 30.9 },
-      { ...northOf(MOTORWAY, 1830), recordedAt: at(-240), accuracyMeters: 7, speedMps: 30.2 },
-      { ...northOf(MOTORWAY, 1930), recordedAt: at(-210), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-420), accuracyMeters: 6, speedMps: 30.5 },
+      { ...northOf(MOTORWAY, 915), recordedAt: at(-390), accuracyMeters: 6, speedMps: 30.9 },
+      { ...northOf(MOTORWAY, 1830), recordedAt: at(-360), accuracyMeters: 7, speedMps: 30.2 },
+      { ...northOf(MOTORWAY, 1930), recordedAt: at(-330), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 1930), recordedAt: at(-240), accuracyMeters: 9, speedMps: 0 },
       { ...northOf(MOTORWAY, 1930), recordedAt: at(-150), accuracyMeters: 9, speedMps: 0 },
       { ...northOf(MOTORWAY, 1932), recordedAt: at(-90), accuracyMeters: 11, speedMps: 0 },
       { ...northOf(MOTORWAY, 1931), recordedAt: at(-20), accuracyMeters: 10, speedMps: 0 },
@@ -405,9 +410,9 @@ describe("two devices uploading at the same moment", () => {
 
       // Both devices ride in the same car, so both have the drive behind them.
       const drive = [
-        { ...northOf(MOTORWAY, 0), recordedAt: at(-290), accuracyMeters: 6, speedMps: 29.0 },
-        { ...northOf(MOTORWAY, 870), recordedAt: at(-260), accuracyMeters: 6, speedMps: 28.6 },
-        { ...northOf(MOTORWAY, 940), recordedAt: at(-230), accuracyMeters: 9, speedMps: 0 },
+        { ...northOf(MOTORWAY, 0), recordedAt: at(-410), accuracyMeters: 6, speedMps: 29.0 },
+        { ...northOf(MOTORWAY, 870), recordedAt: at(-380), accuracyMeters: 6, speedMps: 28.6 },
+        { ...northOf(MOTORWAY, 940), recordedAt: at(-350), accuracyMeters: 9, speedMps: 0 },
       ]
       await uploadFixes(driver.headers, drive)
       await uploadFixes(second, drive)

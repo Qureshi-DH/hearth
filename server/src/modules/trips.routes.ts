@@ -38,7 +38,9 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
         description:
           "Trips are detected server-side by splitting history wherever the device stayed " +
           "put long enough to count as a stop. Visible only to members of a circle the " +
-          "person shares precise location with.",
+          "person shares precise location with, in a circle that allows history. Anyone " +
+          "else in the circle gets an empty list rather than a refusal, as they do for " +
+          "somebody who has left it.",
         params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
         querystring: z.object({
           from: isoTimestamp.optional(),
@@ -66,19 +68,18 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
           .from(circleMembers)
           .where(and(eq(circleMembers.circleId, circleId), eq(circleMembers.userId, userId)))
           .limit(1)
-        if (!target) throw forbidden("That person is not in this circle.")
+        // Empty rather than refused. The member page asks whatever she
+        // shares, and a refusal is a 4xx a firewall in front of the server
+        // can answer by locking out every phone in the house.
+        if (!target) return []
         const stretch = preciseStretch(target, new Date())
-        if (!stretch) {
-          throw forbidden("That member is not sharing precise location with this circle.")
-        }
+        if (!stretch) return []
         const [circle] = await db
           .select({ settings: circles.settings })
           .from(circles)
           .where(eq(circles.id, circleId))
           .limit(1)
-        if (circle && !circle.settings.allowHistory) {
-          throw forbidden("This circle has location history turned off.")
-        }
+        if (circle && !circle.settings.allowHistory) return []
         // The same bound the breadcrumb history uses: nothing from before this
         // person joined or last started sharing precisely, and nothing older
         // than the circle's own retention.
@@ -145,17 +146,31 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ["trips"],
         summary: "One trip, with its full path",
+        description:
+          "Clears the same bar as the trips list. A trip the viewer cannot see is a 403 and " +
+          "one that no longer exists is a 404. With `soft=true` in the request " +
+          "both come back as 200 with `{ id, visible: false }`, and a trip that is served " +
+          "carries `visible: true`. A list on screen outlives the sharing it was read under, " +
+          "and a trip can be folded into its neighbour when a late backlog arrives, so the " +
+          "app asks for the soft answer. Older apps render any 200 as a trip and do not.",
         params: z.object({ tripId: z.string().uuid() }),
+        querystring: z.object({ soft: z.enum(["true", "false"]).optional() }),
       },
     },
     async (request) => {
       const auth = requireAuth(request)
+      const soft = request.query.soft === "true"
+      const unavailable = (error: Error) => {
+        if (soft) return { id: request.params.tripId, visible: false as const }
+        throw error
+      }
+
       const [trip] = await db
         .select()
         .from(trips)
         .where(eq(trips.id, request.params.tripId))
         .limit(1)
-      if (!trip) throw notFound("No such trip.")
+      if (!trip) return unavailable(notFound("No such trip."))
 
       // Null while the trip is the viewer's own, where every place they can
       // see is theirs to read.
@@ -192,7 +207,7 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
             ? [{ ...row, since: stretch.since?.getTime() ?? 0 }]
             : []
         })
-        if (qualifying.length === 0) throw forbidden("You cannot view this trip.")
+        if (qualifying.length === 0) return unavailable(forbidden("You cannot view this trip."))
 
         // And the same lower bound, which the trips list and the breadcrumb
         // history both apply: nothing from before this person joined, nothing
@@ -213,7 +228,7 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
         // window: the summary is derived from position too, and its start
         // coordinates and place name are exactly what the list withholds.
         if (trip.startedAt.getTime() < earliestVisible) {
-          throw forbidden("You cannot view this trip.")
+          return unavailable(forbidden("You cannot view this trip."))
         }
 
         viewerCircleIds = qualifying.map((row) => row.circleId)
@@ -235,6 +250,7 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
         : await withPlaceNames([trip])
       return {
         ...detailed,
+        visible: true as const,
         path: path.map((point) => ({
           recordedAt: point.recordedAt.toISOString(),
           lat: point.lat,

@@ -82,6 +82,8 @@ export function Accounts({ me }: { me: CurrentUser }) {
           className="search"
           placeholder="Search by name or email"
           aria-label="Search accounts"
+          // The server reads no more than this, and refuses a longer search.
+          maxLength={120}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />

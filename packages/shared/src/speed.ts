@@ -7,6 +7,12 @@ const AGREEMENT_TOLERANCE = 0.1
 const GPS_CLASS_ACCURACY_METERS = 30
 /** Closer than this and the error circles swamp the ground covered. */
 const MIN_CHORD_SECONDS = 5
+/**
+ * How hard a car is allowed to brake and pick up again between two fixes
+ * before the ground they cover is said to contradict their speeds. Firmer
+ * than everyday driving, so a real change of pace is never the contradiction.
+ */
+const MAX_ACCELERATION_MPS2 = 4
 
 export interface SpeedFix {
   recordedAt: string | Date
@@ -43,7 +49,9 @@ export function agreedSpeedMps(
  * a network fix mid-drive carries no speed and must not stand between two
  * readings that agree. The answer is the highest agreed speed, floored at the
  * fastest ground covered between consecutive GPS-class fixes, since 250 m in
- * 10 s is 90 km/h whatever the Doppler reading said.
+ * 10 s is 90 km/h whatever the Doppler reading said. Positions cap it too. Two
+ * readings that agree on a speed the ground between them cannot support are
+ * one artefact read twice, and Live's fix a second produces them in pairs.
  */
 export function agreedMaxSpeedMps(points: SpeedFix[], gapMs: number): number | null {
   const sorted = points
@@ -57,7 +65,9 @@ export function agreedMaxSpeedMps(points: SpeedFix[], gapMs: number): number | n
     if (point.speedMps == null || !Number.isFinite(point.speedMps)) continue
     if (previous && point.at - previous.at <= gapMs) {
       const agreed = agreedSpeedMps(previous.speedMps, point.speedMps)
-      if (agreed !== null && (agreedMax === null || agreed > agreedMax)) agreedMax = agreed
+      const supported =
+        agreed === null ? null : Math.min(agreed, supportableMps(previous, point) ?? agreed)
+      if (supported !== null && (agreedMax === null || supported > agreedMax)) agreedMax = supported
     }
     previous = point
   }
@@ -79,6 +89,25 @@ export function agreedMaxSpeedMps(points: SpeedFix[], gapMs: number): number | n
   if (agreedMax === null) return chordMax
   if (chordMax === null) return agreedMax
   return Math.max(agreedMax, chordMax)
+}
+
+/**
+ * The fastest a car can have been going at both ends of the time between two
+ * sharp fixes, given the most ground the positions allow between them. Holding
+ * v for t covers v·t, and braking then picking up again saves at most a·t²/4,
+ * or the whole lot when there is time to stop. A second apart that is the
+ * ground covered and a metre a second to spare. Thirty seconds apart a car
+ * could have done anything in between, and the bound says nothing.
+ */
+function supportableMps(from: SpeedFix & { at: number }, to: SpeedFix & { at: number }) {
+  if (!isGpsClass(from) || !isGpsClass(to)) return null
+  const seconds = (to.at - from.at) / 1000
+  if (seconds <= 0) return null
+  const reach = haversineMeters(from, to) + from.accuracyMeters! + to.accuracyMeters!
+  const a = MAX_ACCELERATION_MPS2
+  return reach < (a * seconds * seconds) / 4
+    ? Math.sqrt(a * reach)
+    : reach / seconds + (a * seconds) / 4
 }
 
 function isGpsClass(point: SpeedFix): boolean {

@@ -91,6 +91,14 @@ const en = {
       "Approximate mode is on for Hearth. Turn on Precise Location so places and trips are accurate.",
     notificationsTitle: "Notifications",
     notificationsBody: "Arrivals, low battery, and most importantly SOS alerts from your circle.",
+    notificationsNoPushBody:
+      "Your server has no push service, so Hearth can only ring for an SOS or a possible crash while it is open or still connected in the background. An iPhone stays connected while it shares its location, an Android phone only while it is on the move. Everything else waits until you open the app.",
+    dndTitle: "Let SOS through Do Not Disturb",
+    dndBody:
+      "Optional. Do Not Disturb silences Hearth like any other app. With this access an SOS or a possible-crash alert from your circle still gets through. Hearth uses it for those two alerts and nothing else. Find Hearth in the list and allow it.",
+    dndGrantedBody:
+      "An SOS or a possible-crash alert from your circle gets through Do Not Disturb. Nothing else from Hearth does.",
+    dndOpen: "Open Do Not Disturb access",
     batteryTitle: "Battery optimisation",
     batteryBody:
       "Android pauses background apps to save power. Exempt Hearth so location keeps flowing when the screen is off.",
@@ -201,6 +209,7 @@ const en = {
     exhausted: "That invite has already been used.",
     notFound: "No invite found for that code.",
     alreadyMember: "You're already in this circle.",
+    removed: "You were removed from this circle. Ask for a new invite to rejoin.",
     success: "Welcome to {{name}}",
   },
   map: {
@@ -208,6 +217,7 @@ const en = {
     you: "You",
     lastSeen: "Seen {{time}}",
     stale: "Not updated recently",
+    batteryRanOut: "Battery likely ran out",
     paused: "Sharing paused",
     approximate: "Approximate location",
     noLocation: "No location yet",
@@ -242,6 +252,18 @@ const en = {
   member: {
     title: "Member",
     messageSent: "Sent to {{name}}: “{{body}}”",
+    messageHeld: "You sent {{name}} that a moment ago",
+    askedSocket: "Asked {{name}}. Their phone is updating their location now.",
+    askedPushed: "Asked {{name}}. Their phone has been asked for its location.",
+    askedFresh: "Asked {{name}}. Their phone reported a moment ago.",
+    askedNoDevice:
+      "Asked {{name}}. No phone of theirs can be woken from here, so their location updates when they open Hearth.",
+    askedUnsupported:
+      "Asked {{name}}. This server can't wake their phone, so their location updates when they open Hearth.",
+    nudgeHeld: "You asked {{name}} a moment ago",
+    nudgePaused: "{{name}} has paused sharing, so nothing was sent",
+    nudgeGone: "{{name}} is no longer in this circle, so nothing was sent",
+    nudgeWait: "That's a lot of nudges for now. Try again in {{minutes}} min.",
     savePlace: "Save this spot as a place",
     trips: "Recent trips",
     noTrips: "No trips yet",
@@ -284,6 +306,7 @@ const en = {
     recent: "Recent activity",
     arrived: "{{name}} arrived",
     left: "{{name}} left",
+    gone: "Somebody in your circle deleted this place.",
   },
   activity: {
     title: "Activity",
@@ -313,13 +336,24 @@ const en = {
     stale:
       "Too much time has passed to alert your circle automatically. Send it yourself if you still need help.",
     alarmTitle: "Are you okay?",
-    alarmBody: "Your phone felt something like a collision. Open Hearth to cancel the alert.",
+    alarmBody:
+      "Your phone felt something like a collision. Hearth alerts your circle at {{time}} unless you answer.",
+    alarmWaiting:
+      "Hearth is alerting your circle and is waiting for a connection to send it. Tap I'm okay if you are.",
+    alarmStale:
+      "Too much time has passed to alert your circle automatically. Open Hearth to send it yourself.",
+    waiting:
+      "No connection yet. Hearth sends the alert the moment it can reach your server. Tap I'm okay if you are.",
+    sending: "Alerting your circle with where you are now.",
+    checkOnTitle: "Check on {{name}}",
   },
   sos: {
     title: "SOS",
     holdToSend: "Hold to send SOS",
     sent: "SOS sent to your circle",
-    sentBody: "Your exact location is being shared every few seconds until you resolve this.",
+    sentBody: "Everyone alerted can follow your exact location live until you say you're safe.",
+    sentBodySharingOff:
+      "Share my location is off on this phone, so your circles only see where you were last.",
     note: "Add a note (optional)",
     notePlaceholder: "What's happening?",
     resolve: "I'm safe now",
@@ -362,6 +396,9 @@ const en = {
     topSpeed: "Top speed",
     avgSpeed: "Average",
     unknownPlace: "Unnamed spot",
+    gone: "This trip is no longer available",
+    goneBody:
+      "Their sharing may have changed since the list was loaded, or the trip was merged into another.",
   },
   circle: {
     title: "Circle",
@@ -445,12 +482,16 @@ const en = {
     sosNote: "SOS alerts can't be muted.",
     setupTitle: "Push notifications",
     setupBody: "Your server delivers alerts via {{provider}}.",
-    none: "This server has no push transport configured. You'll see alerts when you open the app.",
+    none: "This server has no push transport configured. Hearth can only ring for an SOS or a possible crash while it is open or still connected in the background. Everything else waits until you open the app.",
+    sosAlertTitle: "SOS from {{name}}",
+    sosAlertBody: "Tap to see their location.",
+    someone: "Someone",
     ntfyTitle: "Set up ntfy",
     ntfyBody: "Install the ntfy app and subscribe to this topic to receive alerts:",
     denied: "Notifications are turned off for Hearth. Turn them on in Settings to get alerts.",
     test: "Send a test notification",
     testSent: "Test queued. It should arrive shortly.",
+    testWait: "That's a few tests already. Try again in {{minutes}} min.",
   },
   settings: {
     title: "You",
@@ -496,6 +537,7 @@ const en = {
     oldest: "Oldest: {{time}}",
     export: "Export my data",
     exportBody: "Download everything the server holds about you as JSON.",
+    exportWait: "You've exported twice in the last few minutes. Try again in {{minutes}} min.",
     eraseHistory: "Erase my location history",
     eraseConfirm: "Delete all of your stored breadcrumbs? Your live position is unaffected.",
     erased: "History erased",

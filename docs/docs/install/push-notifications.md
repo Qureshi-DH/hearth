@@ -12,7 +12,7 @@ your options are, and which one to pick.
 
 | Provider (`PUSH_PROVIDER`) | Works on                                     | Needs a third party?               | Effort | Privacy                           | Reliability on a sleeping phone                                                            |
 | -------------------------- | -------------------------------------------- | ---------------------------------- | ------ | --------------------------------- | ------------------------------------------------------------------------------------------ |
-| `none` (default)           | iOS, Android                                 | No                                 | Zero   | Best                              | None. Alerts appear when the app is opened, and the map still updates live while it's open |
+| `none` (default)           | iOS, Android                                 | No                                 | Zero   | Best                              | Poor. An SOS or a crash alert rings only on a phone still connected, and nothing else does |
 | `ntfy`                     | iOS, Android, through the ntfy app           | No, you host ntfy too              | Low    | Best                              | Good for alerts. Never wakes the Hearth app, see below                                     |
 | `expo`                     | iOS, Android, in a build made with your keys | Yes, Expo's relay then APNs or FCM | High   | Titles and bodies transit Expo    | Excellent                                                                                  |
 | `webpush`                  | No Hearth client uses it yet                 | Browser vendor's push service      | Medium | Good                              | Not used by the app                                                                        |
@@ -66,21 +66,57 @@ All providers share the same server-side pipeline. Events are written to a
 durable `notification_outbox` table in the same transaction as the thing that
 caused them. Postgres wakes the worker the moment that transaction commits, so
 an alert is on its way within milliseconds rather than on the next scheduler
-tick, and rows are sent eight at a time with the most urgent first. Before a
-row goes out, the server checks again that the recipient is still in the
-circle. An arrival, a departure, a finished trip or a speed alert is dropped if
-the person it's about has stopped sharing precisely with that circle in the
-meantime.
+tick, and rows are sent eight at a time with the most urgent first. An SOS or
+a possible crash goes ahead of anything else waiting, however long the queue.
+Before a row goes out, the server checks again that the recipient is still in
+the circle. An arrival, a departure, a finished trip or a speed alert is
+dropped if the person it's about has stopped sharing precisely with that circle
+in the meantime. A "phone offline" alert is dropped if the phone has reported
+since it was queued.
 
 A broken push provider never fails a user's request. A failed send is retried
 after 10 seconds, a minute, 5 minutes, 15 minutes and an hour, and given up
 after the sixth attempt. Each call to the provider has 15 seconds to answer.
 
+An SOS is retried for as long as it is open, never more than three minutes
+apart, and dropped once it is resolved or no longer exists, so a provider that
+is down for an afternoon delays it rather than losing it. A possible crash
+alert travels on the SOS channel and is retried the same way for up to an
+hour, since nothing marks it resolved and "have not moved since" means less
+the later it arrives. It is dropped sooner if the person has since driven on,
+or stopped sharing precisely with that circle. A provider that turns a
+message down as malformed, with a 4xx other than a rate limit, gets the usual
+six tries even for an SOS, because asking again gets the same answer.
+
+When the server can't reach the push provider at all, it holds back its "phone
+offline" alerts until half an hour after the last failure. A home server whose
+own internet connection is down hears from no phone and reaches no provider,
+and without the hold it would tell the family every phone had died as soon as
+the connection came back. A wake that never reached the provider doesn't count
+as asking the phone. Once the server has held its alerts for an outage, it
+keeps holding them for half an hour after it last did, through a restart, so
+the other phones can get back through after the first.
+
+Through Expo, the server keeps the ticket each send gets back. Every quarter of
+an hour it asks Expo for the receipts of tickets at least half an hour old, a
+thousand at a time, and a receipt that says the app is no longer on the phone
+(`DeviceNotRegistered`) clears that phone's token, as long as the phone hasn't
+registered a new one since. A receipt is read once. Tickets with no receipt
+after a day are dropped. A failed call to Expo isn't retried until the next
+quarter hour.
+
+A send or a receipt that says `InvalidCredentials` is about the Expo project's
+FCM or APNs keys, not the phone, so no token is cleared for it. The send counts
+as failed and is retried, and the server logs an error that names the keys to
+check.
+
 Every visible notification is queued at high priority. Through Expo, that is
 what lets an Android phone in Doze show it at once, and on iOS it asks APNs for
 immediate delivery. An SOS or a crash alert goes on its own channel, which
 plays a sound, is marked time-sensitive on iOS and is allowed through Do Not
-Disturb on Android. A silent push to an iPhone goes at Apple's background
+Disturb on Android, once the phone has given Hearth Do Not Disturb access from
+the setup checklist. [SOS and crash detection](../safety.md#sos) says what each
+platform will and won't do with it. A silent push to an iPhone goes at Apple's background
 priority instead, because APNs throttles a background push sent at the higher
 one.
 
@@ -93,7 +129,8 @@ her notification grows a line each time rather than three appearing.
 - Where somebody went goes under their name: arrivals, departures, trips and
   check-ins.
 - Quick messages and location requests go under the name of whoever sent them.
-- Low battery and a phone that stopped reporting go under "Amina's phone".
+- Low battery and a phone that stopped reporting go under "Amina's phone",
+  and so does the line that says it's reporting again.
 
 The newest line comes first, so a collapsed notification shows the news. Five
 lines fit, and older ones are counted underneath. After two hours with no news
@@ -142,10 +179,18 @@ Set nothing. The app still holds a websocket to your server while it's in the
 foreground, so the map, the activity feed and an active SOS update in real
 time. It also polls presence every minute in case that socket is dead.
 
-What you lose is alerts while the phone is locked. The server still records
-every alert in the activity feed, so nothing is missed, only heard about later.
-For a household that mostly opens the app to _check_ where people are, that's
-often fine.
+What you lose is alerts while the phone is locked, with one exception. An SOS,
+or a possible crash from the server's check, that reaches a phone over its own
+connection to the server makes the app ring for it, on the SOS channel, once
+per SOS. That connection is open while Hearth is on screen, on an iPhone
+whenever it shares its location, and on an Android phone while it's on the
+move. A parked Android phone, or one where Hearth isn't running, hears nothing
+until the app is opened. Arrivals, low battery and the rest never ring this
+way. The setup checklist says the same on a server like this.
+
+The server still records every alert in the activity feed, so nothing is
+missed, only heard about later. For a household that mostly opens the app to
+_check_ where people are, that's often fine.
 
 ## Option 2: `ntfy` (self-hosted alerts)
 
@@ -292,15 +337,26 @@ aimed at one member, recorded in the activity feed as `nudge_requested`. A bare
 ask arrives as "Location requested" with "Amina asked where you are." A quick
 message arrives with the sender's name as the title and the line they sent as
 the body. `data` carries the id of the feed entry and who sent it. Tapping it
-opens the map, which is where the app plays the message. A sender can send six
-in ten minutes.
+opens the map, which is where the app plays the message. An account can send
+ten in ten minutes, and the app keeps each phone to six and says to wait
+rather than send one the server would refuse. The same words to the same person
+within a minute are sent once. A quick message reaches somebody who has paused
+sharing. A bare ask to them is not sent, and the sender is told they paused.
 
 This one is a visible notification, not a silent push, and that changes what
 it can do. With the app open, the phone shows the message and takes a fresh
-fix at once, whatever the provider. With the app in the background, the system
-shows the notification and the app doesn't run, so the ask alone doesn't
-produce a fix. In practice the sender asks from the member's page, and opening
-that page has already asked the phone for a fix, as described above.
+fix at once, whatever the provider. With `expo` the push also reaches the app
+in the background. Android hands every Expo push to the app, and on an iPhone
+the request is marked content-available, which asks iOS to run the app for it
+as it does for a silent wake. Either way the phone takes a fix as well as
+showing the message. iOS decides for itself when to run an app for a push, so
+an iPhone may still hold it back. Through `ntfy` the app doesn't run, so the
+alert alone doesn't produce a fix. A bare ask to somebody sharing precisely
+therefore also asks the phone for a fix the way opening the member's page
+does, over its control channel or by a silent wake, and the sender's toast
+says which happened, or that no phone of theirs could be woken. Somebody
+sharing approximately gets the alert alone, so the sender learns nothing
+about their phone that the member's page would not show.
 
 Muting "Nudges from your circle" in a circle's notification settings silences
 the notification. The activity feed records it either way, so the line is still

@@ -112,7 +112,15 @@ export class ApiClient {
     const first = await this.send<T>(method, path, options)
     if (first.kind === "ok") return first.data
 
-    if (first.error.status === 401 && options.auth !== false && this.hooks.getTokens()) {
+    // Only the server's word that the token is no good is worth a renewal.
+    // A wrong password, or a page from a firewall in front of the server, is
+    // a 401 too, and sending it again would only be another.
+    if (
+      first.error.status === 401 &&
+      first.error.code === "unauthorized" &&
+      options.auth !== false &&
+      this.hooks.getTokens()
+    ) {
       this.refused = true
       const refreshed = await this.refreshTokens()
       if (refreshed) {

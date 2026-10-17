@@ -578,11 +578,11 @@ describe("device offline", () => {
     expect(await eventCount("device_offline")).toBe(0)
   })
 
-  it("alerts every member of a family-sized server when the server itself was down", async () => {
-    // Characterisation, not an endorsement. The outage guard needs eight
-    // reporting devices before it engages, so on the one-household server this
-    // project is built for, an ingest outage longer than an hour tells every
-    // family that every phone has broken. The code documents the trade-off.
+  it("withholds them on a family-sized server when the server itself was down", async () => {
+    // Too few phones for a majority to mean anything, but not one of the
+    // four reporting is what the server's own outage looks like, and telling
+    // the family every phone broke at once is the alert it must not send.
+    const members: Awaited<ReturnType<typeof registerUser>>[] = []
     for (let i = 0; i < 4; i += 1) {
       const member = await registerUser(ctx.app)
       await createCircle(member.headers)
@@ -590,11 +590,25 @@ describe("device offline", () => {
         { ...HOME, recordedAt: iso(-90 * 60), accuracyMeters: 12, batteryLevel: 0.5 },
       ])
       await silentSinceLastFix(member.user.id)
+      members.push(member)
     }
 
-    const report = await tick()
-    expect(report.offlineFlagged).toBe(4)
-    expect(await eventCount("device_offline")).toBe(4)
+    expect((await tick()).offlineFlagged).toBe(0)
+    expect(await eventCount("device_offline")).toBe(0)
+
+    // The first phone back gives the rest half an hour to get through too.
+    await uploadFixes(members[0]!.headers, [
+      { ...HOME, recordedAt: iso(-20), accuracyMeters: 12, batteryLevel: 0.5 },
+    ])
+    expect((await tick()).offlineFlagged).toBe(0)
+
+    // After that a phone still dark has no excuse left, so one that really
+    // is dead is never hidden behind the rest for good. With no push provider
+    // nothing can be asked first, so the other three are told about at once.
+    await getDb().execute(
+      sql`update server_settings set updated_at = now() - interval '31 minutes'`,
+    )
+    expect((await tick()).offlineFlagged).toBe(3)
   })
 
   it("keeps withholding them when the first phone reconnects after the outage", async () => {

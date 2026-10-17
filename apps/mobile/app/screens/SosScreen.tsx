@@ -10,13 +10,13 @@ import { PrimaryButton } from "@/components/PrimaryButton"
 import { SosHoldButton } from "@/components/SosHoldButton"
 import { Text } from "@/components/Text"
 import { TextField } from "@/components/TextField"
-import { useActiveSos, useRaiseSos, useResolveSos } from "@/hooks/queries"
+import { useMyOpenSos, useRaiseSos, useResolveSos } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { reportNow } from "@/services/location/tracker"
 import { alert } from "@/stores/alert"
-import { useAuthStore } from "@/stores/auth"
 import { toast } from "@/stores/toast"
+import { useTrackingStore } from "@/stores/tracking"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { relativeTime } from "@/utils/time"
@@ -24,25 +24,52 @@ import { relativeTime } from "@/utils/time"
 const SOS_PING_MS = DEFAULTS.sosPingIntervalSeconds * 1000
 
 /**
- * While an alert is active this screen takes high-accuracy fixes on top of the
- * normal background cadence, so the circle sees movement in near real time.
+ * Long enough for a warm GPS to answer, so the alert carries where the person
+ * is now. Short enough that a phone indoors does not hold the alert back. The
+ * fix still uploads when it comes, and the phone is on Live by then.
+ */
+const FRESH_FIX_WAIT_MS = 5_000
+
+function liveNow(): boolean {
+  const { watchedUntil } = useTrackingStore.getState()
+  return watchedUntil != null && Date.parse(watchedUntil) > Date.now()
+}
+
+/**
+ * With sharing off a fix never leaves the phone. It waits in the queue and
+ * goes up whenever sharing comes back on, long after anybody needed it, so
+ * none is taken.
+ */
+function sharingOn(): boolean {
+  return useTrackingStore.getState().enabled
+}
+
+/**
+ * While an alert is open the server holds this phone on Live, a fix a second
+ * wherever the app is. This screen only reports for a phone that is not on
+ * it, one whose tracker cannot run in the background or that talks to a
+ * server too old to hold it.
  */
 export const SosScreen: FC<AppStackScreenProps<"Sos">> = ({ navigation, route }) => {
   const { circleId } = route.params
   const { themed, theme } = useAppTheme()
   const insets = useSafeAreaInsets()
-  const me = useAuthStore((state) => state.user)
-  const { data: active } = useActiveSos(circleId)
+  const mine = useMyOpenSos(circleId)
   const raise = useRaiseSos(circleId)
-  const resolve = useResolveSos(circleId)
+  const resolve = useResolveSos()
+  const sharing = useTrackingStore((state) => state.enabled)
   const [note, setNote] = useState("")
-  const mine = active?.find((alert) => alert.user.id === me?.id) ?? null
   const timer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (mine) {
-      void reportNow("sos")
-      timer.current = setInterval(() => void reportNow("sos"), SOS_PING_MS)
+      // The first one also carries the alert's live window back in its
+      // upload reply, to a phone that had no channel open to hear it on.
+      const ping = () => {
+        if (sharingOn() && !liveNow()) void reportNow("sos")
+      }
+      ping()
+      timer.current = setInterval(ping, SOS_PING_MS)
     }
     return () => {
       if (timer.current) clearInterval(timer.current)
@@ -52,6 +79,13 @@ export const SosScreen: FC<AppStackScreenProps<"Sos">> = ({ navigation, route })
 
   const activate = async () => {
     try {
+      // A failed or slow fix must never be what stops the alert going out.
+      if (sharingOn()) {
+        await Promise.race([
+          reportNow("sos").catch(() => null),
+          new Promise((resolve) => setTimeout(resolve, FRESH_FIX_WAIT_MS)),
+        ])
+      }
       await raise.mutateAsync(note.trim() || null)
       toast.success(translate("sos:sent"))
     } catch (error) {
@@ -118,7 +152,11 @@ export const SosScreen: FC<AppStackScreenProps<"Sos">> = ({ navigation, route })
             active={Boolean(mine)}
             onActivate={activate}
             label={translate("sos:holdToSend")}
-            hint={mine ? translate("sos:sentBody") : translate("sos:cancelCountdown")}
+            hint={
+              mine
+                ? translate(sharing ? "sos:sentBody" : "sos:sentBodySharingOff")
+                : translate("sos:cancelCountdown")
+            }
           />
           {mine ? (
             <View style={{ alignItems: "center", gap: 4 }}>

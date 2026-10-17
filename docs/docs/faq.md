@@ -112,10 +112,17 @@ and takes a fresh fix if the last one is over 15 minutes old.
 While the server is down nobody can see anybody, and after 15 minutes without a
 fix everyone shows as stale, or after 35 for a phone that said it had parked,
 since a parked phone only reports every quarter of an hour. The job that
-alerts on a phone going quiet holds its alerts back when at least eight
-phones count and most of them have gone
-quiet at once, on the grounds that a simultaneous outage is the server's fault
-rather than everyone's, so a reboot does not send the family an alert each.
+alerts on a phone going quiet holds its alerts back when the outage looks like
+the server's own. That is when it couldn't reach the push provider in the last
+half hour, when a family-sized server has two or more phones and not one of
+them is reporting, or when at least eight phones count and most of them have
+gone quiet at once, and for half an hour after any of those last held, so the
+other phones have time to get back through after the first. A simultaneous
+outage is the server's fault rather than everyone's, so a reboot or a dead home
+connection does not send the family an alert each. A server with a single
+phone can't tell the difference, and still says when that phone goes quiet. An
+alert held back by a push outage is dropped if the phone reports before it
+goes out.
 
 ## How much battery does it use?
 
@@ -139,12 +146,17 @@ back into moving. A phone allowed only approximate location gets no geofence,
 because neither Android nor iOS arms one for it, so it parks without one and
 leaves on the classifier's word or on a fix far enough away to say so. The
 member's page then says precise location is off. So a phone sitting in a house
-overnight is costing you a few cheap fixes an hour, not a GPS. A parked phone
-is expected to be quiet, so the server only calls it offline after twelve
-hours of silence. A phone last seen
+overnight is costing you a few cheap fixes an hour, not a GPS. A parked iPhone
+is expected to be quiet, because iOS holds back the silent pushes that would
+wake it, so the server only calls it offline after twelve hours of silence. A
+parked Android phone reports every quarter of an hour and answers those pushes,
+so it is called offline once it has let three of them go, about 100 minutes
+after it was last heard. A phone last seen
 moving is reported after an hour, and the server asks it for a fix before
 that. A phone that has told the server why it cannot report, a permission not
 set to Always, Location Services off, is shown as that under its name instead.
+One that went quiet on 5% battery or less is shown, and reported, as having
+most likely run out.
 Opening the map asks anyone quiet for a couple of minutes for a fresh fix, and
 opening somebody's page asks their phone for one too. Live, offered while
 somebody is on the move, has their phone send a fix a second for as long as you
@@ -247,7 +259,10 @@ Hearth's answer is to make push optional. The default, `PUSH_PROVIDER=none`,
 needs no configuration: the app holds a websocket while it is open, so the map
 and feed update live, it polls presence every 60 seconds as a fallback in case
 that socket is dead, and an active SOS shows as a banner on the circle's map.
-What you lose is alerts while the phone is locked.
+What you lose is alerts while the phone is locked. The exception is an SOS or a
+possible crash, which the app rings for itself when it hears one over its own
+connection to the server. An iPhone keeps that connection while it shares its
+location, and an Android phone while it's on the move.
 
 When you want more, `ntfy` is the fully self-hosted route. It carries alerts
 only and never wakes the Hearth app. `expo` is the zero-infrastructure one and
@@ -261,9 +276,50 @@ Whichever you pick, events are written to an outbox table in the same
 transaction as the thing that caused them and drained by a background worker
 with back-off, so a broken push provider delays notifications rather than
 dropping them at the first failure. A send that keeps failing is tried six
-times over about an hour and twenty minutes before it is given up.
+times over about an hour and twenty minutes before it is given up. An SOS is
+the exception. It is tried every few minutes for as long as it is open, and a
+possible crash alert the same way for up to an hour.
 [Push notifications](install/push-notifications.md) compares all four options
 properly.
+
+## Will an SOS get through silent mode or Do Not Disturb?
+
+Mostly, and not everywhere.
+
+On an iPhone an SOS is a Time Sensitive notification. It gets through Do Not
+Disturb and any other Focus that allows time sensitive notifications, but the
+ring/silent switch still silences it. The kind of alert that sounds on a
+silenced iPhone is a Critical Alert, which needs an entitlement Apple grants on
+request, and Hearth doesn't have one. Keep Time Sensitive Notifications on for
+Hearth in its notification settings and in each Focus you use.
+
+On Android an SOS goes on a channel set to override Do Not Disturb, and Android
+honours that only for an app that has been given Do Not Disturb access. The
+setup checklist has an optional step for it. Without the access an SOS still
+arrives at the highest importance, but Do Not Disturb keeps it quiet.
+
+[SOS and crash detection](safety.md#sos) has the detail.
+
+## When does a speed alert go off?
+
+Only once a circle admin sets a speed for it in circle settings. It's off until
+then. After that the circle is told when somebody's phone stays over the speed
+for at least 15 seconds of the drive. One fast reading never counts, and
+neither do two in a row on Live, which sends a fix a second. That's how a GPS
+glitch reading 130 km/h for a moment on a town road stays quiet. A phone that
+reports once a minute on the motorway still counts, because two fixes a minute
+apart over the limit cover a minute of driving.
+
+The speed quoted is the fastest that two neighbouring fixes agree on, and never
+faster than the ground between two sharp fixes allows. The trip card uses the
+same rule, so the two never disagree. The alert reaches only circles the driver
+shares precisely with, at most once every half hour per circle, and a drive
+that uploads late goes in the feed without a notification.
+
+The check that tells a circle to look in on somebody who stopped hard is a
+different thing, and
+[SOS and crash detection](safety.md#the-server-side-check-which-is-a-different-thing)
+explains it.
 
 ## What actually happens when somebody pauses sharing?
 
@@ -273,8 +329,8 @@ paused.
 Paused means that circle gets nothing. Coordinates come back null, and so do
 battery, activity, the last-reported time and which place you are at. Members
 see that you paused, which is deliberate: silent invisibility would be a
-different feature. The history endpoint refuses outright for anybody who is not
-currently sharing precisely.
+different feature. The history and trips endpoints answer an empty list for
+anybody who is not currently sharing precisely.
 
 Two behaviours surprise people:
 
@@ -287,14 +343,20 @@ Two behaviours surprise people:
   sharing" under your name with your last position, so a switch on the phone
   cannot get round a circle's rule unnoticed. Your own map says the switch is
   off until you turn it back on.
-- **SOS overrides a pause.** Raising one switches you to precise in that circle
-  and notifies everyone regardless of mutes. Resolving it does not put the
+- **SOS overrides a pause.** Raising one switches you to precise in every
+  circle you're in, including ones you had paused or set to approximate, and
+  notifies everyone in them regardless of mutes. Your phone reports live, a fix
+  a second, until shortly after you resolve it. Resolving it does not put the
   pause back. See [safety](safety.md).
 
 A pause can carry an expiry. It lapses on read, and a background job restores
 whatever mode you were in before pausing rather than defaulting you to precise.
 A circle owner or admin can turn pausing off entirely, and that setting is
 visible to every member.
+
+Quick messages still reach somebody who has paused, since a message says
+nothing about where they are. A bare _Ask for location_ isn't sent to them, and
+the person asking is told they paused.
 
 ## Can a circle admin see more than an ordinary member?
 

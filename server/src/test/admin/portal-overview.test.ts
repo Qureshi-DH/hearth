@@ -191,6 +191,7 @@ describe("the dashboard's phones", () => {
       lastHeardAt: heard,
       state: "reporting",
       issues: ["location_permission"],
+      batteryRanOut: false,
     })
     expect(byName.get("Daniyal")).toMatchObject({
       deviceName: "Test Phone",
@@ -259,16 +260,29 @@ describe("the dashboard's phones", () => {
 })
 
 describe("the dashboard", () => {
-  it("turns down a time zone it does not know", async () => {
+  // The browser says which zone it is in, and some say one the database has
+  // never heard of. The page polls every minute, and a 400 each time is a 4xx
+  // in ordinary use that a firewall can lock the house out for.
+  it("draws a time zone it does not know in UTC, and says so", async () => {
     const { admin } = await family()
-    expect((await overview(admin.headers, "Mars/Olympus")).statusCode).toBe(400)
+    const response = await overview(admin.headers, "Etc/Unknown")
+    expect(response.statusCode).toBe(200)
+    expect((response.json() as AdminOverview).timeZone).toBe("UTC")
   })
 
   // Postgres reads "+05:00" as POSIX, where the sign is the other way round,
   // and every day would shift by ten hours.
-  it("turns down a bare offset in place of a zone name", async () => {
+  it("does not take a bare offset in place of a zone name", async () => {
     const { admin } = await family()
-    expect((await overview(admin.headers, "+05:00")).statusCode).toBe(400)
+    const response = await overview(admin.headers, "+05:00")
+    expect(response.statusCode).toBe(200)
+    expect((response.json() as AdminOverview).timeZone).toBe("UTC")
+  })
+
+  it("takes a zone the database knows by a name with no slash in it", async () => {
+    const { admin } = await family()
+    const response = await overview(admin.headers, "CET")
+    expect((response.json() as AdminOverview).timeZone).toBe("CET")
   })
 
   it("draws an empty server as empty days", async () => {

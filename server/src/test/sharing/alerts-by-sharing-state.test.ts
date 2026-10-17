@@ -312,12 +312,12 @@ describe("possible incident", () => {
     await setCircleSettings(alice.headers, B, { incidentDetection: true })
     await setSharing(alice.headers, A, { sharingState: "approximate" })
 
-    // 90 km/h on the ring road, then a stop that lasts four minutes.
+    // 90 km/h on the ring road, then a stop that lasts five minutes.
     await uploadFixes(alice.headers, [
-      { ...northOf(HOME, 0), recordedAt: iso(-290), accuracyMeters: 8, speedMps: 25 },
-      { ...northOf(HOME, 750), recordedAt: iso(-260), accuracyMeters: 8, speedMps: 24.2 },
-      { ...northOf(HOME, 900), recordedAt: iso(-230), accuracyMeters: 9, speedMps: 0.2 },
-      { ...northOf(HOME, 900), recordedAt: iso(-120), accuracyMeters: 12, speedMps: 0 },
+      { ...northOf(HOME, 0), recordedAt: iso(-410), accuracyMeters: 8, speedMps: 25 },
+      { ...northOf(HOME, 750), recordedAt: iso(-380), accuracyMeters: 8, speedMps: 24.2 },
+      { ...northOf(HOME, 900), recordedAt: iso(-350), accuracyMeters: 9, speedMps: 0.2 },
+      { ...northOf(HOME, 900), recordedAt: iso(-200), accuracyMeters: 12, speedMps: 0 },
       { ...northOf(HOME, 902), recordedAt: iso(-30), accuracyMeters: 12, speedMps: 0 },
     ])
 
@@ -440,9 +440,10 @@ describe("trip completed", () => {
 })
 
 describe("SOS, check-ins and nudges", () => {
-  it("an SOS reaches only the circle it was raised in, and lifts that circle's pause", async () => {
+  it("an SOS reaches every circle she is in, and lifts the pause in each", async () => {
     const { alice, bob, carol, A, B } = await household()
     await setSharing(alice.headers, A, { sharingState: "paused" })
+    await setSharing(alice.headers, B, { sharingState: "approximate" })
     await uploadFixes(alice.headers, [{ ...HOME, recordedAt: iso(-30), accuracyMeters: 10 }])
 
     const sos = await ctx.app.inject({
@@ -454,13 +455,18 @@ describe("SOS, check-ins and nudges", () => {
     expect(sos.statusCode).toBe(201)
 
     expect(await feedTypes(bob.headers, A)).toContain("sos_started")
-    expect(await feedTypes(carol.headers, B)).not.toContain("sos_started")
+    expect(await feedTypes(carol.headers, B)).toContain("sos_started")
 
-    // An SOS from someone whose location is paused would be useless, so the
-    // route un-pauses that circle and only that circle.
-    const seenByBob = await presenceFor(bob.headers, A, alice.user.id)
-    expect(seenByBob.sharingState).toBe("precise")
-    expect(seenByBob.lat).toBeCloseTo(HOME.lat, 5)
+    // An SOS from someone whose location is paused or blurred would be
+    // useless, so every circle it reaches gets her exact position.
+    for (const [viewer, circleId] of [
+      [bob, A],
+      [carol, B],
+    ] as const) {
+      const seen = await presenceFor(viewer.headers, circleId, alice.user.id)
+      expect(seen.sharingState).toBe("precise")
+      expect(seen.lat).toBeCloseTo(HOME.lat, 5)
+    }
 
     const resolve = await ctx.app.inject({
       method: "POST",
@@ -469,7 +475,7 @@ describe("SOS, check-ins and nudges", () => {
     })
     expect(resolve.statusCode).toBe(200)
     expect(await feedTypes(bob.headers, A)).toContain("sos_resolved")
-    expect(await feedTypes(carol.headers, B)).not.toContain("sos_resolved")
+    expect(await feedTypes(carol.headers, B)).toContain("sos_resolved")
   })
 
   it("keeps an open SOS out of the map once she pauses again", async () => {
@@ -527,26 +533,26 @@ describe("SOS, check-ins and nudges", () => {
     expect(row!.lastLat).not.toBe(HOME.lat)
   })
 
-  it("refuses a nudge to a paused member and allows one to an approximate member", async () => {
+  it("asks a paused member for nothing and an approximate member for a location", async () => {
     const { alice, bob, A } = await household()
 
     await setSharing(alice.headers, A, { sharingState: "paused" })
-    const blocked = await ctx.app.inject({
+    const paused = await ctx.app.inject({
       method: "POST",
       url: `/api/v1/circles/${A}/nudge/${alice.user.id}`,
       headers: bob.headers,
-      payload: { quickKey: "where_are_you" },
     })
-    expect(blocked.statusCode).toBe(403)
+    expect(paused.statusCode).toBe(200)
+    expect(paused.json()).toMatchObject({ notified: "paused" })
 
     await setSharing(alice.headers, A, { sharingState: "approximate" })
     const allowed = await ctx.app.inject({
       method: "POST",
       url: `/api/v1/circles/${A}/nudge/${alice.user.id}`,
       headers: bob.headers,
-      payload: { quickKey: "where_are_you" },
     })
     expect(allowed.statusCode).toBe(200)
+    expect(allowed.json()).toMatchObject({ notified: "sent" })
   })
 
   it("keeps a check-in in the circle it was made in", async () => {
@@ -621,7 +627,8 @@ describe("transitions", () => {
       url: `/api/v1/circles/${A}/members/${alice.user.id}/trips`,
       headers: bob.headers,
     })
-    expect(paused.statusCode).toBe(403)
+    expect(paused.statusCode).toBe(200)
+    expect(paused.json()).toEqual([])
 
     const precise = await ctx.app.inject({
       method: "GET",

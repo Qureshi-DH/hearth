@@ -53,6 +53,12 @@ export interface PermissionSnapshot {
   manufacturer: string | null
   /** Android only. The location service died without the tracker asking. */
   serviceStopped: boolean
+  /**
+   * Android only. Whether Hearth may let the SOS channel through Do Not
+   * Disturb, which Android honours for no app without this access. "unknown"
+   * is a build whose native module cannot say.
+   */
+  dndAccess: "granted" | "denied" | "unknown" | "n/a"
 }
 
 /**
@@ -80,6 +86,7 @@ export async function getPermissionSnapshot(): Promise<PermissionSnapshot> {
     refresh,
     backgroundRestricted,
     lowPowerMode,
+    dndAccess,
   ] = await Promise.all([
     Location.getForegroundPermissionsAsync(),
     Location.getBackgroundPermissionsAsync().catch(() => null),
@@ -90,6 +97,7 @@ export async function getPermissionSnapshot(): Promise<PermissionSnapshot> {
     Platform.OS === "ios" ? backgroundRefreshStatus() : Promise.resolve("unknown" as const),
     readBackgroundRestricted(),
     readLowPowerMode(),
+    readDndAccess(),
   ])
 
   let location: PermissionLevel = "unknown"
@@ -131,6 +139,7 @@ export async function getPermissionSnapshot(): Promise<PermissionSnapshot> {
     lowPowerMode,
     manufacturer: make ? make : null,
     serviceStopped: Platform.OS === "android" && serviceDiedUnexpectedly(),
+    dndAccess,
   }
 }
 
@@ -152,6 +161,17 @@ async function readBackgroundRestricted(): Promise<boolean> {
     // An install carrying an older copy of the module has no such function,
     // and nothing known is better than a restriction invented.
     return false
+  }
+}
+
+async function readDndAccess(): Promise<PermissionSnapshot["dndAccess"]> {
+  if (Platform.OS !== "android") return "n/a"
+  if (!native) return "unknown"
+  try {
+    return (await native.isNotificationPolicyAccessGrantedAsync()) ? "granted" : "denied"
+  } catch {
+    // An install carrying an older copy of the module has no such function.
+    return "unknown"
   }
 }
 
@@ -216,7 +236,13 @@ export function vendorFor(manufacturer: string | null | undefined): Vendor | nul
   return null
 }
 
-/** Needed even without a push provider. SOS banners raised while the app is open are local. */
+/**
+ * Needed even without a push provider, because the incident alarm and an SOS
+ * heard over a socket are local notifications. Time Sensitive needs no option
+ * here. It comes with the entitlement in app.json. Critical Alerts would need
+ * an entitlement Apple grants on request, which Hearth does not have, so the
+ * request leaves it off.
+ */
 export async function requestNotifications(): Promise<SimpleStatus> {
   const result = await Notifications.requestPermissionsAsync({
     ios: { allowAlert: true, allowBadge: true, allowSound: true, allowCriticalAlerts: false },
@@ -288,6 +314,25 @@ export async function openBatterySaverSettings(): Promise<void> {
       return
     } catch {
       // Some OEM builds have no such activity.
+    }
+  }
+  await openAppSettings()
+}
+
+/**
+ * The system list where Do Not Disturb access is granted. There is no dialog
+ * for it. Hearth is on the list because app.json declares
+ * ACCESS_NOTIFICATION_POLICY.
+ */
+export async function openDndAccessSettings(): Promise<void> {
+  if (Platform.OS === "android") {
+    try {
+      await IntentLauncher.startActivityAsync(
+        IntentLauncher.ActivityAction.NOTIFICATION_POLICY_ACCESS_SETTINGS,
+      )
+      return
+    } catch {
+      // Some OEM builds and Android Go have no such page.
     }
   }
   await openAppSettings()

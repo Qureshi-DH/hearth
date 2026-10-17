@@ -154,8 +154,8 @@ async function household() {
   return { alice, bob, circleId: circle.id }
 }
 
-describe("the SOS raise budget is per circle", () => {
-  it("tells the fourth circle when one emergency is raised in all of them", async () => {
+describe("the SOS raise budget", () => {
+  it("answers a press in each of four circles without refusing one", async () => {
     const yusuf = await registerUser(ctx.app, { displayName: "Yusuf" })
     const circles: string[] = []
     for (const name of ["Family", "Cousins", "Football", "Flatmates"]) {
@@ -165,6 +165,7 @@ describe("the SOS raise budget is per circle", () => {
       circles.push(created.id)
     }
 
+    // The first press raises it everywhere, so the rest find it open.
     const codes: number[] = []
     for (const circleId of circles) {
       codes.push((await raiseSos(yusuf.headers, circleId, "Hit on Gloucester Rd")).statusCode)
@@ -173,14 +174,14 @@ describe("the SOS raise budget is per circle", () => {
     expect({
       codes,
       alerts: await Promise.all(circles.map(sosStartedCount)),
-    }).toEqual({ codes: [201, 201, 201, 201], alerts: [1, 1, 1, 1] })
+    }).toEqual({ codes: [201, 200, 200, 200], alerts: [1, 1, 1, 1] })
   })
 
-  it("still stops a fourth raise inside ten minutes in one circle", async () => {
+  it("still stops a sixth fresh alarm inside ten minutes", async () => {
     const { alice, circleId } = await household()
 
     const codes: number[] = []
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
       const raised = await raiseSos(alice.headers, circleId)
       codes.push(raised.statusCode)
       if (raised.statusCode !== 201) continue
@@ -192,7 +193,7 @@ describe("the SOS raise budget is per circle", () => {
       expect(resolve.statusCode).toBe(200)
     }
 
-    expect(codes).toEqual([201, 201, 201, 429])
+    expect(codes).toEqual([201, 201, 201, 201, 201, 429])
   })
 })
 
@@ -369,6 +370,29 @@ describe("the SOS list serves the same position the map does", () => {
     const [row] = await sosList(alice.headers, circleId)
     expect(row!.lastLat).toBeCloseTo(SCHOOL.lat, 5)
   })
+
+  it("reads as paused, like the map, once she switches sharing off on the phone", async () => {
+    const { alice, bob, circleId } = await household()
+    await uploadFix(alice.headers, SCHOOL, 120)
+    expect((await raiseSos(alice.headers, circleId)).statusCode).toBe(201)
+    const health = await ctx.app.inject({
+      method: "PATCH",
+      url: "/api/v1/me/health",
+      headers: alice.headers,
+      payload: { locationPermission: "always", locationServices: true, sharingEnabled: false },
+    })
+    expect(health.statusCode).toBe(200)
+
+    const seen = await mapRow(bob.headers, circleId, alice.user.id)
+    const [row] = await sosList(bob.headers, circleId)
+
+    expect({
+      mapState: seen.sharingState,
+      mapLat: seen.lat,
+      alertLat: row!.lastLat,
+      alertFixAt: row!.lastFixAt,
+    }).toEqual({ mapState: "paused", mapLat: null, alertLat: null, alertFixAt: null })
+  })
 })
 
 describe("nudging through a lapsed pause", () => {
@@ -388,16 +412,17 @@ describe("nudging through a lapsed pause", () => {
       where circle_id = ${circleId}::uuid and user_id = ${bob.user.id}::uuid
     `)
 
+    // A bare ask for a location, the one kind of nudge a pause answers.
     const nudged = await ctx.app.inject({
       method: "POST",
       url: `/api/v1/circles/${circleId}/nudge/${bob.user.id}`,
       headers: alice.headers,
-      payload: { quickKey: "where_are_you" },
     })
     expect(nudged.statusCode).toBe(200)
+    expect(nudged.json()).toMatchObject({ notified: "sent" })
   })
 
-  it("still refuses a nudge to someone whose pause has no expiry", async () => {
+  it("still answers an ask for a location to someone whose pause has no expiry with the pause", async () => {
     const { alice, bob, circleId } = await household()
     await setSharing(bob.headers, circleId, "paused")
 
@@ -405,8 +430,8 @@ describe("nudging through a lapsed pause", () => {
       method: "POST",
       url: `/api/v1/circles/${circleId}/nudge/${bob.user.id}`,
       headers: alice.headers,
-      payload: { quickKey: "where_are_you" },
     })
-    expect(nudged.statusCode).toBe(403)
+    expect(nudged.statusCode).toBe(200)
+    expect(nudged.json()).toMatchObject({ notified: "paused", asked: "paused" })
   })
 })

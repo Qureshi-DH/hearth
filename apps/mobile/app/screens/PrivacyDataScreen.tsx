@@ -22,6 +22,7 @@ import { tokenVault } from "@/stores/tokenVault"
 import { useTrackingStore } from "@/stores/tracking"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
+import { minutesToWait, takeExport } from "@/utils/budget"
 import { relativeTime } from "@/utils/time"
 import { useHeader } from "@/utils/useHeader"
 
@@ -40,6 +41,11 @@ export const PrivacyDataScreen: FC<AppStackScreenProps<"PrivacyData">> = ({ navi
   )
 
   const exportData = async () => {
+    const waitMs = takeExport()
+    if (waitMs > 0) {
+      toast.info(translate("settings:exportWait", { minutes: minutesToWait(waitMs) }))
+      return
+    }
     setExporting(true)
     try {
       const data = await endpoints.auth.exportData()

@@ -11,9 +11,8 @@ import {
   type LocationSource,
 } from "@hearth/shared"
 
-import { translate } from "@/i18n/translate"
 import { ApiError, endpoints } from "@/services/api"
-import { presentIncidentAlarm } from "@/services/incidentAlarm"
+import { checkIncident, raiseIncident } from "@/services/incidentAlarm"
 import { useAuthStore } from "@/stores/auth"
 import {
   startMotion,
@@ -22,7 +21,6 @@ import {
   type MotionSource,
 } from "@/services/location/motion"
 import { startDriveSensors, stopDriveSensors } from "@/services/location/driveSensors"
-import { useIncidentStore } from "@/stores/incident"
 import { useSettingsStore } from "@/stores/settings"
 import { tokenVault } from "@/stores/tokenVault"
 import { control, setControlHandler } from "@/services/location/control"
@@ -315,7 +313,16 @@ export function thin(
         { lat: fix.lat, lon: fix.lon },
       )
       const halfInterval = (policy.minUpdateIntervalSeconds * 1000) / 2
+      // The first fix off road speed goes up whatever the gates say. The
+      // server calls a stop sudden only from the fix that shows the car
+      // standing straight after road speed, and an ordinary stop sends its
+      // slowing down here instead.
+      const offRoadSpeed =
+        (last.speedMps ?? 0) >= DEFAULTS.incidentMinSpeedMps &&
+        fix.speedMps != null &&
+        fix.speedMps < DEFAULTS.incidentMinSpeedMps
       if (
+        !offRoadSpeed &&
         dt < halfInterval &&
         moved < policy.distanceFilterMeters / 2 &&
         fix.source !== "manual" &&
@@ -329,6 +336,7 @@ export function thin(
       // STILL_AFTER_MS, which is a phone that has stopped and not yet been
       // called stopped.
       if (
+        !offRoadSpeed &&
         gateMeters > 0 &&
         fix.source === "background" &&
         moved < gateMeters &&
@@ -369,6 +377,9 @@ export function flush(): Promise<void> {
     } while (flushAgain)
   })().finally(() => {
     flushing = null
+    // Every delivery, retry and sync pass comes through here, and an
+    // incident's countdown or unsent alert is decided on the same beat.
+    void checkIncident()
   })
   return flushing
 }
@@ -387,6 +398,8 @@ async function doFlush(): Promise<void> {
       useTrackingStore.getState().dequeue(batch)
       useTrackingStore.getState().recordUpload(result.accepted)
       clearRetry()
+      // The server just answered, so an alert waiting for a signal goes now.
+      void checkIncident({ online: true })
       if (watchedNow()) {
         tallyLive({ sent: batch.length, accepted: result.accepted })
       } else {
@@ -1336,6 +1349,10 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
     } else {
       await flush()
     }
+    // The flush only starts an incident's alert. iOS suspends the app the
+    // moment this returns, so the task waits for it here rather than in the
+    // flush, which the alert's own fix goes through.
+    await checkIncident()
     return BackgroundTask.BackgroundTaskResult.Success
   } catch {
     return BackgroundTask.BackgroundTaskResult.Failed
@@ -2093,9 +2110,7 @@ async function onMotion(
       // Harsh braking is a driving quality signal with nowhere to go yet, so
       // only a possible impact is acted on.
       if (event.kind !== "possibleImpact") return
-      useIncidentStore.getState().raise(event)
-      // The modal only helps someone already looking at the screen.
-      void presentIncidentAlarm(translate("incident:alarmTitle"), translate("incident:alarmBody"))
+      void raiseIncident(event)
     })
   } else if (activity !== "unknown" && activity !== "still") {
     stopDriveSensors()

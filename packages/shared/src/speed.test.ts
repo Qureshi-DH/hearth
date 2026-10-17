@@ -100,6 +100,29 @@ describe("agreedMaxSpeedMps", () => {
     expect(agreedMaxSpeedMps(quick, GAP)).toBe(5)
   })
 
+  it("caps two agreeing spikes at what the ground between them allows", () => {
+    // Live, a fix a second at 72 km/h on sharp GPS, and two readings in a row
+    // of 144 km/h. They agree with each other, but the car covered 20 m in
+    // that second, and no braking or accelerating inside one second turns
+    // 26 m of road at most into 40 m/s at both ends.
+    const fixes = run([20, 20, 20, 40, 40, 20, 20, 20], {
+      interval: 1,
+      accuracy: 3,
+      metresPerStep: 20,
+    })
+    const peak = agreedMaxSpeedMps(fixes, GAP)!
+    expect(peak).toBeGreaterThanOrEqual(20)
+    expect(peak).toBeLessThan(28)
+  })
+
+  it("leaves a speed alone when the car could have slowed and regained it in between", () => {
+    // 90 km/h at both ends of ten seconds that covered only 200 m. A car can
+    // brake for a junction and pick up again in that time, so the positions
+    // contradict nothing.
+    const fixes = run([25, 25], { interval: 10, metresPerStep: 200 })
+    expect(agreedMaxSpeedMps(fixes, GAP)).toBe(25)
+  })
+
   it("reads timestamps as strings too, in any order", () => {
     const fixes = run([10, 11, 10]).map((fix) => ({
       ...fix,

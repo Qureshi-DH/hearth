@@ -177,17 +177,20 @@ describe("portal refresh", () => {
       headers: { cookie },
       payload: { deviceId: DEVICE },
     })
-    expect(response.statusCode).toBe(401)
+    expect([response.statusCode, response.json()]).toEqual([200, { signedIn: false }])
     expect(cookieFrom(response)).toContain("Max-Age=0")
   })
 
-  it("has nothing to do without the cookie", async () => {
+  // Every open of the portal asks, signed in or not, and a 401 each time is a
+  // 4xx in ordinary use that a firewall in front of the server can lock the
+  // house out for.
+  it("says there is no session without the cookie, rather than refusing", async () => {
     const response = await ctx.app.inject({
       method: "POST",
       url: "/api/v1/auth/portal/refresh",
       payload: { deviceId: DEVICE },
     })
-    expect(response.statusCode).toBe(401)
+    expect([response.statusCode, response.json()]).toEqual([200, { signedIn: false }])
   })
 
   it("refuses a request another site made", async () => {
@@ -268,6 +271,6 @@ describe("portal sign-out", () => {
       headers: { cookie },
       payload: { deviceId: DEVICE },
     })
-    expect(again.statusCode).toBe(401)
+    expect([again.statusCode, again.json()]).toEqual([200, { signedIn: false }])
   })
 })

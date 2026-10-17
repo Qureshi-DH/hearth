@@ -7,6 +7,7 @@ import * as TaskManager from "expo-task-manager"
 import { DEFAULTS, type ServerInfo } from "@hearth/shared"
 
 import { endpoints } from "@/services/api"
+import { answerIncidentResponse } from "@/services/incidentAlarm"
 import { logTracker } from "@/services/location/log"
 import {
   BACKGROUND_LOCATION_TASK,
@@ -29,7 +30,8 @@ export type PushSetupResult =
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const type = (notification.request.content.data as { type?: string } | undefined)?.type
-    const urgent = type === "sos_started" || type === "nudge_requested"
+    const urgent =
+      type === "sos_started" || type === "nudge_requested" || type === "possible_incident"
     return {
       shouldShowBanner: true,
       shouldShowList: true,
@@ -56,7 +58,11 @@ export async function setupChannels(): Promise<void> {
   })
   await Notifications.setNotificationChannelAsync("sos", {
     name: "SOS",
-    description: "Emergency alerts from your circle. Bypasses Do Not Disturb.",
+    // Android only lets this through Do Not Disturb for an app holding Do Not
+    // Disturb access, and only if the channel is written while it holds it.
+    // The checklist asks for the access and calls this again once granted.
+    description:
+      "SOS and possible-crash alerts from your circle. Gets through Do Not Disturb once Hearth has Do Not Disturb access.",
     importance: Notifications.AndroidImportance.MAX,
     bypassDnd: true,
     vibrationPattern: [0, 400, 200, 400, 200, 400],
@@ -176,6 +182,9 @@ const WATCH_TYPE = "watch"
 // module scope: the OS can hand this over before any React code has mounted.
 TaskManager.defineTask(NOTIFICATION_WAKE_TASK, async ({ data, error }) => {
   if (error) return
+  // Android also runs this for a button on a notification, and the incident's
+  // I'm okay is answered here so the person never has to unlock the phone.
+  if (await answerIncidentResponse(data)) return
   const type = pushType(data)
   logTracker("push", { type })
   if (type === WATCH_TYPE) {
@@ -227,16 +236,18 @@ export function attachNotificationListeners(
     else if (WAKE_TYPES.has(data.type)) void wakeFix()
   })
 
-  const responded = Notifications.addNotificationResponseReceivedListener((response) => {
+  const open = async (response: Notifications.NotificationResponse | null) => {
+    // The incident's prompt is already over whatever screen is up.
+    if (!response || (await answerIncidentResponse(response))) return
     const data = response.notification.request.content.data as NotificationTarget | undefined
     if (data?.type) onOpen(data)
+  }
+  const responded = Notifications.addNotificationResponseReceivedListener((response) => {
+    void open(response)
   })
 
   // The listeners above never fire for a notification that launched the app cold.
-  void Notifications.getLastNotificationResponseAsync().then((response) => {
-    const data = response?.notification.request.content.data as NotificationTarget | undefined
-    if (data?.type) onOpen(data)
-  })
+  void Notifications.getLastNotificationResponseAsync().then(open)
 
   return () => {
     received.remove()

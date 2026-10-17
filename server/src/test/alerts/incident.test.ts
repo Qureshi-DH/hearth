@@ -184,13 +184,14 @@ describe("possible incident: it fires when it should", () => {
   it("raises one alert for a hard stop from motorway speed followed by stillness", async () => {
     const { driver, watcher, circle } = await drivingFamily()
 
-    // 110 km/h up the M32, then nothing but the same coordinate for four
+    // 110 km/h up the M32, then nothing but the same coordinate for five
     // minutes. Fixes 30 s apart, which is the tracker's minimum interval.
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-300), accuracyMeters: 6, speedMps: 30.5 },
-      { ...northOf(MOTORWAY, 915), recordedAt: at(-270), accuracyMeters: 6, speedMps: 30.9 },
-      { ...northOf(MOTORWAY, 1830), recordedAt: at(-240), accuracyMeters: 7, speedMps: 30.2 },
-      { ...northOf(MOTORWAY, 1930), recordedAt: at(-210), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-420), accuracyMeters: 6, speedMps: 30.5 },
+      { ...northOf(MOTORWAY, 915), recordedAt: at(-390), accuracyMeters: 6, speedMps: 30.9 },
+      { ...northOf(MOTORWAY, 1830), recordedAt: at(-360), accuracyMeters: 7, speedMps: 30.2 },
+      { ...northOf(MOTORWAY, 1930), recordedAt: at(-330), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 1930), recordedAt: at(-240), accuracyMeters: 9, speedMps: 0 },
       { ...northOf(MOTORWAY, 1930), recordedAt: at(-150), accuracyMeters: 9, speedMps: 0 },
       { ...northOf(MOTORWAY, 1932), recordedAt: at(-90), accuracyMeters: 11, speedMps: 0 },
       { ...northOf(MOTORWAY, 1931), recordedAt: at(-20), accuracyMeters: 10, speedMps: 0 },
@@ -211,15 +212,15 @@ describe("possible incident: it fires when it should", () => {
     const { driver, watcher, circle } = await drivingFamily()
 
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-330), accuracyMeters: 6, speedMps: 29.4 },
-      { ...northOf(MOTORWAY, 880), recordedAt: at(-300), accuracyMeters: 6, speedMps: 29.1 },
-      { ...northOf(MOTORWAY, 1750), recordedAt: at(-270), accuracyMeters: 7, speedMps: 28.8 },
-      { ...northOf(MOTORWAY, 1810), recordedAt: at(-240), accuracyMeters: 12, speedMps: 0 },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-450), accuracyMeters: 6, speedMps: 29.4 },
+      { ...northOf(MOTORWAY, 880), recordedAt: at(-420), accuracyMeters: 6, speedMps: 29.1 },
+      { ...northOf(MOTORWAY, 1750), recordedAt: at(-390), accuracyMeters: 7, speedMps: 28.8 },
+      { ...northOf(MOTORWAY, 1810), recordedAt: at(-360), accuracyMeters: 12, speedMps: 0 },
     ])
 
     // An SOS-style ping every 20 s from a phone that is upright and reporting
     // but has not moved. Each upload is its own request, as it would be.
-    for (const offset of [-180, -120, -60, -40, -20]) {
+    for (const offset of [-300, -240, -180, -120, -60, -40, -20]) {
       await uploadFixes(driver.headers, [
         { ...northOf(MOTORWAY, 1810), recordedAt: at(offset), accuracyMeters: 12, speedMps: 0 },
       ])
@@ -229,26 +230,25 @@ describe("possible incident: it fires when it should", () => {
     expect(await incidentPushes()).toHaveLength(1)
   })
 
-  it("waits for the stillness to last three minutes before saying anything", async () => {
+  it("waits for the stillness to last five minutes before saying anything", async () => {
     const { driver, watcher, circle } = await drivingFamily()
 
-    // 100 km/h, braking, and stationary from -190 s. At -30 s the stop is 170
-    // seconds old measured from the last fix that was still moving, which is
-    // under the threshold and must stay quiet.
+    // 100 km/h, stopped dead, and stationary from -320 s. At -30 s the stop
+    // is 290 seconds old, which is under the threshold and must stay quiet.
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-290), accuracyMeters: 6, speedMps: 28.0 },
-      { ...northOf(MOTORWAY, 840), recordedAt: at(-260), accuracyMeters: 6, speedMps: 27.0 },
-      { ...northOf(MOTORWAY, 1450), recordedAt: at(-230), accuracyMeters: 7, speedMps: 12.0 },
-      { ...northOf(MOTORWAY, 1620), recordedAt: at(-200), accuracyMeters: 8, speedMps: 5.0 },
-      { ...northOf(MOTORWAY, 1650), recordedAt: at(-190), accuracyMeters: 8, speedMps: 0 },
-      { ...northOf(MOTORWAY, 1650), recordedAt: at(-100), accuracyMeters: 8, speedMps: 0 },
-      { ...northOf(MOTORWAY, 1651), recordedAt: at(-30), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-410), accuracyMeters: 6, speedMps: 28.0 },
+      { ...northOf(MOTORWAY, 840), recordedAt: at(-380), accuracyMeters: 6, speedMps: 27.6 },
+      { ...northOf(MOTORWAY, 1660), recordedAt: at(-350), accuracyMeters: 7, speedMps: 27.0 },
+      { ...northOf(MOTORWAY, 1700), recordedAt: at(-320), accuracyMeters: 8, speedMps: 0 },
+      { ...northOf(MOTORWAY, 1700), recordedAt: at(-200), accuracyMeters: 8, speedMps: 0 },
+      { ...northOf(MOTORWAY, 1700), recordedAt: at(-100), accuracyMeters: 8, speedMps: 0 },
+      { ...northOf(MOTORWAY, 1701), recordedAt: at(-30), accuracyMeters: 9, speedMps: 0 },
     ])
     expect(await incidentSummaries(watcher.headers, circle.id)).toEqual([])
 
-    // The next fix pushes the stillness past three minutes.
+    // The next fix pushes the stillness past five minutes.
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 1650), recordedAt: at(-5), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 1700), recordedAt: at(-5), accuracyMeters: 9, speedMps: 0 },
     ])
     expect(await incidentSummaries(watcher.headers, circle.id)).toHaveLength(1)
   })
@@ -346,18 +346,19 @@ describe("possible incident: it must not fire", () => {
     const { driver, watcher, circle } = await drivingFamily()
 
     await uploadFixes(driver.headers, [
-      { ...northOf(HOME, 0), recordedAt: at(-320), accuracyMeters: 8, speedMps: 12.0 },
-      { ...northOf(HOME, 300), recordedAt: at(-290), accuracyMeters: 8, speedMps: 9.0 },
-      { ...northOf(HOME, 420), recordedAt: at(-260), accuracyMeters: 10, speedMps: 3.0 },
-      { ...northOf(HOME, 465), recordedAt: at(-230), accuracyMeters: 10, speedMps: 1.5 },
-      { ...northOf(HOME, 470), recordedAt: at(-215), accuracyMeters: 11, speedMps: 0.4 },
+      { ...northOf(HOME, 0), recordedAt: at(-470), accuracyMeters: 8, speedMps: 12.5 },
+      { ...northOf(HOME, 375), recordedAt: at(-440), accuracyMeters: 8, speedMps: 12.0 },
+      { ...northOf(HOME, 600), recordedAt: at(-410), accuracyMeters: 8, speedMps: 9.0 },
+      { ...northOf(HOME, 720), recordedAt: at(-380), accuracyMeters: 10, speedMps: 3.0 },
+      { ...northOf(HOME, 765), recordedAt: at(-350), accuracyMeters: 10, speedMps: 1.5 },
+      { ...northOf(HOME, 770), recordedAt: at(-335), accuracyMeters: 11, speedMps: 0.4 },
     ])
 
-    // Three and a half minutes at the window, then "arrived safe" from the
-    // check-in screen, which reports one fix of its own.
+    // Five minutes at the window, then "arrived safe" from the check-in
+    // screen, which reports one fix of its own.
     await uploadFixes(driver.headers, [
       {
-        ...northOf(HOME, 470),
+        ...northOf(HOME, 770),
         recordedAt: at(-25),
         accuracyMeters: 18,
         speedMps: 0,
@@ -371,17 +372,20 @@ describe("possible incident: it must not fire", () => {
   it("stays quiet while the car is still moving through a long tunnel", async () => {
     const { driver, watcher, circle } = await drivingFamily()
 
-    // 100 km/h into a 6 km tunnel. GPS is gone, so the fused provider falls
-    // back to cell: speed unavailable (the client sends null for that) and
-    // accuracy in the kilometre range. The coordinates keep advancing at
-    // 27 m/s the whole time, which is the opposite of not having moved.
+    // 100 km/h into ten kilometres of tunnels and cuttings. GPS is gone, so
+    // the fused provider falls back to cell, with no speed (the client
+    // sends null for that) and accuracy in the kilometre range. The
+    // coordinates keep advancing at 27 m/s the whole six minutes, which is
+    // the opposite of not having moved.
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-260), accuracyMeters: 7, speedMps: 27.5 },
-      { ...northOf(MOTORWAY, 820), recordedAt: at(-230), accuracyMeters: 1400, speedMps: null },
-      { ...northOf(MOTORWAY, 2450), recordedAt: at(-170), accuracyMeters: 1600, speedMps: null },
-      { ...northOf(MOTORWAY, 4080), recordedAt: at(-110), accuracyMeters: 1500, speedMps: null },
-      { ...northOf(MOTORWAY, 5700), recordedAt: at(-50), accuracyMeters: 1400, speedMps: null },
-      { ...northOf(MOTORWAY, 6510), recordedAt: at(-20), accuracyMeters: 1300, speedMps: null },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-400), accuracyMeters: 7, speedMps: 27.5 },
+      { ...northOf(MOTORWAY, 820), recordedAt: at(-370), accuracyMeters: 1400, speedMps: null },
+      { ...northOf(MOTORWAY, 2440), recordedAt: at(-310), accuracyMeters: 1600, speedMps: null },
+      { ...northOf(MOTORWAY, 4060), recordedAt: at(-250), accuracyMeters: 1500, speedMps: null },
+      { ...northOf(MOTORWAY, 5680), recordedAt: at(-190), accuracyMeters: 1400, speedMps: null },
+      { ...northOf(MOTORWAY, 7300), recordedAt: at(-130), accuracyMeters: 1300, speedMps: null },
+      { ...northOf(MOTORWAY, 8920), recordedAt: at(-70), accuracyMeters: 1500, speedMps: null },
+      { ...northOf(MOTORWAY, 10540), recordedAt: at(-10), accuracyMeters: 1400, speedMps: null },
     ])
 
     expect(await incidentSummaries(watcher.headers, circle.id)).toEqual([])
@@ -391,11 +395,12 @@ describe("possible incident: it must not fire", () => {
     const { driver, watcher, circle } = await drivingFamily()
 
     await uploadFixes(driver.headers, [
-      { ...northOf(HOME, 0), recordedAt: at(-300), accuracyMeters: 8, speedMps: 12.4 },
-      { ...northOf(HOME, 330), recordedAt: at(-270), accuracyMeters: 9, speedMps: 10.8 },
-      { ...northOf(HOME, 500), recordedAt: at(-240), accuracyMeters: 25, speedMps: 4.0 },
+      { ...northOf(HOME, 0), recordedAt: at(-420), accuracyMeters: 8, speedMps: 12.4 },
+      { ...northOf(HOME, 330), recordedAt: at(-390), accuracyMeters: 9, speedMps: 10.8 },
+      { ...northOf(HOME, 500), recordedAt: at(-360), accuracyMeters: 25, speedMps: 4.0 },
       // Down the ramp. No sky, no GPS, no speed.
-      { ...northOf(HOME, 520), recordedAt: at(-200), accuracyMeters: 1800, speedMps: null },
+      { ...northOf(HOME, 520), recordedAt: at(-320), accuracyMeters: 1800, speedMps: null },
+      { ...northOf(HOME, 530), recordedAt: at(-200), accuracyMeters: 1800, speedMps: null },
       { ...northOf(HOME, 540), recordedAt: at(-100), accuracyMeters: 1800, speedMps: null },
       { ...northOf(HOME, 515), recordedAt: at(-15), accuracyMeters: 1650, speedMps: null },
     ])
@@ -410,11 +415,11 @@ describe("possible incident: it must not fire", () => {
     // walks twenty metres inside (too little for the distance filter) and sits.
     // The next fix is a Wi-Fi one from the concourse.
     await uploadFixes(driver.headers, [
-      { ...northOf(HOME, 0), recordedAt: at(-330), accuracyMeters: 7, speedMps: 25.0 },
-      { ...northOf(HOME, 750), recordedAt: at(-300), accuracyMeters: 7, speedMps: 24.2 },
-      { ...northOf(HOME, 1200), recordedAt: at(-270), accuracyMeters: 8, speedMps: 9.0 },
-      { ...northOf(HOME, 1250), recordedAt: at(-250), accuracyMeters: 9, speedMps: 1.4 },
-      { ...northOf(HOME, 1258), recordedAt: at(-230), accuracyMeters: 12, speedMps: 0 },
+      { ...northOf(HOME, 0), recordedAt: at(-450), accuracyMeters: 7, speedMps: 25.0 },
+      { ...northOf(HOME, 750), recordedAt: at(-420), accuracyMeters: 7, speedMps: 24.2 },
+      { ...northOf(HOME, 1200), recordedAt: at(-390), accuracyMeters: 8, speedMps: 9.0 },
+      { ...northOf(HOME, 1250), recordedAt: at(-370), accuracyMeters: 9, speedMps: 1.4 },
+      { ...northOf(HOME, 1258), recordedAt: at(-350), accuracyMeters: 12, speedMps: 0 },
     ])
     await uploadFixes(driver.headers, [
       { ...northOf(HOME, 1268), recordedAt: at(-30), accuracyMeters: 45, speedMps: 0 },
@@ -431,10 +436,11 @@ describe("possible incident: it must not fire", () => {
     // and reported 101 km/h without the phone going anywhere.
     await uploadFixes(driver.headers, [
       { ...HOME, recordedAt: at(-900), accuracyMeters: 14, speedMps: 0 },
-      { ...northOf(HOME, 4), recordedAt: at(-400), accuracyMeters: 16, speedMps: 0.1 },
-      { ...northOf(HOME, -3), recordedAt: at(-300), accuracyMeters: 15, speedMps: 0 },
-      { ...northOf(HOME, 8), recordedAt: at(-260), accuracyMeters: 22, speedMps: 28.0 },
-      { ...northOf(HOME, 2), recordedAt: at(-230), accuracyMeters: 15, speedMps: 0 },
+      { ...northOf(HOME, 4), recordedAt: at(-700), accuracyMeters: 16, speedMps: 0.1 },
+      { ...northOf(HOME, -3), recordedAt: at(-560), accuracyMeters: 15, speedMps: 0 },
+      { ...northOf(HOME, 8), recordedAt: at(-520), accuracyMeters: 22, speedMps: 28.0 },
+      { ...northOf(HOME, 2), recordedAt: at(-490), accuracyMeters: 15, speedMps: 0 },
+      { ...northOf(HOME, -2), recordedAt: at(-320), accuracyMeters: 15, speedMps: 0 },
       { ...northOf(HOME, -5), recordedAt: at(-150), accuracyMeters: 15, speedMps: 0 },
       { ...northOf(HOME, 1), recordedAt: at(-60), accuracyMeters: 14, speedMps: 0 },
       { ...HOME, recordedAt: at(-20), accuracyMeters: 14, speedMps: 0 },
@@ -450,15 +456,15 @@ describe("possible incident: it must not fire", () => {
     // The phone is on the motorway and then loses signal in a cutting. The
     // scheduler's device_offline sweep is what exists to notice that.
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-320), accuracyMeters: 6, speedMps: 29.0 },
-      { ...northOf(MOTORWAY, 870), recordedAt: at(-290), accuracyMeters: 6, speedMps: 30.0 },
-      { ...northOf(MOTORWAY, 1770), recordedAt: at(-260), accuracyMeters: 6, speedMps: 30.0 },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-440), accuracyMeters: 6, speedMps: 29.0 },
+      { ...northOf(MOTORWAY, 870), recordedAt: at(-410), accuracyMeters: 6, speedMps: 30.0 },
+      { ...northOf(MOTORWAY, 1770), recordedAt: at(-380), accuracyMeters: 6, speedMps: 30.0 },
     ])
 
     // The tablet has been on the kitchen table all evening and reports a
     // Wi-Fi fix on its own timer. It has not stopped suddenly. It has not
     // started.
-    await uploadFixes(tablet, [{ ...HOME, recordedAt: at(-200), accuracyMeters: 35, speedMps: 0 }])
+    await uploadFixes(tablet, [{ ...HOME, recordedAt: at(-350), accuracyMeters: 35, speedMps: 0 }])
     await uploadFixes(tablet, [{ ...HOME, recordedAt: at(-20), accuracyMeters: 35, speedMps: 0 }])
 
     expect(await incidentSummaries(watcher.headers, circle.id)).toEqual([])
@@ -467,14 +473,14 @@ describe("possible incident: it must not fire", () => {
   it("stays quiet for a backlog uploaded after the battery died mid-drive", async () => {
     const { driver, watcher, circle } = await drivingFamily()
 
-    // The phone recorded a hard stop and four minutes of stillness, then died
+    // The phone recorded a hard stop and five minutes of stillness, then died
     // at 3%. Forty minutes later it is on a charger and drains its queue. The
     // stop is long over and nobody should be told "they have not moved since".
     const base = -40 * 60
     await uploadFixes(driver.headers, [
       {
         ...northOf(MOTORWAY, 0),
-        recordedAt: at(base - 300),
+        recordedAt: at(base - 420),
         accuracyMeters: 7,
         speedMps: 28.0,
         batteryLevel: 0.04,
@@ -482,7 +488,7 @@ describe("possible incident: it must not fire", () => {
       },
       {
         ...northOf(MOTORWAY, 840),
-        recordedAt: at(base - 270),
+        recordedAt: at(base - 390),
         accuracyMeters: 7,
         speedMps: 27.6,
         batteryLevel: 0.03,
@@ -490,7 +496,7 @@ describe("possible incident: it must not fire", () => {
       },
       {
         ...northOf(MOTORWAY, 900),
-        recordedAt: at(base - 240),
+        recordedAt: at(base - 360),
         accuracyMeters: 9,
         speedMps: 0,
         batteryLevel: 0.03,
@@ -517,10 +523,10 @@ describe("possible incident: it must not fire", () => {
     await joinCircle(watcher.headers, circle.invite.code)
 
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-300), accuracyMeters: 6, speedMps: 30.0 },
-      { ...northOf(MOTORWAY, 900), recordedAt: at(-270), accuracyMeters: 6, speedMps: 30.0 },
-      { ...northOf(MOTORWAY, 960), recordedAt: at(-240), accuracyMeters: 9, speedMps: 0 },
-      { ...northOf(MOTORWAY, 960), recordedAt: at(-120), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-420), accuracyMeters: 6, speedMps: 30.0 },
+      { ...northOf(MOTORWAY, 900), recordedAt: at(-390), accuracyMeters: 6, speedMps: 30.0 },
+      { ...northOf(MOTORWAY, 960), recordedAt: at(-360), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 960), recordedAt: at(-200), accuracyMeters: 9, speedMps: 0 },
       { ...northOf(MOTORWAY, 961), recordedAt: at(-20), accuracyMeters: 9, speedMps: 0 },
     ])
 
@@ -531,10 +537,10 @@ describe("possible incident: it must not fire", () => {
 describe("possible incident: sharing state", () => {
   /** The crash sequence used by both privacy tests. */
   const hardStop = () => [
-    { ...northOf(MOTORWAY, 0), recordedAt: at(-300), accuracyMeters: 6, speedMps: 30.0 },
-    { ...northOf(MOTORWAY, 900), recordedAt: at(-270), accuracyMeters: 6, speedMps: 30.4 },
-    { ...northOf(MOTORWAY, 980), recordedAt: at(-240), accuracyMeters: 9, speedMps: 0 },
-    { ...northOf(MOTORWAY, 980), recordedAt: at(-120), accuracyMeters: 9, speedMps: 0 },
+    { ...northOf(MOTORWAY, 0), recordedAt: at(-420), accuracyMeters: 6, speedMps: 30.0 },
+    { ...northOf(MOTORWAY, 900), recordedAt: at(-390), accuracyMeters: 6, speedMps: 30.4 },
+    { ...northOf(MOTORWAY, 980), recordedAt: at(-360), accuracyMeters: 9, speedMps: 0 },
+    { ...northOf(MOTORWAY, 980), recordedAt: at(-200), accuracyMeters: 9, speedMps: 0 },
     { ...northOf(MOTORWAY, 981), recordedAt: at(-20), accuracyMeters: 9, speedMps: 0 },
   ]
 
@@ -583,10 +589,10 @@ describe("possible incident: exactly once", () => {
     const { driver, watcher, circle } = await drivingFamily()
 
     await uploadFixes(driver.headers, [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-300), accuracyMeters: 6, speedMps: 30.0 },
-      { ...northOf(MOTORWAY, 900), recordedAt: at(-270), accuracyMeters: 6, speedMps: 30.0 },
-      { ...northOf(MOTORWAY, 960), recordedAt: at(-240), accuracyMeters: 9, speedMps: 0 },
-      { ...northOf(MOTORWAY, 960), recordedAt: at(-120), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-420), accuracyMeters: 6, speedMps: 30.0 },
+      { ...northOf(MOTORWAY, 900), recordedAt: at(-390), accuracyMeters: 6, speedMps: 30.0 },
+      { ...northOf(MOTORWAY, 960), recordedAt: at(-360), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 960), recordedAt: at(-200), accuracyMeters: 9, speedMps: 0 },
       { ...northOf(MOTORWAY, 961), recordedAt: at(-30), accuracyMeters: 9, speedMps: 0 },
     ])
     expect(await incidentSummaries(watcher.headers, circle.id)).toHaveLength(1)
@@ -616,10 +622,10 @@ describe("possible incident: exactly once", () => {
     const { driver, watcher, circle } = await drivingFamily()
 
     const batch = [
-      { ...northOf(MOTORWAY, 0), recordedAt: at(-300), accuracyMeters: 6, speedMps: 31.0 },
-      { ...northOf(MOTORWAY, 930), recordedAt: at(-270), accuracyMeters: 6, speedMps: 30.6 },
-      { ...northOf(MOTORWAY, 1000), recordedAt: at(-240), accuracyMeters: 9, speedMps: 0 },
-      { ...northOf(MOTORWAY, 1000), recordedAt: at(-120), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 0), recordedAt: at(-420), accuracyMeters: 6, speedMps: 31.0 },
+      { ...northOf(MOTORWAY, 930), recordedAt: at(-390), accuracyMeters: 6, speedMps: 30.6 },
+      { ...northOf(MOTORWAY, 1000), recordedAt: at(-360), accuracyMeters: 9, speedMps: 0 },
+      { ...northOf(MOTORWAY, 1000), recordedAt: at(-200), accuracyMeters: 9, speedMps: 0 },
       { ...northOf(MOTORWAY, 1001), recordedAt: at(-20), accuracyMeters: 9, speedMps: 0 },
     ]
     await uploadFixes(driver.headers, batch)
@@ -645,9 +651,9 @@ describe("possible incident: exactly once", () => {
       const second = await signInDevice(driver.email, `device-incident-race-${i}`)
 
       await uploadFixes(driver.headers, [
-        { ...northOf(MOTORWAY, 0), recordedAt: at(-290), accuracyMeters: 6, speedMps: 29.0 },
-        { ...northOf(MOTORWAY, 870), recordedAt: at(-260), accuracyMeters: 6, speedMps: 28.6 },
-        { ...northOf(MOTORWAY, 940), recordedAt: at(-230), accuracyMeters: 9, speedMps: 0 },
+        { ...northOf(MOTORWAY, 0), recordedAt: at(-410), accuracyMeters: 6, speedMps: 29.0 },
+        { ...northOf(MOTORWAY, 870), recordedAt: at(-380), accuracyMeters: 6, speedMps: 28.6 },
+        { ...northOf(MOTORWAY, 940), recordedAt: at(-350), accuracyMeters: 9, speedMps: 0 },
       ])
 
       // The phone in the driver's pocket and the phone in the cradle both
