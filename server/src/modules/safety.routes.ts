@@ -1,7 +1,7 @@
 import {
   coarsenLocation,
   DEFAULTS,
-  haversineMeters,
+  placeAt,
   QUICK_MESSAGE_KEYS,
   QUICK_MESSAGES,
   SHARING_STATES,
@@ -524,13 +524,7 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
         .from(places)
         .where(eq(places.circleId, membership.circleId))
 
-      const match = nearby.find(
-        (place) =>
-          haversineMeters(
-            { lat: request.body.lat, lon: request.body.lon },
-            { lat: place.lat, lon: place.lon },
-          ) <= place.radiusMeters,
-      )
+      const match = placeAt(nearby, { lat: request.body.lat, lon: request.body.lon })
 
       const [created] = await db
         .insert(checkIns)

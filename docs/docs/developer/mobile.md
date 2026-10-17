@@ -367,7 +367,9 @@ notification is one plain line on a channel the service creates at minimum
 importance (`hearth-wake`, "Location updates"), not ongoing, so from Android
 13 the person can swipe it away and the service runs on without it. The app's
 own channels, `default`, `alerts` and `sos`, come from `setupChannels()` in
-`services/notifications.ts`.
+`services/notifications.ts`. `setupPush()` sends the phone's time zone and
+clock (`services/phoneClock.ts`) with its registration on every launch, since
+the server reads quiet hours and the time on late news on them.
 
 Everything that has to survive the JavaScript process being killed is
 native Kotlin in `modules/hearth-motion/android`:

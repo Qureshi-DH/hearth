@@ -5,9 +5,9 @@ import type { Database } from "../db/client"
 import { events, users } from "../db/schema"
 import { circleTopic } from "../lib/bus"
 import { toFeedEvent, toPublicUser } from "../lib/serialize"
-import { getBus, getPushDriver } from "../runtime"
-import { amendArrivalLine, type PushGroup } from "./notification-groups"
-import { canReplace, enqueuePush, resolveCircleRecipients } from "./push"
+import { getBus } from "../runtime"
+import type { PushGroup } from "./notification-groups"
+import { enqueuePush, resolveCircleRecipients } from "./push"
 
 type Notify = {
   title: string
@@ -21,19 +21,9 @@ type Notify = {
   data?: Record<string, unknown>
   /** Hold the send back until this time. See PushMessage.notBefore. */
   notBefore?: Date
-} & (
-  | { group?: undefined; amends?: undefined }
-  | {
-      /** Joins the notification already showing about the person. */
-      group: PushGroup
-      /**
-       * Rewrite the line of an arrival already queued for the recipient
-       * instead of sending this. Only recipients with no such arrival get the
-       * push. See amendArrivalLine.
-       */
-      amends?: { placeId: string; startedAt: Date; endedAt: Date; line: string }
-    }
-)
+  /** Joins the notification already showing about the person. */
+  group?: PushGroup
+}
 
 export interface RecordEventInput {
   circleId: string
@@ -103,25 +93,14 @@ export async function recordEvent(db: Database, input: RecordEventInput): Promis
   if (input.notify) {
     const exclude =
       input.notify.excludeActor === false || !input.actorUserId ? [] : [input.actorUserId]
-    let recipients = await resolveCircleRecipients(db, input.circleId, input.type, exclude)
+    let recipients = await resolveCircleRecipients(db, input.circleId, input.type, exclude, {
+      userId: input.actorUserId,
+      placeId: typeof input.payload?.placeId === "string" ? input.payload.placeId : null,
+    })
     if (input.notify.onlyUserIds) {
       const allowed = new Set(input.notify.onlyUserIds)
       recipients = recipients.filter((userId) => allowed.has(userId))
     }
-    const { amends, group } = input.notify
-    // Only a provider that replaces cards ever shows the rewritten line.
-    // Anywhere else the trip keeps its own notification.
-    const driver = getPushDriver()
-    if (amends && group && driver && canReplace(driver)) {
-      const amended = await amendArrivalLine(db, {
-        userIds: recipients,
-        circleId: input.circleId,
-        groupKey: group.key,
-        ...amends,
-      })
-      recipients = recipients.filter((userId) => !amended.has(userId))
-    }
-
     await enqueuePush(
       db,
       recipients.map((userId) => ({

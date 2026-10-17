@@ -77,7 +77,8 @@ soon. Until they're out you build the app yourself. Read
 </table>
 
 - **Live map.** Everyone in your circle, with battery and how they're moving.
-- **Places.** Hear when someone arrives at or leaves home, school or work.
+- **Places.** Hear when someone leaves home and gets to school, with how far they came.
+  Choose what you hear per place and per person, and set quiet hours.
 - **Live drives.** Follow a drive as it happens, a fix a second while you watch.
 - **SOS and check-ins.** One press alerts the whole family, and pausing can't block it.
 - **Crash alerts.** Optional. The phone asks first, and silence raises the alarm.

@@ -3,6 +3,7 @@ import {
   agreedMaxSpeedMps,
   haversineMeters,
   pathDistanceMeters,
+  placeAt,
   type FeedEvent,
 } from "@hearth/shared"
 import {
@@ -11,6 +12,7 @@ import {
   desc,
   eq,
   gt,
+  gte,
   inArray,
   isNotNull,
   isNull,
@@ -26,6 +28,7 @@ import {
   circleMembers,
   circles,
   locationPoints,
+  placeEvents,
   places,
   trips,
   userPresence,
@@ -33,6 +36,13 @@ import {
 } from "../db/schema"
 import { broadcastEvent, recordEvent } from "./feed"
 import { outingGroup } from "./notification-groups"
+import {
+  DEFAULT_READER,
+  LATE_AFTER_MS,
+  PLACE_NEWS_CATCH_UP_MS,
+  wordPlaceNews,
+  type Wording,
+} from "./place-news"
 import { preciseStretch } from "./presence"
 
 const MAX_POINTS_PER_PASS = 5000
@@ -64,14 +74,16 @@ const BACKFILL_ARRIVAL_WINDOW_MS = 6 * 60 * 60 * 1000
 const MAX_BACKDATE_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
- * How recently a journey has to have ended for finishing it to be worth a
- * buzz. The feed line is always written, dated when the drive actually ended,
- * but a phone that comes back on Wi-Fi hands over a whole day at once, and
- * "Aisha travelled 12 km" about yesterday's commute is the false alarm that
- * costs the family's trust. Comfortably wider than one idle gap plus a sweep
- * interval, so an ordinary drive still announces itself.
+ * The fence can notice the arrival a fix or two after the trip's last moving
+ * one, when a sharper fix finally puts the phone inside.
  */
-const TRIP_PUSH_FRESHNESS_MS = 60 * 60 * 1000
+const ARRIVAL_AFTER_TRIP_MS = 10 * 60 * 1000
+
+/**
+ * The soonest a finished trip can be known, an idle gap with nothing new and
+ * then the sweep that notices it.
+ */
+const TRIP_KNOWN_AFTER_MS = DEFAULTS.tripIdleGapSeconds * 1000 + 60 * 1000
 
 /** Any real journey gets at least this far from where it started. */
 const MIN_EXCURSION_METERS = 150
@@ -845,9 +857,14 @@ async function claimPoints(db: Database, tripId: string, segment: Candidate[]): 
  *
  * A distance, a top speed and "Home to School" are all things derived from
  * where somebody was, so this goes only to circles they shared precisely with
- * for the whole journey, and only where the circle keeps history at all. The places
- * are resolved against that circle's own, or the line would name somewhere
- * defined in a circle these members cannot see.
+ * for the whole journey, and only where the circle keeps history at all.
+ *
+ * Its ends are the ones the fence recorded in that circle, never a radius of
+ * its own, which can call a stop "School" a few metres short of where the
+ * fence would and say so before any arrival does. A journey that ended at a
+ * named place is the arrival's news, and the arrival already says how far and
+ * how long, so that trip goes to the feed only. One that ended anywhere else
+ * still tells the family the journey is over.
  */
 async function announceTrip(db: Database, pass: Pass, columns: TripColumns): Promise<void> {
   const audience = await pass.audience()
@@ -861,15 +878,47 @@ async function announceTrip(db: Database, pass: Pass, columns: TripColumns): Pro
 
   // Pushing a drive that finished hours ago would announce a backlog as if it
   // were happening now. The feed still gets the line, dated when it happened.
-  const fresh = pass.now.getTime() - columns.endedAt.getTime() < TRIP_PUSH_FRESHNESS_MS
+  const fresh = pass.now.getTime() - columns.endedAt.getTime() < PLACE_NEWS_CATCH_UP_MS
+  const durationSeconds = Math.max(
+    0,
+    Math.round((columns.endedAt.getTime() - columns.startedAt.getTime()) / 1000),
+  )
 
   for (const circleId of circleIds) {
+    const ends = await fenceEnds(db, pass.userId, circleId, columns)
+    // Where it began names nothing the family was told otherwise, so a start
+    // the fence never saw them leave, such as the first fix it ever judged,
+    // is named by the rule every reader uses.
     const from =
-      placeIn(pass.places, circleId, { lat: columns.startLat, lon: columns.startLon })?.name ?? null
-    const end = placeIn(pass.places, circleId, { lat: columns.endLat, lon: columns.endLon })
-    const to = end?.name ?? null
-    const route = journey(columns.distanceMeters, from, to)
-    const summary = `${audience.name} travelled ${route}`
+      ends.from ??
+      placeAt(
+        pass.places.filter((place) => place.circleId === circleId),
+        { lat: columns.startLat, lon: columns.startLon },
+      )?.name ??
+      null
+    const to = ends.to
+    const summary = `${audience.name} travelled ${journey(columns.distanceMeters, from, to)}`
+
+    let notify: Parameters<typeof recordEvent>[1]["notify"]
+    if (fresh && !to) {
+      const wording: Wording = {
+        who: audience.name,
+        kind: "stop",
+        place: null,
+        journey: { from, meters: columns.distanceMeters, seconds: durationSeconds },
+        at: columns.endedAt.toISOString(),
+        lateAfter: new Date(
+          columns.endedAt.getTime() + TRIP_KNOWN_AFTER_MS + LATE_AFTER_MS,
+        ).toISOString(),
+      }
+      const { body, line } = wordPlaceNews(wording, DEFAULT_READER, columns.endedAt)
+      notify = {
+        title: "Trip finished",
+        body,
+        group: outingGroup(pass.userId, audience.name, line),
+        data: { userId: pass.userId, occurredAt: columns.endedAt.toISOString(), wording },
+      }
+    }
 
     const event = await recordEvent(db, {
       circleId,
@@ -879,34 +928,72 @@ async function announceTrip(db: Database, pass: Pass, columns: TripColumns): Pro
       deferBroadcast: true,
       payload: {
         distanceMeters: columns.distanceMeters,
-        durationSeconds: Math.max(
-          0,
-          Math.round((columns.endedAt.getTime() - columns.startedAt.getTime()) / 1000),
-        ),
+        durationSeconds,
         startPlaceName: from,
         endPlaceName: to,
         endedAt: columns.endedAt.toISOString(),
       },
       summary,
-      notify: fresh
-        ? {
-            title: "Trip finished",
-            body: `${summary}.`,
-            group: outingGroup(pass.userId, audience.name, `Travelled ${route}`),
-            // Ending at a saved place, the arrival has already buzzed, and the
-            // distance reads best on its line.
-            amends: end
-              ? {
-                  placeId: end.id,
-                  startedAt: columns.startedAt,
-                  endedAt: columns.endedAt,
-                  line: `Arrived at ${end.name} after ${distanceText(columns.distanceMeters)}`,
-                }
-              : undefined,
-          }
-        : undefined,
+      notify,
     })
     pass.broadcasts.push({ circleId, event })
+  }
+}
+
+/**
+ * Where the fence saw this journey begin and end in one circle, the first
+ * departure during it and the last arrival it did not then leave again. Two
+ * places crossed on the same fix are the one that fix is most specifically
+ * at, the same rule the fence tells the family by.
+ */
+async function fenceEnds(
+  db: Database,
+  userId: string,
+  circleId: string,
+  columns: Pick<TripColumns, "startedAt" | "endedAt">,
+): Promise<{ from: string | null; to: string | null }> {
+  const rows = await db
+    .select({
+      type: placeEvents.type,
+      placeId: placeEvents.placeId,
+      occurredAt: placeEvents.occurredAt,
+      name: places.name,
+      radiusMeters: places.radiusMeters,
+    })
+    .from(placeEvents)
+    .innerJoin(places, eq(places.id, placeEvents.placeId))
+    .where(
+      and(
+        eq(placeEvents.userId, userId),
+        eq(placeEvents.circleId, circleId),
+        gte(placeEvents.occurredAt, columns.startedAt),
+        lte(placeEvents.occurredAt, new Date(columns.endedAt.getTime() + ARRIVAL_AFTER_TRIP_MS)),
+      ),
+    )
+    .orderBy(asc(placeEvents.occurredAt), asc(placeEvents.id))
+
+  const ended = columns.endedAt.getTime()
+  const departures = rows.filter((row) => row.type === "leave" && row.occurredAt.getTime() <= ended)
+  const arrivals = rows.filter(
+    (row) =>
+      row.type === "arrive" &&
+      !rows.some(
+        (other) =>
+          other.type === "leave" &&
+          other.placeId === row.placeId &&
+          other.occurredAt > row.occurredAt &&
+          other.occurredAt.getTime() <= ended,
+      ),
+  )
+  const specific = (candidates: typeof rows, at: Date | undefined) =>
+    candidates
+      .filter((row) => row.occurredAt.getTime() === at?.getTime())
+      .sort((a, b) => a.radiusMeters - b.radiusMeters || (a.placeId < b.placeId ? -1 : 1))[0]
+      ?.name ?? null
+
+  return {
+    from: specific(departures, departures[0]?.occurredAt),
+    to: specific(arrivals, arrivals.at(-1)?.occurredAt),
   }
 }
 
@@ -1094,26 +1181,7 @@ function leavesStartPlace(points: Fix[], placeRows: PlaceRow[]): boolean {
 }
 
 function placeContaining(placeRows: PlaceRow[], point: { lat: number; lon: number }) {
-  for (const place of placeRows) {
-    if (haversineMeters(point, { lat: place.lat, lon: place.lon }) <= place.radiusMeters) {
-      return place.id
-    }
-  }
-  return undefined
-}
-
-function placeIn(
-  placeRows: PlaceRow[],
-  circleId: string,
-  point: { lat: number; lon: number },
-): PlaceRow | null {
-  for (const place of placeRows) {
-    if (place.circleId !== circleId) continue
-    if (haversineMeters(point, { lat: place.lat, lon: place.lon }) <= place.radiusMeters) {
-      return place
-    }
-  }
-  return null
+  return placeAt(placeRows, point)?.id
 }
 
 async function placesVisibleTo(db: Database, userId: string) {

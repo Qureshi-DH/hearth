@@ -328,8 +328,9 @@ paused.
 
 Paused means that circle gets nothing. Coordinates come back null, and so do
 battery, activity, the last-reported time and which place you are at. Members
-see that you paused, which is deliberate: silent invisibility would be a
-different feature. The history and trips endpoints answer an empty list for
+see that you paused, and get a notification that says so and for how long,
+unless they turned "Sharing paused" off. That is deliberate. Silent
+invisibility would be a different feature. The history and trips endpoints answer an empty list for
 anybody who is not currently sharing precisely.
 
 Two behaviours surprise people:
@@ -351,6 +352,8 @@ Two behaviours surprise people:
 
 A pause can carry an expiry. It lapses on read, and a background job restores
 whatever mode you were in before pausing rather than defaulting you to precise.
+Sharing precisely again starts the circle's places from where you are then, so
+the circle isn't told you left home hours after you did.
 A circle owner or admin can turn pausing off entirely, and that setting is
 visible to every member.
 

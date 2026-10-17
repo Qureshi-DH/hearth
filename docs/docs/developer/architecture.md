@@ -39,10 +39,13 @@ Services hold the domain logic and are unit-testable with a real database.
 
 - `users` and `sessions` hold one session row per (user, device). Refresh
   tokens are hashed and rotated, and push tokens hang off the session, so
-  signing a device out also silences it.
+  signing a device out also silences it. `users.notification_settings` holds
+  what follows a person to every phone, which is the phone's time zone and
+  clock, quiet hours and the people they muted.
 - `circles`, `circle_members`, `invites`. A _circle_ is a family. Members carry
   a role (`owner` > `admin` > `member`), a per-circle `sharing_state`
-  (`precise` / `approximate` / `paused`), notification mutes, and a feed-read
+  (`precise` / `approximate` / `paused`), notification mutes and per-place
+  choices, and a feed-read
   watermark. `circle_removals` records who was removed, so an invite made
   before the removal can't bring them back.
 - `location_points` is breadcrumb history, deduped on
@@ -52,7 +55,9 @@ Services hold the domain logic and are unit-testable with a real database.
   the control channel's stamps and the phone's own health report. Reads for
   the map hit this table, never the history table.
 - `places`, `place_memberships` and `place_events` cover geofences, who is
-  currently inside each one, and the arrive/leave log.
+  currently inside each one, and the arrive/leave log. A membership also
+  carries `settles_at`, until which its last crossing may still be undone, and
+  `quiet_until`, for a place somebody keeps leaving and coming back to.
 - `events` is the activity feed. Everything the family sees as a line item,
   including a quick message, which is a feed row, a push and a live frame rather
   than a stored conversation. There is no chat table, because nothing would ever
@@ -96,7 +101,24 @@ and keeps the ingest path free of per-circle fan-out.
    because a parked Android phone answered from the cell network can sit a
    street away for hours.
    Approximate and paused circles learn nothing. An arrival at "Home" is
-   precise information.
+   precise information. When sharing with a circle becomes precise again,
+   `reseedPlaceMemberships` starts its places from the newest fix sharp
+   enough, with no events, so nothing that happened in between is announced.
+
+   What the family hears is narrower than what the feed records. A departure
+   is pushed once a second fix is clear of the place too, or a minute passes
+   with no fix back inside, and a fix back inside before then cancels both.
+   An arrival is pushed at once, unless the phone was doing 5 m/s or more,
+   when it waits up to a minute in case the car is driving past. Either wait
+   is `settles_at` on the membership and `next_attempt_at` on the row, and a
+   fix that settles it early releases the row. An arrival carries its
+   journey, worked out from the fixes since the departure it answers
+   (`journeyTo`). Places crossed on the same fix push only the smallest one,
+   and coming back to a place within 10 minutes of leaving it keeps that
+   place to the feed for 15 minutes, so pacing a boundary sends one pair.
+   News older than 30 minutes, or from a batch whose newest fix is older than
+   15, goes to the feed only.
+
 6. Raise speed and possible-crash alerts, to precisely shared circles only.
 7. Raise a low-battery event (≤15 % unless the circle sets its own threshold,
    not charging, 6-hour cooldown) to circles that are not paused.
@@ -167,7 +189,11 @@ moving, so a parked Android phone is reached by silent push alone.
 `enqueuePush()` writes rows to `notification_outbox` inside the caller's
 transaction. A trigger on that table raises `NOTIFY hearth_outbox`, which
 Postgres delivers only when the transaction commits, and every replica
-listens for it and drains straight away. The drain claims pending rows with
+listens for it and drains straight away. After each pass the drain sets a
+timer for the earliest row still waiting, so a row held back for a moment or
+a retry goes when it falls due rather than on the next tick. Each replica
+keeps its own timer, and the scheduler wakes the drain once on boot, so a
+restart picks up whatever was waiting. The drain claims pending rows with
 `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)`, the `sos` channel
 first and then high priority, which is safe across several API replicas and
 against an admin "flush now",
@@ -177,7 +203,15 @@ waits while a sibling for the same recipient and card is still sending, so two
 drains never build one card twice. Before sending, it drops a row whose
 recipient has left the circle, place news about somebody who no longer
 shares precisely with it, and a `device_offline` row whose phone has been heard
-since the row was queued (`services/outbox-visibility.ts`). Each provider call
+since the row was queued (`services/outbox-visibility.ts`). Anything due in
+the recipient's quiet hours is moved to when they end, or skipped, as they
+chose, except an SOS, its all clear, a possible crash and a test the person
+asked for. A departure still waiting when an
+arrival elsewhere goes out is skipped, since the arrival names where they came
+from. Place news carries the parts it is worded from (`data.wording`, kept off
+the phone's payload), and the drain words it again for the recipient, in their
+units, with the time on their clock once it is more than 2 minutes late
+(`services/place-news.ts`). Each provider call
 gets 15 s. A failed send is retried with back-off, and after 6 attempts the row
 is marked `failed`. A row on the `sos` channel is the exception. It retries
 every 10 s to 3 min, a `sos_started` until the drain drops it as resolved, and
@@ -207,10 +241,10 @@ phone replaces the card it shows. The rows a card carries are sent or retried
 together. Android gets no collapse id,
 because FCM keeps only four collapse keys for an offline phone. Earlier lines
 pass the same membership and sharing checks as the row itself. A line the card
-already shows, arriving through a second circle, is skipped. When the provider
-is `expo`, a trip that ends at a saved place rewrites the arrival's line
-(`amendArrivalLine`) instead of queueing a push of its own. Other providers
-send each row's standalone title and body. An SOS still queued after it was
+already shows, arriving through a second circle, is skipped. Other providers
+send each row's standalone title and body. Every visible push asks Expo for
+the default sound, since Android's channels play one for every notification
+and a card update is always a new line of news. An SOS still queued after it was
 resolved is dropped, so a late retry can't sound the alarm again.
 
 A silent push (`silent: true`, the `wake` and `watch` rows) can only go through
@@ -299,8 +333,15 @@ finished drive from closing. So are network estimates worse than 100 m: one
 of them between two fixes at home is otherwise a trip there and back. A gap
 is not a split when the fix after it shows the phone travelled through it. A segment with ≥3 points,
 ≥2 min, ≥250 m of path and real displacement (150 m from where it started)
-becomes a `trip`, and its points are tagged with the trip id. Start and end
-are matched to places for "Home → School".
+becomes a `trip`, and its points are tagged with the trip id. A trip names
+its ends from the fence's own records in each circle, the first departure
+during it and the last arrival it did not leave again, so a trip can never
+name a place the arrival did not. A start the fence never saw them leave is
+named by `placeAt`, the rule every reader uses, which takes the smallest place
+containing the point and then the nearest centre. A trip that ends at a named place goes to
+the feed only, because the arrival already carried the journey. One that ends
+anywhere else sends one push, "Aisha stopped 4.2 km from Home", up to 30
+minutes after it ended.
 
 A journey between two named places is a trip whatever its length, because
 the feed has already announced "left" and "arrived" for it. The tracker
@@ -428,9 +469,10 @@ plain SVG and CSS, so the page still loads nothing from anywhere else.
   computed from the database per request, never from the token.
 - SOS switches a paused sharing state back to precise, in every circle it is
   raised in, and leaves it there.
-  Nothing else overrides sharing. Mutes apply only to the alert types a member
-  may silence (`MUTABLE_EVENT_TYPES`), so an SOS or a possible crash always
-  gets through.
+  Nothing else overrides sharing. Mutes, per-place choices and muting a
+  person apply only to the alert types a member may silence
+  (`MUTABLE_EVENT_TYPES`), and quiet hours to everything but the safety
+  alerts, so an SOS or a possible crash always gets through.
 - Invite codes: 8 chars, Crockford base32, rejection-sampled, single
   conditional `UPDATE` to claim a seat.
 

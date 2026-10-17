@@ -352,7 +352,13 @@ describe("sos", () => {
     expect(started[0]!.summary).toBe("Bob raised an SOS")
     expect(started[0]!.payload).toMatchObject({ alertId: alert.id })
 
-    const rows = await outbox()
+    // The pause before it was news of its own, to whoever had not muted the
+    // circle.
+    const all = await outbox()
+    expect(
+      all.filter((row) => row.data.type === "sharing_paused").map((row) => row.user_id),
+    ).toEqual([alice.user.id])
+    const rows = all.filter((row) => row.data.type !== "sharing_paused")
     expect(rows).toHaveLength(2)
     expect(new Set(rows.map((row) => row.user_id))).toEqual(new Set([alice.user.id, carol.user.id]))
     for (const row of rows) {

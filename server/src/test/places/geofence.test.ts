@@ -518,10 +518,10 @@ describe("geofence: it fires exactly once", () => {
 
   // KNOWN LIMITATION. The crossings are still recorded when a drive-past is
   // split across uploads, because the server cannot know a leave is coming when
-  // the entry fix lands. What is fixed is the harm: the entry push is held for
-  // TRANSIENT_VISIT_MS and cancelled by the leave, so nobody is buzzed. Closing
-  // the rest means holding the feed row too, which needs a pending column on
-  // place_memberships and a scheduler pass to promote it.
+  // the entry fix lands. What is fixed is the harm. An entry at driving speed
+  // holds its push for a minute and the leave cancels it, so nobody is
+  // buzzed. Closing the rest means holding the feed row too, until the
+  // crossing settles.
   it.fails(
     "does not announce a drive-through when each fix is uploaded as it happens",
     async () => {
@@ -551,13 +551,7 @@ describe("geofence: it fires exactly once", () => {
     },
   )
 
-  // KNOWN LIMITATION. The crossings are still recorded when a drive-past is
-  // split across uploads, because the server cannot know a leave is coming when
-  // the entry fix lands. What is fixed is the harm: the entry push is held for
-  // TRANSIENT_VISIT_MS and cancelled by the leave, so nobody is buzzed. Closing
-  // the rest means holding the feed row too, which needs a pending column on
-  // place_memberships and a scheduler pass to promote it.
-  it.fails("does not ping-pong when a second device is left behind at home", async () => {
+  it("does not ping-pong when a second device is left behind at home", async () => {
     const { parent, kid, circle } = await household(150)
 
     // The kid's phone and a tablet that never leaves the kitchen. Both are
@@ -650,7 +644,11 @@ describe("geofence: it fires exactly once", () => {
       atPlace: (await presenceFor(parent.headers, circle.id, kid.user.id)).atPlace?.name ?? null,
     }).toEqual({
       summaries: ["Kid arrived at School", "Kid left Home", "Kid arrived at Home"],
-      pushes: ["Kid arrived at Home", "Kid left Home", "Kid arrived at School"],
+      pushes: [
+        "Kid arrived at Home",
+        "Kid left Home",
+        "Kid arrived at School, 1.2 km from Home in 6 min",
+      ],
       atPlace: "School",
     })
   })

@@ -29,9 +29,12 @@ or account in between.
 - **A live map.** Each member's position, battery, whether they are walking or
   driving, and how long ago the fix arrived. Updates arrive over a websocket
   while the app is open. Alerts reach a closed app by push, if you set push up.
-- **Places.** Draw a circle around home, school or work and everyone is told on
-  arrival and departure. Leaving needs about 40 metres more than arriving, so a
-  phone resting on the boundary does not spam the circle.
+- **Places.** Draw a circle around home, school or work and everyone is told
+  when somebody leaves and when they arrive, "arrived at School, 4.2 km from
+  Home in 14 min", in two notifications at most. Leaving needs about 40 metres
+  more than arriving, and a second fix or a minute to stand, so a phone resting
+  on the boundary does not spam the circle. Each person chooses what they hear
+  about each place and each member, and can set quiet hours.
 - **Sharing modes, per circle.** Precise, approximate or paused. Approximate
   snaps you to a 750 metre grid and hides your trail, your trips and which place
   you are at. Paused shares nothing. Everyone can see which mode you picked.

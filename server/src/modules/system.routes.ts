@@ -55,6 +55,7 @@ export const systemRoutes: FastifyPluginAsyncZod = async (app) => {
           sos: true,
           checkIns: true,
           avatars: storageEnabled(),
+          notificationControls: true,
         },
       }
     },

@@ -92,6 +92,13 @@
       "when": 1792253379645,
       "tag": "0012_push_tickets_check_in_precision",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792261689970,
+      "tag": "0013_quiet_hours_and_settling_crossings",
+      "breakpoints": true
     }
   ]
 }

@@ -8,6 +8,19 @@ Notable changes to Hearth. The format is loosely
 
 ### Added
 
+- More say over what you hear. Each circle's notification settings let you
+  choose, for each of its places, arrivals, departures, both or neither, and
+  stop hearing about one person's comings and goings, which covers their
+  arrivals, departures and trips wherever you share a circle. Quiet hours
+  hold ordinary news until they end, or drop it, on your phone's own clock and
+  across every circle. SOS, possible crashes and the notice that an SOS was
+  resolved ignore all of it. Muting a person and quiet hours are stored on
+  your account, so every phone you sign in on agrees. The server adds
+  `PATCH /me/notifications`, `places` on `PATCH /circles/:id/notifications`,
+  `timeZone` and `clock` on `POST /push/register`, which the app sends on
+  every launch, `notificationSettings` on the account, and
+  `features.notificationControls` in `server-info`. The app shows the new
+  controls only on a server that has them.
 - Hearth can sit at a path on a domain that already has something at its root,
   such as `https://lab.example.com/hearth`. Put the path in `PUBLIC_URL`. A
   proxy that strips the path and one that passes it on both work. The admin
@@ -66,6 +79,26 @@ Notable changes to Hearth. The format is loosely
 
 ### Changed
 
+- A journey between two named places is at most two notifications. "Aisha
+  left Home" goes once a second fix is outside too, or a minute passes with no
+  fix back inside, so a Wi-Fi fix that jumps down the street no longer sends
+  "left Home" and then "arrived at Home". "Aisha arrived at School, 4.2 km
+  from Home in 14 min" carries the journey, worked out from the fixes since
+  she left. When the phone's next word after leaving is already from
+  somewhere named, only the arrival is sent. A trip that ends at a named place
+  goes to the feed only, and one that ends anywhere else sends "Aisha stopped
+  4.2 km from Home". Older apps show these words as they come.
+- An arrival goes as soon as the server sees it, rather than two minutes
+  later and then on the next minute's tick. Only a phone doing 18 km/h or more
+  waits, up to a minute, in case the car is driving past. Anything held back
+  for a moment, or waiting for a retry, now goes the moment it falls due.
+- News that arrives more than a couple of minutes late says when it happened,
+  "Aisha arrived at School at 8:31", on the reader's own clock, or how long ago
+  where the phone never said its time zone. Distances follow the reader's
+  units. Arrivals, departures and trips are all pushed up to half an hour
+  late and no later, where trips went on for an hour.
+- Every visible notification plays the sound on an iPhone, as it already did
+  on Android, since each update to a card is a new line of news.
 - One SOS press alerts every circle you're in, not only the one on screen, and
   somebody who shares two of those circles with you hears about it once. It
   switches you back to precise in each of them, paused and approximate ones
@@ -140,6 +173,25 @@ Notable changes to Hearth. The format is loosely
 
 ### Fixed
 
+- A trip could be sent before the arrival it ended in, naming a place the
+  fence had not yet said they reached. A trip now takes its ends from the
+  fence's own records, so the two can't disagree.
+- A drive-past whose leave fix uploaded after the held arrival went out
+  stayed as "arrived at School". The leave is now sent unless it really
+  cancelled the arrival.
+- Places inside places picked whichever came first. Every reader now takes the
+  smallest place containing the spot, then the nearest centre, so an arrival,
+  a trip and a check-in agree, a trip no longer reads "from Town to Town", and
+  walking into a Home inside a Town is one arrival.
+- Sharing precisely again after approximate or a pause announced a departure
+  from hours before as if it had just happened. The circle's places now start
+  from where you are, without a word.
+- Somebody pacing a boundary sent a pair of notifications for every lap. A
+  return within ten minutes now keeps that place to the feed for a quarter of
+  an hour after it.
+- The "Sharing paused" switch did nothing, because pausing sent no
+  notification. The circle is now told, "Aisha paused location sharing for 1
+  hour", unless they turned the switch off.
 - Pressing SOS again after a reply was lost on a weak signal got a 409, and a
   fourth press inside ten minutes a 429, which a firewall in front of the
   server can answer by cutting off every phone in the house. A press on an

@@ -66,7 +66,10 @@ All providers share the same server-side pipeline. Events are written to a
 durable `notification_outbox` table in the same transaction as the thing that
 caused them. Postgres wakes the worker the moment that transaction commits, so
 an alert is on its way within milliseconds rather than on the next scheduler
-tick, and rows are sent eight at a time with the most urgent first. An SOS or
+tick, and rows are sent eight at a time with the most urgent first. A row held
+back for a moment, or waiting to be retried, goes the moment it falls due,
+because the worker keeps a timer for the earliest one, and picks it up again
+after a restart. An SOS or
 a possible crash goes ahead of anything else waiting, however long the queue.
 Before a row goes out, the server checks again that the recipient is still in
 the circle. An arrival, a departure, a finished trip or a speed alert is
@@ -112,13 +115,63 @@ check.
 
 Every visible notification is queued at high priority. Through Expo, that is
 what lets an Android phone in Doze show it at once, and on iOS it asks APNs for
-immediate delivery. An SOS or a crash alert goes on its own channel, which
-plays a sound, is marked time-sensitive on iOS and is allowed through Do Not
-Disturb on Android, once the phone has given Hearth Do Not Disturb access from
-the setup checklist. [SOS and crash detection](../safety.md#sos) says what each
-platform will and won't do with it. A silent push to an iPhone goes at Apple's background
+immediate delivery, and every one plays the phone's notification sound. An SOS
+or a crash alert goes on its own channel, which is marked time-sensitive on iOS
+and is allowed through Do Not Disturb on Android, once the phone has given
+Hearth Do Not Disturb access from the setup checklist.
+[SOS and crash detection](../safety.md#sos) says what each platform will and
+won't do with it. A silent push to an iPhone goes at Apple's background
 priority instead, because APNs throttles a background push sent at the higher
 one.
+
+## Arrivals, departures and trips
+
+A journey between two named places is at most two notifications.
+
+- **Left.** "Amina left Home", once the departure is real. That takes a second
+  fix outside the place, or a minute with no fix back inside, so a Wi-Fi fix
+  that jumps down the street doesn't send "left Home" and then "arrived at
+  Home". If the phone's next word after leaving is already from somewhere
+  named, as a parked phone's often is, only the arrival is sent.
+- **Arrived.** "Amina arrived at School, 4.2 km from Home in 14 min", with the
+  distance and time worked out from the fixes since she left. It goes as soon
+  as the server sees the crossing, usually within a second. A phone doing
+  18 km/h or more might be in a car driving past, so that arrival waits up to
+  a minute, and is never sent if the next fix is out the far side.
+- **Trip.** A trip that ends at a named place goes to the activity feed only.
+  One that ends anywhere else sends "Amina stopped 4.2 km from Home", so you
+  still hear that the journey is over.
+
+News that reaches you more than a couple of minutes late says when it
+happened, "Amina arrived at School at 8:31", on your phone's clock. Anything
+more than half an hour old, or from a backlog the phone uploads long after,
+goes to the feed only. Walking into a Home inside a bigger place such as a
+neighbourhood is one arrival, at Home. Somebody who keeps leaving and coming
+back to a place within minutes gets one pair of notifications, and the rest
+of the laps go to the feed.
+
+## What you can turn off
+
+Each circle's notification settings let you choose these.
+
+- which kinds of news you hear, or mute the whole circle for an hour, a day or
+  a week,
+- for each of the circle's places, whether you hear arrivals, departures, both
+  or neither,
+- the people whose comings and goings you'd rather not hear about. This covers
+  arrivals, departures and trips, wherever you share a circle with them.
+
+Quiet hours hold ordinary news until they end, or drop it, as you choose, and
+cover every circle. They follow your phone's clock, which the app sends each
+time it starts. Muting a person and quiet hours are stored on your account, so
+every phone you sign in on agrees.
+
+None of it reaches an SOS, a possible crash, or the notice that an SOS was
+resolved. Those always come through.
+
+When somebody pauses sharing with a circle, the circle is told, "Amina paused
+location sharing for 1 hour", unless they turned "Sharing paused" off. A
+paused phone is otherwise as silent as one that died.
 
 ## One notification per person
 
@@ -140,31 +193,30 @@ in the morning doesn't come back with the whole morning in it.
 A backlog, after the phone or the provider was out of reach for a while,
 arrives as one update rather than a buzz for every line in a row.
 
-A trip that ends at a saved place doesn't send a notification of its own,
-because the arrival already did. Its distance is added to the arrival line and
-shows with the next update. A trip that ends somewhere unsaved gets its own
-line. News that reaches you through two circles you share with the same person
-is sent once.
+A trip that ends somewhere unsaved gets its own line. News that reaches you
+through two circles you share with the same person is sent once.
 
 An SOS always gets a notification to itself, and the notice that it was
 resolved replaces it. An SOS that couldn't be delivered before it was resolved
 isn't sent late. Speed and crash alerts always stand alone.
 
-Every update still makes the phone buzz. There are fewer buzzes because a
-finished trip no longer adds one. ntfy and Web Push can't replace a
-notification, so through them each piece of news still arrives as its own.
+Every update plays the notification sound, on iPhone and Android alike,
+because each one is a new line of news. A journey makes two at most. ntfy and
+Web Push can't replace a notification, so through them each piece of news
+arrives as its own, with the same words.
 
 ## What a notification actually contains
 
 Hearth keeps push payloads deliberately boring:
 
 - title: `"Amina"` / `"Amina's phone"` / `"🚨 SOS from Amina"`
-- body: `"Arrived at Home"` with earlier lines under it / `"Battery at 12%"`
+- body: `"Arrived at School, 4.2 km from Home in 14 min"` with earlier lines
+  under it / `"Battery at 12%"`
 - data: `{ type, circleId, eventId }`, plus a `placeId`, `userId` or timestamp
   where the alert needs one. Identifiers and times, nothing more.
 
 Through ntfy and Web Push each notification stands alone, so the wording does
-too: `"Home"` and `"Amina arrived at Home"`.
+too, as in `"School"` and `"Amina arrived at School, 4.2 km from Home in 14 min"`.
 
 **Coordinates are never included in a push.** The phone fetches the actual
 position from _your_ server when the notification is tapped. So the

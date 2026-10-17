@@ -2,7 +2,8 @@ import { sql } from "drizzle-orm"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { getDb } from "../../db/client"
-import { amendArrivalLine, replaceKey, threadBody } from "../../services/notification-groups"
+import { replaceKey, threadBody } from "../../services/notification-groups"
+import { clockTime } from "../../services/place-news"
 import {
   createPushDriver,
   drainOutbox,
@@ -477,7 +478,7 @@ describe("the same arrival in two circles", () => {
     await clearOutbox()
 
     await uploadFixes(ctx.app, teen.headers, [
-      { ...HOME, recordedAt: iso(-480), accuracyMeters: 10 },
+      { ...HOME, recordedAt: iso(-30), accuracyMeters: 10 },
     ])
     expect(await queuedFor(parent.user.id)).toHaveLength(2)
 
@@ -511,17 +512,15 @@ describe("a place somebody stopped sharing precisely", () => {
 
     const db = getDb()
     const driver = new FakeDriver()
-    await uploadFixes(ctx.app, teen.headers, [
-      { ...GYM, recordedAt: iso(-720), accuracyMeters: 10 },
-    ])
+    await uploadFixes(ctx.app, teen.headers, [{ ...GYM, recordedAt: iso(-60), accuracyMeters: 10 }])
     await drainOutbox(db, driver, { now: nextTick() })
     expect(driver.delivered.map((entry) => entry.message.body)).toEqual(["Arrived at Gym"])
 
     await setSharing(ctx.app, teen.headers, sports.id, "approximate")
     await uploadFixes(ctx.app, teen.headers, [
-      { ...HOME, recordedAt: iso(-300), accuracyMeters: 10 },
+      { ...HOME, recordedAt: iso(-20), accuracyMeters: 10 },
     ])
-    await drainOutbox(db, driver, { now: new Date(Date.now() + 3 * 60 * 1000) })
+    await drainOutbox(db, driver, { now: nextTick() })
 
     expect(driver.delivered.at(-1)!.message.body).toBe("Arrived at Home")
   })
@@ -686,68 +685,74 @@ describe("a finished trip", () => {
     setRuntime({ pushDriver: configured })
   })
 
-  it("adds its distance to the arrival instead of buzzing again", async () => {
-    const { parent, teen, circle } = await family()
-    const route = drive(13 * 60)
-    const end = route.at(-1)!
+  // The drive ends seconds ago, and the sweep that files it runs once the
+  // idle gap has passed.
+  const route = () => drive(310)
+  const afterTheGap = () => new Date(Date.now() + 6 * 60_000)
+  const afterTheHold = () => new Date(Date.now() + 61_000)
 
+  async function toWork(circles: Array<{ id: string }>, parentHeaders: Record<string, string>) {
+    const end = route().at(-1)!
+    for (const circle of circles) {
+      await createPlace(ctx.app, parentHeaders, circle.id, { name: "Home", ...HOME })
+      await createPlace(ctx.app, parentHeaders, circle.id, {
+        name: "Work",
+        lat: end.lat,
+        lon: end.lon,
+      })
+    }
+    await clearOutbox()
+    return end
+  }
+
+  it("never buzzes when it ends at a saved place, since the arrival carried the journey", async () => {
+    const { parent, teen, circle } = await family()
     await uploadFixes(ctx.app, teen.headers, [
       { ...HOME, recordedAt: iso(-40 * 60), accuracyMeters: 10 },
     ])
-    await createPlace(ctx.app, parent.headers, circle.id, { name: "Home", ...HOME })
-    await createPlace(ctx.app, parent.headers, circle.id, {
-      name: "Work",
-      lat: end.lat,
-      lon: end.lon,
-    })
-    await clearOutbox()
+    const end = await toWork([circle], parent.headers)
 
     const db = getDb()
     const driver = new FakeDriver()
     setRuntime({ pushDriver: driver })
-    await uploadFixes(ctx.app, teen.headers, route)
-    await drainOutbox(db, driver, { now: nextTick() })
+    await uploadFixes(ctx.app, teen.headers, route())
+    await drainOutbox(db, driver, { now: afterTheHold() })
     expect(driver.delivered.map((entry) => entry.message.body)).toEqual([
-      "Arrived at Work\nLeft Home",
+      "Arrived at Work, 4.2 km from Home in 5 min",
     ])
 
-    expect(await detectTripsForUser(db, teen.user.id)).toBe(1)
-    await drainOutbox(db, driver, { now: nextTick() })
+    expect(await detectTripsForUser(db, teen.user.id, afterTheGap())).toBe(1)
+    await drainOutbox(db, driver, { now: afterTheGap() })
     expect(driver.delivered).toHaveLength(1)
     expect((await queuedFor(parent.user.id)).map((row) => row.type)).not.toContain("trip_completed")
 
     await checkIn(ctx.app, teen.headers, circle.id, end)
-    await drainOutbox(db, driver, { now: nextTick() })
+    await drainOutbox(db, driver, { now: afterTheGap() })
     expect(lines(driver.delivered.at(-1)!.message)).toEqual([
       "Checked in at Work.",
-      "Arrived at Work after 4.2 km",
-      "Left Home",
+      "Arrived at Work, 4.2 km from Home in 5 min",
     ])
   })
 
-  it("still buzzes on its own where the provider cannot replace a notification", async () => {
+  it("is not sent on its own through a provider that cannot replace a notification either", async () => {
     const { parent, teen, circle } = await family()
-    const route = drive(13 * 60)
-    const end = route.at(-1)!
-
+    await getDb().execute(sql`update sessions set push_provider = 'ntfy'`)
     await uploadFixes(ctx.app, teen.headers, [
       { ...HOME, recordedAt: iso(-40 * 60), accuracyMeters: 10 },
     ])
-    await createPlace(ctx.app, parent.headers, circle.id, { name: "Home", ...HOME })
-    await createPlace(ctx.app, parent.headers, circle.id, {
-      name: "Work",
-      lat: end.lat,
-      lon: end.lon,
-    })
-    await clearOutbox()
-    setRuntime({ pushDriver: new FakeDriver("ntfy") })
+    await toWork([circle], parent.headers)
+    const driver = new FakeDriver("ntfy")
+    setRuntime({ pushDriver: driver })
 
     const db = getDb()
-    await uploadFixes(ctx.app, teen.headers, route)
-    expect(await detectTripsForUser(db, teen.user.id)).toBe(1)
+    await uploadFixes(ctx.app, teen.headers, route())
+    await drainOutbox(db, driver, { now: afterTheHold() })
+    expect(await detectTripsForUser(db, teen.user.id, afterTheGap())).toBe(1)
+    await drainOutbox(db, driver, { now: afterTheGap() })
 
-    const trips = (await queuedFor(parent.user.id)).filter((row) => row.type === "trip_completed")
-    expect(trips.map((row) => row.body)).toEqual(["Teen travelled 4.2 km from Home to Work."])
+    expect(driver.delivered.map((entry) => [entry.message.title, entry.message.body])).toEqual([
+      ["Work", "Teen arrived at Work, 4.2 km from Home in 5 min"],
+    ])
   })
 
   it("does not buzz for a second circle that already heard the arrival through the first", async () => {
@@ -758,29 +763,18 @@ describe("a finished trip", () => {
     await joinCircle(ctx.app, teen.headers, family.invite.code)
     await joinCircle(ctx.app, teen.headers, cousins.invite.code)
     await enablePush(parent.user.id, "ExponentPushToken[parent-phone]")
-    const route = drive(13 * 60)
-    const end = route.at(-1)!
-
     await uploadFixes(ctx.app, teen.headers, [
       { ...HOME, recordedAt: iso(-40 * 60), accuracyMeters: 10 },
     ])
-    for (const circle of [family, cousins]) {
-      await createPlace(ctx.app, parent.headers, circle.id, { name: "Home", ...HOME })
-      await createPlace(ctx.app, parent.headers, circle.id, {
-        name: "Work",
-        lat: end.lat,
-        lon: end.lon,
-      })
-    }
-    await clearOutbox()
+    await toWork([family, cousins], parent.headers)
 
     const db = getDb()
     const driver = new FakeDriver()
     setRuntime({ pushDriver: driver })
-    await uploadFixes(ctx.app, teen.headers, route)
-    await drainOutbox(db, driver, { now: nextTick() })
-    expect(await detectTripsForUser(db, teen.user.id)).toBe(1)
-    await drainOutbox(db, driver, { now: nextTick() })
+    await uploadFixes(ctx.app, teen.headers, route())
+    await drainOutbox(db, driver, { now: afterTheHold() })
+    expect(await detectTripsForUser(db, teen.user.id, afterTheGap())).toBe(1)
+    await drainOutbox(db, driver, { now: afterTheGap() })
 
     expect(driver.delivered).toHaveLength(1)
     expect((await queuedFor(parent.user.id)).map((row) => row.type)).not.toContain("trip_completed")
@@ -788,6 +782,11 @@ describe("a finished trip", () => {
 
   it("is a line of its own when it ends somewhere unsaved", async () => {
     const { parent, teen, circle } = await family()
+    await getDb().execute(sql`
+      update users set notification_settings =
+        '{"timeZone":"Europe/London","clock":"24h","quietHours":null,"mutedPeople":[]}'::jsonb
+      where id = ${parent.user.id}::uuid
+    `)
     await uploadFixes(ctx.app, teen.headers, [
       { ...HOME, recordedAt: iso(-40 * 60), accuracyMeters: 10 },
     ])
@@ -797,54 +796,18 @@ describe("a finished trip", () => {
     const db = getDb()
     const driver = new FakeDriver()
     setRuntime({ pushDriver: driver })
-    await uploadFixes(ctx.app, teen.headers, drive(13 * 60))
+    const fixes = route()
+    await uploadFixes(ctx.app, teen.headers, fixes)
     await drainOutbox(db, driver, { now: nextTick() })
-    expect(await detectTripsForUser(db, teen.user.id)).toBe(1)
-    await drainOutbox(db, driver, { now: nextTick() })
+    expect(await detectTripsForUser(db, teen.user.id, afterTheGap())).toBe(1)
+    await drainOutbox(db, driver, { now: afterTheGap() })
 
+    // The upload landed a few minutes after the drive set off, so the
+    // departure says when it was.
+    const left = clockTime(new Date(fixes[1]!.recordedAt), "Europe/London", "24h")
     expect(lines(driver.delivered.at(-1)!.message)).toEqual([
-      "Travelled 4.2 km from Home",
-      "Left Home",
-    ])
-  })
-})
-
-describe("finishing an arrival's line", () => {
-  it("picks the arrival the trip ended in, not an earlier one at the same place", async () => {
-    const { parent, teen, circle } = await family()
-    const place = await createPlace(ctx.app, parent.headers, circle.id, { name: "Home", ...HOME })
-    const key = `outing:${teen.user.id}`
-    const db = getDb()
-    const arrival = (line: string, minutesAgo: number): PushMessage => ({
-      userId: parent.user.id,
-      circleId: circle.id,
-      title: "Home",
-      body: `Teen ${line}`,
-      data: {
-        type: "place_arrive",
-        placeId: place.id,
-        occurredAt: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
-      },
-      group: { key, title: "Teen", line },
-    })
-    await clearOutbox()
-    // A late upload: home at 8:05, out at 8:08, home again at 8:30.
-    await enqueuePush(db, [arrival("Arrived at Home", 30), arrival("Arrived at Home", 5)])
-
-    const found = await amendArrivalLine(db, {
-      userIds: [parent.user.id],
-      circleId: circle.id,
-      groupKey: key,
-      placeId: place.id,
-      startedAt: new Date(Date.now() - 27 * 60_000),
-      endedAt: new Date(Date.now() - 6 * 60_000),
-      line: "Arrived at Home after 5.0 km",
-    })
-
-    expect([...found]).toEqual([parent.user.id])
-    expect((await queuedFor(parent.user.id)).map((row) => row.group_line)).toEqual([
-      "Arrived at Home",
-      "Arrived at Home after 5.0 km",
+      "Stopped 4.2 km from Home",
+      `Left Home at ${left}`,
     ])
   })
 })
@@ -956,6 +919,15 @@ describe("the Expo envelope", () => {
     await driver.send({ ...target, platform: "android" }, grouped)
     expect(sent[0]).toMatchObject({ tag: "outing:abc#12" })
     expect(sent[0]).not.toHaveProperty("collapseId")
+  })
+
+  // Two notifications for a journey, and both are news, so an iPhone plays
+  // the sound for them as Android's channel does, update or not.
+  it("asks for the sound on every visible notification, as Android's channel plays one", async () => {
+    const driver = stubExpo()
+    await driver.send(target, grouped)
+    await driver.send({ ...target, platform: "android" }, grouped)
+    expect(sent.map((envelope) => envelope.sound)).toEqual(["default", "default"])
   })
 
   it("leaves a notification without a key to stand on its own", async () => {

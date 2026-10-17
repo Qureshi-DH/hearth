@@ -82,7 +82,7 @@ quarter of an hour answer `429` until the quarter is up.
 | Area      | Endpoints                                                                                                                                                                                                                                                                                                                                                                                             |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | System    | `GET /server-info` (public capabilities), `GET /media/*` (stored images), `GET /healthz`, `GET /readyz` and `GET /join/:code` (root, not under `/api/v1`)                                                                                                                                                                                                                                             |
-| Account   | `GET/PATCH /auth/me`, `POST/DELETE /auth/me/avatar`, `POST /auth/password`, `GET /auth/sessions`, `DELETE /auth/sessions/:id`, `POST /auth/sessions/revoke-all`, `GET /me/export`, `DELETE /me`, `GET /me/stats`, `DELETE /me/history`, `PATCH /me/health` ([what the phone says about itself](mobile.md#what-the-phone-says-about-itself))                                                           |
+| Account   | `GET/PATCH /auth/me`, `POST/DELETE /auth/me/avatar`, `POST /auth/password`, `GET /auth/sessions`, `DELETE /auth/sessions/:id`, `POST /auth/sessions/revoke-all`, `GET /me/export`, `DELETE /me`, `GET /me/stats`, `DELETE /me/history`, `PATCH /me/health`, `PATCH /me/notifications` ([what the phone says about itself](mobile.md#what-the-phone-says-about-itself))                                |
 | Circles   | `GET/POST /circles`, `GET/PATCH/DELETE /circles/:id`, `GET /circles/:id/members`, `PATCH/DELETE /circles/:id/members/:userId`, `PATCH /circles/:id/sharing`, `PATCH /circles/:id/notifications`                                                                                                                                                                                                       |
 | Invites   | `GET/POST /circles/:id/invites` (list omits revoked, `expiresInHours: null` = never expires), `DELETE /circles/:id/invites/:inviteId`, `GET /invites/:code` (public preview), `POST /invites/:code/accept`                                                                                                                                                                                            |
 | Locations | `POST /locations/batch`, `GET /circles/:id/locations`, `POST /circles/:id/locations/refresh`, `GET /circles/:id/members/:userId/history`, `POST /circles/:id/members/:userId/refresh`, `POST /circles/:id/members/:userId/watch`                                                                                                                                                                      |
@@ -137,6 +137,19 @@ nothing is sent twice. `asked` takes the refresh route's words, which are
 precisely has their phone asked. For one sharing approximately the alert goes
 and `asked` is `unsupported`, as on the refresh route, because the rest would
 say whether their phone is connected or reported a moment ago.
+
+`PATCH /me/notifications` takes `timeZone`, `clock` (`12h` or `24h`),
+`quietHours` and `mutedPeople`, and answers the whole set, which `GET /auth/me`
+also carries as `notificationSettings`. Quiet hours are
+`{ from, until, then }`, with the times as `HH:MM` on the phone's clock and
+`then` either `hold` or `drop`, and `null` turns them off. `mutedPeople` lists
+the people whose arrivals, departures and trips you no longer hear about.
+`PATCH /circles/:id/notifications` also takes `places`, a map from a place id
+to `both`, `arrive`, `leave` or `none`, merged into what is stored. `POST
+/push/register` takes `timeZone` and `clock` as well, and the app sends them on
+every launch. A server with all of this says `features.notificationControls:
+true` in `server-info`, and the app shows those controls only where it does.
+None of them reach an SOS, a possible crash or a resolved alert.
 
 A message reaches a member who has paused sharing, since it says nothing about
 where they are. A bare ask to them sends nothing and answers

@@ -872,13 +872,13 @@ describe("membership", () => {
     const toAunt = back.delivered.filter((entry) => entry.token === "ExponentPushToken[aunt-phone]")
     expect(toAunt.map((entry) => entry.message.body)).toEqual([])
 
-    // The parent is still in the circle, so the same backlog still reaches her.
+    // The parent is still in the circle, so the same backlog still reaches
+    // her, saying how late it is.
     const toParent = back.delivered.filter(
       (entry) => entry.token === "ExponentPushToken[parent-phone]",
     )
-    expect(toParent.map((entry) => [entry.message.title, entry.message.body])).toEqual([
-      ["Teen", "Arrived at Home"],
-    ])
+    expect(toParent.map((entry) => entry.message.title)).toEqual(["Teen"])
+    expect(toParent[0]!.message.body).toMatch(/^Arrived at Home 3 h( \d+ min)? ago$/)
   })
 })
 

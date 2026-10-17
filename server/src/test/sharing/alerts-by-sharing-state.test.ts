@@ -569,7 +569,8 @@ describe("SOS, check-ins and nudges", () => {
 
     expect(await feedTypes(carol.headers, B)).toContain("check_in")
     expect(await feedTypes(bob.headers, A)).not.toContain("check_in")
-    expect(await pushesFor(bob.user.id, A)).toHaveLength(0)
+    // Circle A was told she paused, and nothing more.
+    expect((await pushesFor(bob.user.id, A)).map((push) => push.title)).toEqual(["Sharing paused"])
   })
 })
 
@@ -602,7 +603,10 @@ describe("transitions", () => {
     const arrivals = items.filter((e) => e.type === "place_arrive").map((e) => e.summary)
     expect(arrivals).toHaveLength(1)
     // And no second push telling the family she has just got home.
-    expect((await pushesFor(carol.user.id, B)).map((p) => p.body)).toHaveLength(1)
+    expect((await pushesFor(carol.user.id, B)).map((p) => p.body)).toEqual([
+      "Alice arrived at Home",
+      "Alice paused location sharing",
+    ])
   })
 
   it("hides a trip in progress from a circle she pauses, and keeps it for the other", async () => {

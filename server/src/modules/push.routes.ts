@@ -12,6 +12,7 @@ import { badRequest } from "../lib/errors"
 import { sha256 } from "../lib/ids"
 import { isPrivateAddress } from "../lib/net"
 import { requireAuth } from "../plugins/auth"
+import { updateNotificationSettings } from "../services/notification-settings"
 import { enqueuePush } from "../services/push"
 
 export const pushRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -48,10 +49,17 @@ export const pushRoutes: FastifyPluginAsyncZod = async (app) => {
         description:
           "The token is stored against the current session, so signing the device out also " +
           "stops its notifications. For ntfy the server derives a per-device topic instead of " +
-          "trusting a client-supplied one.",
+          "trusting a client-supplied one. The phone's time zone and clock, sent alongside, are " +
+          "what quiet hours and the time on late news are read in.",
         body: z.object({
           provider: z.enum(PUSH_PROVIDERS),
           token: z.string().min(1).max(4096).optional(),
+          /**
+           * Sent on every launch, so quiet hours and the time on late news
+           * follow the phone when it travels.
+           */
+          timeZone: z.string().max(64).optional(),
+          clock: z.enum(["12h", "24h"]).optional(),
         }),
       },
     },
@@ -89,6 +97,12 @@ export const pushRoutes: FastifyPluginAsyncZod = async (app) => {
         .update(sessions)
         .set({ pushProvider: request.body.provider, pushToken: token })
         .where(eq(sessions.id, auth.sessionId))
+      if (request.body.timeZone || request.body.clock) {
+        await updateNotificationSettings(db, auth.userId, {
+          timeZone: request.body.timeZone,
+          clock: request.body.clock,
+        })
+      }
 
       return {
         ok: true,

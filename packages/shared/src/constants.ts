@@ -123,6 +123,20 @@ export const MUTABLE_EVENT_TYPES = [
 
 export type MutableEventType = (typeof MUTABLE_EVENT_TYPES)[number]
 
+/** Whether a member hears arrivals at a place, departures, both or neither. */
+export const PLACE_ALERTS = ["both", "arrive", "leave", "none"] as const
+export type PlaceAlerts = (typeof PLACE_ALERTS)[number]
+
+/**
+ * The news about somebody's comings and goings, which muting a person stops.
+ * A check-in is left out, since they pressed a button to send it.
+ */
+export const COMINGS_AND_GOINGS = [
+  "place_arrive",
+  "place_leave",
+  "trip_completed",
+] as const satisfies readonly MutableEventType[]
+
 export const PLACE_ICONS = [
   "home",
   "work",

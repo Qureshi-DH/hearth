@@ -18,6 +18,7 @@ import type {
   LocationFixInput,
   MemberNotificationPrefs,
   MemberPresence,
+  NotificationSettings,
   Paginated,
   Place,
   PlaceEvent,
@@ -111,6 +112,8 @@ export function createEndpoints(api: ApiClient) {
       exportData: () => api.get<unknown>("/me/export", { timeoutMs: 60_000 }),
       deleteAccount: (password: string) => api.delete<{ ok: true }>("/me", { password }),
       health: (health: DeviceHealth) => api.patch<{ ok: true }>("/me/health", health),
+      updateNotificationSettings: (patch: Partial<NotificationSettings>) =>
+        api.patch<NotificationSettings>("/me/notifications", patch),
     },
 
     circles: {
@@ -271,7 +274,12 @@ export function createEndpoints(api: ApiClient) {
 
     push: {
       config: () => api.get<PushConfig>("/push/config", { auth: false }),
-      register: (body: { provider: PushProvider; token?: string }) =>
+      register: (body: {
+        provider: PushProvider
+        token?: string
+        timeZone?: string
+        clock?: "12h" | "24h"
+      }) =>
         api.post<{
           ok: true
           provider: PushProvider

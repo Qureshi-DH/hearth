@@ -157,10 +157,10 @@ async function household(radiusMeters = 150, centre = HOME, name = "Home") {
 describe("a drive-past is a drive-past however the phone chunked the upload", () => {
   // KNOWN LIMITATION. The crossings are still recorded when a drive-past is
   // split across uploads, because the server cannot know a leave is coming when
-  // the entry fix lands. What is fixed is the harm: the entry push is held for
-  // TRANSIENT_VISIT_MS and cancelled by the leave, so nobody is buzzed. Closing
-  // the rest means holding the feed row too, which needs a pending column on
-  // place_memberships and a scheduler pass to promote it.
+  // the entry fix lands. What is fixed is the harm. An entry at driving speed
+  // holds its push for a minute and the leave cancels it, so nobody is
+  // buzzed. Closing the rest means holding the feed row too, until the
+  // crossing settles.
   it.fails("says nothing when the three fixes arrive as three requests", async () => {
     const { parent, kid, circle } = await household(150, SCHOOL, "School")
 
@@ -254,40 +254,29 @@ describe("a parked phone's quarter hour heartbeat", () => {
 })
 
 describe("a second device signed in to the same account", () => {
-  // KNOWN LIMITATION. The crossings are still recorded when a drive-past is
-  // split across uploads, because the server cannot know a leave is coming when
-  // the entry fix lands. What is fixed is the harm: the entry push is held for
-  // TRANSIENT_VISIT_MS and cancelled by the leave, so nobody is buzzed. Closing
-  // the rest means holding the feed row too, which needs a pending column on
-  // place_memberships and a scheduler pass to promote it.
-  it.fails(
-    "cannot overturn the phone that is with the person, however long it keeps reporting",
-    async () => {
-      const { parent, kid, circle } = await household(150)
+  it("cannot overturn the phone that is with the person, however long it keeps reporting", async () => {
+    const { parent, kid, circle } = await household(150)
 
-      const tablet = await signInDevice(kid.email, "device-fix-tablet")
-      await uploadFixes(kid.headers, [{ ...HOME, recordedAt: iso(-780), accuracyMeters: 10 }])
+    const tablet = await signInDevice(kid.email, "device-fix-tablet")
+    await uploadFixes(kid.headers, [{ ...HOME, recordedAt: iso(-780), accuracyMeters: 10 }])
 
-      // Twelve minutes of the kid at school and the tablet on the kitchen table,
-      // uploading in turn. The old fence answered every single upload.
-      for (let i = 0; i < 4; i += 1) {
-        await uploadFixes(kid.headers, [
-          { ...SCHOOL, recordedAt: iso(-700 + i * 180), accuracyMeters: 11 },
-        ])
-        await uploadFixes(tablet, [
-          { ...HOME, recordedAt: iso(-640 + i * 180), accuracyMeters: 22 },
-        ])
-      }
+    // Twelve minutes of the kid at school and the tablet on the kitchen table,
+    // uploading in turn. The old fence answered every single upload.
+    for (let i = 0; i < 4; i += 1) {
+      await uploadFixes(kid.headers, [
+        { ...SCHOOL, recordedAt: iso(-700 + i * 180), accuracyMeters: 11 },
+      ])
+      await uploadFixes(tablet, [{ ...HOME, recordedAt: iso(-640 + i * 180), accuracyMeters: 22 }])
+    }
 
-      // One trip out, so at most the fence learning where they were and then
-      // watching them go. Nothing the tablet says may add to it.
-      expect({
-        crossings: await crossings(),
-        feed: (await placeFeed(parent.headers, circle.id)).length,
-        pushes: (await placePushes()).length,
-      }).toEqual({ crossings: ["arrive", "leave"], feed: 2, pushes: 2 })
-    },
-  )
+    // One trip out, so at most the fence learning where they were and then
+    // watching them go. Nothing the tablet says may add to it.
+    expect({
+      crossings: await crossings(),
+      feed: (await placeFeed(parent.headers, circle.id)).length,
+      pushes: (await placePushes()).length,
+    }).toEqual({ crossings: ["arrive", "leave"], feed: 2, pushes: 2 })
+  })
 
   it("hands over once the phone that held the fence has gone quiet", async () => {
     const { kid } = await household(150)

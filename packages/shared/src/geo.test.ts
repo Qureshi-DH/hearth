@@ -9,6 +9,7 @@ import {
   haversineMeters,
   isValidLatLng,
   pathDistanceMeters,
+  placeAt,
 } from "./geo"
 
 const LONDON = { lat: 51.5074, lon: -0.1278 }
@@ -154,5 +155,32 @@ describe("formatDistance", () => {
     expect(formatDistance(120)).toBe("120 m")
     expect(formatDistance(3400)).toBe("3.4 km")
     expect(formatDistance(120, "imperial")).toBe("394 ft")
+  })
+})
+
+describe("placeAt", () => {
+  const M_PER_DEG_LAT = (Math.PI * 6_371_008.8) / 180
+  const HOME = { id: "home", lat: 51.4545, lon: -2.5879, radiusMeters: 100 }
+  const TOWN = { id: "town", lat: 51.4545, lon: -2.5879, radiusMeters: 2000 }
+  const north = (metres: number) => ({ lat: HOME.lat + metres / M_PER_DEG_LAT, lon: HOME.lon })
+
+  it("picks the smallest place that contains the point, whatever order they come in", () => {
+    expect(placeAt([TOWN, HOME], HOME)?.id).toBe("home")
+    expect(placeAt([HOME, TOWN], HOME)?.id).toBe("home")
+  })
+
+  it("falls back to the bigger place once the point is outside the smaller one", () => {
+    expect(placeAt([HOME, TOWN], north(500))?.id).toBe("town")
+  })
+
+  it("breaks a tie between equal places by the nearer centre", () => {
+    const a = { id: "a", ...north(-40), radiusMeters: 100 }
+    const b = { id: "b", ...north(40), radiusMeters: 100 }
+    expect(placeAt([a, b], north(30))?.id).toBe("b")
+    expect(placeAt([b, a], north(-30))?.id).toBe("a")
+  })
+
+  it("is null where no place contains the point", () => {
+    expect(placeAt([HOME], north(150))).toBeNull()
   })
 })

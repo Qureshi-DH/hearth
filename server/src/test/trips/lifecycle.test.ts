@@ -489,7 +489,9 @@ describe("telling the circle a journey finished", () => {
       inviteCode: circle.invite.code,
     })
 
-    const fixes = commute(45)
+    // Finished a quarter of an hour ago, well inside the half hour a trip
+    // may still be pushed in.
+    const fixes = commute(30)
     await uploadFixes(aisha.headers, fixes)
     await sweep()
 

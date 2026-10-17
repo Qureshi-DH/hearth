@@ -5,6 +5,7 @@ import {
   attachNotificationListeners,
   pushType,
   setupChannels,
+  setupPush,
 } from "./notifications"
 
 const mockSetChannel = jest.fn()
@@ -44,7 +45,18 @@ jest.mock("expo-task-manager", () => ({
 const mockTasks = () => (globalThis as { __wakeTasks?: Map<string, TaskBody> }).__wakeTasks!
 const mockReportNow = jest.fn(async (..._args: unknown[]): Promise<null> => null)
 jest.mock("expo-device", () => ({ isDevice: true }))
-jest.mock("@/services/api", () => ({ endpoints: {} }))
+const mockRegister = jest.fn(async (..._args: unknown[]) => ({
+  ok: true,
+  provider: "ntfy",
+  ntfyTopic: "hearth-abc",
+  ntfyBaseUrl: "https://ntfy.example.com",
+}))
+jest.mock("@/services/api", () => ({
+  endpoints: { push: { register: (...args: unknown[]) => mockRegister(...args) } },
+}))
+jest.mock("@/services/phoneClock", () => ({
+  phoneClock: () => ({ timeZone: "Asia/Karachi", clock: "24h" }),
+}))
 const mockReassert = jest.fn(async () => {})
 const mockWatched = jest.fn(async (_seconds: number) => {})
 jest.mock("@/services/location/tracker", () => ({
@@ -91,6 +103,19 @@ describe("setupChannels", () => {
     Platform.OS = "ios"
     await setupChannels()
     expect(mockSetChannel).not.toHaveBeenCalled()
+  })
+})
+
+describe("registering for notifications", () => {
+  // Quiet hours and the time on late news are read on this clock, and a
+  // phone that travels takes its time zone with it on the next launch.
+  it("tells the server which time zone and clock the phone keeps", async () => {
+    await setupPush({ pushProvider: "ntfy" } as never)
+    expect(mockRegister).toHaveBeenCalledWith({
+      provider: "ntfy",
+      timeZone: "Asia/Karachi",
+      clock: "24h",
+    })
   })
 })
 

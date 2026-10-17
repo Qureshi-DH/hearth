@@ -180,7 +180,7 @@ describe("resuming sharing while still inside a place", () => {
       placeEvents: (await placeEventRows(alice.user.id)).map((r) => `${r.type} ${r.name}`),
     }).toEqual({
       arrivals: ["Alice arrived at Home"],
-      pushes: ["Home|Alice arrived at Home"],
+      pushes: ["Home|Alice arrived at Home", "Sharing paused|Alice paused location sharing"],
       placeEvents: ["arrive Home"],
     })
   })
@@ -312,6 +312,7 @@ describe("resuming sharing while still inside a place", () => {
     ])
     expect((await pushesFor(dave.user.id, circleId)).map((p) => p.body)).toEqual([
       "Alice arrived at Home",
+      "Alice paused location sharing",
       "Alice left Home",
       "Alice arrived at Gym",
     ])
@@ -347,11 +348,7 @@ describe("resuming sharing while still inside a place", () => {
    * late. Whether the gym arrival is announced at resume time is a product
    * call, but it must never be announced twice.
    */
-  // KNOWN LIMITATION. Resuming advances the fence watermark to the last fix
-  // already seen, which is what stops a departure that happened during the
-  // pause being announced afterwards. A fix recorded before that frontier but
-  // uploaded after the resume is skipped with it.
-  it.fails("says nothing about the place she left while paused", async () => {
+  it("says nothing about the place she left while paused", async () => {
     const { alice, dave, circleId } = await household()
     await addPlace(alice.headers, circleId, "Home", HOME)
     await addPlace(alice.headers, circleId, "Gym", GYM, 120)

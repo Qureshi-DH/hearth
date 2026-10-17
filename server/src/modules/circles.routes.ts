@@ -2,8 +2,8 @@ import {
   CIRCLE_ROLES,
   DEFAULTS,
   MUTABLE_EVENT_TYPES,
+  PLACE_ALERTS,
   SHARING_STATES,
-  haversineMeters,
   roleAtLeast,
   type CircleRole,
 } from "@hearth/shared"
@@ -18,9 +18,7 @@ import {
   circles,
   events,
   invites,
-  placeMemberships,
   places,
-  userPresence,
   users,
 } from "../db/schema"
 import type { CircleSettingsJson } from "../db/schema"
@@ -30,6 +28,8 @@ import { toPublicUser } from "../lib/serialize"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { getBus } from "../runtime"
 import { recordEvent } from "../services/feed"
+import { outingGroup } from "../services/notification-groups"
+import { reseedPlaceMemberships } from "../services/geofence"
 import { acceptInvite, createInvite, inviteUrl, previewInvite } from "../services/invites"
 import {
   POSITION_DERIVED_EVENT_TYPES,
@@ -105,7 +105,7 @@ function toMemberDto(row: typeof circleMembers.$inferSelect, user: typeof users.
     sharingState: row.sharingState,
     pausedUntil: row.pausedUntil?.toISOString() ?? null,
     joinedAt: row.joinedAt.toISOString(),
-    notifications: row.notifications,
+    notifications: { ...row.notifications, places: row.notifications.places ?? {} },
   }
 }
 
@@ -120,65 +120,13 @@ async function loadMemberDto(db: ReturnType<typeof getDb>, circleId: string, use
   return toMemberDto(row.member, row.user)
 }
 
-/**
- * Puts one member's fences for one circle back where they were, silently.
- * Sharing anything less than "precise" deletes those rows, so without this the
- * first fix after resuming looks like a first evaluation and the circle is told
- * they have just arrived somewhere they never left.
- *
- * Same two rules as `primePlaceMemberships`, and for the same reason: this
- * writes "inside" for a fix the fence never judged, so a cell-tower fix that
- * cannot decide a doorstep seeds nothing and the first honest fix decides from
- * scratch. Both stamps come from that fix rather than from the clock, or the
- * uploads already in flight would all read as stragglers and be skipped.
- */
-async function primeMemberPlaceMemberships(
-  db: Pick<Database, "select" | "insert">,
-  circleId: string,
-  userId: string,
-): Promise<void> {
-  const [presence] = await db
-    .select({
-      lat: userPresence.lat,
-      lon: userPresence.lon,
-      accuracyMeters: userPresence.accuracyMeters,
-      recordedAt: userPresence.recordedAt,
-    })
-    .from(userPresence)
-    .where(eq(userPresence.userId, userId))
-    .limit(1)
-  if (!presence) return
-
-  const { lat, lon, accuracyMeters, recordedAt } = presence
-  if (lat == null || lon == null || recordedAt == null) return
-  if (accuracyMeters != null && accuracyMeters > DEFAULTS.geofenceMaxAccuracyMeters) return
-
-  const circlePlaces = await db
-    .select({
-      id: places.id,
-      lat: places.lat,
-      lon: places.lon,
-      radiusMeters: places.radiusMeters,
-    })
-    .from(places)
-    .where(eq(places.circleId, circleId))
-  if (circlePlaces.length === 0) return
-
-  const margin = (accuracyMeters ?? 0) / 2
-  await db
-    .insert(placeMemberships)
-    .values(
-      circlePlaces.map((place) => ({
-        placeId: place.id,
-        userId,
-        isInside: haversineMeters({ lat, lon }, place) + margin <= place.radiusMeters,
-        since: recordedAt,
-        lastEvaluatedAt: recordedAt,
-      })),
-    )
-    // A row still here was written after the rows for this circle were dropped,
-    // by the fence or by a place created mid-pause, so it is the newer answer.
-    .onConflictDoNothing({ target: [placeMemberships.placeId, placeMemberships.userId] })
+/** " for 2 hours", or nothing for a pause with no end. */
+function pausedFor(until: Date | null, now: Date): string {
+  if (!until) return ""
+  const minutes = Math.max(1, Math.round((until.getTime() - now.getTime()) / 60_000))
+  if (minutes < 60) return ` for ${minutes} min`
+  const hours = Math.round(minutes / 60)
+  return ` for ${hours} ${hours === 1 ? "hour" : "hours"}`
 }
 
 export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -618,7 +566,10 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "Change how you share your location with this circle",
         description:
           "`precise` shares exact coordinates, `approximate` snaps them to a coarse grid, " +
-          "and `paused` shares nothing. A pause may carry an expiry so it lapses on its own.",
+          "and `paused` shares nothing. A pause may carry an expiry so it lapses on its own, " +
+          "and the circle is told when one starts, unless they muted it. Sharing precisely " +
+          "again starts the circle's places from where you are now, without announcing " +
+          "anything that happened in between.",
         params: circleIdParam,
         body: z.object({
           sharingState: z.enum(SHARING_STATES),
@@ -659,19 +610,12 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
       // The fence rows and the state that gates them move together, or a
       // failure between the two leaves the member sharing precisely from a
       // frozen fence, which is the bug this whole block exists to avoid.
-      await db.transaction(async (tx) => {
-        const [before] = await tx
+      const before = await db.transaction(async (tx) => {
+        const [previous] = await tx
           .select({ sharingState: circleMembers.sharingState })
           .from(circleMembers)
           .where(memberFilter)
           .limit(1)
-
-        // Priming happens before the circle can see anything again, so an
-        // upload landing mid-request cannot read the gap as a first evaluation
-        // and announce an arrival at a place she has been sitting in all along.
-        if (request.body.sharingState === "precise" && before?.sharingState !== "precise") {
-          await primeMemberPlaceMemberships(tx, request.params.circleId, auth.userId)
-        }
 
         await tx
           .update(circleMembers)
@@ -683,27 +627,26 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
           })
           .where(memberFilter)
 
-        // The rows stay. Fences stop being evaluated for a circle the moment
-        // sharing is not precise, and the read paths already refuse to report a
-        // membership belonging to somebody who is not sharing precisely, so a
-        // frozen row discloses nothing. Deleting instead made resuming look
-        // like arriving: the next fix was a first evaluation with the member
-        // already inside, which is exactly what the fence announces.
-        //
-        // What does have to move is the watermark. Sharing again means the
-        // fence starts reading this circle's places from now, not from wherever
-        // the member was when they paused, or resuming announces a departure
-        // that happened while nobody was allowed to watch.
-        await tx.execute(sql`
-          update place_memberships pm
-          set last_evaluated_at = greatest(pm.last_evaluated_at, up.recorded_at)
-          from user_presence up
-          where up.user_id = ${auth.userId}
-            and pm.user_id = ${auth.userId}
-            and up.recorded_at is not null
-            and pm.place_id in (select id from places where circle_id = ${request.params.circleId})
-        `)
+        // The rows describe wherever she was when precise sharing stopped,
+        // and picking up from them announces a departure hours old.
+        if (request.body.sharingState === "precise" && previous?.sharingState !== "precise") {
+          await reseedPlaceMemberships(tx as unknown as Database, auth.userId, [
+            request.params.circleId,
+          ])
+        }
+        return previous
       })
+
+      const pausing = request.body.sharingState === "paused" && before?.sharingState !== "paused"
+      const [actor] = pausing
+        ? await db
+            .select({ displayName: users.displayName })
+            .from(users)
+            .where(eq(users.id, auth.userId))
+            .limit(1)
+        : []
+      const name = actor?.displayName ?? "Someone"
+      const line = `Paused location sharing${pausedFor(pausedUntil, new Date())}`
 
       await recordEvent(db, {
         circleId: request.params.circleId,
@@ -714,6 +657,17 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
           request.body.sharingState === "paused"
             ? "Paused location sharing"
             : `Sharing location (${request.body.sharingState})`,
+        // A phone that goes quiet is news the family is told, and a pause is
+        // the same silence chosen on purpose. Saying so is what keeps it from
+        // reading as a phone that died. Pausing again to change how long is
+        // not news, and nor is sharing again, which the map shows.
+        notify: pausing
+          ? {
+              title: "Sharing paused",
+              body: `${name} ${line.charAt(0).toLowerCase()}${line.slice(1)}`,
+              group: outingGroup(auth.userId, name, line),
+            }
+          : undefined,
       })
 
       return loadMemberDto(db, request.params.circleId, auth.userId)
@@ -726,28 +680,49 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
       preHandler: app.authenticate,
       schema: {
         tags: ["circles"],
-        summary: "Mute specific alerts from this circle",
+        summary: "Choose what you hear from this circle",
+        description:
+          "`muted` silences whole kinds of news, `mutedUntil` silences everything for a while, " +
+          "and `places` chooses what to hear about each of the circle's places: arrivals, " +
+          "departures, both or neither. Places merge into what is stored, `both` clears a " +
+          "choice, and a place that is not this circle's is ignored. None of it reaches an " +
+          "SOS or a possible crash.",
         params: circleIdParam,
         body: z.object({
           muted: z.array(z.enum(MUTABLE_EVENT_TYPES)).max(32).optional(),
           mutedUntil: isoTimestamp.nullish(),
+          places: z.record(z.string().uuid(), z.enum(PLACE_ALERTS)).optional(),
         }),
       },
     },
     async (request) => {
       const auth = requireAuth(request)
       const membership = await requireMembership(request, request.params.circleId)
+      const mine = and(
+        eq(circleMembers.circleId, membership.circleId),
+        eq(circleMembers.userId, auth.userId),
+      )
 
       const [current] = await db
         .select({ notifications: circleMembers.notifications })
         .from(circleMembers)
-        .where(
-          and(
-            eq(circleMembers.circleId, membership.circleId),
-            eq(circleMembers.userId, auth.userId),
-          ),
-        )
+        .where(mine)
         .limit(1)
+
+      const chosen = { ...(current?.notifications.places ?? {}) }
+      const asked = Object.keys(request.body.places ?? {})
+      if (asked.length > 0) {
+        const own = await db
+          .select({ id: places.id })
+          .from(places)
+          .where(and(eq(places.circleId, membership.circleId), inArray(places.id, asked)))
+        const ownIds = new Set(own.map((place) => place.id))
+        for (const [placeId, choice] of Object.entries(request.body.places ?? {})) {
+          if (!ownIds.has(placeId)) continue
+          if (choice === "both") delete chosen[placeId]
+          else chosen[placeId] = choice
+        }
+      }
 
       const next = {
         muted: (request.body.muted ?? current?.notifications.muted ?? []) as never,
@@ -755,20 +730,17 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
           request.body.mutedUntil === undefined
             ? (current?.notifications.mutedUntil ?? null)
             : (request.body.mutedUntil ?? null),
+        places: chosen,
       }
 
       const [updated] = await db
         .update(circleMembers)
         .set({ notifications: next })
-        .where(
-          and(
-            eq(circleMembers.circleId, membership.circleId),
-            eq(circleMembers.userId, auth.userId),
-          ),
-        )
+        .where(mine)
         .returning()
 
-      return updated?.notifications ?? next
+      const stored = updated?.notifications ?? next
+      return { ...stored, places: stored.places ?? {} }
     },
   )
 

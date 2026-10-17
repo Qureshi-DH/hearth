@@ -1,4 +1,4 @@
-import { DEFAULTS, haversineMeters } from "@hearth/shared"
+import { DEFAULTS, placeAt } from "@hearth/shared"
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
@@ -303,6 +303,7 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
 
     const placeRows = await db
       .select({
+        id: places.id,
         name: places.name,
         lat: places.lat,
         lon: places.lon,
@@ -311,8 +312,7 @@ export const tripRoutes: FastifyPluginAsyncZod = async (app) => {
       .from(places)
       .where(inArray(places.circleId, circleIds))
 
-    const nameFor = (point: { lat: number; lon: number }) =>
-      placeRows.find((place) => haversineMeters(point, place) <= place.radiusMeters)?.name ?? null
+    const nameFor = (point: { lat: number; lon: number }) => placeAt(placeRows, point)?.name ?? null
 
     return rows.map((row) =>
       toTrip(

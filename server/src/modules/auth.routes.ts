@@ -44,6 +44,7 @@ import {
 } from "../services/auth"
 import { acceptInvite, previewInvite } from "../services/invites"
 import { broadcastPresence } from "../services/locations"
+import { updateNotificationSettings } from "../services/notification-settings"
 import { portalRoutes } from "./portal.routes"
 import { passwordGuesses } from "../plugins/password-guesses"
 import { registrationMode } from "../services/settings"
@@ -57,6 +58,9 @@ import {
   sniffImageType,
   storageEnabled,
 } from "../services/storage"
+
+/** "HH:MM", on the phone's own clock. */
+const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
 
 const DeviceSchema = z.object({
   deviceId: z.string().min(6).max(128),
@@ -670,6 +674,40 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       reply.header("content-disposition", `attachment; filename="hearth-export-${user.id}.json"`)
       reply.header("content-type", "application/json; charset=utf-8")
       return Readable.from(document())
+    },
+  )
+
+  app.patch(
+    "/me/notifications",
+    {
+      preHandler: app.authenticate,
+      schema: {
+        tags: ["account"],
+        summary: "Notification settings that follow you to every phone",
+        description:
+          "The phone's time zone and clock, which quiet hours and the time on late news are " +
+          "read in, quiet hours themselves, and the people whose comings and goings you no " +
+          "longer hear about. During quiet hours ordinary news is held until they end, or " +
+          "dropped. SOS, possible crashes and the other safety alerts are never held, " +
+          "dropped or muted. Fields left out keep their value. A time zone the server does " +
+          "not know is ignored rather than refused.",
+        body: z.object({
+          timeZone: z.string().max(64).nullish(),
+          clock: z.enum(["12h", "24h"]).nullish(),
+          quietHours: z
+            .object({
+              from: clockTime,
+              until: clockTime,
+              then: z.enum(["hold", "drop"]),
+            })
+            .nullish(),
+          mutedPeople: z.array(z.string().uuid()).max(200).optional(),
+        }),
+      },
+    },
+    async (request) => {
+      const auth = requireAuth(request)
+      return updateNotificationSettings(db, auth.userId, request.body)
     },
   )
 

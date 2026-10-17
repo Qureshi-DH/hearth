@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 
-import { and, desc, eq, isNotNull, sql } from "drizzle-orm"
+import { and, desc, eq, isNotNull } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import { notificationOutbox, type OutboxRow } from "../db/schema"
@@ -248,56 +248,4 @@ async function earlierLines(
   return rows.flatMap((row) =>
     row.line && !hidden.has(row.id) ? [{ id: row.id, line: row.line }] : [],
   )
-}
-
-/** The fence can notice an arrival a fix or two after the trip's last moving one. */
-const ARRIVAL_AFTER_TRIP_MS = 10 * 60 * 1000
-
-/**
- * Finishes the line of an arrival already queued for each recipient, and
- * says whose it found. A trip is worked out minutes after the arrival it
- * ended in went out, and its distance belongs on that line rather than in a
- * second buzz. The phone shows it with the next news about the person.
- *
- * The arrival is the latest at the place that happened during the trip, by
- * when it happened rather than when it was queued, since one late upload can
- * queue an earlier visit to the same place alongside it. A copy that was
- * skipped counts as found, whatever the reason: one skipped as an echo was
- * shown through another circle, and every other reason would stop the trip
- * reaching this recipient too.
- */
-export async function amendArrivalLine(
-  db: Database,
-  input: {
-    userIds: string[]
-    circleId: string
-    groupKey: string
-    placeId: string
-    startedAt: Date
-    endedAt: Date
-    line: string
-  },
-): Promise<Set<string>> {
-  if (input.userIds.length === 0) return new Set()
-  const until = new Date(input.endedAt.getTime() + ARRIVAL_AFTER_TRIP_MS)
-  const rows = (await db.execute(sql`
-    update notification_outbox set group_line = ${input.line}
-    where id in (
-      select distinct on (user_id) id from notification_outbox
-      where user_id in (${sql.join(
-        input.userIds.map((id) => sql`${id}::uuid`),
-        sql`, `,
-      )})
-        and circle_id = ${input.circleId}::uuid
-        and group_key = ${input.groupKey}
-        and data->>'type' = 'place_arrive'
-        and data->>'placeId' = ${input.placeId}
-        and (data->>'occurredAt')::timestamptz
-          between ${input.startedAt.toISOString()}::timestamptz and ${until.toISOString()}::timestamptz
-        and status <> 'failed'
-      order by user_id, (data->>'occurredAt')::timestamptz desc
-    )
-    returning user_id
-  `)) as unknown as Array<{ user_id: string }>
-  return new Set(rows.map((row) => row.user_id))
 }

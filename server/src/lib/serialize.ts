@@ -46,6 +46,7 @@ export function toCurrentUser(row: User): CurrentUser {
     locale: row.locale,
     units: row.units,
     createdAt: row.createdAt.toISOString(),
+    notificationSettings: row.notificationSettings,
   }
 }
 

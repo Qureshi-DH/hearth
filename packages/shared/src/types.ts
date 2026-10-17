@@ -4,6 +4,7 @@ import type {
   EventType,
   LocationSource,
   Platform,
+  PlaceAlerts,
   PlaceIcon,
   PresenceIssue,
   PushProvider,
@@ -56,6 +57,11 @@ export interface ServerInfo {
     checkIns: boolean
     /** False when the server has no object storage, so uploads are hidden. */
     avatars: boolean
+    /**
+     * Per-place choices, muting a person and quiet hours. Older servers leave
+     * it out and would ignore or refuse those settings.
+     */
+    notificationControls?: boolean
   }
 }
 
@@ -76,6 +82,30 @@ export interface CurrentUser extends PublicUser {
   locale: string | null
   createdAt: string
   units: "metric" | "imperial"
+  /** Absent from servers older than quiet hours. */
+  notificationSettings?: NotificationSettings
+}
+
+/** "HH:MM" on the phone's own clock. */
+export interface QuietHours {
+  from: string
+  until: string
+  /** Hold ordinary news until `until`, or drop it. */
+  then: "hold" | "drop"
+}
+
+/**
+ * Notification settings that follow the person rather than a circle, so every
+ * phone they sign in on agrees. SOS, possible crashes and the other safety
+ * alerts ignore all of it.
+ */
+export interface NotificationSettings {
+  /** The phone's IANA time zone, which quiet hours and late times are read in. */
+  timeZone: string | null
+  clock: "12h" | "24h" | null
+  quietHours: QuietHours | null
+  /** People whose comings and goings this person no longer hears about. */
+  mutedPeople: string[]
 }
 
 export interface DeviceInfo {
@@ -157,6 +187,11 @@ export interface MemberNotificationPrefs {
   muted: EventType[]
   /** Silences everything, not just the muted types. ISO timestamp. */
   mutedUntil: string | null
+  /**
+   * What to hear about each of this circle's places, by place id. A place
+   * missing here is heard about both ways. Absent from older servers.
+   */
+  places?: Record<string, PlaceAlerts>
 }
 
 export interface CircleMember {

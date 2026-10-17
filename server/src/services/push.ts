@@ -1,5 +1,10 @@
 import type postgres from "postgres"
-import { MUTABLE_EVENT_TYPES, type PushProvider } from "@hearth/shared"
+import {
+  COMINGS_AND_GOINGS,
+  MUTABLE_EVENT_TYPES,
+  type NotificationSettings,
+  type PushProvider,
+} from "@hearth/shared"
 import { and, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm"
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core"
 import type { FastifyBaseLogger } from "fastify"
@@ -13,9 +18,12 @@ import {
   sessions,
   sosAlerts,
   userPresence,
+  users,
   type OutboxRow,
 } from "../db/schema"
 import { ALREADY_SHOWN, composeCard, type PushGroup } from "./notification-groups"
+import { quietHoursApply, quietHoursEnd } from "./notification-settings"
+import { DEFAULT_READER, wordPlaceNews, type Reader, type Wording } from "./place-news"
 import {
   incidentsMovedOn,
   offlineNewsOvertaken,
@@ -208,7 +216,10 @@ class ExpoDriver implements PushDriver {
               title: message.title,
               body: message.body,
               data: message.data ?? {},
-              sound: message.channel === "sos" ? "default" : null,
+              // Android plays the channel's sound for every one of these, and
+              // a notification that is worth showing is worth hearing, so iOS
+              // is asked for the same.
+              sound: "default",
               // Without this iOS files an SOS as an ordinary alert, so Focus or Do
               // Not Disturb silences the one notification that must not be
               // silenced. Android's equivalent is the channel's bypassDnd.
@@ -473,14 +484,22 @@ export async function resolveCircleRecipients(
   circleId: string,
   eventType: string,
   excludeUserIds: string[] = [],
+  /** Who and where the news is about, for the per-person and per-place choices. */
+  about: { userId?: string | null; placeId?: string | null } = {},
 ): Promise<string[]> {
   const rows = await db
-    .select({ userId: circleMembers.userId, notifications: circleMembers.notifications })
+    .select({
+      userId: circleMembers.userId,
+      notifications: circleMembers.notifications,
+      settings: users.notificationSettings,
+    })
     .from(circleMembers)
+    .innerJoin(users, eq(users.id, circleMembers.userId))
     .where(eq(circleMembers.circleId, circleId))
 
   const now = Date.now()
   const silenceable = (MUTABLE_EVENT_TYPES as readonly string[]).includes(eventType)
+  const comingOrGoing = (COMINGS_AND_GOINGS as readonly string[]).includes(eventType)
 
   return rows
     .filter((row) => !excludeUserIds.includes(row.userId))
@@ -492,7 +511,14 @@ export async function resolveCircleRecipients(
       if (!silenceable) return true
       const prefs = row.notifications
       if (prefs.mutedUntil && Date.parse(prefs.mutedUntil) > now) return false
-      return !prefs.muted.includes(eventType as never)
+      if (prefs.muted.includes(eventType as never)) return false
+      if (comingOrGoing && about.userId && row.settings.mutedPeople?.includes(about.userId)) {
+        return false
+      }
+      const choice = about.placeId ? (prefs.places?.[about.placeId] ?? "both") : "both"
+      if (eventType === "place_arrive") return choice === "both" || choice === "arrive"
+      if (eventType === "place_leave") return choice === "both" || choice === "leave"
+      return true
     })
     .map((row) => row.userId)
 }
@@ -595,8 +621,12 @@ export async function drainOutbox(
   const shared = await dropPlaceNewsNoLongerShared(db, members, now, summary)
   const live = await dropSosAlreadyResolved(db, shared, now, summary)
   const current = await dropOfflineNewsOvertaken(db, live, now, summary)
-  const claimed = await dropIncidentsOvertaken(db, current, now, summary)
+  const relevant = await dropIncidentsOvertaken(db, current, now, summary)
+  const readers = await loadReaders(db, relevant)
+  const awake = await holdForQuietHours(db, relevant, readers, now, summary)
+  const claimed = await foldDepartures(db, awake, now, summary)
   if (claimed.length === 0) return summary
+  await wordForReaders(db, claimed, readers, now)
 
   if (driver.provider === "none") {
     await db
@@ -706,7 +736,7 @@ export async function drainOutbox(
       circleId: head.circleId,
       title: head.title,
       body: head.body,
-      data: head.data,
+      data: payload(head.data),
       channel: head.channel,
       priority: head.priority,
       silent: head.silent,
@@ -729,7 +759,7 @@ export async function drainOutbox(
       const newest = card.rows.at(-1)!
       Object.assign(message, {
         circleId: newest.circleId,
-        data: newest.data,
+        data: payload(newest.data),
         queuedAt: newest.createdAt,
         title: card.title,
         body: card.body,
@@ -837,6 +867,175 @@ export async function drainOutbox(
   const carded = lanes.filter((lane) => lane[0]!.groupKey && canReplace(driver))
   summary.waiting = carded.length > 0 && (await siblingsDue(db, carded, now))
   return summary
+}
+
+/** What the phone is handed. The parts a row is worded from stay on the server. */
+function payload(data: Record<string, unknown>): Record<string, unknown> {
+  if (!("wording" in data)) return data
+  const { wording: _wording, ...rest } = data
+  return rest
+}
+
+interface Recipient {
+  reader: Reader
+  settings: NotificationSettings
+}
+
+async function loadReaders(db: Database, rows: OutboxRow[]): Promise<Map<string, Recipient>> {
+  const ids = [...new Set(rows.map((row) => row.userId))]
+  if (ids.length === 0) return new Map()
+  const found = await db
+    .select({ id: users.id, units: users.units, settings: users.notificationSettings })
+    .from(users)
+    .where(inArray(users.id, ids))
+  return new Map(
+    found.map((row) => [
+      row.id,
+      {
+        reader: { units: row.units, timeZone: row.settings.timeZone, clock: row.settings.clock },
+        settings: row.settings,
+      },
+    ]),
+  )
+}
+
+/**
+ * Place news is worded again as it goes, for the person it goes to, so a
+ * held or late arrival says when it happened in their own time, and the card
+ * keeps the words it was shown with.
+ */
+async function wordForReaders(
+  db: Database,
+  rows: OutboxRow[],
+  readers: Map<string, Recipient>,
+  now: Date,
+): Promise<void> {
+  for (const row of rows) {
+    const wording = row.data.wording as Wording | undefined
+    if (!wording || typeof wording !== "object") continue
+    const { body, line } = wordPlaceNews(
+      wording,
+      readers.get(row.userId)?.reader ?? DEFAULT_READER,
+      now,
+    )
+    const groupLine = row.groupKey ? line : row.groupLine
+    if (body === row.body && groupLine === row.groupLine) continue
+    row.body = body
+    row.groupLine = groupLine
+    await db
+      .update(notificationOutbox)
+      .set({ body, groupLine })
+      .where(eq(notificationOutbox.id, row.id))
+  }
+}
+
+/**
+ * Ordinary news due during the recipient's quiet hours waits for them to end,
+ * or is dropped, as they chose. That is everything but the safety alerts. It is checked as it goes rather than when it
+ * was queued, so news held back for any other reason waits too, and the
+ * morning's backlog lands as one card.
+ */
+async function holdForQuietHours(
+  db: Database,
+  claimed: OutboxRow[],
+  readers: Map<string, Recipient>,
+  now: Date,
+  summary: DrainSummary,
+): Promise<OutboxRow[]> {
+  const waiting = new Map<number, Date>()
+  const dropped: number[] = []
+  for (const row of claimed) {
+    if (row.silent || !quietHoursApply(row.data.type)) continue
+    const settings = readers.get(row.userId)?.settings
+    const end = settings ? quietHoursEnd(settings, now) : null
+    if (!end) continue
+    if (settings!.quietHours!.then === "drop") dropped.push(row.id)
+    else waiting.set(row.id, end)
+  }
+  if (waiting.size === 0 && dropped.length === 0) return claimed
+
+  for (const [id, end] of waiting) {
+    await db
+      .update(notificationOutbox)
+      .set({ status: "pending", nextAttemptAt: end })
+      .where(eq(notificationOutbox.id, id))
+  }
+  // Handled, so a drain that held a whole batch goes on to the next one.
+  summary.processed += waiting.size
+  if (dropped.length > 0) {
+    await db
+      .update(notificationOutbox)
+      .set({ status: "skipped", sentAt: now, lastError: "quiet hours" })
+      .where(inArray(notificationOutbox.id, dropped))
+    summary.processed += dropped.length
+    summary.skipped += dropped.length
+  }
+  return claimed.filter((row) => !waiting.has(row.id) && !dropped.includes(row.id))
+}
+
+const FOLDED = "told with the arrival that followed"
+
+/**
+ * A departure still waiting to go when the arrival it led to goes out is
+ * told by that arrival, which says where they came from. A parked phone's
+ * next word after home is often already from school, and "left home" with
+ * "arrived at school" a moment later is one piece of news in two buzzes. A
+ * departure from the place being arrived at is a round trip, and stays.
+ */
+async function foldDepartures(
+  db: Database,
+  claimed: OutboxRow[],
+  now: Date,
+  summary: DrainSummary,
+): Promise<OutboxRow[]> {
+  const arrivals = claimed.filter(
+    (row) =>
+      row.data.type === "place_arrive" &&
+      row.circleId &&
+      typeof row.data.userId === "string" &&
+      typeof row.data.occurredAt === "string",
+  )
+  if (arrivals.length === 0) return claimed
+
+  const folded = new Set<number>()
+  for (const arrival of arrivals) {
+    const arrivedAt = Date.parse(String(arrival.data.occurredAt))
+    for (const row of claimed) {
+      if (
+        row.data.type === "place_leave" &&
+        row.userId === arrival.userId &&
+        row.circleId === arrival.circleId &&
+        row.data.userId === arrival.data.userId &&
+        row.data.placeId !== arrival.data.placeId &&
+        Date.parse(String(row.data.occurredAt)) <= arrivedAt
+      ) {
+        folded.add(row.id)
+      }
+    }
+    const waiting = (await db.execute(sql`
+      update notification_outbox
+      set status = 'skipped', sent_at = ${now.toISOString()}::timestamptz, last_error = ${FOLDED}
+      where status = 'pending'
+        and user_id = ${arrival.userId}::uuid
+        and circle_id = ${arrival.circleId}::uuid
+        and data ->> 'type' = 'place_leave'
+        and data ->> 'userId' = ${String(arrival.data.userId)}
+        and data ->> 'placeId' <> ${String(arrival.data.placeId)}
+        and (data ->> 'occurredAt')::timestamptz <= ${String(arrival.data.occurredAt)}::timestamptz
+      returning id
+    `)) as unknown as Array<{ id: number }>
+    summary.processed += waiting.length
+    summary.skipped += waiting.length
+  }
+  if (folded.size === 0) return claimed
+
+  await db
+    .update(notificationOutbox)
+    .set({ status: "skipped", sentAt: now, lastError: FOLDED })
+    .where(inArray(notificationOutbox.id, [...folded]))
+  summary.processed += folded.size
+  summary.skipped += folded.size
+  return claimed.filter((row) => !folded.has(row.id))
 }
 
 /** Whether any of these people has news due that a claim passed over while their card was in flight. */

@@ -7,6 +7,7 @@ import type {
   CurrentUser,
   FeedEvent,
   MemberNotificationPrefs,
+  NotificationSettings,
   Paginated,
   Place,
   PlaceIcon,
@@ -53,6 +54,22 @@ export function useUpdateMe() {
     onSuccess: (user) => {
       updateUser(user)
       queryClient.setQueryData(queryKeys.me, user)
+    },
+  })
+}
+
+/** Settings that follow the person to every phone. The new ones go straight onto the cached account. */
+export function useUpdateNotificationSettings() {
+  const queryClient = useQueryClient()
+  const updateUser = useAuthStore((state) => state.updateUser)
+  return useMutation({
+    mutationFn: (patch: Partial<NotificationSettings>) =>
+      endpoints.auth.updateNotificationSettings(patch),
+    onSuccess: (notificationSettings) => {
+      updateUser({ notificationSettings })
+      queryClient.setQueryData<CurrentUser>(queryKeys.me, (me) =>
+        me ? { ...me, notificationSettings } : me,
+      )
     },
   })
 }

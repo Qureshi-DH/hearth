@@ -8,6 +8,7 @@ import {
   circleMembers,
   circles,
   events,
+  notificationOutbox,
   serverSettings,
   sessions,
   userPresence,
@@ -41,6 +42,7 @@ import {
   resolveCircleRecipients,
   type PushDriver,
 } from "../services/push"
+import { reseedPlaceMemberships } from "../services/geofence"
 import { getServerSettings } from "../services/settings"
 import { detectTripsForUser, type PendingBroadcast } from "../services/trips"
 
@@ -766,9 +768,16 @@ async function resumeExpiredPauses(db: Database): Promise<number> {
         lte(circleMembers.pausedUntil, new Date()),
       ),
     )
-    .returning({ circleId: circleMembers.circleId, userId: circleMembers.userId })
+    .returning({
+      circleId: circleMembers.circleId,
+      userId: circleMembers.userId,
+      sharingState: circleMembers.sharingState,
+    })
 
   for (const row of expired) {
+    if (row.sharingState === "precise") {
+      await reseedPlaceMemberships(db, row.userId, [row.circleId])
+    }
     await recordEvent(db, {
       circleId: row.circleId,
       type: "sharing_resumed",
@@ -920,19 +929,60 @@ export interface Scheduler {
 }
 
 /**
+ * The longest the drain sleeps on a timer before it looks again. A row held
+ * until the morning is still sent then, it just costs a cheap read every so
+ * often until it is.
+ */
+const MAX_TIMER_MS = 10 * 60 * 1000
+
+/**
  * Drains the outbox until it is empty, and once more if a wake-up arrived
  * while a pass was running. Wake-ups coalesce: a burst of arrivals raises one
- * extra pass, not one per row. Retries are not covered here. A failed send
- * moves its row's next attempt into the future and nothing notifies for
- * that, so the interval tick still owns the backoff.
+ * extra pass, not one per row.
+ *
+ * A row held back for a moment, or a retry, falls due with nothing in the
+ * database to say so, and the minute's tick made a held arrival up to a
+ * minute late. So after every pass the drain sets a timer for the earliest
+ * row still waiting. Every replica keeps its own and the claim stops two of
+ * them sending one row, and the scheduler wakes it once on boot so a restart
+ * picks up whatever was waiting.
  */
 export function createOutboxDrainer(
   db: Database,
   log: FastifyBaseLogger,
   batchSize = 100,
-): { wake(): void; idle(): Promise<void> } {
+): { wake(): void; idle(): Promise<void>; stop(): void } {
   let draining: Promise<void> | null = null
   let again = false
+  let stopped = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let timerAt = Infinity
+
+  const arm = async () => {
+    const [next] = await db
+      .select({ at: sql<string | Date | null>`min(${notificationOutbox.nextAttemptAt})` })
+      .from(notificationOutbox)
+      .where(
+        and(
+          eq(notificationOutbox.status, "pending"),
+          gt(notificationOutbox.nextAttemptAt, sql`now()`),
+        ),
+      )
+    if (stopped || !next?.at) return
+    const at = new Date(next.at).getTime()
+    if (timer && timerAt <= at) return
+    if (timer) clearTimeout(timer)
+    timerAt = at
+    timer = setTimeout(
+      () => {
+        timer = null
+        timerAt = Infinity
+        wake()
+      },
+      Math.min(Math.max(0, at - Date.now()) + 20, MAX_TIMER_MS),
+    )
+    timer.unref?.()
+  }
 
   const run = async () => {
     do {
@@ -944,21 +994,30 @@ export function createOutboxDrainer(
         summary = await drainOutbox(db, driver, { batchSize, log })
       } while (summary.processed === batchSize || summary.waiting)
     } while (again)
+    await arm()
+  }
+
+  const wake = () => {
+    if (stopped) return
+    if (draining) {
+      again = true
+      return
+    }
+    draining = run()
+      .catch((error) => log.error({ err: error, job: "push.wake" }, "outbox drain failed"))
+      .finally(() => {
+        draining = null
+      })
   }
 
   return {
-    wake() {
-      if (draining) {
-        again = true
-        return
-      }
-      draining = run()
-        .catch((error) => log.error({ err: error, job: "push.wake" }, "outbox drain failed"))
-        .finally(() => {
-          draining = null
-        })
-    },
+    wake,
     idle: () => draining ?? Promise.resolve(),
+    stop() {
+      stopped = true
+      if (timer) clearTimeout(timer)
+      timer = null
+    },
   }
 }
 
@@ -993,8 +1052,9 @@ export function startScheduler(db: Database, config: AppConfig, log: FastifyBase
   timer.unref?.()
   kickoff.unref?.()
 
-  // Alerts go out the moment they commit rather than on the next tick. The
-  // tick keeps running for retries and as the fallback if the listen drops.
+  // Alerts go out the moment they commit, or the moment a held one falls
+  // due, rather than on the next tick. The tick keeps running as the fallback
+  // if the listen drops.
   const drainer = createOutboxDrainer(db, log)
   let listener: { stop(): Promise<void> } | null = null
   if (getPushDriver()) {
@@ -1003,12 +1063,14 @@ export function startScheduler(db: Database, config: AppConfig, log: FastifyBase
         listener = handle
       })
       .catch((error) => log.error({ err: error }, "outbox listen failed; falling back to the tick"))
+    drainer.wake()
   }
 
   return {
     async stop() {
       clearInterval(timer)
       clearTimeout(kickoff)
+      drainer.stop()
       await listener?.stop()
       await drainer.idle()
     },

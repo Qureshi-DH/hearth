@@ -1,7 +1,13 @@
 import { useState, type FC } from "react"
 import { View, type ViewStyle } from "react-native"
 import * as Clipboard from "expo-clipboard"
-import { MUTABLE_EVENT_TYPES, type EventType, type MutableEventType } from "@hearth/shared"
+import {
+  MUTABLE_EVENT_TYPES,
+  type EventType,
+  type MutableEventType,
+  type PlaceAlerts,
+  type QuietHours,
+} from "@hearth/shared"
 
 import { ListGroup, ListRow } from "@/components/ListRow"
 import { OptionSheet } from "@/components/OptionSheet"
@@ -9,17 +15,23 @@ import { PrimaryButton } from "@/components/PrimaryButton"
 import { Screen } from "@/components/Screen"
 import { SectionHeader } from "@/components/SectionHeader"
 import { Text } from "@/components/Text"
-import { useMembers, useSetNotifications } from "@/hooks/queries"
+import {
+  useMembers,
+  usePlaces,
+  useSetNotifications,
+  useUpdateNotificationSettings,
+} from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { endpoints } from "@/services/api"
 import { openAppSettings } from "@/services/permissions"
+import { phoneClock } from "@/services/phoneClock"
 import { useAuthStore } from "@/stores/auth"
 import { usePushStore } from "@/stores/push"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { eventVisual } from "@/utils/activity"
+import { eventVisual, placeIconName } from "@/utils/activity"
 import { minutesToWait, takePushTest } from "@/utils/budget"
 import { formatWhen } from "@/utils/time"
 import { useHeader } from "@/utils/useHeader"
@@ -51,6 +63,31 @@ const LABELS: Record<
   nudge_requested: "notifications:nudge",
 }
 
+const PLACE_CHOICES: Array<{
+  key: PlaceAlerts
+  tx:
+    | "notifications:placeBoth"
+    | "notifications:placeArriveOnly"
+    | "notifications:placeLeaveOnly"
+    | "notifications:placeNone"
+}> = [
+  { key: "both", tx: "notifications:placeBoth" },
+  { key: "arrive", tx: "notifications:placeArriveOnly" },
+  { key: "leave", tx: "notifications:placeLeaveOnly" },
+  { key: "none", tx: "notifications:placeNone" },
+]
+
+/** A short list of sensible times beats a clock face nobody wants to fiddle with. */
+const QUIET_FROM = ["20:00", "21:00", "22:00", "23:00", "00:00"]
+const QUIET_UNTIL = ["05:00", "06:00", "07:00", "08:00", "09:00"]
+const DEFAULT_QUIET: QuietHours = { from: "22:00", until: "07:00", then: "hold" }
+
+type Sheet =
+  | { kind: "place"; placeId: string; name: string }
+  | { kind: "from" }
+  | { kind: "until" }
+  | { kind: "then" }
+
 export const NotificationPrefsScreen: FC<AppStackScreenProps<"NotificationPrefs">> = ({
   navigation,
   route,
@@ -61,6 +98,19 @@ export const NotificationPrefsScreen: FC<AppStackScreenProps<"NotificationPrefs"
   const { data: members } = useMembers(circleId)
   const mine = members?.find((member) => member.userId === me?.id)
   const setNotifications = useSetNotifications(circleId)
+  // An older server would ignore or refuse these, so they show only where
+  // the server says it has them.
+  const controls = useAuthStore(
+    (state) => state.serverInfo?.features?.notificationControls === true,
+  )
+  const { data: places } = usePlaces(controls ? circleId : null)
+  const updateSettings = useUpdateNotificationSettings()
+  const settings = me?.notificationSettings
+  const mutedPeople = new Set(settings?.mutedPeople ?? [])
+  const quiet = settings?.quietHours ?? null
+  const placeChoices = mine?.notifications.places ?? {}
+  const others = (members ?? []).filter((member) => member.userId !== me?.id)
+  const [sheet, setSheet] = useState<Sheet | null>(null)
 
   useHeader(
     { titleTx: "notifications:title", leftIcon: "back", onLeftPress: () => navigation.goBack() },
@@ -82,6 +132,55 @@ export const NotificationPrefsScreen: FC<AppStackScreenProps<"NotificationPrefs"
   }
 
   const [muteOpen, setMuteOpen] = useState(false)
+
+  const onError = { onError: (error: unknown) => toast.error((error as Error).message) }
+
+  const choosePlace = (placeId: string, choice: PlaceAlerts) =>
+    setNotifications.mutate({ places: { [placeId]: choice } }, onError)
+
+  const hearPerson = (userId: string, on: boolean) => {
+    const next = new Set(mutedPeople)
+    if (on) next.delete(userId)
+    else next.add(userId)
+    updateSettings.mutate({ mutedPeople: [...next] }, onError)
+  }
+
+  // The phone's clock goes with every change, since that is what the hours
+  // are read on.
+  const setQuiet = (next: QuietHours | null) =>
+    updateSettings.mutate({ quietHours: next, ...phoneClock() }, onError)
+
+  const sheetOptions = (() => {
+    if (!sheet) return []
+    if (sheet.kind === "place") {
+      return PLACE_CHOICES.map((choice) => ({
+        key: choice.key,
+        tx: choice.tx,
+        onPress: () => choosePlace(sheet.placeId, choice.key),
+      }))
+    }
+    if (!quiet) return []
+    if (sheet.kind === "then") {
+      return [
+        {
+          key: "hold",
+          tx: "notifications:quietHold" as const,
+          onPress: () => setQuiet({ ...quiet, then: "hold" }),
+        },
+        {
+          key: "drop",
+          tx: "notifications:quietDrop" as const,
+          onPress: () => setQuiet({ ...quiet, then: "drop" }),
+        },
+      ]
+    }
+    const times = sheet.kind === "from" ? QUIET_FROM : QUIET_UNTIL
+    return times.map((time) => ({
+      key: time,
+      label: time,
+      onPress: () => setQuiet({ ...quiet, [sheet.kind]: time }),
+    }))
+  })()
 
   const muteAll = (value: boolean) => {
     if (!value) {
@@ -149,6 +248,109 @@ export const NotificationPrefsScreen: FC<AppStackScreenProps<"NotificationPrefs"
           paddingHorizontal: theme.spacing.md,
           paddingTop: theme.spacing.sm,
         }}
+      />
+      {controls && places && places.length > 0 ? (
+        <>
+          <SectionHeader tx="notifications:places" />
+          <ListGroup>
+            {places.map((place) => (
+              <ListRow
+                key={place.id}
+                text={place.name}
+                icon={placeIconName(place.icon)}
+                subtitleTx={
+                  PLACE_CHOICES.find((choice) => choice.key === (placeChoices[place.id] ?? "both"))
+                    ?.tx
+                }
+                onPress={() => setSheet({ kind: "place", placeId: place.id, name: place.name })}
+                disabled={isMutedAll}
+              />
+            ))}
+          </ListGroup>
+        </>
+      ) : null}
+
+      {controls && others.length > 0 ? (
+        <>
+          <SectionHeader tx="notifications:people" />
+          <ListGroup>
+            {others.map((member) => (
+              <ListRow
+                key={member.userId}
+                text={member.nickname ?? member.user.displayName}
+                subtitleTx="notifications:comingsAndGoings"
+                icon="person-outline"
+                value={!mutedPeople.has(member.userId)}
+                onValueChange={(on) => hearPerson(member.userId, on)}
+              />
+            ))}
+          </ListGroup>
+        </>
+      ) : null}
+
+      {controls ? (
+        <>
+          <SectionHeader tx="notifications:atNight" />
+          <ListGroup>
+            <ListRow
+              tx="notifications:quietHours"
+              subtitle={
+                quiet
+                  ? translate("notifications:quietSpan", { from: quiet.from, until: quiet.until })
+                  : undefined
+              }
+              icon="moon-outline"
+              value={Boolean(quiet)}
+              onValueChange={(on) => setQuiet(on ? DEFAULT_QUIET : null)}
+            />
+            {quiet ? (
+              <>
+                <ListRow
+                  tx="notifications:quietFrom"
+                  subtitle={quiet.from}
+                  onPress={() => setSheet({ kind: "from" })}
+                />
+                <ListRow
+                  tx="notifications:quietUntil"
+                  subtitle={quiet.until}
+                  onPress={() => setSheet({ kind: "until" })}
+                />
+                <ListRow
+                  tx="notifications:quietThen"
+                  subtitleTx={
+                    quiet.then === "hold" ? "notifications:quietHold" : "notifications:quietDrop"
+                  }
+                  onPress={() => setSheet({ kind: "then" })}
+                />
+              </>
+            ) : null}
+          </ListGroup>
+          <Text
+            size="xxs"
+            tx="notifications:quietNote"
+            style={{
+              color: theme.colors.textFaint,
+              paddingHorizontal: theme.spacing.md,
+              paddingTop: theme.spacing.sm,
+            }}
+          />
+        </>
+      ) : null}
+
+      <OptionSheet
+        visible={sheet !== null}
+        title={sheet?.kind === "place" ? sheet.name : undefined}
+        titleTx={
+          sheet?.kind === "from"
+            ? "notifications:quietFrom"
+            : sheet?.kind === "until"
+              ? "notifications:quietUntil"
+              : sheet?.kind === "then"
+                ? "notifications:quietThen"
+                : undefined
+        }
+        onClose={() => setSheet(null)}
+        options={sheetOptions}
       />
       <OptionSheet
         visible={muteOpen}

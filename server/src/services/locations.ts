@@ -26,7 +26,7 @@ import {
 import { circleTopic } from "../lib/bus"
 import { getBus } from "../runtime"
 import { recordEvent } from "./feed"
-import { evaluateGeofenceBatch } from "./geofence"
+import { evaluateGeofenceBatch, reseedPlaceMemberships } from "./geofence"
 import { phoneGroup } from "./notification-groups"
 import { effectiveSharingState, loadRawPresenceByCircle, preciseSinceOnLapse } from "./presence"
 
@@ -407,6 +407,7 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
       accuracyMeters: fix.accuracyMeters,
       recordedAt: fix.recordedAt,
       pointId: idByTime.get(fix.recordedAt.getTime()) ?? null,
+      speedMps: fix.speedMps,
     })),
     {
       visibleCircleIds: [...sharing.entries()].filter(([, s]) => s === "precise").map(([id]) => id),
@@ -1146,28 +1147,13 @@ export async function resumeExpiredPauses(db: Database, userId: string, now: Dat
         lte(circleMembers.pausedUntil, now),
       ),
     )
-    .returning({ circleId: circleMembers.circleId })
+    .returning({ circleId: circleMembers.circleId, sharingState: circleMembers.sharingState })
 
-  if (expired.length > 0) {
-    // The fence stopped being evaluated for this circle while the pause ran, so
-    // its rows describe wherever the member was when it started. Picking up
-    // from there would replay a crossing nobody was allowed to see, and the
-    // family would be told about a departure hours after it happened.
-    await db.execute(sql`
-      update place_memberships pm
-      set last_evaluated_at = greatest(pm.last_evaluated_at, up.recorded_at)
-      from user_presence up
-      where up.user_id = ${userId}::uuid
-        and pm.user_id = ${userId}::uuid
-        and up.recorded_at is not null
-        and pm.place_id in (
-          select id from places where circle_id in (${sql.join(
-            expired.map((row) => sql`${row.circleId}::uuid`),
-            sql`, `,
-          )})
-        )
-    `)
-  }
+  await reseedPlaceMemberships(
+    db,
+    userId,
+    expired.filter((row) => row.sharingState === "precise").map((row) => row.circleId),
+  )
 
   for (const row of expired) {
     await recordEvent(db, {

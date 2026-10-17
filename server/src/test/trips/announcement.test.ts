@@ -122,11 +122,11 @@ async function feedItems(headers: Record<string, string>, circleId: string) {
 
 const sweep = () => runJobs(getDb(), getConfig(), ctx.app.log)
 
-/** 12.6 km at 50 km/h, finished half an hour ago. */
+/** 12.6 km at 50 km/h, finished a quarter of an hour ago. */
 const commute = () =>
   drive({
     from: HOME,
-    startMs: minutesAgo(45),
+    startMs: minutesAgo(30),
     intervalSeconds: 30,
     count: 31,
     speedMps: 14,

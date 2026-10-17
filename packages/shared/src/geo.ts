@@ -107,6 +107,34 @@ export function boundingBox(
   return { north, south, east, west }
 }
 
+/**
+ * The one place a point is at when places overlap. A 100 m Home inside a 2 km
+ * Town is the ordinary way to use places, so the smallest one wins, then the
+ * nearer centre, then the id. Every reader uses this, so an arrival, a trip
+ * and a check-in never name different places for the same spot.
+ */
+export function placeAt<T extends LatLng & { id: string; radiusMeters: number }>(
+  places: readonly T[],
+  point: LatLng,
+): T | null {
+  let best: T | null = null
+  let bestDistance = Infinity
+  for (const place of places) {
+    const distance = haversineMeters(point, place)
+    if (distance > place.radiusMeters) continue
+    const better =
+      !best ||
+      place.radiusMeters < best.radiusMeters ||
+      (place.radiusMeters === best.radiusMeters &&
+        (distance < bestDistance || (distance === bestDistance && place.id < best.id)))
+    if (better) {
+      best = place
+      bestDistance = distance
+    }
+  }
+  return best
+}
+
 export function pathDistanceMeters(points: LatLng[]): number {
   let total = 0
   for (let i = 1; i < points.length; i += 1) {

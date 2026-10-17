@@ -4,7 +4,9 @@ import type {
   DeviceHealth,
   EventType,
   LocationSource,
+  NotificationSettings,
   Platform,
+  PlaceAlerts,
   PlaceIcon,
   PushProvider,
   SharingState,
@@ -55,6 +57,10 @@ export const users = pgTable(
     avatarUrl: text("avatar_url"),
     locale: text("locale"),
     units: text("units").$type<"metric" | "imperial">().notNull().default("metric"),
+    notificationSettings: jsonb("notification_settings")
+      .$type<NotificationSettings>()
+      .notNull()
+      .default(sql`'{"timeZone":null,"clock":null,"quietHours":null,"mutedPeople":[]}'::jsonb`),
     isAdmin: boolean("is_admin").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
@@ -154,6 +160,8 @@ export const circles = pgTable(
 export interface MemberNotificationPrefsJson {
   muted: EventType[]
   mutedUntil: string | null
+  /** Rows written before per-place choices have none. */
+  places?: Record<string, PlaceAlerts>
 }
 
 export const circleMembers = pgTable(
@@ -381,6 +389,18 @@ export const placeMemberships = pgTable(
     isInside: boolean("is_inside").notNull().default(false),
     since: timestamp("since", { withTimezone: true }).notNull().defaultNow(),
     lastEvaluatedAt: timestamp("last_evaluated_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Server time until which the crossing that set `isInside` can still turn
+     * out to be nothing, such as a departure the next fix undoes or an arrival
+     * at speed that the next fix carries out the far side. Its push waits
+     * until then, and a crossing back before then cancels both.
+     */
+    settlesAt: timestamp("settles_at", { withTimezone: true }),
+    /**
+     * Fix time until which crossings here go to the feed only, because the
+     * person has just come straight back and may be pacing the boundary.
+     */
+    quietUntil: timestamp("quiet_until", { withTimezone: true }),
   },
   (table) => [
     primaryKey({ columns: [table.placeId, table.userId] }),

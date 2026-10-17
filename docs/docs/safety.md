@@ -228,8 +228,9 @@ signal can be repeated without alerting anybody twice.
 
 **Who is told.** Every other member of those circles, once each, at the highest
 priority the transport allows, as "🚨 SOS from _name_" with your note as the
-body, or "Tap to see their location." without one. Notification mutes never
-apply to it, so somebody who muted the circle last Tuesday still gets it. With
+body, or "Tap to see their location." without one. Notification mutes, quiet
+hours and muting a person never apply to it, so somebody who muted the circle
+last Tuesday, or who is asleep inside their quiet hours, still gets it. With
 Expo push it arrives on Android on a maximum-importance channel that bypasses
 Do Not Disturb, and on iOS it is marked time sensitive. Through ntfy it goes
 out at ntfy's highest priority, and the ntfy app decides how to show it.

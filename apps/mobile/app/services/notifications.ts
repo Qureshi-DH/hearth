@@ -8,6 +8,7 @@ import { DEFAULTS, type ServerInfo } from "@hearth/shared"
 
 import { endpoints } from "@/services/api"
 import { answerIncidentResponse } from "@/services/incidentAlarm"
+import { phoneClock } from "@/services/phoneClock"
 import { logTracker } from "@/services/location/log"
 import {
   BACKGROUND_LOCATION_TASK,
@@ -87,7 +88,7 @@ export async function setupPush(serverInfo: ServerInfo): Promise<PushSetupResult
 
   if (serverInfo.pushProvider === "ntfy") {
     // The server derives an unguessable per-device topic, so there is no token to send.
-    const result = await endpoints.push.register({ provider: "ntfy" })
+    const result = await endpoints.push.register({ provider: "ntfy", ...phoneClock() })
     if (!result.ntfyTopic || !result.ntfyBaseUrl) {
       return { kind: "unsupported", reason: "Server did not return an ntfy topic." }
     }
@@ -120,7 +121,7 @@ export async function setupPush(serverInfo: ServerInfo): Promise<PushSetupResult
   }
 
   const token = await Notifications.getExpoPushTokenAsync({ projectId })
-  await endpoints.push.register({ provider: "expo", token: token.data })
+  await endpoints.push.register({ provider: "expo", token: token.data, ...phoneClock() })
   return { kind: "registered", provider: "expo" }
 }
 

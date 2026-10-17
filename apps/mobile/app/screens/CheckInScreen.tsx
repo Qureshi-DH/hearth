@@ -1,7 +1,7 @@
 import { useEffect, useState, type FC } from "react"
 import { ActivityIndicator, View, type ViewStyle } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
-import { haversineMeters } from "@hearth/shared"
+import { placeAt } from "@hearth/shared"
 
 import { PrimaryButton } from "@/components/PrimaryButton"
 import { SheetScreen, SheetTextField } from "@/components/SheetScreen"
@@ -32,13 +32,8 @@ export const CheckInScreen: FC<AppStackScreenProps<"CheckIn">> = ({ navigation, 
     })()
   }, [])
 
-  const nearby = fix
-    ? places?.find(
-        (place) =>
-          haversineMeters({ lat: fix.lat, lon: fix.lon }, { lat: place.lat, lon: place.lon }) <=
-          place.radiusMeters,
-      )
-    : undefined
+  // The same place the server will file the check-in under.
+  const nearby = fix && places ? (placeAt(places, fix) ?? undefined) : undefined
 
   const submit = async () => {
     if (!fix) return
