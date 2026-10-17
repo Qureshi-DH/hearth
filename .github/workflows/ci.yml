@@ -17,7 +17,10 @@ jobs:
     # runner for the six hour default, on a private repository's minutes.
     timeout-minutes: 10
     steps:
+      # The commit message check reads every commit since the base, which a
+      # one-commit checkout does not have.
       - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
       - uses: pnpm/action-setup@v6
         with: { version: "10.14.0" }
       - uses: actions/setup-node@v7

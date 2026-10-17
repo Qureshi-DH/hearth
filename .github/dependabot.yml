@@ -34,14 +34,16 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "@babel/*"
         update-types: ["version-update:semver-major"]
+      # These the SDK pins to the exact version it was tested with, and React
+      # Native's renderer refuses any other React, so even a patch waits.
       - dependency-name: "react"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "react-dom"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "react-test-renderer"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "react-native"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "react-native-keyboard-controller"
+      - dependency-name: "react-native-reanimated"
+      - dependency-name: "react-native-svg"
+      - dependency-name: "react-native-worklets"
       - dependency-name: "react-native-*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "@react-native/*"
