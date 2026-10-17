@@ -1,4 +1,4 @@
-import { simplifyTrail, splitTrail } from "./trail"
+import { liveTrailToDraw, mergeTrail, simplifyTrail, splitTrail } from "./trail"
 
 // Roughly 0.00027 degrees of latitude is 30 metres.
 const step = 0.0003
@@ -119,5 +119,75 @@ describe("splitTrail", () => {
       const { gaps } = splitTrail([p1, p2])
       expect(gaps).toEqual([[p1, p2]])
     })
+  })
+})
+
+describe("mergeTrail", () => {
+  const at = (seconds: number, lat = 51.4545) => ({
+    lat,
+    lon: -2.5879,
+    recordedAt: new Date(Date.UTC(2026, 9, 18, 10, 0, seconds)).toISOString(),
+    accuracyMeters: 5,
+  })
+
+  it("keeps the points in the order they were recorded, whatever order they came in", () => {
+    const merged = mergeTrail([at(1), at(4)], [at(3), at(2)])
+    expect(merged.map((point) => point.recordedAt)).toEqual(
+      [1, 2, 3, 4].map((s) => at(s).recordedAt),
+    )
+  })
+
+  it("has each moment once, though the socket and a refill both carried it", () => {
+    expect(mergeTrail([at(1), at(2)], [at(2), at(3)])).toHaveLength(3)
+  })
+
+  it("drops the oldest once it holds as many as it may", () => {
+    const merged = mergeTrail([at(1), at(2)], [at(3)], 2)
+    expect(merged.map((point) => point.recordedAt)).toEqual([at(2).recordedAt, at(3).recordedAt])
+  })
+})
+
+describe("liveTrailToDraw", () => {
+  const base = 51.4545
+  // Roughly 0.0001 degrees of latitude is 11 metres.
+  const fix = (n: number, accuracyMeters: number | null, lat = base + n * 0.0001) => ({
+    lat,
+    lon: -2.5879,
+    recordedAt: new Date(Date.UTC(2026, 9, 18, 10, 0, n)).toISOString(),
+    accuracyMeters,
+  })
+
+  // A parked Android phone's Wi-Fi grade request keeps delivering under the
+  // live one, and a one-shot fix can be a cell estimate. Drawn, each is a
+  // spike off the road and back.
+  it("leaves out a fix far looser than the ones around it", () => {
+    const points = [
+      fix(0, 5),
+      fix(1, 6),
+      fix(2, 5),
+      fix(3, 180, base + 0.004),
+      fix(4, 5),
+      fix(5, 6),
+    ]
+    const drawn = liveTrailToDraw(points)
+    expect(drawn.map((point) => point.accuracyMeters)).not.toContain(180)
+    expect(drawn).toHaveLength(5)
+  })
+
+  it("keeps a run of loose fixes when that is all the phone has, indoors or under trees", () => {
+    const points = [fix(0, 60), fix(1, 65), fix(2, 70), fix(3, 62)]
+    expect(liveTrailToDraw(points)).toHaveLength(4)
+  })
+
+  it("draws nothing under a few metres from the last point as a step", () => {
+    const points = [fix(0, 5), fix(1, 5, base + 0.00001), fix(2, 5, base + 0.00002), fix(3, 5)]
+    expect(liveTrailToDraw(points).map((point) => point.recordedAt)).toEqual([
+      fix(0, 5).recordedAt,
+      fix(3, 5).recordedAt,
+    ])
+  })
+
+  it("keeps a fix that says nothing about its accuracy", () => {
+    expect(liveTrailToDraw([fix(0, 5), fix(1, null), fix(2, 5)])).toHaveLength(3)
   })
 })

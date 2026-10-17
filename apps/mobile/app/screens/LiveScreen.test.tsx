@@ -7,10 +7,14 @@ import type {
 } from "@hearth/shared"
 import { AppState, RefreshControl } from "react-native"
 import { SafeAreaProvider } from "react-native-safe-area-context"
+import { QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render } from "@testing-library/react-native"
 
 import { LiveScreen } from "./LiveScreen"
+import { queryKeys } from "../hooks/queryKeys"
+import { queryClient } from "../services/queryClient"
 import { ThemeProvider } from "../theme/context"
+import { mergeTrail } from "../utils/trail"
 
 function presenceFor(
   activity: ActivityType,
@@ -93,9 +97,15 @@ const mockTrailProps: Array<{
 }> = []
 const mockGapProps: Array<{ gaps: unknown[] }> = []
 const mockFlyTo = jest.fn()
+const mockEaseTo = jest.fn()
+let mockMapProps: { onRegionWillChange?: (event: unknown) => void } = {}
 let mockWatchResponse: WatchResponse
 const mockWatch = jest.fn(async () => mockWatchResponse)
+const mockUnwatch = jest.fn(async (..._args: unknown[]) => ({ ok: true }))
+const mockLiveTrail = jest.fn(async (..._args: unknown[]) => [] as unknown[])
 const mockNavigation = { navigate: jest.fn(), goBack: jest.fn() }
+const mockStopWatchingClosely = jest.fn()
+const mockWatchClosely = jest.fn(() => mockStopWatchingClosely)
 
 jest.mock("../hooks/queries", () => {
   const react = require("react")
@@ -112,7 +122,20 @@ jest.mock("../hooks/useNearby", () => ({
   useNearby: (...args: unknown[]) => mockNearby(...(args as [])),
 }))
 jest.mock("../services/api", () => ({
-  endpoints: { locations: { watch: (...args: unknown[]) => mockWatch(...(args as [])) } },
+  endpoints: {
+    locations: {
+      watch: (...args: unknown[]) => mockWatch(...(args as [])),
+      unwatch: (...args: unknown[]) => mockUnwatch(...args),
+      liveTrail: (...args: unknown[]) => mockLiveTrail(...args),
+    },
+  },
+}))
+jest.mock("../services/realtime", () => ({
+  realtime: {
+    watchClosely: () => mockWatchClosely(),
+    downSince: null,
+    onStatusChange: () => () => {},
+  },
 }))
 jest.mock("../stores/settings", () => {
   const state = { units: "metric", streetNames: true, hapticsEnabled: false }
@@ -126,10 +149,11 @@ jest.mock("../components/HearthMap", () => {
   const rn = require("react-native")
   return {
     HearthMap: react.forwardRef(function HearthMap(
-      { children, cameraRef }: { children?: unknown; cameraRef?: { current: unknown } },
+      { children, cameraRef, ...props }: { children?: unknown; cameraRef?: { current: unknown } },
       _ref: unknown,
     ) {
-      if (cameraRef) cameraRef.current = { flyTo: mockFlyTo }
+      if (cameraRef) cameraRef.current = { flyTo: mockFlyTo, easeTo: mockEaseTo }
+      mockMapProps = props
       return react.createElement(rn.View, null, children)
     }),
     PlaceLayers: () => null,
@@ -184,28 +208,57 @@ const ON = { lat: 33.702, lon: 73.05 }
 
 async function renderLive() {
   const utils = render(
-    <ThemeProvider>
-      <SafeAreaProvider
-        initialMetrics={{
-          frame: { x: 0, y: 0, width: 390, height: 844 },
-          insets: { top: 0, left: 0, right: 0, bottom: 0 },
-        }}
-      >
-        <LiveScreen
-          navigation={mockNavigation as never}
-          route={{ name: "Live", params: { circleId: "c1", userId: "sam" } } as never}
-        />
-      </SafeAreaProvider>
-    </ThemeProvider>,
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <SafeAreaProvider
+          initialMetrics={{
+            frame: { x: 0, y: 0, width: 390, height: 844 },
+            insets: { top: 0, left: 0, right: 0, bottom: 0 },
+          }}
+        >
+          <LiveScreen
+            navigation={mockNavigation as never}
+            route={{ name: "Live", params: { circleId: "c1", userId: "sam" } } as never}
+          />
+        </SafeAreaProvider>
+      </ThemeProvider>
+    </QueryClientProvider>,
   )
   await act(async () => {})
   return utils
 }
 
+interface Fix {
+  lat: number
+  lon: number
+  recordedAt: string
+  accuracyMeters: number | null
+}
+
+/** Fixes a location frame carried, written where the socket writes them. */
+async function socketFixes(fixes: Fix[]) {
+  await act(async () => {
+    queryClient.setQueryData<Fix[]>(queryKeys.liveTrail("c1", "sam"), (current) =>
+      mergeTrail(current ?? [], fixes),
+    )
+    jest.advanceTimersByTime(0)
+  })
+}
+
+const fixAt = (secondsAgo: number, lat: number, accuracyMeters: number | null = 5): Fix => ({
+  lat,
+  lon: START.lon,
+  recordedAt: new Date(Date.now() - secondsAgo * 1000).toISOString(),
+  accuracyMeters,
+})
+
 beforeEach(() => {
   jest.useFakeTimers()
   jest.clearAllMocks()
+  queryClient.clear()
+  mockMapProps = {}
   mockWatch.mockImplementation(async () => mockWatchResponse)
+  mockLiveTrail.mockImplementation(async () => [])
   ;(AppState.addEventListener as jest.Mock).mockClear()
   mockTrailProps.length = 0
   mockGapProps.length = 0
@@ -217,6 +270,7 @@ beforeEach(() => {
     lastHeardAt: new Date().toISOString(),
     activity: "driving",
     issues: [],
+    supports: { release: true, trail: true },
   }
   // What is on the map when the page opens: where they were a minute ago.
   mockPresence = [presenceFor("driving", START, 11.1, [], 60_000)]
@@ -422,6 +476,17 @@ describe("the trail", () => {
     expect(points[2]).toMatchObject({ lat: 33.704, lon: 73.05 })
   })
 
+  it("does not draw a grid cell into the trail when they turn to approximate", async () => {
+    await renderLive()
+    await move(presenceFor("driving", ON, 12))
+    await move({
+      ...presenceFor("driving", { lat: 33.71, lon: 73.06 }, 0),
+      approximate: true,
+      sharingState: "approximate",
+    })
+    expect(lastTrail().map((point) => point.lat)).not.toContain(33.71)
+  })
+
   it("does not draw a fix twice", async () => {
     await renderLive()
     await move(presenceFor("driving", START, 11.1))
@@ -448,9 +513,174 @@ describe("the trail", () => {
     await move(presenceFor("driving", ON, 12))
     await move(presenceFor("driving", { lat: 33.704, lon: 73.05 }, 12))
 
-    const calls = mockFlyTo.mock.calls.map(([options]) => options as { zoom?: number })
+    const calls = mockEaseTo.mock.calls.map(([options]) => options as { zoom?: number })
     expect(calls.length).toBeGreaterThanOrEqual(3)
     expect(calls[0]!.zoom).toBeDefined()
     expect(calls.slice(1).every((call) => call.zoom === undefined)).toBe(true)
+  })
+
+  // An upload carries several fixes, and only the newest moved the dot.
+  it("draws every fix the socket carried, not one per upload", async () => {
+    await renderLive()
+    await socketFixes([fixAt(3, 33.7005), fixAt(2, 33.701), fixAt(1, 33.7015)])
+    const lats = lastTrail().map((point) => point.lat)
+    expect(lats).toEqual(expect.arrayContaining([33.7005, 33.701, 33.7015]))
+  })
+
+  it("keeps a fix far looser than the ones around it out of the trail", async () => {
+    await renderLive()
+    await socketFixes([
+      fixAt(5, 33.7005),
+      fixAt(4, 33.701),
+      fixAt(3, 33.7015),
+      fixAt(2, 33.709, 250),
+      fixAt(1, 33.702),
+    ])
+    expect(lastTrail().map((point) => point.lat)).not.toContain(33.709)
+  })
+
+  it("fills in what it missed when the app comes back to the front", async () => {
+    await renderLive()
+    await socketFixes([fixAt(30, 33.701)])
+    await setAppState("background")
+    await wait(20_000)
+    mockLiveTrail.mockResolvedValueOnce([fixAt(15, 33.703), fixAt(10, 33.705)])
+    await setAppState("active")
+    await wait(0)
+
+    expect(mockLiveTrail).toHaveBeenCalledWith("c1", "sam", expect.any(String))
+    expect(lastTrail().map((point) => point.lat)).toEqual(
+      expect.arrayContaining([33.701, 33.703, 33.705]),
+    )
+  })
+
+  it("does not ask a server without the fill for one", async () => {
+    mockWatchResponse = { ...mockWatchResponse, supports: undefined }
+    await renderLive()
+    await socketFixes([fixAt(30, 33.701)])
+    await setAppState("background")
+    await setAppState("active")
+    await wait(0)
+    expect(mockLiveTrail).not.toHaveBeenCalled()
+  })
+})
+
+describe("following them on the map", () => {
+  it("glides to each fix in a straight line, quickly", async () => {
+    await renderLive()
+    await move(presenceFor("driving", ON, 12))
+    const last = mockEaseTo.mock.calls.at(-1)![0] as { easing?: string; duration?: number }
+    expect(last.easing).toBe("linear")
+    expect(last.duration).toBeLessThanOrEqual(1_000)
+    expect(mockFlyTo).not.toHaveBeenCalled()
+  })
+
+  it("stops following once the viewer moves the map, and follows again when asked", async () => {
+    const screen = await renderLive()
+    await move(presenceFor("driving", ON, 12))
+    await act(async () => {
+      mockMapProps.onRegionWillChange?.({ nativeEvent: { userInteraction: true } })
+    })
+    mockEaseTo.mockClear()
+    await move(presenceFor("driving", { lat: 33.704, lon: 73.05 }, 12))
+    expect(mockEaseTo).not.toHaveBeenCalled()
+
+    fireEvent.press(screen.getByLabelText(/live:follow/))
+    expect(mockEaseTo).toHaveBeenCalledTimes(1)
+    await move(presenceFor("driving", { lat: 33.706, lon: 73.05 }, 12))
+    expect(mockEaseTo).toHaveBeenCalledTimes(2)
+  })
+
+  it("keeps following when the map moved on its own", async () => {
+    await renderLive()
+    await act(async () => {
+      mockMapProps.onRegionWillChange?.({ nativeEvent: { userInteraction: false } })
+    })
+    mockEaseTo.mockClear()
+    await move(presenceFor("driving", ON, 12))
+    expect(mockEaseTo).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("letting go of their phone", () => {
+  // Nothing ended a watch, so the phone stayed on a fix a second for up to
+  // ten minutes after the viewer left.
+  it("releases the watch when the page closes", async () => {
+    const screen = await renderLive()
+    screen.unmount()
+    await wait(0)
+    expect(mockUnwatch).toHaveBeenCalledWith("c1", "sam")
+  })
+
+  it("releases it in the background and asks afresh on the way back", async () => {
+    await renderLive()
+    await setAppState("background")
+    expect(mockUnwatch).toHaveBeenCalledTimes(1)
+    await wait(30_000)
+    await setAppState("active")
+    expect(mockWatch).toHaveBeenCalledTimes(2)
+  })
+
+  // Pulling down Control Centre makes the app inactive with the page still
+  // on screen.
+  it("goes on holding while the app is only inactive", async () => {
+    await renderLive()
+    await setAppState("inactive")
+    await wait(60_000)
+    expect(mockUnwatch).not.toHaveBeenCalled()
+    expect(mockWatch).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not send a release to a server that cannot take one", async () => {
+    mockWatchResponse = { ...mockWatchResponse, supports: undefined }
+    const screen = await renderLive()
+    screen.unmount()
+    await wait(0)
+    expect(mockUnwatch).not.toHaveBeenCalled()
+  })
+
+  it("asks again at once on coming back to the page, after letting go", async () => {
+    let answer: (value: { ok: boolean }) => void = () => {}
+    mockUnwatch.mockImplementationOnce(
+      () => new Promise<{ ok: boolean }>((resolve) => (answer = resolve)),
+    )
+    await renderLive()
+    await setAppState("background")
+    await setAppState("active")
+    // The ask waits for the release, so the two land in order.
+    expect(mockWatch).toHaveBeenCalledTimes(1)
+    await act(async () => answer({ ok: true }))
+    expect(mockWatch).toHaveBeenCalledTimes(2)
+  })
+
+  it("checks its socket closely while open, and stops when it closes", async () => {
+    const screen = await renderLive()
+    expect(mockWatchClosely).toHaveBeenCalledTimes(1)
+    screen.unmount()
+    expect(mockStopWatchingClosely).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("asking often", () => {
+  // The server takes sixty asks in ten minutes, and a 429 is a 4xx a
+  // firewall in front of it can lock the household out for.
+  it("asks at most once in ten seconds, however often the viewer pulls", async () => {
+    const screen = await renderLive()
+    await wait(11_000)
+    for (let n = 0; n < 5; n += 1) {
+      await act(async () => {
+        await screen.UNSAFE_getByType(RefreshControl).props.onRefresh()
+      })
+    }
+    expect(mockWatch).toHaveBeenCalledTimes(2)
+    await wait(10_000)
+    expect(mockWatch).toHaveBeenCalledTimes(3)
+  })
+
+  it("says the server is busy rather than unreachable when it says too many", async () => {
+    mockWatch.mockRejectedValue(Object.assign(new Error("Too many requests"), { status: 429 }))
+    const screen = await renderLive()
+    expect(screen.getByText(/live:reason_busy/)).toBeTruthy()
+    expect(screen.queryByText(/live:reason_unreachable/)).toBeNull()
   })
 })

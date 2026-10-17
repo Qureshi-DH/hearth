@@ -145,6 +145,18 @@ const JOURNEY_SPEED_MPS = 3
 
 /** A failed upload tries again on this ladder, then waits for the next delivery. */
 const RETRY_DELAYS_MS = [30_000, 60_000, 120_000]
+/**
+ * While live the next delivery is a second away, so waiting for it is no
+ * back-off at all, and the slowest step repeats. Every fix stays queued for
+ * when the server can be reached again, whatever locked the phone out.
+ */
+const LIVE_RETRY_DELAYS_MS = [2_000, 5_000, 10_000]
+/**
+ * A live upload carries a second's fixes and comes back well inside this.
+ * One that has not is stuck on a dead connection, and a fresh request gets
+ * through where waiting the full half minute froze the viewer's map.
+ */
+const LIVE_UPLOAD_TIMEOUT_MS = 4_000
 /** How long a service found dead stays on the health report. */
 const SERVICE_DEATH_MEMORY_MS = 24 * 60 * 60 * 1000
 
@@ -353,6 +365,8 @@ export function thin(
 
 let flushing: Promise<void> | null = null
 let flushAgain = false
+/** Live uploads that timed out in a row. Two is a slow network rather than a stuck request. */
+let liveTimeouts = 0
 
 /**
  * Network failures leave the queue intact for the next attempt. A 4xx that is
@@ -393,8 +407,14 @@ async function doFlush(): Promise<void> {
 
   while (useTrackingStore.getState().queue.length > 0) {
     const batch = useTrackingStore.getState().queue.slice(0, MAX_BATCH)
+    const live = watchedNow()
+    const sentAt = Date.now()
     try {
-      const result = await endpoints.locations.upload(batch)
+      const result = await endpoints.locations.upload(
+        batch,
+        live && liveTimeouts < 2 ? { timeoutMs: LIVE_UPLOAD_TIMEOUT_MS } : undefined,
+      )
+      liveTimeouts = 0
       useTrackingStore.getState().dequeue(batch)
       useTrackingStore.getState().recordUpload(result.accepted)
       clearRetry()
@@ -409,7 +429,7 @@ async function doFlush(): Promise<void> {
           queued: useTrackingStore.getState().queue.length,
         })
       }
-      void adoptWatch(result.watchedUntil, result.serverTime)
+      void adoptWatch(result.watchedUntil, result.serverTime, sentAt)
       if (
         result.policy.minUpdateIntervalSeconds !== store.policy.minUpdateIntervalSeconds ||
         result.policy.distanceFilterMeters !== store.policy.distanceFilterMeters
@@ -420,6 +440,16 @@ async function doFlush(): Promise<void> {
     } catch (error) {
       const queued = useTrackingStore.getState().queue.length
       if (error instanceof ApiError) {
+        // Again at once on a fresh request, with the same fixes in the same
+        // order. A second timeout in a row is the network, and the ladder
+        // takes over.
+        if (live && error.code === "timeout") {
+          liveTimeouts += 1
+          if (liveTimeouts === 1) {
+            logTracker("flush failed", { status: "timeout", queued, again: true })
+            continue
+          }
+        }
         if (error.isNetwork || error.isForeign || error.status >= 500 || error.status === 429) {
           useTrackingStore.getState().setError(error.message)
           logTracker("flush failed", { status: error.isNetwork ? "network" : error.status, queued })
@@ -480,7 +510,9 @@ let retryAttempt = 0
  */
 function scheduleRetry(): void {
   if (retryTimer) return
-  const delay = RETRY_DELAYS_MS[retryAttempt]
+  const live = watchedNow()
+  const ladder = live ? LIVE_RETRY_DELAYS_MS : RETRY_DELAYS_MS
+  const delay = ladder[retryAttempt] ?? (live ? ladder[ladder.length - 1] : undefined)
   if (delay == null) {
     retryAttempt = 0
     return
@@ -609,7 +641,9 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
   }
   // Whether or not this delivery kept a fix: the queue may hold an upload
   // that failed, and on a parked phone the next kept fix is a quarter hour off.
-  await flush()
+  // A retry already waiting is left to its timer, so a firewall that locked
+  // the address out is not met with a request for every fix.
+  if (!retryTimer) await flush()
 }
 
 /**
@@ -1918,18 +1952,50 @@ export async function reassertService({
 }
 
 /**
+ * When this phone last took a window from an ask, and whether this process
+ * has put the live tier in place for it. A reply to an upload sent before
+ * the ask is older news than the ask, and a hold on a window already live
+ * changes when it ends and nothing else.
+ */
+let windowTakenAt = 0
+let liveInPlace = false
+
+/**
  * Somebody opened this phone's owner's page. The phone goes live for the
  * window whatever it was doing, and answers with one fix straight away:
  * iOS ignores the interval and delivers on distance, so a phone at rest
  * would otherwise say nothing for the whole window. The window ends by the
- * clock and by the first fix past it, whichever comes first.
+ * clock, by the first fix past it, and when the server says nobody is
+ * watching any more, whichever comes first.
+ *
+ * The page holds its window with an ask a minute. One for a window already
+ * live only moves the end, since a fresh one-shot fix every minute is a
+ * Wi-Fi grade dot dropped into a stream of GPS ones. It still puts back a
+ * live service Android stopped, at once when the ask came by push, which is
+ * one of the moments Android allows the start.
  */
-export async function enterWatched(seconds: number): Promise<void> {
+export async function enterWatched(
+  seconds: number,
+  { push = false }: { push?: boolean } = {},
+): Promise<void> {
   const store = useTrackingStore.getState()
   if (!store.enabled || store.mode === "off") return
+  if (seconds <= 0) {
+    await endWatch("ended")
+    return
+  }
+  windowTakenAt = Date.now()
+  const until = new Date(Date.now() + seconds * 1000).toISOString()
+  if (liveInPlace && watchedNow()) {
+    store.setWatchedUntil(until)
+    armWatchTimer()
+    await reassertService({ exempt: push })
+    return
+  }
   logTracker("watched", { seconds, mode: store.mode })
-  store.setWatchedUntil(new Date(Date.now() + seconds * 1000).toISOString())
+  store.setWatchedUntil(until)
   armWatchTimer()
+  liveInPlace = true
   // A parked Android phone goes live under the brief service the watch
   // push brought up, upgraded in place. Where Android refused it anyway,
   // the window is still held, so the upload reply cannot ask again and
@@ -1951,24 +2017,39 @@ export async function enterWatched(seconds: number): Promise<void> {
  * open. A moving phone uploads with each fix, so this reaches it whether or
  * not the silent push did. The window is measured against the server's
  * own clock, since the phone's may be minutes out. A window already held is
- * only moved out, never re-registered: the tier steps down on its own when
- * the window lapses.
+ * moved, never re-registered, and a reply that names no window, or a
+ * shorter one, means the viewers who held it have gone. Only a reply to an
+ * upload sent after the last ask can say that.
  */
 const WATCH_EXTEND_MIN_MS = 5_000
 
-async function adoptWatch(until: string | null | undefined, serverTime?: string): Promise<void> {
-  if (!until) return
-  const serverNow = serverTime ? Date.parse(serverTime) : NaN
-  const remainingMs = Date.parse(until) - (Number.isFinite(serverNow) ? serverNow : Date.now())
-  if (!(remainingMs > 0)) return
+async function adoptWatch(
+  until: string | null | undefined,
+  serverTime?: string,
+  sentAt = Date.now(),
+): Promise<void> {
   const store = useTrackingStore.getState()
   const held = store.watchedUntil ? Date.parse(store.watchedUntil) : null
-  if (held != null && held > Date.now()) {
+  const holding = held != null && held > Date.now()
+  const current = sentAt > windowTakenAt
+  if (!until) {
+    if (holding && current) await endWatch("released")
+    return
+  }
+  const serverNow = serverTime ? Date.parse(serverTime) : NaN
+  const remainingMs = Date.parse(until) - (Number.isFinite(serverNow) ? serverNow : Date.now())
+  if (!(remainingMs > 0)) {
+    if (holding && current) await endWatch("released")
+    return
+  }
+  if (holding) {
     // Every reply in a window names the same end, which lands a few
     // milliseconds either side of the one held once the round trip is
-    // counted. Only a viewer asking again moves it.
+    // counted. Only a viewer asking again, or leaving, moves it.
     const ends = Date.now() + remainingMs
-    if (ends - held > WATCH_EXTEND_MIN_MS) {
+    const later = ends - held > WATCH_EXTEND_MIN_MS
+    const sooner = held - ends > WATCH_EXTEND_MIN_MS && current
+    if (later || sooner) {
       logTracker("watch adopted", { remaining: Math.round(remainingMs / 1000), held: true })
       store.setWatchedUntil(new Date(ends).toISOString())
       armWatchTimer()
@@ -2003,11 +2084,19 @@ function armWatchTimer(): void {
 async function endWatchIfOver(): Promise<void> {
   const store = useTrackingStore.getState()
   if (!store.watchedUntil || watchedNow()) return
+  await endWatch("over")
+}
+
+async function endWatch(why: "over" | "ended" | "released"): Promise<void> {
+  const store = useTrackingStore.getState()
+  liveInPlace = false
+  liveTimeouts = 0
+  if (!store.watchedUntil) return
   store.setWatchedUntil(null)
   if (watchTimer) clearTimeout(watchTimer)
   watchTimer = null
   logLiveTally()
-  logTracker("watch over", { mode: store.mode })
+  logTracker("watch over", { mode: store.mode, ...(why === "over" ? {} : { why }) })
   if (store.mode !== "off") await applyRegistration()
 }
 
@@ -2707,6 +2796,7 @@ export async function stopTracking(): Promise<void> {
   clearRetry()
   if (watchTimer) clearTimeout(watchTimer)
   watchTimer = null
+  liveInPlace = false
   recentFixes = []
   const store = useTrackingStore.getState()
   store.setDriving(null)

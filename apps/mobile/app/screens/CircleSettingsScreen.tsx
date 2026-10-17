@@ -11,12 +11,17 @@ import { TextField } from "@/components/TextField"
 import { useCircle, useUpdateCircle } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
+import { useAuthStore } from "@/stores/auth"
+import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
+import { KM_PER_MILE, speedFromKmh, speedToKmh, speedUnit, type Units } from "@/utils/format"
 import { useHeader } from "@/utils/useHeader"
 
 const RETENTION_OPTIONS = [0, 1, 7, 30, 90]
+const MAX_RETENTION_DAYS = 3650
+const MAX_SPEED_KMH = 300
 const INTERVAL_OPTIONS: Array<{
   seconds: number
   tx: "circle:intervalFast" | "circle:intervalNormal" | "circle:intervalSaver"
@@ -26,29 +31,53 @@ const INTERVAL_OPTIONS: Array<{
   { seconds: 300, tx: "circle:intervalSaver" },
 ]
 const BATTERY_OPTIONS = [0.1, 0.15, 0.2, 0.3]
-/** 0 disables speed alerts. Without that option a normal commute alerts every day. */
-const SPEED_OPTIONS = [0, 80, 100, 120]
+/**
+ * 0 disables speed alerts. Without that option a normal commute alerts every
+ * day. Each list is in its own unit, so nobody picks from 62, 75 and 97 mph.
+ */
+const SPEED_OPTIONS: Record<Units, number[]> = {
+  metric: [0, 80, 100, 120],
+  imperial: [0, 50, 60, 75],
+}
+
+/**
+ * The presets the server would actually keep. A ceiling that falls between
+ * them is offered as a choice of its own, since it is the longest one there is.
+ */
+export function retentionOptions(ceiling: number | undefined): number[] {
+  if (ceiling === undefined) return RETENTION_OPTIONS
+  const kept = RETENTION_OPTIONS.filter((days) => days <= ceiling)
+  const longest = RETENTION_OPTIONS[RETENTION_OPTIONS.length - 1]!
+  return ceiling < longest && !kept.includes(ceiling) ? [...kept, ceiling] : kept
+}
 
 type CustomKey = "retention" | "interval" | "battery" | "speed"
 
 /**
  * The presets cover the common answers, but a family that wants 45 days or
  * 90 km/h should not have to pick the nearest one. Bounds match what the
- * server accepts, so a rejected value is caught before the round trip.
+ * server accepts or keeps, so a rejected value is caught before the round
+ * trip. Speed is in the person's own unit.
  */
-const CUSTOM: Record<
-  CustomKey,
-  {
-    titleTx:
-      "circle:customDays" | "circle:customInterval" | "circle:customBattery" | "circle:customSpeed"
-    min: number
-    max: number
+function customBounds(
+  ceilingDays: number | undefined,
+  units: Units,
+): Record<CustomKey, { title: string; min: number; max: number }> {
+  return {
+    retention: {
+      title: translate("circle:customDays"),
+      min: 0,
+      max: ceilingDays ?? MAX_RETENTION_DAYS,
+    },
+    interval: { title: translate("circle:customInterval"), min: 10, max: 3600 },
+    battery: { title: translate("circle:customBattery"), min: 1, max: 90 },
+    speed: {
+      title: translate("circle:customSpeed", { unit: speedUnit(units) }),
+      min: 0,
+      // Rounded down, so the largest figure offered still fits once stored.
+      max: units === "imperial" ? Math.floor(MAX_SPEED_KMH / KM_PER_MILE) : MAX_SPEED_KMH,
+    },
   }
-> = {
-  retention: { titleTx: "circle:customDays", min: 0, max: 3650 },
-  interval: { titleTx: "circle:customInterval", min: 10, max: 3600 },
-  battery: { titleTx: "circle:customBattery", min: 1, max: 90 },
-  speed: { titleTx: "circle:customSpeed", min: 0, max: 300 },
 }
 
 export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = ({
@@ -61,6 +90,8 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
   const update = useUpdateCircle(circleId)
   const [name, setName] = useState(circle?.name ?? "")
   const [customFor, setCustomFor] = useState<CustomKey | null>(null)
+  const units = useSettingsStore((state) => state.units)
+  const ceilingDays = useAuthStore((state) => state.serverInfo?.maxHistoryRetentionDays)
 
   useHeader(
     { titleTx: "circle:settings", leftIcon: "back", onLeftPress: () => navigation.goBack() },
@@ -72,6 +103,14 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
   }, [circle?.name]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!circle) return <Screen preset="fixed" />
+
+  const custom = customBounds(ceilingDays, units)
+  const speedAlert = speedFromKmh(circle.settings.speedAlertKmh ?? 0, units)
+  // A circle set longer before the ceiling came down only gets the ceiling.
+  const retention =
+    ceilingDays === undefined
+      ? circle.settings.historyRetentionDays
+      : Math.min(circle.settings.historyRetentionDays, ceilingDays)
 
   const patchSettings = (patch: Partial<typeof circle.settings>) =>
     update.mutate(
@@ -162,15 +201,15 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
 
   const currentCustom = (key: CustomKey) =>
     key === "retention"
-      ? circle.settings.historyRetentionDays
+      ? retention
       : key === "interval"
         ? circle.settings.minUpdateIntervalSeconds
         : key === "battery"
           ? Math.round(circle.settings.lowBatteryThreshold * 100)
-          : (circle.settings.speedAlertKmh ?? 0)
+          : speedAlert
 
   const applyCustom = (key: CustomKey, raw: string) => {
-    const { min, max } = CUSTOM[key]
+    const { min, max } = custom[key]
     const value = Number(raw.trim())
     if (!Number.isInteger(value) || value < min || value > max) {
       toast.error(translate("circle:customInvalid", { min, max }))
@@ -183,7 +222,7 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
         distanceFilterMeters: value >= 300 ? 150 : value >= 60 ? 80 : 40,
       })
     else if (key === "battery") patchSettings({ lowBatteryThreshold: value / 100 })
-    else patchSettings({ speedAlertKmh: value })
+    else patchSettings({ speedAlertKmh: speedToKmh(value, units) })
   }
 
   return (
@@ -212,10 +251,11 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
       />
       <SectionHeader tx="circle:speedAlert" />
       {chips(
-        SPEED_OPTIONS,
-        circle.settings.speedAlertKmh ?? 0,
-        (kmh) => (kmh === 0 ? translate("circle:speedAlertOff") : `${kmh} km/h`),
-        (kmh) => patchSettings({ speedAlertKmh: kmh }),
+        SPEED_OPTIONS[units],
+        speedAlert,
+        (speed) =>
+          speed === 0 ? translate("circle:speedAlertOff") : `${speed} ${speedUnit(units)}`,
+        (speed) => patchSettings({ speedAlertKmh: speedToKmh(speed, units) }),
         "speed",
       )}
       <Text
@@ -264,8 +304,8 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
 
       <SectionHeader tx="circle:historyRetention" />
       {chips(
-        RETENTION_OPTIONS,
-        circle.settings.historyRetentionDays,
+        retentionOptions(ceilingDays),
+        retention,
         (days) =>
           days === 0
             ? translate("circle:daysOff")
@@ -275,6 +315,17 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
         (days) => patchSettings({ historyRetentionDays: days }),
         "retention",
       )}
+      {ceilingDays !== undefined ? (
+        <Text
+          size="xxs"
+          text={translate("circle:retentionCeiling", { count: ceilingDays })}
+          style={{
+            color: theme.colors.textFaint,
+            paddingHorizontal: theme.spacing.md,
+            paddingTop: 6,
+          }}
+        />
+      ) : null}
 
       <SectionHeader tx="circle:privacy" />
       <ListGroup>
@@ -295,13 +346,13 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
       {customFor ? (
         <PromptDialog
           visible
-          titleTx={CUSTOM[customFor].titleTx}
+          title={custom[customFor].title}
           initialValue={String(currentCustom(customFor))}
           keyboardType="number-pad"
           maxLength={4}
           helper={translate("circle:customRange", {
-            min: CUSTOM[customFor].min,
-            max: CUSTOM[customFor].max,
+            min: custom[customFor].min,
+            max: custom[customFor].max,
           })}
           onCancel={() => setCustomFor(null)}
           onSubmit={(value) => applyCustom(customFor, value)}

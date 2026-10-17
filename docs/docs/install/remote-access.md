@@ -116,8 +116,9 @@ leave the map looking frozen while everything else works. Caddy and Traefik do
 this correctly with no configuration. For nginx see the config in
 [self-hosting](self-hosting.md).
 
-**`PUBLIC_URL` must be the address phones actually use.** Invite links, the
-join page they open and the API docs are all built from it. If phones connect to
+**`PUBLIC_URL` must be the address phones actually use.** Invite links, their
+QR codes, the join page they open and the API docs are all built from it, and a
+new phone takes its server address from the invite. If phones connect to
 `https://hearth.example.com` then that is the value, not `http://localhost:4000`
 and not the container's address. Behind a proxy at a path, the path is part of
 it, as in `https://lab.example.com/hearth`.
@@ -130,7 +131,8 @@ let somebody on the internet choose the address their password guesses are
 counted against.
 
 **Long-lived connections need a generous timeout.** Phones hold a websocket
-open. The app's on-screen socket sends something every 25 seconds, but the line
+open. The app's on-screen socket sends something every 25 seconds, or every 5
+while Live is open, but the line
 a phone keeps open for the server's asks, like Live and a fresh fix, hears only
 the server's ping, every two minutes. A proxy that closes idle connections
 sooner than that keeps cutting it, and those asks fall back to a silent push,

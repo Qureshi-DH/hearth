@@ -1,6 +1,12 @@
 import { useEffect, useRef } from "react"
 import { AppState, type AppStateStatus } from "react-native"
-import type { FeedEvent, MemberPresence, Paginated, WsServerMessage } from "@hearth/shared"
+import type {
+  FeedEvent,
+  MemberPresence,
+  Paginated,
+  TrailFix,
+  WsServerMessage,
+} from "@hearth/shared"
 
 import { queryKeys } from "@/hooks/queryKeys"
 import { api } from "@/services/api"
@@ -9,10 +15,22 @@ import { queryClient, recheckCircles } from "@/services/queryClient"
 import { noticeSocketAlert } from "@/services/socketAlerts"
 import { useAuthStore } from "@/stores/auth"
 import { useNudgeStore } from "@/stores/nudge"
+import { mergePresence, withPresence } from "@/utils/presence"
+import { mergeTrail } from "@/utils/trail"
 
 const MIN_BACKOFF_MS = 1_000
 const MAX_BACKOFF_MS = 30_000
 const PING_INTERVAL_MS = 25_000
+/**
+ * A socket can be open on paper with nothing behind it, after a network
+ * change or a NAT that forgot it, and nothing says so until a ping goes
+ * unanswered. The server answers within milliseconds, so this long without
+ * a word is a dead socket, and a new one is opened.
+ */
+const PONG_DEADLINE_MS = 10_000
+/** While a Live page is open the map falls behind a second at a time, so it is checked far more often. */
+const LIVE_PING_INTERVAL_MS = 5_000
+const LIVE_PONG_DEADLINE_MS = 4_000
 
 type Listener = (message: WsServerMessage) => void
 
@@ -33,8 +51,13 @@ class RealtimeClient {
   private backoff = MIN_BACKOFF_MS
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private pingTimer: ReturnType<typeof setInterval> | null = null
+  private pongTimer: ReturnType<typeof setTimeout> | null = null
   private wanted = false
   private listeners = new Set<Listener>()
+  private statusListeners = new Set<() => void>()
+  /** Live pages open, which ask for the closer check. */
+  private closely = 0
+  private down: number | null = null
   /**
    * Whether a socket has been open before. The one that follows it has a
    * gap behind it, in the background or through a dropped connection, and
@@ -45,6 +68,7 @@ class RealtimeClient {
   connect() {
     this.wanted = true
     this.open()
+    this.noteStatus()
   }
 
   disconnect() {
@@ -52,6 +76,77 @@ class RealtimeClient {
     this.clearTimers()
     this.socket?.close()
     this.socket = null
+    this.noteStatus()
+  }
+
+  /**
+   * Since when the socket has been wanted and not open, or null while it is
+   * open or not wanted at all. A screen says it is reconnecting once this is
+   * a few seconds old.
+   */
+  get downSince(): number | null {
+    return this.down
+  }
+
+  onStatusChange(listener: () => void): () => void {
+    this.statusListeners.add(listener)
+    return () => this.statusListeners.delete(listener)
+  }
+
+  /**
+   * A Live page is open. Until the returned function is called, the socket
+   * is pinged every few seconds and replaced as soon as one goes unanswered,
+   * since a socket that looks open and carries nothing leaves the page on
+   * the minute's poll.
+   */
+  watchClosely(): () => void {
+    this.closely += 1
+    this.restartPings()
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.closely = Math.max(0, this.closely - 1)
+      this.restartPings()
+    }
+  }
+
+  private noteStatus() {
+    const down = this.wanted && !this.connected ? (this.down ?? Date.now()) : null
+    if (down === this.down) return
+    this.down = down
+    for (const listener of this.statusListeners) listener()
+  }
+
+  private restartPings() {
+    const socket = this.socket
+    if (this.pingTimer) clearInterval(this.pingTimer)
+    this.pingTimer = null
+    if (!socket || socket.readyState !== WebSocket.OPEN) return
+    const live = this.closely > 0
+    this.pingTimer = setInterval(
+      () => this.ping(socket, live ? LIVE_PONG_DEADLINE_MS : PONG_DEADLINE_MS),
+      live ? LIVE_PING_INTERVAL_MS : PING_INTERVAL_MS,
+    )
+  }
+
+  private ping(socket: WebSocket, deadlineMs: number) {
+    if (socket.readyState !== WebSocket.OPEN || this.socket !== socket) return
+    socket.send(JSON.stringify({ type: "ping" }))
+    if (this.pongTimer) return
+    this.pongTimer = setTimeout(() => {
+      this.pongTimer = null
+      if (this.socket === socket) this.replace(socket)
+    }, deadlineMs)
+  }
+
+  /** The socket went quiet without closing. Its own close may never come, so it is let go now. */
+  private replace(socket: WebSocket) {
+    this.socket = null
+    this.clearTimers()
+    socket.close()
+    this.noteStatus()
+    this.open()
   }
 
   /**
@@ -91,14 +186,18 @@ class RealtimeClient {
 
     socket.onopen = () => {
       this.backoff = MIN_BACKOFF_MS
-      this.pingTimer = setInterval(() => {
-        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }))
-      }, PING_INTERVAL_MS)
+      this.restartPings()
+      this.noteStatus()
       if (this.hadSocket) refetchMissed()
       this.hadSocket = true
     }
 
     socket.onmessage = (event) => {
+      // Anything at all from the server is the answer a ping waits for.
+      if (this.socket === socket && this.pongTimer) {
+        clearTimeout(this.pongTimer)
+        this.pongTimer = null
+      }
       let message: WsServerMessage
       try {
         message = JSON.parse(String(event.data)) as WsServerMessage
@@ -116,6 +215,7 @@ class RealtimeClient {
       if (this.socket !== socket) return
       this.socket = null
       this.clearTimers()
+      this.noteStatus()
       // 4401 means the server considers the token dead. A refresh happens on the
       // next REST call and `refresh()` reconnects us, so do not hammer it here.
       if (!this.wanted || event.code === 4401) return
@@ -131,8 +231,10 @@ class RealtimeClient {
   private clearTimers() {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.pingTimer) clearInterval(this.pingTimer)
+    if (this.pongTimer) clearTimeout(this.pongTimer)
     this.reconnectTimer = null
     this.pingTimer = null
+    this.pongTimer = null
   }
 
   private handle(message: WsServerMessage) {
@@ -141,22 +243,18 @@ class RealtimeClient {
       case "presence":
         queryClient.setQueryData<MemberPresence[]>(
           queryKeys.presence(message.circleId),
-          message.presences,
+          (current) => mergePresence(current, message.presences),
         )
         break
 
       case "location":
         queryClient.setQueryData<MemberPresence[]>(
           queryKeys.presence(message.circleId),
-          (current) => {
-            if (!current) return [message.presence]
-            const index = current.findIndex((entry) => entry.userId === message.presence.userId)
-            if (index === -1) return [...current, message.presence]
-            const next = current.slice()
-            next[index] = message.presence
-            return next
-          },
+          (current) => withPresence(current, message.presence),
         )
+        if (message.fixes?.length) {
+          addLiveFixes(message.circleId, message.presence.userId, message.fixes)
+        }
         break
 
       case "event":
@@ -220,6 +318,17 @@ class RealtimeClient {
 export const realtime = new RealtimeClient()
 
 /**
+ * Every fix of an upload, for a Live page open on that member. Nothing is
+ * kept for anybody nobody is following, and the page's own query is what
+ * says somebody is.
+ */
+function addLiveFixes(circleId: string, userId: string, fixes: TrailFix[]) {
+  const key = queryKeys.liveTrail(circleId, userId)
+  if (!queryClient.getQueryCache().find({ queryKey: key, exact: true })) return
+  queryClient.setQueryData<TrailFix[]>(key, (current) => mergeTrail(current ?? [], fixes))
+}
+
+/**
  * Everything the socket keeps current, asked for again after a gap in it.
  * Only a feed's first page can hold anything new, and refetching an
  * infinite query refetches every page it has, so a feed scrolled deep is
@@ -237,6 +346,7 @@ function refetchMissed() {
   void queryClient.invalidateQueries({ queryKey: ["presence"] })
   void queryClient.invalidateQueries({ queryKey: ["trips"] })
   void queryClient.invalidateQueries({ queryKey: queryKeys.myTrips })
+  void queryClient.invalidateQueries({ queryKey: ["live-trail"] })
 }
 
 /**
@@ -266,14 +376,20 @@ export function useRealtimeConnection() {
     }
     if (appState.current === "active") realtime.connect()
 
+    // Only the background closes it. Pulling down Control Centre on an
+    // iPhone makes the app inactive with the screen still showing, and a
+    // socket closed for that left Live on the minute's poll until it reopened.
+    let away = false
     const subscription = AppState.addEventListener("change", (next) => {
-      const wasActive = appState.current === "active"
+      const previous = appState.current
       appState.current = next
-      if (next === "active" && !wasActive) {
+      if (next === "active" && previous !== "active") {
         realtime.connect()
         // The socket may have missed events while we were suspended.
-        void queryClient.invalidateQueries({ queryKey: queryKeys.circles })
-      } else if (next !== "active" && wasActive) {
+        if (away) void queryClient.invalidateQueries({ queryKey: queryKeys.circles })
+        away = false
+      } else if (next === "background" && !away) {
+        away = true
         realtime.disconnect()
       }
     })

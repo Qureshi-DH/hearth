@@ -1,3 +1,9 @@
+import { Platform } from "react-native"
+
+// The two systems name the background location choice differently, and the
+// words on screen are the ones somebody then looks for in the system's own.
+const android = Platform.OS === "android"
+
 const en = {
   common: {
     cancel: "Cancel",
@@ -16,6 +22,8 @@ const en = {
     never: "never",
     showPassword: "Show password",
     retry: "Try again",
+    back: "Back",
+    close: "Close",
   },
   errorScreen: {
     title: "Something went wrong",
@@ -36,17 +44,22 @@ const en = {
   server: {
     title: "Connect to your server",
     subtitle:
-      "Hearth is self-hosted. Enter the address of the server your family runs. Nothing ever goes anywhere else.",
+      "Hearth is self-hosted. Enter the address of the server your family runs, which is where your location goes. The app also fetches map tiles, and asks your phone's maps service for street names, which is sent each spot it names. You can turn street names off under You.",
     urlLabel: "Server address",
     urlPlaceholder: "https://hearth.example.com",
     connect: "Connect",
     connecting: "Checking…",
     hint: "Ask whoever set up your family's Hearth for the address.",
+    fromInvite: "Filled in from your invite link. Check it's the address you were told.",
     invalid:
       "Could not reach a server at that address. Check the address and that you are on the same network.",
     timeout: "That server did not respond in time. Is it running and reachable from this device?",
     noHttps:
       "Could not make a secure connection to that address. A server without HTTPS needs the address typed with http:// in front.",
+    httpsOnly:
+      "Could not make a secure connection to that address. This version of Hearth connects only over HTTPS, so the server needs HTTPS in front of it.",
+    httpBlocked:
+      "This version of Hearth connects only over HTTPS. Type the address without http://, and put HTTPS in front of the server if it has none.",
     notHearth: "Something answered, but it is not a Hearth server.",
     connectedTo: "Connected to {{name}}",
     change: "Change server",
@@ -75,17 +88,21 @@ const en = {
     create: "Create account",
     haveAccount: "Already have an account?",
     signIn: "Sign in",
+    inviteFailed: "Your account is ready, but the invite didn't work",
+    inviteFailedNext: "Ask for a new code, then tap Join with a code on the map.",
   },
   permissions: {
     title: "Set up Hearth",
     intro:
       "A few system permissions make the difference between a map that works and one that goes quiet the moment you lock your phone.",
-    subtitle:
-      'For your family to see you when the app is closed, Hearth needs "Always" location access. You stay in control: pause sharing any time.',
-    locationTitle: "Location, always",
+    subtitle: android
+      ? 'Hearth collects location data to enable family location sharing, arrival alerts and crash detection even when the app is closed or not in use. Choose "Allow all the time" when Android offers it. You stay in control and can pause sharing any time.'
+      : 'For your family to see you when the app is closed, Hearth needs "Always" location access. You stay in control and can pause sharing any time.',
+    locationTitle: android ? "Location, all the time" : "Location, always",
     locationAlwaysBody: "Your family can see you even when the app is closed.",
-    locationForegroundBody:
-      'Only "While Using" was granted. Your position stops updating when Hearth leaves the screen. Change it to "Always" in Settings.',
+    locationForegroundBody: android
+      ? 'Only "Allow only while using the app" was granted. Your position stops updating when Hearth leaves the screen. Change it to "Allow all the time" in Settings.'
+      : 'Only "While Using" was granted. Your position stops updating when Hearth leaves the screen. Change it to "Always" in Settings.',
     preciseTitle: "Precise location",
     preciseBody:
       "Approximate mode is on for Hearth. Turn on Precise Location so places and trips are accurate.",
@@ -106,9 +123,9 @@ const en = {
     refreshBody:
       "Keep it on for Hearth (Settings → General → Background App Refresh). It is what lets the server wake the app for a fix when the phone has been quiet, and lets the offline queue upload.",
     notRequested:
-      "Your location only ever goes to the server your family runs. There is no Hearth account, no analytics and no ad network in this app. It never asks for your contacts, microphone, Bluetooth or advertising ID, and a profile picture goes through the system picker so it only ever sees the one image you choose.",
+      "Hearth uploads your location to the server your family runs. Street names come from your phone's maps service, which is sent each spot it names, and can be turned off under You. There is no Hearth account, no analytics and no ad network in this app. It never asks for your contacts, microphone, Bluetooth or advertising ID, and a profile picture goes through the system picker so it only ever sees the one image you choose.",
     allow: "Allow",
-    always: 'Allow "Always"',
+    always: android ? "Allow all the time" : 'Allow "Always"',
     later: "Not now",
     servicesOffTitle: "Location is turned off on this phone",
     servicesOffBody:
@@ -125,7 +142,7 @@ const en = {
     motionTitle: "Motion & Fitness",
     motionBody:
       "Your phone already knows when you have stopped and when you are in a car. Hearth reads that so the GPS can rest between journeys and crash detection knows a drive has started. Without it the GPS has to stay awake to work it out.",
-    whyTitle: 'Why "Always"?',
+    whyTitle: android ? 'Why "Allow all the time"?' : 'Why "Always"?',
     stateDone: "On",
     stateTodo: "Needed",
     stateBlocked: "Off",
@@ -191,7 +208,9 @@ const en = {
     create: "Create a circle",
     join: "Join with a code",
     switch: "Switch circle",
+    // i18next reads `_one` for a count of one and the bare key for any other.
     members: "{{count}} members",
+    members_one: "{{count}} member",
     nameLabel: "Circle name",
     namePlaceholder: "e.g. The Khans",
     created: "Circle created",
@@ -210,10 +229,13 @@ const en = {
     notFound: "No invite found for that code.",
     alreadyMember: "You're already in this circle.",
     removed: "You were removed from this circle. Ask for a new invite to rejoin.",
+    otherServer:
+      "This invite is for {{server}}, and this phone is signed in to a different server.",
     success: "Welcome to {{name}}",
   },
   map: {
     title: "Map",
+    reconnecting: "Reconnecting…",
     you: "You",
     lastSeen: "Seen {{time}}",
     stale: "Not updated recently",
@@ -225,7 +247,7 @@ const en = {
     atPlaceSince: "At {{place}} since {{since}}",
     near: "Near {{where}}",
     issue_sharing_off: "Turned off location sharing",
-    issue_location_permission: "Location permission is not set to Always",
+    issue_location_permission: "Location access is not allowed all the time on their phone",
     issue_precise_location: "Precise location is off on their phone",
     issue_location_services: "Location is turned off on their phone",
     issue_motion_permission: "Motion and activity access is off on their phone",
@@ -388,6 +410,8 @@ const en = {
     reason_no_device: "Their phone cannot be reached from this server",
     reason_unsupported: "This server cannot wake phones",
     reason_unreachable: "Your server could not be reached",
+    reason_busy: "Too many asks just now. Wait a moment and it will ask again.",
+    follow: "Follow {{name}}",
   },
   trips: {
     title: "Trips",
@@ -412,7 +436,7 @@ const en = {
     customDays: "Days of history to keep",
     customInterval: "Seconds between updates",
     customBattery: "Battery percentage to alert at",
-    customSpeed: "Speed to alert above, in km/h",
+    customSpeed: "Speed to alert above, in {{unit}}",
     alertsHint: "What this family gets told about, and when. These apply to everyone here.",
     privacy: "Privacy",
     location: "Location",
@@ -426,6 +450,10 @@ const en = {
     days: "{{count}} days",
     dayOne: "1 day",
     daysOff: "Don't keep history",
+    retentionCeiling_one:
+      "This server deletes location history after {{count}} day, so no circle can keep it longer.",
+    retentionCeiling:
+      "This server deletes location history after {{count}} days, so no circle can keep it longer.",
     allowPause: "Members can pause sharing",
     allowHistory: "Members can see each other's history",
     speedAlert: "Alert above",
@@ -520,8 +548,8 @@ const en = {
     choosePhoto: "Choose a photo",
     removePhoto: "Remove photo",
     imperialUnits: "Imperial units",
-    imperialOn: "Miles and Fahrenheit",
-    imperialOff: "Kilometres and Celsius",
+    imperialOn: "Miles, feet and mph",
+    imperialOff: "Kilometres, metres and km/h",
     appearance: "Appearance",
     system: "System",
     light: "Light",
@@ -535,13 +563,17 @@ const en = {
     trackerClear: "Clear the log",
     trackerEmpty: "Nothing logged yet.",
     streetNames: "Street names",
-    streetNamesBody: "Under members and trips. Uses your phone's geocoder.",
+    streetNamesBody:
+      "Under members and trips. Your phone's maps service looks them up, and is sent each spot it names.",
     sharing: "Location sharing",
     devices: "Signed-in devices",
     devicesLoading: "Loading your devices",
     devicesFailed: "Couldn't load your devices",
     devicesEmpty: "The server lists no devices signed in to this account.",
     thisDevice: "This device",
+    onMap: "On the map",
+    onMapNote:
+      "Your circles see you where the device marked On the map is. One that is on the move takes over from one lying still, so a tablet left at home does not pull you back there.",
     signOutDevice: "Sign out",
     platformIos: "iPhone or iPad",
     platformAndroid: "Android device",
@@ -551,6 +583,7 @@ const en = {
     lastUsed: "Last used {{time}}",
     privacy: "Privacy & data",
     dataStored: "{{count}} location points stored",
+    dataStored_one: "{{count}} location point stored",
     oldest: "Oldest: {{time}}",
     export: "Export my data",
     exportBody: "Download everything the server holds about you as JSON.",
@@ -576,6 +609,7 @@ const en = {
     trackingActive: "Background updates on",
     trackingInactive: "Background updates off",
     queued: "{{count}} fixes waiting to upload",
+    queued_one: "{{count}} fix waiting to upload",
     lastUpload: "Last upload {{time}}",
     permission: "Permission: {{level}}",
     signOutConfirm: "Sign out of this device?",
@@ -602,10 +636,14 @@ const en = {
     serverNameHint: "What this server calls itself in the app.",
     maxRetention: "History retention",
     retentionDays: "{{count}} days",
+    retentionDays_one: "{{count}} day",
     retentionNone: "From the server's .env, 90 days by default",
     retentionHelper:
       "Days of location history to keep, across every circle, from 1 to 3650. Leave empty to use MAX_HISTORY_RETENTION_DAYS from the server's .env, 90 days by default.",
     usersCount: "{{count}} users",
+    usersCount_one: "{{count}} user",
+    circlesCount: "{{count}} circles",
+    circlesCount_one: "{{count}} circle",
     active24h: "Active 24h",
     circles: "Circles",
     points: "Points",
@@ -629,6 +667,12 @@ const en = {
     minutesAgo: "{{count}}m ago",
     hoursAgo: "{{count}}h ago",
     daysAgo: "{{count}}d ago",
+    inMinutes: "in {{count}} minutes",
+    inMinutes_one: "in {{count}} minute",
+    inHours: "in {{count}} hours",
+    inHours_one: "in {{count}} hour",
+    inDays: "in {{count}} days",
+    inDays_one: "in {{count}} day",
   },
 }
 

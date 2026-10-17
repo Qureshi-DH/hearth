@@ -76,9 +76,10 @@ class ControlChannel {
     socket.onopen = () => {
       this.backoff = MIN_BACKOFF_MS
       socket.send(JSON.stringify({ type: "control" }))
-      // Nothing more is sent from here. The server pings a declared socket
+      // Nothing more is sent from here but the answer to an ask, while the
+      // radio is awake for the ask anyway. The server pings a declared socket
       // every couple of minutes and the socket layer answers without the
-      // app; every frame of the phone's own would be a radio wake.
+      // app. Every frame of the phone's own would be a radio wake.
       logTracker("control", { open: true })
     }
 
@@ -92,7 +93,13 @@ class ControlChannel {
       // The screens' socket is closed in the background, so on a server with
       // no push this is the only line an SOS can reach a locked phone on.
       noticeSocketAlert(message)
-      if (message.type !== "control" || !handler) return
+      if (message.type !== "control") return
+      // Before the work, which can take as long as a fix. The server pushes
+      // instead when no answer comes within seconds.
+      if (message.ask && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "control", ack: message.ask }))
+      }
+      if (!handler) return
       if (message.command === "watch") {
         logTracker("control", { command: "watch", seconds: message.seconds })
         void handler.watch(message.seconds ?? 0).catch(() => undefined)

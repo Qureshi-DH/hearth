@@ -288,7 +288,7 @@ export function healthReason(
   if (!health) return null
   if (sharingSwitchedOff(health, lastFixAt)) return "location sharing is turned off"
   if (health.locationPermission !== "always" && health.locationPermission !== "unknown") {
-    return "location permission is not set to Always"
+    return "location access is not allowed all the time"
   }
   if (!health.locationServices) return "location services are off"
   if (health.backgroundRefresh && health.backgroundRefresh !== "available") {

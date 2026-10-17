@@ -15,6 +15,7 @@ import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
+import { inviteQrValue } from "@/utils/inviteCode"
 import { relativeTime } from "@/utils/time"
 import { useHeader } from "@/utils/useHeader"
 
@@ -75,7 +76,7 @@ export const InvitesScreen: FC<AppStackScreenProps<"Invites">> = ({ navigation, 
           />
           <View style={themed($qr)}>
             <QRCode
-              value={`hearth://join/${selected.code}`}
+              value={inviteQrValue(selected)}
               size={180}
               backgroundColor="#FFFFFF"
               color="#1E1714"

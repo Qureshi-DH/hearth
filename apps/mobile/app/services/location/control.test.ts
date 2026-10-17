@@ -103,6 +103,29 @@ describe("the control channel", () => {
     expect(handler.wake).toHaveBeenCalledTimes(1)
   })
 
+  // The server only believes the channel when the phone says it has the
+  // ask, and pushes within seconds otherwise. The answer goes before the
+  // work, which can take a fix's worth of time.
+  it("acknowledges an ask the moment it lands", () => {
+    control.setWanted(true)
+    sockets[0]!.accept()
+    sockets[0]!.receive({ type: "control", command: "watch", seconds: 600, ask: "a1" })
+    sockets[0]!.receive({ type: "control", command: "wake", ask: "a2" })
+    expect(sockets[0]!.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "control" },
+      { type: "control", ack: "a1" },
+      { type: "control", ack: "a2" },
+    ])
+  })
+
+  it("acknowledges nothing a server from before acknowledgements did not ask", () => {
+    control.setWanted(true)
+    sockets[0]!.accept()
+    sockets[0]!.receive({ type: "control", command: "watch", seconds: 600 })
+    sockets[0]!.receive({ type: "control", command: "ready" })
+    expect(sockets[0]!.sent.map((frame) => JSON.parse(frame))).toEqual([{ type: "control" }])
+  })
+
   it("comes back on its own after the connection drops", () => {
     control.setWanted(true)
     sockets[0]!.accept()

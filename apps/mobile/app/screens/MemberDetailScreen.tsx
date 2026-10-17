@@ -38,7 +38,7 @@ import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { activityIconName, atUnnamedSpot, onTheMove } from "@/utils/activity"
+import { activityIconName, atUnnamedSpot, liveOffered } from "@/utils/activity"
 import { minutesToWait, takeNudge } from "@/utils/budget"
 import { quickMessagesFor, sendQuickMessage } from "@/utils/quickMessages"
 import { availableDirectionsApps, openDirections, type DirectionsApp } from "@/utils/directions"
@@ -67,9 +67,7 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
   const entry = presence?.find((item) => item.userId === userId)
   const nearby = useMemberNearby(entry)
 
-  // Live is the one thing that asks their phone for more than it would
-  // send anyway, and it is only offered while they are going somewhere.
-  const liveAvailable = !isSelf && !entry?.approximate && onTheMove(entry)
+  const liveAvailable = liveOffered(entry, isSelf)
   // Opening the page asks their phone for one fresh fix, the way opening the
   // map asks everyone's. The server holds it to one ask per half minute.
   // The server decides for a member whose presence has not arrived yet. A

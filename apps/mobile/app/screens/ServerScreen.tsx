@@ -1,4 +1,4 @@
-import { useState, type FC } from "react"
+import { useEffect, useState, type FC } from "react"
 import { View, type ViewStyle } from "react-native"
 import Constants from "expo-constants"
 import { LinearGradient } from "expo-linear-gradient"
@@ -8,13 +8,13 @@ import { PrimaryButton } from "@/components/PrimaryButton"
 import { Screen } from "@/components/Screen"
 import { Text } from "@/components/Text"
 import { TextField } from "@/components/TextField"
-import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { endpoints } from "@/services/api"
 import { useAuthStore } from "@/stores/auth"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { serverCandidates } from "@/utils/serverAddress"
+import { describeProbeFailure } from "@/utils/serverProbe"
 
 /** Accepts a bare hostname and tries https, so nobody has to type a scheme. */
 export const ServerScreen: FC<AppStackScreenProps<"Server">> = ({ navigation }) => {
@@ -22,7 +22,13 @@ export const ServerScreen: FC<AppStackScreenProps<"Server">> = ({ navigation }) 
   const setServer = useAuthStore((state) => state.setServer)
   const existing = useAuthStore((state) => state.serverUrl)
   const status = useAuthStore((state) => state.status)
-  const [url, setUrl] = useState(existing ?? devServerGuess())
+  const inviteServer = useAuthStore((state) => state.pendingInviteServer)
+  const [url, setUrl] = useState(inviteServer ?? existing ?? devServerGuess())
+  // The link can arrive while this screen is already open. Only filled in,
+  // never connected to, since the link is whatever somebody sent.
+  useEffect(() => {
+    if (inviteServer) setUrl(inviteServer)
+  }, [inviteServer])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -86,7 +92,7 @@ export const ServerScreen: FC<AppStackScreenProps<"Server">> = ({ navigation }) 
           onSubmitEditing={connect}
           status={error ? "error" : undefined}
           helper={error ?? undefined}
-          helperTx={error ? undefined : "server:hint"}
+          helperTx={error ? undefined : url === inviteServer ? "server:fromInvite" : "server:hint"}
           containerStyle={{ marginTop: theme.spacing.md }}
           inputWrapperStyle={themed($input)}
         />
@@ -116,15 +122,6 @@ function devServerGuess(): string {
     ?.split(":")[0]
   if (!host) return ""
   return `http://${host}:4000`
-}
-
-function describeProbeFailure(error: unknown, tried: string[]): string {
-  const message = error instanceof Error ? error.message : ""
-  if (message.includes("different API")) return message
-  if (message.includes("answered")) return translate("server:notHearth")
-  if (/abort/i.test(message)) return translate("server:timeout")
-  if (tried.length === 1 && tried[0]!.startsWith("https://")) return translate("server:noHttps")
-  return translate("server:invalid")
 }
 
 const $container: ThemedStyle<ViewStyle> = ({ colors }) => ({

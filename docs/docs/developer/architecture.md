@@ -35,7 +35,7 @@ Every API route lives under `/api/v1`. Only the health probes (`/healthz`,
 `requireMembership(request, circleId, minRole)`, call a service, serialise.
 Services hold the domain logic and are unit-testable with a real database.
 
-### Data model (18 tables)
+### Data model (20 tables)
 
 - `users` and `sessions` hold one session row per (user, device). Refresh
   tokens are hashed and rotated, and push tokens hang off the session, so
@@ -52,8 +52,13 @@ Services hold the domain logic and are unit-testable with a real database.
   `(user, device, recorded_at)` so retried uploads are idempotent.
 - `user_presence` keeps one row per user: the latest fix, plus flags for the
   low-battery / offline alerts, the trip-detector watermark, the wake count,
-  the control channel's stamps and the phone's own health report. Reads for
-  the map hit this table, never the history table.
+  the control channel's stamps, the phone's own health report and the device
+  the position came from. Reads for the map hit this table, never the history
+  table.
+- `live_watches` has a row for each person with a member's Live page open,
+  until when they hold it and the circle they hold it through. The phone's
+  window, `user_presence.watched_until`, is the latest of them, so the last
+  viewer out ends it.
 - `places`, `place_memberships` and `place_events` cover geofences, who is
   currently inside each one, and the arrive/leave log. A membership also
   carries `settles_at`, until which its last crossing may still be undone, and
@@ -88,7 +93,10 @@ and keeps the ingest path free of per-circle fan-out.
 2. Bulk insert. A duplicate changes nothing, except that a re-report saying
    `still` adopts that activity (`onConflictDoUpdate` with a `setWhere`).
 3. Advance `user_presence`, only ever forwards in time (`setWhere`), so an
-   out-of-order retry can't rewind "where are they now".
+   out-of-order retry can't rewind "where are they now". A parked word from
+   one device doesn't take the row from another device of the same person
+   whose position isn't stale, so a tablet left at home doesn't pull the dot
+   back from the road. A device on the move takes it like any fix.
 4. Lapse any expired "paused until" state.
 5. Replay only the _newly inserted_ fixes through the geofences of circles the
    user shares **precisely** with (`services/geofence.ts`). Places and current
@@ -122,8 +130,10 @@ and keeps the ingest path free of per-circle fan-out.
 6. Raise speed and possible-crash alerts, to precisely shared circles only.
 7. Raise a low-battery event (≤15 % unless the circle sets its own threshold,
    not charging, 6-hour cooldown) to circles that are not paused.
-8. Publish `{type:"location", circleId, userId, raw}` on the realtime bus for
-   every circle the user is in, where `raw` is the unprojected presence.
+8. Publish `{type:"location", circleId, userId, raw, fixes}` on the realtime
+   bus for every circle the user is in, where `raw` is the unprojected
+   presence and `fixes` are the batch's fixes past the old position, sent
+   only when this batch moved the dot.
 
 ### Privacy projection (`services/presence.ts`)
 
@@ -132,7 +142,8 @@ decides what _this viewer_ may see of _that member_:
 
 - `paused` → coordinates, battery, activity all `null`
 - `approximate` → position snapped to a deterministic 750 m grid, accuracy
-  widened to ≥750 m, speed/heading/activity hidden, history and trips refused
+  widened to ≥750 m, `recordedAt` floored to five minutes, speed/heading/activity
+  hidden, history and trips refused
 - _Share my location_ switched off on the phone, as its last health report
   says and no newer fix contradicts → `paused` in a circle that allows
   pausing. A circle that does not keeps the last position, and `issues`
@@ -144,7 +155,11 @@ decides what _this viewer_ may see of _that member_:
 on the beat itself faded healthy phones in and out.
 
 Because the projection is per viewer, the bus carries the unprojected row and
-the websocket layer projects it on each socket.
+the websocket layer projects it on each socket. Only a socket whose projection
+is precise passes the batch's `fixes` on. Any socket sends a frame only when
+its projection changed, and for an approximate viewer that means a new cell
+or a new five minutes, so a fix a second while somebody else watches can't
+time each step across a grid line.
 
 ### Realtime
 
@@ -153,7 +168,8 @@ the websocket layer projects it on each socket.
 `?access_token=`), primes the client with current presence, then forwards
 `location` / `event` / `sos` frames for the circles the user belongs to, and
 `nudge` / `control` frames addressed to the user. Heartbeat every 30 s, or
-every 2 minutes on a control channel.
+every 2 minutes on a control channel. The app's own `ping` frame is answered
+with a `pong`, which is how the app finds a socket that is open on paper only.
 
 A `location` message carries the moving member's _unprojected_ presence row,
 which never leaves the server. With Redis the frames are sealed with
@@ -176,9 +192,15 @@ heartbeat refreshes `user_presence.control_seen_at`. When the server wants
 something from a phone, it calls `sendControl()` first: the sweep's wake, the
 fresh fix asked for when someone opens the map or a member's page, and Live's
 watch. That publishes a `control` frame on the user's bus topic, and whichever
-replica holds the socket passes it on. Only when no channel is open, its stamp
-is over five minutes old, or an earlier ask went unanswered for 20 seconds does
-the server fall back to a silent push, which needs the `expo` provider.
+replica holds the socket passes it on. Each frame carries an `ask` id, and the
+phone answers `{type:"control", ack}` the moment it lands. Live's watch and a
+member's page wait up to 3 s for that answer and push at once without it, so
+a socket iOS suspended with the app costs seconds rather than the minute until
+the next hold. Otherwise only when no channel is open, its stamp is over five
+minutes old, or an earlier ask went unanswered for 20 seconds does the server
+fall back to a silent push, which needs the `expo` provider. A `watch` with no
+seconds left ends the window, which is how a phone hears that the last viewer
+left.
 
 An iPhone keeps the channel open whenever sharing is on, because its parked
 location session keeps the app alive. An Android phone holds it only while
@@ -249,7 +271,10 @@ resolved is dropped, so a late retry can't sound the alarm again.
 
 A silent push (`silent: true`, the `wake` and `watch` rows) can only go through
 `expo`, and the drain marks it `skipped` for any other provider. It carries a
-lifetime: `ttl` and `expiration` of 60 s for a watch and 300 s for a wake.
+lifetime, a `ttl` and `expiration` of 300 s for a watch or a wake. A watch only
+goes by push when the channel did not take it, often to an iPhone app iOS
+has to start again, and one that lands after the viewer left is ended by the
+phone's first upload reply.
 Without one FCM and APNs hold a message for up to four weeks, and a wake that
 Doze held back is then delivered out of context, so the phone fires its GPS at
 a random moment to answer a question nobody is asking. On iOS a
@@ -321,7 +346,9 @@ running is skipped.
 
 The sweep reads the ceiling from `server_settings` on every tick, falling back to
 `MAX_HISTORY_RETENTION_DAYS`. Reading the env value instead was the bug: changing
-the cap from the app stored a number that then swept nothing.
+the cap from the app stored a number that then swept nothing. `server-info`
+publishes the same ceiling as `maxHistoryRetentionDays`, and creating or
+updating a circle stores a longer retention as the ceiling.
 
 ### Trip detection (`services/trips.ts`)
 
@@ -395,9 +422,16 @@ from where the phone parked unless a fix sharp enough to mean it shows it
 has left. A phone allowed only approximate location parks without the
 geofence, which neither OS arms for it. The server's asks
 are a parked phone's other heartbeat: the wake after half an hour of quiet,
-the map or a member's page being opened, and Live. Live, offered while the
-member is on the move, is the live tier: full accuracy, a fix a second, for
-ten minutes. A parked phone goes live too and stays parked. On Android that
+the map or a member's page being opened, and Live. Live, offered for anyone
+the viewer sees precisely, is the live tier, full accuracy and a fix a
+second, for as long as the page is open and at most ten minutes past its last hold.
+Each viewer holds the window on their own. It ends within seconds of the last
+one leaving, through the next upload reply and the control channel, and when
+the member turns that circle to approximate or pauses it. A hold on a window
+already live only moves its end. While live, a stuck upload gets 4 s before it
+goes again on a fresh request, and a failed one waits 2, 5, then 10 s with
+every fix kept, rather than trying again on every fix. A parked phone goes
+live too and stays parked. On Android that
 brings the location service and its notification up for the window, and both go
 when it ends. Its resting request keeps running under the service, and if
 Android refuses the service the phone answers with one fix. The OS motion
@@ -407,9 +441,16 @@ the permission falls back to working stops out from position.
 
 ### Realtime on the phone (`services/realtime.ts`)
 
-One socket while foregrounded, torn down in the background, exponential
-reconnect, and every message but a nudge is written into the React Query
-cache. A nudge goes to its own store and makes the phone report at once.
+One socket while foregrounded, torn down in the background but not when the
+app is only inactive under Control Centre, exponential reconnect, and every
+message but a nudge is written into the React Query cache. It pings every
+25 s, or every 5 s while a Live page is open, and replaces a socket that
+doesn't answer within 10 s, or 4 s. Presence is merged by `recordedAt`, so a
+poll answered after a newer frame can't step a dot back. A frame's `fixes` go
+to an open Live page's trail, which fills its gaps from `GET .../live-trail`
+after a reconnect or a return to the front. The map and the Live page say
+they're reconnecting once the socket has been down for 5 s. A nudge goes to
+its own store and makes the phone report at once.
 Screens just render query data. The control channel
 (`services/location/control.ts`) is a separate socket the tracker holds in the
 background, as described above.

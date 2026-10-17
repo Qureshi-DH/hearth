@@ -129,12 +129,14 @@ const ANSWERED_IN_BACKGROUND = new Set(["nudge_requested"])
  * it. Without a lifetime FCM and APNs hold a message for up to four weeks,
  * and a wake that Doze held back is then delivered out of context: the phone
  * fires its GPS at a random moment to answer a question nobody is asking. A
- * watch is worth nothing once the viewer has moved on, a wake is worth one
- * sweep interval or so, and a nudge lasts about as long as the asker's
- * patience.
+ * watch lasts half the window it asks for, since it is what restarts an
+ * iPhone app iOS has stopped and that can take a while, and a watch that
+ * lands after the viewer left is ended by the phone's first upload reply. A
+ * wake is worth one sweep interval or so, and a nudge lasts about as long as
+ * the asker's patience.
  */
 const SILENT_TTL_SECONDS: Record<string, number> = {
-  watch: 60,
+  watch: 300,
   wake: 300,
   nudge: 600,
   nudge_requested: 600,

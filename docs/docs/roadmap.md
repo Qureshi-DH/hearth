@@ -59,8 +59,6 @@ battery alerts, trips, history, and the member statuses other apps show
   classifier, which are what pay for themselves today. A measured comparison
   of the classifier against the GPS-only fallback would say how much a refused
   permission actually costs.
-- An admin web UI. The admin API exists, and a small dashboard would help
-  operators who never install the app.
 - Circle-level place sharing, meaning you copy a place into another circle.
 - End-to-end encrypted history, with client-side keys and the server holding
   only ciphertext, for people who don't trust their own server host. Presence

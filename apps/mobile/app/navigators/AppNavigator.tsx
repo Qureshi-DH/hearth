@@ -42,6 +42,7 @@ const AppStack = () => {
   const status = useAuthStore((state) => state.status)
   const serverInfo = useAuthStore((state) => state.serverInfo)
   const pendingInviteCode = useAuthStore((state) => state.pendingInviteCode)
+  const pendingInviteServer = useAuthStore((state) => state.pendingInviteServer)
   const {
     theme: { colors },
   } = useAppTheme()
@@ -108,12 +109,15 @@ const AppStack = () => {
     if (status !== "signed_in" || !pendingInviteCode) return
     const timer = setTimeout(() => {
       if (navigationRef.isReady()) {
-        navigationRef.navigate("JoinCircle", { code: pendingInviteCode })
+        navigationRef.navigate("JoinCircle", {
+          code: pendingInviteCode,
+          server: pendingInviteServer ?? undefined,
+        })
         useAuthStore.getState().setPendingInvite(null)
       }
     }, 400)
     return () => clearTimeout(timer)
-  }, [status, pendingInviteCode])
+  }, [status, pendingInviteCode, pendingInviteServer])
 
   useEffect(() => {
     return attachNotificationListeners((target) => {

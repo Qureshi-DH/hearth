@@ -77,6 +77,39 @@ Notable changes to Hearth. The format is loosely
   new `push_tickets` table, read a thousand at a time every quarter hour, and
   dropped after a day.
 
+- Live lets go of the phone when you leave. Each viewer holds the watch on
+  their own, and once the last one closes the page or puts Hearth in the
+  background, the phone hears it in its next upload reply and over its own
+  line to the server and steps down within seconds. It stayed on a fix a
+  second for up to ten minutes. Turning a circle to approximate or pausing it
+  ends that circle's watches at once, leaving the circle ends the ones you
+  held or were the subject of, and an open SOS still keeps the phone on Live.
+  The server adds `DELETE /circles/:id/members/:userId/watch` and the
+  `live_watches` table, and the watch reply gains `supports`. The app sends no
+  release to a server whose reply leaves it out.
+- A Live trail is every fix the phone sent rather than one per upload, and
+  the gap a dropped connection or a trip to the background leaves is filled
+  in when the page comes back. Location frames to a viewer who sees the member
+  precisely carry the upload's `fixes`, and
+  `GET /circles/:id/members/:userId/live-trail` hands back the fixes since a
+  given moment, from the device the map follows and no further back than the
+  ten minute window, whether or not the circle keeps history.
+- The map and the Live page say "Reconnecting…" once their connection to the
+  server has been down for five seconds, so dots that stop moving read as the
+  connection and not as the people.
+- Invite links and their QR codes carry the server's address. The page an
+  invite opens has an Open in Hearth button that fills in the server and the
+  code on a phone that was never set up, and steps for somebody without the
+  app, which link to `IOS_APP_URL` and `ANDROID_APP_URL` when set. It no longer
+  opens the app by itself, which on a phone without it put an error in front
+  of the steps. The button is `hearth://join/<code>?server=<address>` and the
+  QR is the invite's `url`, so older apps still find the code in both. A code
+  that isn't found says which server it belongs to.
+- The data export includes your SOS alerts, the devices signed in to your
+  account with the address and browser each used, and the feed entries you
+  made or that are about you. They name circles and people rather than ids.
+  `GET /me/export` gains `sosAlerts`, `devices` and `activityFeed`.
+
 ### Changed
 
 - A journey between two named places is at most two notifications. "Aisha
@@ -113,7 +146,7 @@ Notable changes to Hearth. The format is loosely
   recognised by the note its prompt puts on it, and anything else it sends is
   a press that reaches every circle.
 - While your SOS is open your phone is on Live, a fix a second wherever the
-  app is, until a couple of minutes after you resolve it. It used to report
+  app is, until you resolve it. It used to report
   every 20 seconds, and only while the SOS screen was open. The SOS screen
   uploads a fresh fix before it sends the alert, waiting up to five seconds
   for one, and says so when _Share my location_ is off on the phone, since
@@ -170,6 +203,13 @@ Notable changes to Hearth. The format is loosely
 - The app keeps every phone to six nudges and quick messages in ten minutes,
   and says how long to wait rather than send one the server would refuse.
   The server takes ten per account, up from six.
+
+- Live is offered for anyone you see precisely, parked or on the move, and
+  never on your own page. It was offered only while somebody was travelling,
+  though a parked phone goes live too and the page says when a phone doesn't
+  answer.
+- Speed alert choices follow your units, in mph for miles. They're still
+  stored in km/h.
 
 ### Fixed
 
@@ -408,6 +448,81 @@ Notable changes to Hearth. The format is loosely
   reports once a minute on the motorway still raises one. The speed quoted,
   and the trip card's top speed with it, is never faster than the ground
   between two sharp fixes allows.
+- A parked Android phone whose live service Android stopped in the middle of
+  a watch wasn't asked again for up to ten minutes, because answering once
+  counted for the whole window. The server pushes again once the phone has
+  said nothing for 20 seconds and the last push is 90 seconds old.
+- A killed or suspended iPhone lost the first minute of Live. Its line to the
+  server looked open for minutes after iOS stopped the app, so the ask went
+  nowhere and the push waited for the next hold. An ask down that line is now
+  believed only when the phone says it has it, and without that answer within
+  three seconds the push goes at once. Opening a member's page works the same
+  way. A watch push waits five minutes for the phone rather than one. Control
+  frames carry an `ask` id and the app answers `{ type: "control", ack }`,
+  which an older server reads as the line's declaration again.
+- One stuck upload froze Live for up to half a minute. On Live an upload gets
+  four seconds and then goes again at once on a fresh request, with the same
+  fixes in the same order. A network that is slow rather than stuck gets the
+  full time after two tries.
+- A half-open connection looked open, and Live sat on the minute's poll. The
+  app checks that its pings are answered, every five seconds while Live is
+  open and every 25 otherwise, and opens a new connection when one goes
+  unanswered.
+- Coarse fixes no longer scribble over a Live trail or move the dot back. Each
+  minute's hold took a fresh Wi-Fi grade fix, and a parked Android phone's
+  resting request keeps delivering under the live one. A hold on a window
+  already live now only moves its end, a fix far looser than the ones around
+  it is left out of the trail, and the minute's poll and the socket are merged
+  by time, so an answer that lost the race can't step the dot back.
+- During a firewall lockout a phone on Live tried again with every fix, a
+  request a second from the household's address. It now waits 2, 5 and then
+  10 seconds with every fix kept, and any retry already waiting keeps its
+  timer instead of going again with the next fix. The Live page sends at most
+  one ask in ten seconds however often you pull to refresh, and a `429` reads
+  as too many asks rather than as a server that couldn't be reached.
+- A Live page held open on somebody who had left the circle got a 404 every
+  minute, and one held open by somebody removed from the circle a 403. Both
+  are answered `watching: false`.
+- Live follows with a short straight glide rather than a fly animation every
+  second, and stops following once you move the map, with a Follow button to
+  pick them up again. On an iPhone, pulling down Control Centre no longer
+  closes the app's connection to the server. Only the background does.
+- A circle that sees somebody approximately got a frame every second while a
+  precise circle watched them on Live, which timed each step across a grid
+  line. It now sees the time of their last fix on a five minute clock and
+  hears of them only when the grid cell or those five minutes change.
+- Somebody signed in on a phone and a tablet had their dot pulled back home
+  every quarter hour by the tablet's parked report, and the tablet's battery
+  could raise the low battery alert. A device that says it is lying still no
+  longer takes the dot from another of theirs that is still reporting, and a
+  device on the move takes it at once. _Signed-in devices_ marks the one the
+  map follows, and `GET /auth/sessions` gains `onMap`.
+- A circle could be set to keep history for up to ten years while the server
+  pruned at its own ceiling, 90 days by default. The app now offers nothing
+  longer and says why. Server-info gains `maxHistoryRetentionDays`, and the
+  server stores a longer setting as the ceiling rather than refusing it.
+- An invite code that didn't work at sign-up left the new account in no circle
+  with no word of why. The register response gains `invite`, and the app says
+  what went wrong.
+- Invites said "Expires just now" whatever was left. A time ahead now reads
+  "in 3 days", and one of anything no longer reads "1 members", "1 users" or
+  "1 circles".
+- The server screen told an Android phone to type `http://`, which a store
+  build can't use for any server, a home one included. It suggests that only
+  where the build can use it, and otherwise says the app connects over HTTPS
+  only. The Play listing no longer says a local address over plain HTTP works.
+- On Android the setup checklist says "Allow all the time", the words on
+  Android's own screen, where it said the iPhone's "Always".
+- The units switch says miles, feet and mph rather than Fahrenheit, which the
+  app never shows.
+- The back button is named for a screen reader, toasts are read out as they
+  appear, and an error stays up at least six seconds, longer if it is long.
+- The app, the README, the docs, the landing page and the store text said
+  nothing goes anywhere but your server. They now name what does, which is map
+  tiles from the map host, street names from the phone's own geocoder, Apple's or
+  Google's, push, and an Android build with Firebase registering with Google
+  when it starts. The landing page says 1.2, and the docs describe the admin
+  portal.
 
 ## [1.2.0] - 2026-10-02
 

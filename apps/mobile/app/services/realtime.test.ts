@@ -161,6 +161,53 @@ describe("a location over the socket", () => {
     issues: [],
   })
 
+  // The 60 second poll can leave before a frame and be answered after it.
+  it("never steps the dot back to an older fix than the one it has", () => {
+    const newer = new Date().toISOString()
+    const older = new Date(Date.now() - 30_000).toISOString()
+    queryClient.setQueryData(queryKeys.presence("c1"), [presenceOf(newer)])
+    realtime.connect()
+    sockets[0]!.accept()
+
+    sockets[0]!.receive({ type: "location", circleId: "c1", presence: presenceOf(older) })
+    sockets[0]!.receive({ type: "presence", circleId: "c1", presences: [presenceOf(older)] })
+
+    const cached = queryClient.getQueryData<MemberPresence[]>(queryKeys.presence("c1"))!
+    expect(cached[0]!.recordedAt).toBe(newer)
+  })
+
+  it("hands every fix of a frame to a Live page open on that member", () => {
+    queryClient.setQueryData(queryKeys.liveTrail("c1", "sam"), [])
+    realtime.connect()
+    sockets[0]!.accept()
+    const fixes = [0, 1, 2].map((n) => ({
+      lat: 33.7 + n * 0.0001,
+      lon: 73.05,
+      recordedAt: new Date(Date.now() - (3 - n) * 1_000).toISOString(),
+      accuracyMeters: 5,
+    }))
+    sockets[0]!.receive({
+      type: "location",
+      circleId: "c1",
+      presence: presenceOf(fixes[2]!.recordedAt),
+      fixes,
+    })
+    expect(queryClient.getQueryData(queryKeys.liveTrail("c1", "sam"))).toEqual(fixes)
+  })
+
+  it("keeps no trail for a member nobody has open on Live", () => {
+    realtime.connect()
+    sockets[0]!.accept()
+    const fix = { lat: 33.7, lon: 73.05, recordedAt: new Date().toISOString(), accuracyMeters: 5 }
+    sockets[0]!.receive({
+      type: "location",
+      circleId: "c1",
+      presence: presenceOf(fix.recordedAt),
+      fixes: [fix],
+    })
+    expect(queryClient.getQueryData(queryKeys.liveTrail("c1", "sam"))).toBeUndefined()
+  })
+
   it("replaces that member's presence in the cache, recordedAt included", () => {
     const before = new Date(Date.now() - 12 * 60_000).toISOString()
     const now = new Date().toISOString()
@@ -173,6 +220,85 @@ describe("a location over the socket", () => {
     const cached = queryClient.getQueryData<MemberPresence[]>(queryKeys.presence("c1"))!
     expect(cached).toHaveLength(1)
     expect(cached[0]!.recordedAt).toBe(now)
+  })
+})
+
+describe("a socket that stops answering", () => {
+  const pings = (socket: FakeSocket) =>
+    socket.sent
+      .map((frame) => JSON.parse(frame) as { type: string })
+      .filter((f) => f.type === "ping")
+
+  // A half-open socket looks open, and Live sat on the 60 second poll.
+  it("is replaced within seconds while a Live page is open", () => {
+    realtime.connect()
+    sockets[0]!.accept()
+    const release = realtime.watchClosely()
+    jest.advanceTimersByTime(5_000)
+    expect(pings(sockets[0]!)).toHaveLength(1)
+    jest.advanceTimersByTime(4_000)
+    expect(sockets).toHaveLength(2)
+    release()
+  })
+
+  it("is left alone while it answers", () => {
+    realtime.connect()
+    sockets[0]!.accept()
+    const release = realtime.watchClosely()
+    for (let n = 0; n < 4; n += 1) {
+      jest.advanceTimersByTime(5_000)
+      sockets[0]!.receive({ type: "pong", serverTime: new Date().toISOString() })
+    }
+    jest.advanceTimersByTime(4_000)
+    expect(sockets).toHaveLength(1)
+    release()
+  })
+
+  it("is replaced on the slower beat when nothing is live", () => {
+    realtime.connect()
+    sockets[0]!.accept()
+    jest.advanceTimersByTime(25_000)
+    expect(pings(sockets[0]!)).toHaveLength(1)
+    jest.advanceTimersByTime(9_000)
+    expect(sockets).toHaveLength(1)
+    jest.advanceTimersByTime(2_000)
+    expect(sockets).toHaveLength(2)
+  })
+
+  it("asks a Live page's trail to fill in once a new one is open", () => {
+    realtime.connect()
+    sockets[0]!.accept()
+    sockets[0]!.drop()
+    jest.advanceTimersByTime(1_000)
+    sockets[1]!.accept()
+    expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["live-trail"] })
+  })
+})
+
+describe("whether the socket is down", () => {
+  it("is down from the moment it is wanted until a socket opens", () => {
+    expect(realtime.downSince).toBeNull()
+    realtime.connect()
+    expect(realtime.downSince).not.toBeNull()
+    sockets[0]!.accept()
+    expect(realtime.downSince).toBeNull()
+    sockets[0]!.drop()
+    expect(realtime.downSince).not.toBeNull()
+  })
+
+  it("is not down when it is not wanted, in the background or signed out", () => {
+    realtime.connect()
+    realtime.disconnect()
+    expect(realtime.downSince).toBeNull()
+  })
+
+  it("tells whoever listens when it changes", () => {
+    const heard = jest.fn()
+    const stop = realtime.onStatusChange(heard)
+    realtime.connect()
+    sockets[0]!.accept()
+    expect(heard).toHaveBeenCalledTimes(2)
+    stop()
   })
 })
 

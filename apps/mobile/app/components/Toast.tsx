@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { Pressable, View } from "react-native"
+import { AccessibilityInfo, Pressable, View } from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import Animated, { FadeInUp, FadeOutUp } from "react-native-reanimated"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -21,6 +21,9 @@ export function ToastHost() {
     if (!current) return
     if (current.tone === "success") haptics.success()
     else if (current.tone === "error") haptics.error()
+    // Focus never reaches a toast before it goes, so a screen reader would
+    // otherwise never hear why something failed.
+    AccessibilityInfo.announceForAccessibility(current.message)
   }, [current])
 
   if (!current) return null

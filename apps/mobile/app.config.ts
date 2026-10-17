@@ -76,6 +76,9 @@ module.exports = ({ config }: ConfigContext): Partial<ExpoConfig> => {
 
   return {
     ...config,
+    // Read back by utils/serverProbe.ts, so the server screen only suggests
+    // http:// to a build that can use it.
+    extra: { ...config.extra, plainHttp: allowInsecureHttp },
     android: {
       ...config.android,
       ...(googleServicesFile ? { googleServicesFile } : {}),

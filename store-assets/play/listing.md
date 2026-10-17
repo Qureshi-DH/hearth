@@ -77,7 +77,8 @@ user's server, and say it isn't shared.
 
 - Does your app collect or share any of the required user data types: Yes.
 - Is all user data encrypted in transit: Yes. Store builds refuse plain HTTP
-  (`usesCleartextTraffic` is false), except to a server on the local network.
+  to every host, a server on the local network included
+  (`usesCleartextTraffic` is false).
 - Do you provide a way for users to request that their data is deleted: Yes.
   Deletion URL: `https://qureshi-dh.github.io/hearth/delete-account.html`.
 
@@ -125,12 +126,12 @@ build, under 30 seconds each, and upload to YouTube as unlisted.
   while the phone's home screen is showing.
 
 The prominent disclosure must appear before the system prompt and name
-background use. Onboarding's location step does, but its text today says
-"Always", which is the iPhone word. Google's reviewers look for their own
-pattern, "Hearth collects location data to enable family location sharing,
-arrival alerts and crash detection even when the app is closed or not in
-use", and "Allow all the time" on Android. Change `onboarding` in
-`apps/mobile/app/i18n/en.ts` to that on Android before recording.
+background use. Onboarding's location step does, in the words Google's
+reviewers look for. On Android it reads "Hearth collects location data to
+enable family location sharing, arrival alerts and crash detection even when
+the app is closed or not in use", and its button and the rest of the setup
+checklist say "Allow all the time", as Android's own screen does. The iPhone
+keeps "Always". The text is `permissions` in `apps/mobile/app/i18n/en.ts`.
 
 ### Foreground service, location (`FOREGROUND_SERVICE_LOCATION`)
 

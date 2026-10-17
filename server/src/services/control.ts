@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto"
+
 import { eq, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import { userPresence } from "../db/schema"
-import { userTopic } from "../lib/bus"
+import { userTopic, type RealtimeBus } from "../lib/bus"
 import { getBus } from "../runtime"
 
 /**
@@ -32,6 +34,13 @@ export const CONTROL_HEARTBEAT_MS = 2 * 60 * 1000
  */
 export const CONTROL_ANSWER_GRACE_MS = 20 * 1000
 
+/**
+ * How long an ask waits for the phone to say it has it. The app answers the
+ * moment the frame lands, so a few seconds of nothing is a socket that is
+ * only open on paper, and the caller pushes instead of waiting out a hold.
+ */
+export const CONTROL_ACK_MS = 3_000
+
 export type ControlCommand = { command: "watch"; seconds: number } | { command: "wake" }
 
 export async function markControlSeen(db: Database, userId: string): Promise<void> {
@@ -50,6 +59,24 @@ export async function clearControlSeen(db: Database, userId: string): Promise<vo
 export const controlOpenSql = (fresherThan: Date) =>
   sql`${userPresence.controlSeenAt} > ${fresherThan.toISOString()}::timestamptz`
 
+/** Resolves true when the phone acknowledges this ask, false once `ms` pass without it. */
+function acknowledged(bus: RealtimeBus, userId: string, ask: string, ms: number) {
+  const topic = userTopic(userId)
+  return new Promise<boolean>((resolve) => {
+    const finish = (acked: boolean) => {
+      clearTimeout(timer)
+      stop()
+      resolve(acked)
+    }
+    const timer = setTimeout(() => finish(false), ms)
+    const stop = bus.onMessage((envelope) => {
+      if (envelope.topic !== topic) return
+      const payload = envelope.payload as { type?: unknown; ask?: unknown }
+      if (payload.type === "control_ack" && payload.ask === ask) finish(true)
+    })
+  })
+}
+
 /**
  * Sends the ask down the channel when one is open. True means the phone
  * has it; false means it has to go by push. The bus carries it to whichever
@@ -58,13 +85,16 @@ export const controlOpenSql = (fresherThan: Date) =>
  * The stamp alone is not believed. iOS suspends an app without closing its
  * socket, and the stamp stays fresh for minutes after, so an ask followed by
  * neither an upload nor a heartbeat within the grace means the channel is
- * gone, and the ask goes by push until the phone is heard from again.
+ * gone, and the ask goes by push until the phone is heard from again. A
+ * caller that cannot afford to find that out on its next ask passes
+ * `awaitAckMs`, and then true means the phone said it has it.
  */
 export async function sendControl(
   db: Database,
   userId: string,
   command: ControlCommand,
   now = new Date(),
+  { awaitAckMs }: { awaitAckMs?: number } = {},
 ): Promise<boolean> {
   const [row] = await db
     .select({
@@ -83,14 +113,18 @@ export async function sendControl(
   if (outstanding && now.getTime() - asked >= CONTROL_ANSWER_GRACE_MS) return false
   const bus = getBus()
   if (!bus) return false
-  await bus.publish(userTopic(userId), { type: "control", ...command })
   // Measured from the first ask left standing, so asks every few seconds
-  // cannot keep pushing the grace back.
+  // cannot keep pushing the grace back. Written before the ask goes, so an
+  // acknowledgement that lands first still reads as one.
   if (!outstanding) {
     await db
       .update(userPresence)
       .set({ controlAskedAt: now })
       .where(eq(userPresence.userId, userId))
   }
-  return true
+  const ask = randomUUID()
+  // Listening before the ask goes, so an answer quicker than the publish is not missed.
+  const acked = awaitAckMs != null ? acknowledged(bus, userId, ask, awaitAckMs) : null
+  await bus.publish(userTopic(userId), { type: "control", ...command, ask })
+  return acked ?? true
 }

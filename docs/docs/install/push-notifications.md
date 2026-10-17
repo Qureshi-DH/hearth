@@ -370,13 +370,17 @@ itself when to hand a background push to an app and may hold one back, which is
 why the open line matters more on an iPhone.
 
 A silent push that can't be delivered in time is dropped rather than arriving
-late: a watch after a minute, a wake after five. A late one would turn on the
+late, a watch or a wake after five minutes. A late one would turn on the
 GPS for somebody who stopped looking long ago. The server also holds pushes back
 so they don't pile up. Opening the map skips any phone that reported in the last
 two minutes and pushes each of the others at most once every ten minutes. A
 member's page skips a phone that reported in the last half minute and pushes it
-at most once a half minute. Live sends a new watch no sooner than every 90
-seconds, and no more than three in its ten-minute window.
+at most once a half minute. Before any push for those two, the server waits up
+to three seconds for the phone to say it has the ask over its own line, and
+pushes at once if it doesn't, so an iPhone iOS has suspended is reached in
+seconds. Live pushes again only once the phone has said nothing for 20 seconds
+and the last push went 90 seconds ago, and no more than three times in its
+ten-minute window.
 
 With `ntfy` or `none`, only the phone's own line carries an ask. That reaches
 any iPhone that's sharing and any Android phone that's moving. A parked Android

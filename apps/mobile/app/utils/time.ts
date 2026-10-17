@@ -1,8 +1,14 @@
 import { translate } from "@/i18n/translate"
 
+// The server takes fixes stamped up to five minutes ahead of its own clock, so
+// a past moment can arrive looking that far into the future.
+const CLOCK_SKEW_MS = 5 * 60_000
+
 export function relativeTime(iso: string | null | undefined, now: number = Date.now()): string {
   if (!iso) return translate("common:never")
-  const delta = Math.max(0, now - Date.parse(iso))
+  const ahead = Date.parse(iso) - now
+  if (ahead > CLOCK_SKEW_MS) return timeUntil(ahead)
+  const delta = Math.max(0, -ahead)
   const seconds = Math.round(delta / 1000)
   if (seconds < 45) return translate("common:justNow")
   const minutes = Math.round(seconds / 60)
@@ -11,6 +17,14 @@ export function relativeTime(iso: string | null | undefined, now: number = Date.
   if (hours < 24) return translate("time:hoursAgo", { count: hours })
   const days = Math.round(hours / 24)
   return translate("time:daysAgo", { count: days })
+}
+
+function timeUntil(deltaMs: number): string {
+  const minutes = Math.round(deltaMs / 60_000)
+  if (minutes < 60) return translate("time:inMinutes", { count: minutes })
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return translate("time:inHours", { count: hours })
+  return translate("time:inDays", { count: Math.round(hours / 24) })
 }
 
 export function formatClock(iso: string): string {

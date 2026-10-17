@@ -158,7 +158,7 @@ jest.mock("@react-navigation/native", () => {
   }
 })
 
-async function renderProfile() {
+async function renderProfile(userId = "omar") {
   const utils = render(
     <ThemeProvider>
       <SafeAreaProvider
@@ -169,7 +169,7 @@ async function renderProfile() {
       >
         <MemberDetailScreen
           navigation={mockNavigation as never}
-          route={{ name: "MemberDetail", params: { circleId: "c1", userId: "omar" } } as never}
+          route={{ name: "MemberDetail", params: { circleId: "c1", userId } } as never}
         />
       </SafeAreaProvider>
     </ThemeProvider>,
@@ -234,18 +234,37 @@ describe("Live on a member's profile", () => {
     expect(screen.getByText(/member:live/)).toBeTruthy()
   })
 
-  it("is not offered while they are parked", async () => {
+  // A parked phone goes live too, a fix a second, and somebody waiting at
+  // the door for a child to come out of school wants to see the moment the
+  // dot moves.
+  it("is offered while they are parked", async () => {
     mockPresence = [presenceFor("still")]
+    const screen = await renderProfile()
+    expect(screen.getByText(/member:live/)).toBeTruthy()
+  })
+
+  // The Live page says when a phone does not answer, and why.
+  it("is offered when their phone has said nothing for minutes", async () => {
+    mockPresence = [presenceFor("driving", 5 * 60_000)]
+    const screen = await renderProfile()
+    expect(screen.getByText(/member:live/)).toBeTruthy()
+  })
+
+  it("is not offered while they share approximately", async () => {
+    mockPresence = [{ ...presenceFor("still"), approximate: true, sharingState: "approximate" }]
     const screen = await renderProfile()
     expect(screen.queryByText(/member:live/)).toBeNull()
   })
 
-  // A phone that is travelling uploads every half minute. One that has said
-  // nothing for minutes is out of signal or asleep, and asking it to go live
-  // only spins on "asking". The button is a promise that it will work.
-  it("is not offered when their phone has said nothing for minutes, however it was last moving", async () => {
-    mockPresence = [presenceFor("driving", 5 * 60_000)]
+  it("is not offered while they are paused", async () => {
+    mockPresence = [{ ...presenceFor("still"), lat: null, lon: null, sharingState: "paused" }]
     const screen = await renderProfile()
+    expect(screen.queryByText(/member:live/)).toBeNull()
+  })
+
+  it("is never offered on your own profile", async () => {
+    mockPresence = [{ ...presenceFor("driving"), userId: "ana" }]
+    const screen = await renderProfile("ana")
     expect(screen.queryByText(/member:live/)).toBeNull()
   })
 
@@ -302,8 +321,6 @@ describe("what a quiet phone says about itself", () => {
     ]
     const screen = await renderProfile()
     expect(screen.getByText(/map:issue_background_restricted/)).toBeTruthy()
-    // A phone the OS holds back is not on the move, whatever it last said.
-    expect(screen.queryByText(/member:live/)).toBeNull()
   })
 })
 

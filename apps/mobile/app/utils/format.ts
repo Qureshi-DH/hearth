@@ -25,6 +25,25 @@ export function formatSpeed(
   return `${Math.round(value)} ${units === "imperial" ? "mph" : "km/h"}`
 }
 
+export const KM_PER_MILE = 1.609344
+
+/**
+ * The server keeps speed thresholds in whole km/h. A mile is longer than a
+ * kilometre, so rounding an mph figure to the nearest km/h always reads back
+ * as the same mph.
+ */
+export function speedFromKmh(kmh: number, units: Units): number {
+  return units === "imperial" ? Math.round(kmh / KM_PER_MILE) : kmh
+}
+
+export function speedToKmh(speed: number, units: Units): number {
+  return units === "imperial" ? Math.round(speed * KM_PER_MILE) : speed
+}
+
+export function speedUnit(units: Units): "mph" | "km/h" {
+  return units === "imperial" ? "mph" : "km/h"
+}
+
 export function formatDistance(meters: number, units: Units): string {
   return sharedFormatDistance(meters, units)
 }

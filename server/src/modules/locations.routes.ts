@@ -4,15 +4,16 @@ import {
   LOCATION_SOURCES,
   PRESENCE_ISSUES,
   type RefreshMemberResponse,
+  type TrailFix,
   type WatchResponse,
 } from "@hearth/shared"
-import { and, asc, eq, gte, isNotNull, isNull, lte, ne, sql } from "drizzle-orm"
+import { and, asc, eq, gt, gte, lte, ne, sql } from "drizzle-orm"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
 import { z } from "zod"
 
 import { getDb } from "../db/client"
 import { circleMembers, circles, locationPoints, sessions, trips, userPresence } from "../db/schema"
-import { badRequest, forbidden, notFound } from "../lib/errors"
+import { AppError, badRequest, forbidden } from "../lib/errors"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { getPushDriver } from "../runtime"
 import { ingestPoints, markHeard } from "../services/locations"
@@ -22,10 +23,11 @@ import {
   preciseStretch,
   presenceIssues,
 } from "../services/presence"
-import { CONTROL_ANSWER_GRACE_MS, sendControl } from "../services/control"
+import { sendControl } from "../services/control"
 import { enqueuePush, recentSilentPushes } from "../services/push"
 import { liveUntil } from "../services/sos"
 import { askPhoneForFix } from "../services/wake"
+import { endWatches, holdWatch, pushForWatch, watchesOf } from "../services/watch"
 
 // Accuracy fields are deliberately not constrained here. A platform sentinel
 // in one optional field would otherwise fail the whole array, and the client
@@ -70,16 +72,6 @@ const isoTimestamp = z
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000
 /** A phone heard from this recently has nothing new to say. */
 const FRESH_ENOUGH_MS = 2 * 60 * 1000
-/**
- * Watching is spent more freely: a page open on one person is worth more
- * than a glance at everyone. The page calls every minute to hold the window,
- * so a phone that has not uploaded since the first push is asked again on
- * the second call, and a phone that is not going to answer is not chased
- * all evening.
- */
-const WATCH_REPUSH_AFTER_MS = 90 * 1000
-const WATCH_PUSHES_PER_WINDOW = 3
-
 const nothingToWatch: WatchResponse = {
   watching: false,
   seconds: 0,
@@ -92,70 +84,6 @@ const nothingToWatch: WatchResponse = {
 
 export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
   const db = getDb()
-
-  /**
-   * What the watch did about the phone, in the words the Live page shows.
-   * "Held" is the ordinary answer on the calls that hold a window open, and
-   * the re-push is for a phone that has not uploaded since the first push,
-   * because that is the one the push may never have reached.
-   */
-  async function pushForWatch(
-    userId: string,
-    now: Date,
-    heardAt: Date | null,
-    seconds: number,
-    previousAskAt: Date | null,
-  ): Promise<WatchResponse["pushed"]> {
-    // A phone with its channel open has the ask already; nothing is pushed.
-    // Unless the last ask went down it and nothing has been heard since: a
-    // phone that took the ask uploads within seconds, so that silence is a
-    // channel that is not what its stamp says.
-    const unanswered =
-      previousAskAt != null &&
-      now.getTime() - previousAskAt.getTime() >= CONTROL_ANSWER_GRACE_MS &&
-      now.getTime() - previousAskAt.getTime() <= seconds * 1000 &&
-      (heardAt == null || heardAt.getTime() <= previousAskAt.getTime())
-    if (!unanswered && (await sendControl(db, userId, { command: "watch", seconds }, now))) {
-      return "socket"
-    }
-    if (getPushDriver()?.provider !== "expo") return "unsupported"
-    const [device] = await db
-      .select({ id: sessions.id })
-      .from(sessions)
-      .where(
-        and(
-          eq(sessions.userId, userId),
-          isNull(sessions.revokedAt),
-          eq(sessions.pushProvider, "expo"),
-          isNotNull(sessions.pushToken),
-        ),
-      )
-      .limit(1)
-    if (!device) return "no_device"
-
-    const pushes = await recentSilentPushes(
-      db,
-      userId,
-      "watch",
-      new Date(now.getTime() - seconds * 1000),
-    )
-    if (pushes.length > 0) {
-      const newest = pushes[0]!
-      const first = pushes[pushes.length - 1]!
-      const answered = heardAt != null && heardAt.getTime() > first.createdAt.getTime()
-      if (
-        answered ||
-        pushes.length >= WATCH_PUSHES_PER_WINDOW ||
-        now.getTime() - newest.createdAt.getTime() < WATCH_REPUSH_AFTER_MS
-      ) {
-        return "held"
-      }
-    }
-    await enqueuePush(db, [
-      { userId, title: "", body: "", silent: true, data: { type: "watch", seconds } },
-    ])
-    return "sent"
-  }
 
   app.post(
     "/locations/batch",
@@ -382,16 +310,20 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         description:
           "Called while someone has a member's Live page open. The member's phone is asked " +
           "to report at full accuracy, a fix a second, for the watch window, over its control " +
-          "channel when it has one open, by silent push otherwise, and by its next upload " +
-          "reply, and the page keeps calling to hold it. A parked phone goes live too. " +
-          "Only members sharing precisely can be watched. The reply says what " +
-          "became of the ask: `socket` when the channel carried it, `sent` when a push was queued by this call, " +
-          "`held` when the phone was pushed moments ago or has uploaded since, `no_device` " +
-          "when the member has no push token, `unsupported` when the push provider cannot " +
-          "carry a silent push. A phone that has not uploaded since the first push is asked " +
-          "again after ninety seconds, three times per window at most. `lastFixAt` is the " +
-          "last position, `lastHeardAt` the last upload of any kind, and `issues` what the " +
-          "phone itself said stands between it and reporting.",
+          "channel when it has one open and says it has the ask within three seconds, by " +
+          "silent push otherwise, and by its next upload reply, and the page keeps calling to " +
+          "hold it. Each viewer holds a window of their own, and the phone's is the latest of " +
+          "them. A parked phone goes live too. Only members sharing precisely can be watched, " +
+          "and anyone else, somebody who has left the circle, or a caller no longer in it, is " +
+          "answered `watching: false`. " +
+          "The reply says what became of the ask: `socket` when the channel carried it, `sent` " +
+          "when a push was queued by this call, `held` when the phone was pushed moments ago or " +
+          "is uploading, `no_device` when the member has no push token, `unsupported` when the " +
+          "push provider cannot carry a silent push. A phone that has said nothing for twenty " +
+          "seconds is pushed again once the last push is ninety seconds old, three times per " +
+          "window at most. `lastFixAt` is the last position, `lastHeardAt` the last upload of " +
+          "any kind, `issues` what the phone itself said stands between it and reporting, and " +
+          "`supports` that this server takes the release and fills the trail.",
         params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
         response: {
           200: z.object({
@@ -402,13 +334,26 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
             lastHeardAt: z.string().nullable(),
             activity: z.enum(ACTIVITY_TYPES).nullable(),
             issues: z.array(z.enum(PRESENCE_ISSUES)),
+            supports: z.object({ release: z.boolean(), trail: z.boolean() }).optional(),
           }),
         },
       },
     },
     async (request) => {
       const auth = requireAuth(request)
-      const membership = await requireMembership(request, request.params.circleId)
+      // A Live page left open by somebody just removed from the circle holds
+      // every minute, and refusing each one is a 4xx in ordinary use. The
+      // answer says nothing about the member either way.
+      const membership = await requireMembership(request, request.params.circleId).catch(
+        (error: unknown) => {
+          if (error instanceof AppError && error.statusCode === 403) return null
+          throw error
+        },
+      )
+      if (!membership) {
+        await endWatches(db, watchesOf(request.params.userId, auth.userId), new Date())
+        return nothingToWatch
+      }
       if (request.params.userId === auth.userId) {
         throw badRequest("You do not need to watch yourself.")
       }
@@ -426,55 +371,45 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           ),
         )
         .limit(1)
-      if (!target) throw notFound("That person is not in this circle.")
-      const state = effectiveSharingState(
-        target.sharingState,
-        target.pausedUntil,
-        new Date(),
-        target.resumeToState,
-      )
+      const now = new Date()
+      const state = target
+        ? effectiveSharingState(target.sharingState, target.pausedUntil, now, target.resumeToState)
+        : null
       // Approximate is a choice about how closely they want to be seen, and
       // live updates from their phone would be thrown away by the projection
-      // anyway. The rest of the reply is precise information too.
-      if (state !== "precise") return nothingToWatch
+      // anyway. The rest of the reply is precise information too. The page
+      // holds every minute, including the one after she left the circle, and
+      // a 404 there is a 4xx in ordinary use.
+      if (state !== "precise") {
+        await endWatches(db, watchesOf(request.params.userId, auth.userId), now)
+        return nothingToWatch
+      }
 
       const seconds = DEFAULTS.watchWindowSeconds
-      const now = new Date()
-      // When the last ask was made, from the window it opened. The page holds
-      // its window with an ask a minute, and whether the phone answered the
-      // last one decides how this one is sent.
-      const [before] = await db
-        .select({ watchedUntil: userPresence.watchedUntil })
-        .from(userPresence)
-        .where(eq(userPresence.userId, request.params.userId))
-        .limit(1)
-      const previousAskAt = before?.watchedUntil
-        ? new Date(before.watchedUntil.getTime() - seconds * 1000)
-        : null
       // The window is recorded whatever the push does. A phone in the middle
       // of a drive uploads with every fix and reads it off the reply, so the
       // push is the fast path for a phone that has nothing to say yet.
-      const watchedUntil = new Date(now.getTime() + seconds * 1000)
+      await holdWatch(db, {
+        userId: request.params.userId,
+        viewerId: auth.userId,
+        circleId: membership.circleId,
+        seconds,
+        now,
+      })
       const [presence] = await db
-        .insert(userPresence)
-        .values({ userId: request.params.userId, watchedUntil })
-        .onConflictDoUpdate({ target: userPresence.userId, set: { watchedUntil } })
-        .returning({
+        .select({
           recordedAt: userPresence.recordedAt,
           lastHeardAt: userPresence.lastHeardAt,
           activity: userPresence.activity,
           health: userPresence.health,
         })
+        .from(userPresence)
+        .where(eq(userPresence.userId, request.params.userId))
+        .limit(1)
       const heardAt = [presence?.recordedAt, presence?.lastHeardAt]
         .filter((at): at is Date => at != null)
         .sort((a, b) => b.getTime() - a.getTime())[0]
-      const pushed = await pushForWatch(
-        request.params.userId,
-        now,
-        heardAt ?? null,
-        seconds,
-        previousAskAt,
-      )
+      const pushed = await pushForWatch(db, request.params.userId, now, heardAt ?? null, seconds)
 
       return {
         watching: true,
@@ -484,7 +419,32 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         lastHeardAt: heardAt?.toISOString() ?? null,
         activity: presence?.activity ?? null,
         issues: presenceIssues(presence?.health, presence?.recordedAt),
+        supports: { release: true, trail: true },
       } satisfies WatchResponse
+    },
+  )
+
+  app.delete(
+    "/circles/:circleId/members/:userId/watch",
+    {
+      preHandler: app.authenticate,
+      schema: {
+        tags: ["locations"],
+        summary: "Stop following one person live",
+        description:
+          "Called when a Live page closes or the app goes to the background. Takes away this " +
+          "viewer's hold on the member's watch window. When nobody else is watching, the " +
+          "window ends, and the phone hears it in its next upload reply and over its control " +
+          "channel as `watch` with no seconds left, unless the member has an SOS open. Only " +
+          "the caller's own hold is touched, so this is always answered 200.",
+        params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
+        response: { 200: z.object({ ok: z.literal(true) }) },
+      },
+    },
+    async (request) => {
+      const auth = requireAuth(request)
+      await endWatches(db, watchesOf(request.params.userId, auth.userId))
+      return { ok: true as const }
     },
   )
 
@@ -615,6 +575,93 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         batteryLevel: row.batteryLevel,
         tripId: row.tripId,
       }))
+    },
+  )
+
+  app.get(
+    "/circles/:circleId/members/:userId/live-trail",
+    {
+      preHandler: app.authenticate,
+      schema: {
+        tags: ["locations"],
+        summary: "The fixes a Live page missed",
+        description:
+          "What a Live page fills its trail from when it comes back to the front or its socket " +
+          "reconnects. The member's fixes after `since`, oldest first, from the device the map " +
+          "follows, and from no further back than the watch window. The same fixes reached the " +
+          "page as they arrived, so this works whether or not the circle keeps history. Empty " +
+          "for a member sharing approximately or not at all, and for somebody who has left " +
+          "the circle.",
+        params: z.object({ circleId: z.string().uuid(), userId: z.string().uuid() }),
+        querystring: z.object({ since: isoTimestamp }),
+        response: {
+          200: z.array(
+            z.object({
+              lat: z.number(),
+              lon: z.number(),
+              recordedAt: z.string(),
+              accuracyMeters: z.number().nullable(),
+            }),
+          ),
+        },
+      },
+    },
+    async (request) => {
+      const auth = requireAuth(request)
+      const { circleId, userId } = request.params
+      await requireMembership(request, circleId)
+      const now = new Date()
+      let earliest = now.getTime() - DEFAULTS.watchWindowSeconds * 1000
+
+      if (userId !== auth.userId) {
+        const [target] = await db
+          .select({
+            sharingState: circleMembers.sharingState,
+            pausedUntil: circleMembers.pausedUntil,
+            resumeToState: circleMembers.resumeToState,
+            preciseSince: circleMembers.preciseSince,
+            joinedAt: circleMembers.joinedAt,
+          })
+          .from(circleMembers)
+          .where(and(eq(circleMembers.circleId, circleId), eq(circleMembers.userId, userId)))
+          .limit(1)
+        if (!target) return []
+        const stretch = preciseStretch(target, now)
+        if (!stretch) return []
+        earliest = Math.max(earliest, target.joinedAt.getTime(), stretch.since?.getTime() ?? 0)
+      }
+
+      const [presence] = await db
+        .select({ deviceId: userPresence.deviceId })
+        .from(userPresence)
+        .where(eq(userPresence.userId, userId))
+        .limit(1)
+      const from = new Date(Math.max(Date.parse(request.query.since), earliest))
+      const rows = await db
+        .select({
+          lat: locationPoints.lat,
+          lon: locationPoints.lon,
+          recordedAt: locationPoints.recordedAt,
+          accuracyMeters: locationPoints.accuracyMeters,
+        })
+        .from(locationPoints)
+        .where(
+          and(
+            eq(locationPoints.userId, userId),
+            gt(locationPoints.recordedAt, from),
+            lte(locationPoints.recordedAt, now),
+            presence?.deviceId ? eq(locationPoints.deviceId, presence.deviceId) : undefined,
+          ),
+        )
+        .orderBy(asc(locationPoints.recordedAt))
+        .limit(DEFAULTS.watchWindowSeconds * 2)
+
+      return rows.map((row) => ({
+        lat: row.lat,
+        lon: row.lon,
+        recordedAt: row.recordedAt.toISOString(),
+        accuracyMeters: row.accuracyMeters,
+      })) satisfies TrailFix[]
     },
   )
 

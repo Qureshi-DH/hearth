@@ -7,6 +7,7 @@ export const queryKeys = {
   circle: (circleId: string) => ["circle", circleId] as const,
   members: (circleId: string) => ["members", circleId] as const,
   presence: (circleId: string) => ["presence", circleId] as const,
+  liveTrail: (circleId: string, userId: string) => ["live-trail", circleId, userId] as const,
   places: (circleId: string) => ["places", circleId] as const,
   placeEvents: (circleId: string, placeId: string) => ["place-events", circleId, placeId] as const,
   events: (circleId: string) => ["events", circleId] as const,

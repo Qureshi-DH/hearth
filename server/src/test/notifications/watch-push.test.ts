@@ -181,6 +181,57 @@ describe("the watch reply says whether the phone was reached", () => {
     expect(await watchRows()).toHaveLength(1)
   })
 
+  // The phone answered the push and went live, then Android killed its live
+  // service mid window. Answered once is not answering now, and the next
+  // hold asks again rather than waiting out the window.
+  it("asks again when the phone answered and then went quiet", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const { member, watch } = await family()
+    await giveToken(member.user.id)
+    expect((await watch()).pushed).toBe("sent")
+
+    const upload = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/locations/batch",
+      headers: member.headers,
+      payload: {
+        points: [{ ...ROAD, recordedAt: minutesAgo(0), accuracyMeters: 8, speedMps: 0 }],
+      },
+    })
+    expect(upload.statusCode).toBe(200)
+    expect((await watch()).pushed).toBe("held")
+
+    // Nothing for half a minute since, and the push went a minute and a half ago.
+    await getDb().execute(
+      sql`update user_presence
+          set recorded_at = recorded_at - interval '30 seconds',
+              last_heard_at = last_heard_at - interval '30 seconds'
+          where user_id = ${member.user.id}::uuid`,
+    )
+    await ageWatchPushes(91)
+    expect((await watch()).pushed).toBe("sent")
+    expect(await watchRows()).toHaveLength(2)
+  })
+
+  it("does not ask again while the phone is talking, however old the push", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const { member, watch } = await family()
+    await giveToken(member.user.id)
+    expect((await watch()).pushed).toBe("sent")
+    await ageWatchPushes(300)
+    const upload = await ctx.app.inject({
+      method: "POST",
+      url: "/api/v1/locations/batch",
+      headers: member.headers,
+      payload: {
+        points: [{ ...ROAD, recordedAt: minutesAgo(0), accuracyMeters: 8, speedMps: 0 }],
+      },
+    })
+    expect(upload.statusCode).toBe(200)
+    expect((await watch()).pushed).toBe("held")
+    expect(await watchRows()).toHaveLength(1)
+  })
+
   it("does not count a push that never went", async () => {
     setRuntime({ pushDriver: new ExpoLikeDriver() })
     const { member, watch } = await family()
@@ -277,13 +328,16 @@ describe("the silent push envelope", () => {
     data: { type },
   })
 
-  it("gives a watch a minute to arrive, at normal priority on iOS", async () => {
+  // A watch only goes by push when the channel did not take it, which on an
+  // iPhone is often an app iOS has to relaunch. That can take longer than a
+  // minute, and the viewer is still on the page for most of the window.
+  it("gives a watch five minutes to arrive, at normal priority on iOS", async () => {
     const driver = stubExpo()
     const before = Math.floor(Date.now() / 1000)
     await driver.send(target("ios"), silent("watch"))
-    expect(sent[0]).toMatchObject({ ttl: 60, priority: "normal", _contentAvailable: true })
-    expect(sent[0]!.expiration as number).toBeGreaterThanOrEqual(before + 60)
-    expect(sent[0]!.expiration as number).toBeLessThanOrEqual(before + 62)
+    expect(sent[0]).toMatchObject({ ttl: 300, priority: "normal", _contentAvailable: true })
+    expect(sent[0]!.expiration as number).toBeGreaterThanOrEqual(before + 300)
+    expect(sent[0]!.expiration as number).toBeLessThanOrEqual(before + 302)
   })
 
   it("keeps Android at high priority and gives a wake five minutes", async () => {

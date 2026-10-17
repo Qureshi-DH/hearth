@@ -97,8 +97,15 @@ export const DevicesScreen: FC<AppStackScreenProps<"Devices">> = ({ navigation }
                       : "phone-portrait-outline"
                 }
                 right={
-                  session.current ? (
-                    <Pill text={translate("settings:thisDevice")} tone="info" />
+                  session.current || session.onMap ? (
+                    <View style={{ flexDirection: "row", gap: theme.spacing.xxs }}>
+                      {session.onMap ? (
+                        <Pill text={translate("settings:onMap")} tone="tint" icon="location" />
+                      ) : null}
+                      {session.current ? (
+                        <Pill text={translate("settings:thisDevice")} tone="info" />
+                      ) : null}
+                    </View>
                   ) : undefined
                 }
                 onPress={
@@ -122,6 +129,17 @@ export const DevicesScreen: FC<AppStackScreenProps<"Devices">> = ({ navigation }
           })}
         </ListGroup>
       )}
+      {sessions && sessions.length > 1 && sessions.some((session) => session.onMap) ? (
+        <Text
+          tx="settings:onMapNote"
+          size="xs"
+          style={{
+            color: theme.colors.textDim,
+            paddingHorizontal: theme.spacing.lg,
+            marginTop: theme.spacing.sm,
+          }}
+        />
+      ) : null}
     </Screen>
   )
 }

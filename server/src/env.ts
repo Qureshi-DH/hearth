@@ -43,6 +43,8 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+const webAddress = z.string().trim().refine(isHttpUrl, "must be an http or https URL")
+
 const mapStyle = z.object({
   id: z.string().trim().min(1).max(64),
   name: z.string().trim().min(1).max(40),
@@ -113,6 +115,13 @@ const schema = z.object({
     }),
   /** Deep-link scheme registered by the mobile app. */
   APP_SCHEME: z.string().default("hearth"),
+  /**
+   * Where the join page sends somebody who does not have the app yet, such as
+   * a store listing, a TestFlight invite or an APK. Unset, it says to ask
+   * whoever sent the invite.
+   */
+  IOS_APP_URL: webAddress.optional(),
+  ANDROID_APP_URL: webAddress.optional(),
   SERVER_NAME: z.string().default("Hearth"),
   TRUST_PROXY: bool.default(false),
   /** Comma-separated allowlist. Empty blocks every browser origin, which native clients never need. */

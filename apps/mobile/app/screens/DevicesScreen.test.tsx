@@ -104,6 +104,24 @@ describe("DevicesScreen", () => {
     expect(getByLabelText("settings:devicesLoading")).toBeTruthy()
   })
 
+  // Somebody with a phone and a tablet is one dot, and the dot follows one
+  // of them. Without saying which, a tablet at home looked like the phone.
+  it("names the device your circles' map is following", async () => {
+    mockSessions = [
+      session({ id: "phone", deviceName: "Pixel", current: true, onMap: true }),
+      session({ id: "tablet", deviceName: "Kitchen tablet", onMap: false }),
+    ]
+    const { getAllByText, getByText } = await renderScreen()
+    expect(getAllByText("settings:onMap")).toHaveLength(1)
+    expect(getByText(/settings:onMapNote/)).toBeTruthy()
+  })
+
+  it("says nothing about the map on a server that does not tell", async () => {
+    mockSessions = [session({ id: "phone", deviceName: "Pixel", current: true })]
+    const { queryByText } = await renderScreen()
+    expect(queryByText("settings:onMap")).toBeNull()
+  })
+
   it("says the list could not load, and why, with a way to try again", async () => {
     mockSessions = undefined
     mockStatus = {

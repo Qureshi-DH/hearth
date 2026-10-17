@@ -39,6 +39,8 @@ import type {
   TripDetailResponse,
   NudgeResponse,
   RefreshMemberResponse,
+  RegisterResponse,
+  TrailFix,
   WatchResponse,
 } from "@hearth/shared"
 
@@ -90,7 +92,7 @@ export function createEndpoints(api: ApiClient) {
         displayName: string
         inviteCode?: string
         device: DeviceInfo
-      }) => api.post<AuthResponse>("/auth/register", body, { auth: false }),
+      }) => api.post<RegisterResponse>("/auth/register", body, { auth: false }),
       login: (body: { email: string; password: string; device: DeviceInfo }) =>
         api.post<AuthResponse>("/auth/login", body, { auth: false }),
       logout: () => api.post<{ ok: true }>("/auth/logout"),
@@ -170,13 +172,23 @@ export function createEndpoints(api: ApiClient) {
     },
 
     locations: {
-      upload: (points: LocationFixInput[]) =>
-        api.post<LocationBatchResponse>("/locations/batch", { points }, { timeoutMs: 30_000 }),
+      upload: (points: LocationFixInput[], options: { timeoutMs?: number } = {}) =>
+        api.post<LocationBatchResponse>(
+          "/locations/batch",
+          { points },
+          { timeoutMs: options.timeoutMs ?? 30_000 },
+        ),
       presence: (circleId: string) => api.get<MemberPresence[]>(`/circles/${circleId}/locations`),
       refresh: (circleId: string) =>
         api.post<{ asked: number }>(`/circles/${circleId}/locations/refresh`, {}),
       watch: (circleId: string, userId: string) =>
         api.post<WatchResponse>(`/circles/${circleId}/members/${userId}/watch`, {}),
+      unwatch: (circleId: string, userId: string) =>
+        api.delete<{ ok: true }>(`/circles/${circleId}/members/${userId}/watch`),
+      liveTrail: (circleId: string, userId: string, since: string) =>
+        api.get<TrailFix[]>(`/circles/${circleId}/members/${userId}/live-trail`, {
+          query: { since },
+        }),
       refreshMember: (circleId: string, userId: string) =>
         api.post<RefreshMemberResponse>(`/circles/${circleId}/members/${userId}/refresh`, {}),
       history: (

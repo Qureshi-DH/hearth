@@ -239,7 +239,7 @@ describe("a phone whose battery was nearly flat", () => {
     await reportHealth(user.headers, { locationPermission: "foreground" })
     await tick()
     const [news] = await offlineNews(user.user.id)
-    expect(news?.summary).toContain("location permission is not set to Always")
+    expect(news?.summary).toContain("location access is not allowed all the time")
   })
 })
 

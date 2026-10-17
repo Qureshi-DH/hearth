@@ -1,4 +1,4 @@
-import { isLocalHost, serverCandidates } from "./serverAddress"
+import { isLocalHost, sameServer, serverCandidates } from "./serverAddress"
 
 describe("serverCandidates", () => {
   it("never tries plain HTTP for a public name whose HTTPS failed", () => {
@@ -49,4 +49,15 @@ describe("isLocalHost", () => {
       expect(isLocalHost(host)).toBe(false)
     },
   )
+})
+
+describe("sameServer", () => {
+  it("treats a trailing slash and the host's case as the same server", () => {
+    expect(sameServer("https://Hearth.example.com/", "https://hearth.example.com")).toBe(true)
+  })
+
+  it("tells two servers apart", () => {
+    expect(sameServer("https://a.example.com", "https://b.example.com")).toBe(false)
+    expect(sameServer("http://hearth.example.com", "https://hearth.example.com")).toBe(false)
+  })
 })

@@ -3,12 +3,21 @@ import { createRequire } from "node:module"
 import type { WsServerMessage } from "@hearth/shared"
 import { sql } from "drizzle-orm"
 import type { AddressInfo } from "node:net"
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
 
 import { getDb } from "../../db/client"
 import { wakeQuietPhones } from "../../jobs/scheduler"
-import { CONTROL_FRESH_MS, CONTROL_HEARTBEAT_MS } from "../../services/control"
-import { registerUser, startTestApp, type TestContext } from "../helpers"
+import { getPushDriver, setRuntime } from "../../runtime"
+import { CONTROL_ACK_MS, CONTROL_FRESH_MS, CONTROL_HEARTBEAT_MS } from "../../services/control"
+import type { DeliveryResult, PushDriver } from "../../services/push"
+import { enablePush, registerUser, startTestApp, type TestContext } from "../helpers"
+
+class ExpoLikeDriver implements PushDriver {
+  readonly provider = "expo" as const
+  async send(): Promise<DeliveryResult> {
+    return { ok: true }
+  }
+}
 
 /**
  * An awake phone keeps a control channel open, and an ask (a watch, a profile
@@ -44,10 +53,22 @@ function connect(token: string) {
   return { socket, messages, opened }
 }
 
-/** The phone's own channel: a socket that has declared itself the device. */
-async function openControl(token: string) {
+/**
+ * The phone's own channel, a socket that has declared itself the device. The
+ * app acknowledges every ask it is sent. One that does not is a socket iOS
+ * suspended with the app, or an app from before acknowledgements.
+ */
+async function openControl(token: string, { ack = true } = {}) {
   const client = connect(token)
   expect(await client.opened).toBe(true)
+  if (ack) {
+    client.socket.on("message", (data: Buffer) => {
+      const message = JSON.parse(data.toString()) as WsServerMessage
+      if (message.type === "control" && message.ask) {
+        client.socket.send(JSON.stringify({ type: "control", ack: message.ask }))
+      }
+    })
+  }
   client.socket.send(JSON.stringify({ type: "control" }))
   await waitFor(() => client.messages.some((m) => m.type === "control" && m.command === "ready"))
   return client
@@ -133,8 +154,15 @@ afterAll(async () => {
   await ctx.close()
 })
 
+let originalDriver: PushDriver | null = null
+
 beforeEach(async () => {
   await ctx.reset()
+  originalDriver = getPushDriver()
+})
+
+afterEach(() => {
+  setRuntime({ pushDriver: originalDriver })
 })
 
 async function family() {
@@ -172,41 +200,33 @@ describe("a watch over the control channel", () => {
       type: "control",
       command: "watch",
       seconds: 600,
+      ask: expect.any(String),
     })
     expect(await outboxRows("watch")).toBe(0)
     phone.socket.close()
   })
 
-  it("falls back to the push on the next hold when the channel ask went unanswered", async () => {
-    // The stamp says the channel is open, but a socket iOS let die without a
-    // close keeps its stamp for minutes. An ask that got no answer in the
-    // time an answer takes is not sent down it again.
+  // A socket iOS suspended with the app keeps its stamp for minutes, and an
+  // ask down it reaches nobody. No acknowledgement within a few seconds and
+  // the ask goes by push at once, not on the next hold a minute later.
+  it("pushes at once when the phone does not acknowledge the ask", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
     const { viewer, driver, circle } = await family()
-    const phone = await openControl(driver.accessToken)
+    await enablePush(driver.user.id, "ExponentPushToken[x]")
+    const phone = await openControl(driver.accessToken, { ack: false })
 
-    const first = await ctx.app.inject({
+    const started = Date.now()
+    const watch = await ctx.app.inject({
       method: "POST",
       url: `/api/v1/circles/${circle.id}/members/${driver.user.id}/watch`,
       headers: viewer.headers,
     })
-    expect(first.json().pushed).toBe("socket")
-    expect(await waitFor(() => controlCommands(phone.messages).length === 1)).toBe(true)
-
-    // A minute on, with nothing heard from the phone since.
-    await getDb().execute(
-      sql`update user_presence set watched_until = watched_until - interval '60 seconds'
-          where user_id = ${driver.user.id}::uuid`,
-    )
-    const hold = await ctx.app.inject({
-      method: "POST",
-      url: `/api/v1/circles/${circle.id}/members/${driver.user.id}/watch`,
-      headers: viewer.headers,
-    })
-    // The test server has no push provider; what matters is that the channel
-    // was not trusted again.
-    expect(hold.json().pushed).toBe("unsupported")
-    await new Promise((resolve) => setTimeout(resolve, 150))
+    const took = Date.now() - started
+    expect(watch.json().pushed).toBe("sent")
+    expect(took).toBeGreaterThanOrEqual(CONTROL_ACK_MS - 100)
+    expect(took).toBeLessThan(CONTROL_ACK_MS + 2_000)
     expect(controlCommands(phone.messages)).toHaveLength(1)
+    expect(await outboxRows("watch")).toBe(1)
     phone.socket.close()
   })
 
@@ -283,6 +303,22 @@ describe("a profile opened", () => {
     phone.socket.close()
   })
 
+  it("pushes at once when the phone does not acknowledge the ask", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const { viewer, driver, circle } = await family()
+    await enablePush(driver.user.id, "ExponentPushToken[x]")
+    const phone = await openControl(driver.accessToken, { ack: false })
+
+    const ask = await ctx.app.inject({
+      method: "POST",
+      url: `/api/v1/circles/${circle.id}/members/${driver.user.id}/refresh`,
+      headers: viewer.headers,
+    })
+    expect(ask.json()).toEqual({ asked: "pushed" })
+    expect(await outboxRows("wake")).toBe(1)
+    phone.socket.close()
+  })
+
   it("does not ask a phone heard from in the last half minute", async () => {
     const { viewer, driver, circle } = await family()
     await upload(driver.headers, 0)
@@ -311,6 +347,8 @@ describe("a profile opened", () => {
         headers: viewer.headers,
       })
     expect((await ask()).json()).toEqual({ asked: "socket" })
+    // The acknowledgement stamps the channel as it lands, after the reply.
+    await new Promise((resolve) => setTimeout(resolve, 150))
     await getDb().execute(sql`
       update user_presence
       set control_asked_at = now() - interval '30 seconds',

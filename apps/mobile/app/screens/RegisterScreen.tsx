@@ -8,10 +8,12 @@ import { TextField } from "@/components/TextField"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { ApiError, endpoints } from "@/services/api"
+import { alert } from "@/stores/alert"
 import { describeDevice, useAuthStore } from "@/stores/auth"
 import { tokenVault } from "@/stores/tokenVault"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
+import { inviteRefusalText } from "@/utils/inviteCode"
 import { useHeader } from "@/utils/useHeader"
 
 export const RegisterScreen: FC<AppStackScreenProps<"Register">> = ({ navigation, route }) => {
@@ -57,6 +59,16 @@ export const RegisterScreen: FC<AppStackScreenProps<"Register">> = ({ navigation
       })
       setPendingInvite(null)
       signedIn(response.user)
+      // The account is made either way, and without this the person lands on
+      // an empty map with no word of why.
+      const invite = response.invite
+      if (invite && !invite.joined) {
+        const why = inviteRefusalText(invite.reason) ?? invite.message
+        alert(
+          translate("register:inviteFailed"),
+          `${why} ${translate("register:inviteFailedNext")}`,
+        )
+      }
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : translate("errors:generic"))
     } finally {

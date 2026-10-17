@@ -265,6 +265,8 @@ jest.mock("../stores/tracking", () => {
   useTrackingStore.getState = () => ({ setPermission: () => {} })
   return { useTrackingStore }
 })
+let mockSocketDown = false
+jest.mock("../hooks/useRealtimeDown", () => ({ useRealtimeDown: () => mockSocketDown }))
 const mockRefresh = jest.fn(async (_circleId: string) => ({ asked: 0 }))
 jest.mock("../services/api", () => ({
   endpoints: { locations: { refresh: (circleId: string) => mockRefresh(circleId) } },
@@ -528,6 +530,24 @@ describe("MapScreen member sheet", () => {
     expect(controls.style.opacity).toBe(1)
     expect(controls.node.props.pointerEvents).toBe("box-none")
     expect(controls.node.props.accessibilityElementsHidden).toBe(false)
+  })
+})
+
+describe("the map's live connection", () => {
+  afterEach(() => {
+    mockSocketDown = false
+  })
+
+  // Dots that stop moving read as the people, not the connection.
+  it("says so quietly when it has been down a while", async () => {
+    mockSocketDown = true
+    const screen = await renderMap()
+    expect(screen.getByText(/map:reconnecting/)).toBeTruthy()
+  })
+
+  it("says nothing while it is up", async () => {
+    const screen = await renderMap()
+    expect(screen.queryByText(/map:reconnecting/)).toBeNull()
   })
 })
 

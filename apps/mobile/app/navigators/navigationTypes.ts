@@ -24,7 +24,8 @@ export type AppStackParamList = {
   // Main
   Main: NavigatorScreenParams<MainTabParamList> | undefined
   CreateCircle: undefined
-  JoinCircle: { code?: string } | undefined
+  /** `server` is the one the invite link named, when it named one. */
+  JoinCircle: { code?: string; server?: string } | undefined
   MemberDetail: { circleId: string; userId: string }
   Live: { circleId: string; userId: string }
   PlaceEditor: { circleId: string; placeId?: string; lat?: number; lon?: number; name?: string }

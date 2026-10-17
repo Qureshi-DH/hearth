@@ -17,6 +17,8 @@ interface AuthState {
   /** Stable per install. The server keys sessions and dedupes fixes on it. */
   deviceId: string
   pendingInviteCode: string | null
+  /** The server the pending invite's link named, to fill the server field with. */
+  pendingInviteServer: string | null
 
   setServer(url: string, info: ServerInfo): void
   setServerInfo(info: ServerInfo): void
@@ -24,7 +26,7 @@ interface AuthState {
   signedIn(user: CurrentUser): void
   updateUser(patch: Partial<CurrentUser>): void
   signedOut(): void
-  setPendingInvite(code: string | null): void
+  setPendingInvite(code: string | null, server?: string | null): void
   markBooted(): void
 }
 
@@ -44,6 +46,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       deviceId: generateDeviceId(),
       pendingInviteCode: null,
+      pendingInviteServer: null,
 
       setServer: (url, info) => set({ serverUrl: url.replace(/\/+$/, ""), serverInfo: info }),
       setServerInfo: (info) => set({ serverInfo: info }),
@@ -55,7 +58,8 @@ export const useAuthStore = create<AuthState>()(
         if (current) set({ user: { ...current, ...patch } })
       },
       signedOut: () => set({ user: null, status: get().serverUrl ? "signed_out" : "no_server" }),
-      setPendingInvite: (code) => set({ pendingInviteCode: code }),
+      setPendingInvite: (code, server = null) =>
+        set({ pendingInviteCode: code, pendingInviteServer: code ? server : null }),
       markBooted: () => {
         const { serverUrl, user } = get()
         set({ status: !serverUrl ? "no_server" : user ? "signed_in" : "signed_out" })
@@ -71,6 +75,7 @@ export const useAuthStore = create<AuthState>()(
         user: state.user,
         deviceId: state.deviceId,
         pendingInviteCode: state.pendingInviteCode,
+        pendingInviteServer: state.pendingInviteServer,
       }),
     },
   ),

@@ -1,4 +1,4 @@
-import type { WsClientMessage, WsServerMessage } from "@hearth/shared"
+import type { TrailFix, WsClientMessage, WsServerMessage } from "@hearth/shared"
 import { and, eq } from "drizzle-orm"
 import { alias } from "drizzle-orm/pg-core"
 import type { FastifyInstance, FastifyRequest } from "fastify"
@@ -50,7 +50,7 @@ const alertMember = alias(circleMembers, "alert_member")
 const clientMessage: z.ZodType<WsClientMessage> = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ping") }),
   z.object({ type: z.literal("subscribe"), circleIds: z.array(z.string()) }),
-  z.object({ type: z.literal("control") }),
+  z.object({ type: z.literal("control"), ack: z.string().max(64).optional() }),
 ])
 
 /**
@@ -312,7 +312,20 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
             const frame = JSON.stringify(presence)
             if (lastLocation.get(key) === frame) break
             lastLocation.set(key, frame)
-            send({ type: "location", circleId: circleId!, presence })
+            // The fixes are precise positions, so only a viewer whose own
+            // projection is precise gets them. An approximate circle's frame
+            // changes only with the coarse cell and the coarse clock, which
+            // is what keeps a fix a second from timing each grid line.
+            const precise =
+              presence.sharingState === "precise" && !presence.approximate && presence.lat != null
+            const fixes =
+              precise && Array.isArray(payload.fixes) ? (payload.fixes as TrailFix[]) : []
+            send({
+              type: "location",
+              circleId: circleId!,
+              presence,
+              ...(fixes.length > 0 ? { fixes } : {}),
+            })
             break
           }
           case "event": {
@@ -408,6 +421,7 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
               type: "control",
               command,
               ...(typeof payload.seconds === "number" ? { seconds: payload.seconds } : {}),
+              ...(typeof payload.ask === "string" ? { ask: payload.ask } : {}),
             })
             break
           }
@@ -477,6 +491,18 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
 
         if (message.type === "ping") {
           send({ type: "pong", serverTime: new Date().toISOString() })
+          return
+        }
+
+        if (message.type === "control" && message.ack) {
+          // The phone has the ask. Whichever replica sent it is waiting on
+          // the bus, and the stamp says the channel is alive, which is what
+          // keeps the next ask going down it rather than by push.
+          if (!isControl) return
+          void bus
+            ?.publish(userTopic(userId), { type: "control_ack", userId, ask: message.ack })
+            .catch(() => undefined)
+          void markControlSeen(db, userId).catch(() => undefined)
           return
         }
 

@@ -27,9 +27,11 @@ import { userTopic } from "../lib/bus"
 import { toPublicUser } from "../lib/serialize"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { getBus } from "../runtime"
+import { endWatches, watchesInvolving, watchesThrough } from "../services/watch"
 import { recordEvent } from "../services/feed"
 import { outingGroup } from "../services/notification-groups"
 import { reseedPlaceMemberships } from "../services/geofence"
+import { historyCeilingDays } from "../services/settings"
 import { acceptInvite, createInvite, inviteUrl, previewInvite } from "../services/invites"
 import {
   POSITION_DERIVED_EVENT_TYPES,
@@ -58,6 +60,20 @@ const settingsSchema = z.object({
   speedAlertKmh: z.number().int().min(0).max(300).optional(),
   incidentDetection: z.boolean().optional(),
 })
+
+/**
+ * Longer than the server keeps is stored as what it keeps, so the setting says
+ * what the circle gets. Refusing it instead would answer an older app, which
+ * offers up to ten years, with a 400.
+ */
+async function withinCeiling<T extends { historyRetentionDays?: number }>(
+  db: Database,
+  settings: T,
+): Promise<T> {
+  if (settings.historyRetentionDays === undefined) return settings
+  const ceiling = await historyCeilingDays(db)
+  return { ...settings, historyRetentionDays: Math.min(settings.historyRetentionDays, ceiling) }
+}
 
 const circleIdParam = z.object({ circleId: z.string().uuid() })
 
@@ -232,7 +248,10 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
           emoji: request.body.emoji ?? null,
           color: request.body.color ?? null,
           createdBy: auth.userId,
-          settings: { ...defaultSettings(), ...(request.body.settings ?? {}) },
+          settings: await withinCeiling(db, {
+            ...defaultSettings(),
+            ...(request.body.settings ?? {}),
+          }),
         })
         .returning()
       if (!circle) throw badRequest("Could not create the circle.")
@@ -325,7 +344,10 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
           name: request.body.name ?? current.name,
           emoji: request.body.emoji === undefined ? current.emoji : request.body.emoji,
           color: request.body.color === undefined ? current.color : request.body.color,
-          settings: { ...current.settings, ...(request.body.settings ?? {}) },
+          settings: {
+            ...current.settings,
+            ...(await withinCeiling(db, request.body.settings ?? {})),
+          },
           updatedAt: new Date(),
         })
         .where(eq(circles.id, membership.circleId))
@@ -545,6 +567,8 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
           )
       })
 
+      await endWatches(db, watchesInvolving(circleId, userId))
+
       await recordEvent(db, {
         circleId,
         type: isSelf ? "member_left" : "member_removed",
@@ -636,6 +660,12 @@ export const circleRoutes: FastifyPluginAsyncZod = async (app) => {
         }
         return previous
       })
+
+      // Live is precise by nature, so a viewer in this circle stops holding
+      // the phone on it the moment the circle is turned down.
+      if (request.body.sharingState !== "precise") {
+        await endWatches(db, watchesThrough(request.params.circleId, auth.userId))
+      }
 
       const pausing = request.body.sharingState === "paused" && before?.sharingState !== "paused"
       const [actor] = pausing

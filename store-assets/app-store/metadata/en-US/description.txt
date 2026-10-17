@@ -21,7 +21,7 @@ SHARE EXACTLY WHAT YOU WANT
 For each circle, choose precise location, an approximate area of about 750 metres, or paused. A pause can end on its own, like at the end of the day.
 
 YOUR DATA STAYS HOME
-No ads. No analytics. No crash reporting. No third-party SDKs watching what you do. Nothing to sell, because we hold nothing. Beyond your server, the app only fetches map images, looks up street names through iOS, and receives notifications through Apple. Notifications never carry coordinates. Export, erase or delete your data from inside the app whenever you like.
+No ads. No analytics. No crash reporting. No third-party SDKs watching what you do. Nothing to sell, because we hold nothing. Beyond your server, the app only fetches map images, asks Apple for street names, which you can turn off, and receives notifications through Apple, by way of Expo if your server uses it. Notifications never carry coordinates. Export, erase or delete your data from inside the app whenever you like.
 
 EASY ON THE BATTERY
 When you have stopped somewhere, Hearth lets the GPS sleep and wakes it only when you move again.

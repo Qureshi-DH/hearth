@@ -915,7 +915,7 @@
       <!-- hero -->
       <div class="hero wrap">
         <div class="hero-copy">
-          <span class="kicker"><span class="pip" aria-hidden="true"></span> 1.1 · AGPL-3.0</span>
+          <span class="kicker"><span class="pip" aria-hidden="true"></span> 1.2 · AGPL-3.0</span>
           <h1>Know where your family is. <em>Nobody else does.</em></h1>
           <p class="lede prose">
             Every commercial family safety app keeps your positions on its own servers, under a
@@ -1036,9 +1036,10 @@
               <div class="spot-copy">
                 <h3>Watch a drive as it happens.</h3>
                 <p>
-                  Open Live on somebody who is on the move and their phone sends a fix a second,
-                  with speed and street, for as long as you keep the page open. When nobody is
-                  watching, it goes back to its usual pace.
+                  Open Live on anybody who shares precisely with you, driving or standing still, and
+                  their phone sends a fix a second, with speed and street, for as long as you keep
+                  the page open. Within seconds of the last person watching leaving, it goes back to
+                  its usual pace.
                 </p>
                 <ul class="ticks">
                   <li>Battery, walking or driving, and how old each fix is</li>
@@ -1607,9 +1608,9 @@
               family rather than globally.
             </li>
             <li>
-              <b>No third parties in the path</b>
-              Apart from map tiles and the push provider you pick, the app talks to your server and
-              nothing else. No analytics, no ad network, no data broker in the middle.
+              <b>No data broker in the path</b>
+              Beyond your server, the app only reaches the map host, push, and the phone's own maps
+              service for street names, which you can turn off. No analytics, no ad network.
             </li>
             <li>
               <b>It never asks for your contacts</b>
@@ -1685,15 +1686,18 @@
           </div>
 
           <div class="alpha prose">
-            <h3>The two places anything leaves your server</h3>
+            <h3>Where anything goes besides your server</h3>
             <p style="margin-bottom: 22px">
               Map tiles are fetched from a public tile server by default, which sees roughly what
               part of the world you are looking at. Point that setting at your own tiles and even
-              that stops. And if you turn on push through a hosted relay, notification payloads go
-              through it, which is why the default is no push at all rather than a convenient
-              default that quietly costs you something.
+              that stops. Street names come from the phone's own maps service, Apple's or Google's,
+              which is sent each spot it names. They are on by default, and one switch in the app
+              turns them off. And if you turn on push through a hosted relay, notification payloads
+              go through it, which is why the default is no push at all rather than a convenient
+              default that quietly costs you something. An Android build that includes Firebase for
+              push also registers the phone with Google when it starts.
             </p>
-            <h3>What 1.0 means</h3>
+            <h3>What 1.2 means</h3>
             <p>
               The features above are built and tested, and it runs a real family. It has not been
               through a security audit, and Android has had less device testing than iOS. The store

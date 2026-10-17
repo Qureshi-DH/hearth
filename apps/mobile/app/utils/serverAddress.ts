@@ -44,3 +44,9 @@ export function isLocalHost(host: string): boolean {
   }
   return false
 }
+
+/** Host names ignore case, and a trailing slash names the same place. */
+export function sameServer(a: string, b: string): boolean {
+  const normal = (address: string) => address.trim().replace(/\/+$/, "").toLowerCase()
+  return normal(a) === normal(b)
+}

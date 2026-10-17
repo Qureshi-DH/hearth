@@ -28,6 +28,8 @@ import { useAuthStore } from "@/stores/auth"
 import { refreshMotionWatch } from "@/services/location/tracker"
 import { useSettingsStore } from "@/stores/settings"
 
+import { mergePresence } from "@/utils/presence"
+
 import { queryKeys } from "./queryKeys"
 
 export function useMe() {
@@ -318,9 +320,15 @@ export function useAcceptInvite() {
 
 export function usePresence(circleId: string | null) {
   const inCircles = useInCircles(circleId)
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: queryKeys.presence(circleId ?? ""),
-    queryFn: () => endpoints.locations.presence(circleId!),
+    // Merged with what the socket wrote while the request was out, so a
+    // frame that landed first is not stepped back by an older answer.
+    queryFn: async () => {
+      const answer = await endpoints.locations.presence(circleId!)
+      return mergePresence(queryClient.getQueryData(queryKeys.presence(circleId!)), answer)
+    },
     enabled: Boolean(circleId) && inCircles,
     // The socket keeps this fresh. The poll is only a fallback for a dead socket.
     refetchInterval: 60_000,
@@ -529,7 +537,18 @@ export function useUpdateAdminSettings() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: endpoints.admin.updateSettings,
-    onSuccess: (settings) => queryClient.setQueryData(queryKeys.admin.settings, settings),
+    onSuccess: (settings, patch) => {
+      queryClient.setQueryData(queryKeys.admin.settings, settings)
+      // Circle settings offer retention up to the ceiling server-info gave at
+      // launch. Cleared, the ceiling is the server's .env value, which only
+      // server-info can say.
+      if ("maxHistoryRetentionDays" in patch) {
+        endpoints.system
+          .info()
+          .then((info) => useAuthStore.getState().setServerInfo(info))
+          .catch(() => {})
+      }
+    },
   })
 }
 

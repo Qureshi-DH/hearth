@@ -21,12 +21,12 @@ SHARE EXACTLY WHAT YOU WANT
 For each circle, choose precise location, an approximate area of about 750 metres, or paused. A pause can end on its own, like at the end of the day.
 
 YOUR DATA STAYS HOME
-No ads. No analytics. No crash reporting. No third-party SDKs watching what you do. Nothing to sell, because we hold nothing. Beyond your server, the app only fetches map images, looks up street names through Android, and receives notifications through Google. Notifications never carry coordinates. Export, erase or delete your data from inside the app whenever you like.
+No ads. No analytics. No crash reporting. No third-party SDKs watching what you do. Nothing to sell, because we hold nothing. Beyond your server, the app only fetches map images, asks Google for street names, which you can turn off, and registers for notifications with Google, and with Expo if your server uses it. Notifications never carry coordinates. Export, erase or delete your data from inside the app whenever you like.
 
 EASY ON THE BATTERY
 When you have stopped somewhere, Hearth lets the GPS sleep and wakes it only when you move again.
 
 YOU NEED A HEARTH SERVER
-Hearth doesn't work on its own. Someone in your family runs the free Hearth server, which takes a few minutes with Docker. The guide is at github.com/Qureshi-DH/hearth. Store versions of the app connect to internet servers over HTTPS only.
+Hearth doesn't work on its own. Someone in your family runs the free Hearth server, which takes a few minutes with Docker. The guide is at github.com/Qureshi-DH/hearth. This version of the app connects over HTTPS only, to a server at home too.
 
 Hearth is free and open source under the AGPL-3.0 licence. No subscriptions, no premium tier, no features held back.

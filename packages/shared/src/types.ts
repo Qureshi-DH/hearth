@@ -49,6 +49,11 @@ export interface ServerInfo {
    */
   mapStyles?: MapStyle[]
   mapAttribution: string
+  /**
+   * The longest history the server keeps, whatever a circle asks for. Servers
+   * older than this leave it out.
+   */
+  maxHistoryRetentionDays?: number
   features: {
     places: boolean
     history: boolean
@@ -128,6 +133,23 @@ export interface AuthResponse extends AuthTokens {
   user: CurrentUser
 }
 
+/**
+ * What became of the invite code sent with sign-up. The account is made
+ * either way. "failed" is anything the code itself does not explain.
+ */
+export type RegisterInviteOutcome =
+  | { joined: true; circleId: string; circleName: string }
+  | {
+      joined: false
+      reason: NonNullable<InvitePreview["reason"]> | "failed"
+      message: string
+    }
+
+export interface RegisterResponse extends AuthResponse {
+  /** Left out when no code was sent, and by servers older than this. */
+  invite?: RegisterInviteOutcome
+}
+
 /** What the admin portal holds after signing in. Its refresh token stays in a cookie. */
 export type PortalSession = Omit<AuthResponse, "refreshToken">
 
@@ -147,6 +169,8 @@ export interface SessionSummary {
   lastUsedAt: string | null
   current: boolean
   pushEnabled: boolean
+  /** The device your circles' map follows. Older servers leave it out. */
+  onMap?: boolean
 }
 
 /* ------------------------------------------------------------------ */
@@ -324,6 +348,21 @@ export interface WatchResponse {
   lastHeardAt: string | null
   activity: ActivityType | null
   issues: PresenceIssue[]
+  /**
+   * What the server does for a Live page beyond the ask. It takes `DELETE`
+   * on the same path when the page closes, and fills a gap in the page's
+   * trail from `GET .../live-trail`. Older servers leave it out, and the
+   * page then asks for neither, since either would be a 404.
+   */
+  supports?: { release: boolean; trail: boolean }
+}
+
+/** One fix of a member's trail, as the Live page draws it. */
+export interface TrailFix {
+  lat: number
+  lon: number
+  recordedAt: string
+  accuracyMeters: number | null
 }
 
 /** What a phone reports about its own ability to share, see PATCH /me/health. */
@@ -710,7 +749,12 @@ export interface AdminOutboxEntry {
 export type WsServerMessage =
   | { type: "hello"; userId: string; serverTime: string }
   | { type: "subscribed"; circleIds: string[] }
-  | { type: "location"; circleId: string; presence: MemberPresence }
+  /**
+   * `fixes` are the upload's own fixes, oldest first, for a viewer who sees
+   * the member precisely, so a trail is drawn from every fix and not only
+   * the newest of each upload. Older servers send the presence alone.
+   */
+  | { type: "location"; circleId: string; presence: MemberPresence; fixes?: TrailFix[] }
   | { type: "presence"; circleId: string; presences: MemberPresence[] }
   | { type: "event"; circleId: string; event: FeedEvent }
   | { type: "sos"; circleId: string; alert: SosAlert }
@@ -718,16 +762,28 @@ export type WsServerMessage =
   /**
    * Down the phone's control channel: `ready` once it is registered, then
    * `watch` (go live for `seconds`) and `wake` (one fix now) as they are asked.
+   * A `watch` with no seconds left ends the window. The phone answers an
+   * `ask` with `{ type: "control", ack }` at once, and the server takes one
+   * that is not answered within seconds for a channel that is not there.
    */
-  | { type: "control"; command: "ready" | "watch" | "wake"; seconds?: number }
+  | {
+      type: "control"
+      command: "ready" | "watch" | "wake"
+      seconds?: number
+      ask?: string
+    }
   | { type: "pong"; serverTime: string }
   | { type: "error"; message: string }
 
 export type WsClientMessage =
   | { type: "subscribe"; circleIds: string[] }
   | { type: "ping" }
-  /** The phone's tracker declaring this socket its control channel. */
-  | { type: "control" }
+  /**
+   * The phone's tracker declaring this socket its control channel, or with
+   * `ack`, saying it has an ask. Older servers read an ack as the
+   * declaration again, which changes nothing.
+   */
+  | { type: "control"; ack?: string }
 
 /**
  * What POST /circles/:id/members/:userId/refresh did: the phone was asked

@@ -1306,6 +1306,76 @@ describe("uploads", () => {
     expect(mockUpload).toHaveBeenCalledTimes(1)
   })
 
+  // Behind a firewall that locks out an address for a while, a phone on Live
+  // trying again with every second's fix kept the whole household locked out.
+  it("back off on a short ladder while live, and keep every fix for when it lifts", async () => {
+    await enterMoving()
+    await enterWatched(600)
+    await jest.advanceTimersByTimeAsync(0)
+    mockUpload.mockReset()
+    mockUpload.mockRejectedValue(new ApiError(0, "network_error", "Could not reach the server."))
+    const before = useTrackingStore.getState().queue.length
+    const t0 = Date.now()
+    for (let i = 0; i < 20; i += 1) {
+      const n = i + 1
+      await ingest([at(HOME.lat + n * 0.0001, HOME.lon, t0 + n * 1_000, 5, 8)], "background")
+      await jest.advanceTimersByTimeAsync(1_000)
+    }
+    // At once, then two, five and ten seconds on.
+    expect(mockUpload).toHaveBeenCalledTimes(4)
+    expect(useTrackingStore.getState().queue).toHaveLength(before + 20)
+
+    mockUpload.mockImplementation(async (batch: LocationFixInput[]) => reply(batch.length))
+    await jest.advanceTimersByTimeAsync(10_000)
+    expect(useTrackingStore.getState().queue).toHaveLength(0)
+    const [delivered] = mockUpload.mock.calls.at(-1) as [LocationFixInput[]]
+    expect(delivered).toHaveLength(before + 20)
+    const times = delivered.map((fix) => Date.parse(fix.recordedAt))
+    expect(times).toEqual([...times].sort((a, b) => a - b))
+  })
+
+  // One upload that hung for its whole half minute froze the stream on the
+  // viewer's screen for as long.
+  it("give a stuck upload a few seconds while live, then send it again at once", async () => {
+    await enterMoving()
+    await enterWatched(600)
+    await jest.advanceTimersByTimeAsync(0)
+    mockUpload.mockClear()
+    mockUpload.mockRejectedValueOnce(
+      new ApiError(0, "timeout", "The server took too long to respond."),
+    )
+    queued()
+    await flush()
+    expect(mockUpload).toHaveBeenCalledTimes(2)
+    const [first, second] = mockUpload.mock.calls as Array<
+      [LocationFixInput[], { timeoutMs?: number }]
+    >
+    expect(first![1]?.timeoutMs).toBeLessThanOrEqual(5_000)
+    expect(second![0]).toEqual(first![0])
+    expect(useTrackingStore.getState().queue).toHaveLength(0)
+  })
+
+  // A network that is slow rather than stuck still has to get through.
+  it("give a slow network the full time after two quick tries", async () => {
+    await enterMoving()
+    await enterWatched(600)
+    await jest.advanceTimersByTimeAsync(0)
+    mockUpload.mockClear()
+    const late = new ApiError(0, "timeout", "The server took too long to respond.")
+    mockUpload.mockRejectedValueOnce(late).mockRejectedValueOnce(late)
+    queued()
+    await flush()
+    expect(mockUpload).toHaveBeenCalledTimes(2)
+    await jest.advanceTimersByTimeAsync(2_000 + 10)
+    expect(mockUpload).toHaveBeenCalledTimes(3)
+    const third = mockUpload.mock.calls[2] as [
+      LocationFixInput[],
+      { timeoutMs?: number } | undefined,
+    ]
+    expect(third[1]?.timeoutMs ?? 30_000).toBeGreaterThan(5_000)
+    expect(useTrackingStore.getState().queue).toHaveLength(0)
+  })
+
   it("are attempted on every delivery, whether or not it kept a fix", async () => {
     await enterMoving()
     const t0 = Date.now()

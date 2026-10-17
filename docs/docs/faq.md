@@ -70,13 +70,16 @@ Almost entirely. The API, Postgres, object storage, the websocket, geofences,
 trips, nudges and SOS are all local to your box, and phones on the same
 network reach it directly.
 
-Two things reach outside, and neither is required:
+Three things reach outside, and none is required.
 
 - **Map tiles.** The phone fetches them from the style URL your server
   advertises, OpenFreeMap out of the box. With no internet the map data is still
   correct but the background will not draw. Point `MAP_STYLE_URL` and
   `MAP_STYLE_URL_DARK` at your own tile server to fix that for good. Offline map packs are on the
   [roadmap](roadmap.md) and are not built.
+- **Street names.** The phone asks its own geocoder, Apple's or Google's, for
+  the street under a member or a trip. With no internet the street is left out.
+  _Street names_ under _You_ turns it off.
 - **Push**, only if you configured a provider that is not on your network.
 
 One catch on a LAN. A production Android build refuses plain HTTP outright, and
@@ -153,15 +156,18 @@ parked Android phone reports every quarter of an hour and answers those pushes,
 so it is called offline once it has let three of them go, about 100 minutes
 after it was last heard. A phone last seen
 moving is reported after an hour, and the server asks it for a fix before
-that. A phone that has told the server why it cannot report, a permission not
-set to Always, Location Services off, is shown as that under its name instead.
+that. A phone that has told the server why it cannot report, a permission short
+of Always, which Android calls Allow all the time, or Location Services off, is
+shown as that under its name instead.
 One that went quiet on 5% battery or less is shown, and reported, as having
 most likely run out.
 Opening the map asks anyone quiet for a couple of minutes for a fresh fix, and
-opening somebody's page asks their phone for one too. Live, offered while
-somebody is on the move, has their phone send a fix a second for as long as you
-watch and up to ten minutes after you leave, whether they keep moving or stop. On Android the
-location service's notification shows for that time, parked or not.
+opening somebody's page asks their phone for one too. Live, offered for anyone
+you see precisely, moving or parked, has their phone send a fix a second for as
+long as you watch. It stops within seconds of the last person watching leaving
+the page or putting Hearth in the background, and when they turn your circle to
+approximate or pause it. On Android the location service's notification shows
+for that time, parked or not.
 
 Three other things affect it:
 
@@ -179,6 +185,15 @@ Three other things affect it:
 
 The single biggest cause of background location dying on Android is the battery
 optimiser, which is why the app asks for an exemption during setup.
+
+## I'm signed in on a phone and a tablet. Which one is on the map?
+
+You're one dot, and it follows whichever device last had something to say,
+with one exception. A device that is lying still doesn't take the dot from
+another of yours that is still reporting, so a tablet left at home doesn't
+pull you back there every quarter of an hour while you're out with your
+phone. Once a device is on the move it takes the dot at once. Under _You_,
+_Signed-in devices_ marks the one your circles are seeing with _On the map_.
 
 ## My family member's phone keeps going quiet on Android
 
@@ -230,7 +245,8 @@ server can help with.
 
 ## Does any location data leave my server?
 
-Coordinates never leave it.
+Coordinates never leave it. The phone sends some to its own geocoder for street
+names, as below.
 
 Apart from its own object storage, your server makes one kind of outbound
 connection, and only if you configured it: to the push provider. Push payloads
@@ -243,11 +259,19 @@ The phone itself requests map tiles from the style URL your server advertises,
 so that host sees roughly which area is being viewed, as it would with any map.
 Self-host tiles and that goes too.
 
+Street names under members and trips come from the phone's own geocoder,
+Apple's on iPhone and Google's on most Android phones, and the phone sends it
+the coordinates of each spot it names. They are on out of the box. Turn _Street
+names_ off under _You_ and those coordinates stay on the phone.
+
 There is no analytics, no crash reporting and no advertising or tracking SDK
 anywhere in the server or the app. Set `PUSH_PROVIDER=ntfy` against your own
-ntfy instance and host your own tiles, and nothing leaves your infrastructure
-except, for iPhones, the poll request ntfy passes through its public server to
-APNs, which carries a message id and no content.
+ntfy instance, host your own tiles and turn street names off, and two things
+still leave your infrastructure, neither with a position in it. For iPhones,
+ntfy passes a poll request through its public server to APNs, which carries a
+message id and no content. And an Android build that includes Firebase, which
+Expo push needs, registers the phone with Google's Firebase Cloud Messaging
+when it starts, whichever provider your server uses.
 [Privacy](privacy.md) has the full table of what is stored and who can see it.
 
 ## Why are push notifications the awkward part?
@@ -303,7 +327,8 @@ arrives at the highest importance, but Do Not Disturb keeps it quiet.
 ## When does a speed alert go off?
 
 Only once a circle admin sets a speed for it in circle settings. It's off until
-then. After that the circle is told when somebody's phone stays over the speed
+then. The choices are in km/h or mph, whichever the admin's phone uses, and
+the server keeps them in km/h. After that the circle is told when somebody's phone stays over the speed
 for at least 15 seconds of the drive. One fast reading never counts, and
 neither do two in a row on Live, which sends a fix a second. That's how a GPS
 glitch reading 130 km/h for a moment on a town road stays quiet. A phone that
@@ -372,7 +397,9 @@ always see yourself precisely.
 
 Each circle sets its own window, 30 days out of the box. A user's breadcrumbs
 live as long as the most generous circle they belong to asks for, under a
-server-wide ceiling: `MAX_HISTORY_RETENTION_DAYS`, 90 by default. Set a circle's
+server-wide ceiling, `MAX_HISTORY_RETENTION_DAYS`, 90 by default. The app
+offers nothing longer than the ceiling and says why, and a circle that asks for
+more is kept at the ceiling. Set a circle's
 retention to 0 and that circle sees only the live position. The breadcrumbs
 themselves go once every circle the member is in is at 0.
 
@@ -390,7 +417,8 @@ One wrinkle. An admin can change the ceiling from the app, and once they have,
 that stored value wins over the environment variable in both directions. Saving
 any server setting in the app writes the whole set, so even renaming the server
 pins whatever ceiling was in force at that moment. Clear the field in the app to
-hand control back to `.env`.
+hand control back to `.env`. Server-info carries the ceiling as
+`maxHistoryRetentionDays`.
 
 ## What happens to the data when an account is deleted?
 

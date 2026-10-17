@@ -117,6 +117,34 @@ describe("a circle the person is no longer in", () => {
   })
 })
 
+describe("the minute's poll of where everyone is", () => {
+  const at = (secondsAgo: number, lat: number) => ({
+    userId: "sam",
+    lat,
+    lon: -2.5879,
+    recordedAt: new Date(Date.now() - secondsAgo * 1000).toISOString(),
+    sharingState: "precise",
+    approximate: false,
+  })
+
+  // The poll left before the socket's frame and came back after it.
+  it("never puts back an older fix than the socket already gave", async () => {
+    queryClient.setQueryData(queryKeys.circles, [circle("home")])
+    let answer: (value: unknown[]) => void = () => {}
+    mockPresence.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
+    const { result } = renderHook(() => usePresence("home"), { wrapper })
+    await settle()
+
+    act(() => queryClient.setQueryData(queryKeys.presence("home"), [at(1, 51.46)]))
+    await act(async () => answer([at(30, 51.45)]))
+    // The cache tells the hook on the next tick.
+    await act(async () => {
+      jest.advanceTimersByTime(0)
+    })
+    expect((result.current.data as Array<{ lat: number }>)[0]!.lat).toBe(51.46)
+  })
+})
+
 describe("leaving a circle", () => {
   it("drops the circle's queries rather than asking for its members again", async () => {
     queryClient.setQueryData(queryKeys.circles, [circle("home"), circle("school")])

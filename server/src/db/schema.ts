@@ -302,6 +302,12 @@ export const userPresence = pgTable("user_presence", {
     .primaryKey()
     .references(() => users.id, { onDelete: "cascade" }),
   lastPointId: bigint("last_point_id", { mode: "number" }),
+  /**
+   * The device the position came from. Somebody with a phone and a tablet is
+   * followed by the one that is going somewhere, and the tablet at home
+   * saying it is still there does not pull the dot back.
+   */
+  deviceId: text("device_id"),
   lat: doublePrecision("lat"),
   lon: doublePrecision("lon"),
   accuracyMeters: real("accuracy_meters"),
@@ -332,9 +338,10 @@ export const userPresence = pgTable("user_presence", {
   /** Wakes sent since the phone was last heard. Two unanswered is the bar for "offline". */
   wakeCount: integer("wake_count").notNull().default(0),
   /**
-   * Until when somebody has a page open on this member. The phone reads it
-   * off its own upload reply, so a watch reaches a moving phone on its next
-   * fix whether or not the silent push got through.
+   * Until when somebody has a page open on this member, the latest of the
+   * holds in live_watches. The phone reads it off its own upload reply, so a
+   * watch reaches a moving phone on its next fix whether or not the silent
+   * push got through, and so does the end of one.
    */
   watchedUntil: timestamp("watched_until", { withTimezone: true }),
   /**
@@ -354,6 +361,34 @@ export const userPresence = pgTable("user_presence", {
   tripsProcessedUntil: timestamp("trips_processed_until", { withTimezone: true }),
   updatedAt: updatedAt(),
 })
+
+/**
+ * Who has a member's Live page open, one hold per viewer. A viewer leaving
+ * takes away their own hold and nobody else's, and the last one out ends the
+ * window on the phone at once rather than ten minutes later.
+ */
+export const liveWatches = pgTable(
+  "live_watches",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    viewerId: uuid("viewer_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The circle the hold came through, so turning that circle down ends it. */
+    circleId: uuid("circle_id")
+      .notNull()
+      .references(() => circles.id, { onDelete: "cascade" }),
+    until: timestamp("until", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.viewerId] }),
+    index("live_watches_viewer_idx").on(table.viewerId),
+    index("live_watches_circle_idx").on(table.circleId),
+  ],
+)
 
 export const places = pgTable(
   "places",

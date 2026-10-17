@@ -112,11 +112,13 @@ refuses it outright.
    In a development build the field is already filled in with whichever machine
    is running Metro, which is usually the right answer.
 2. Sign in with the `ADMIN_EMAIL` and `ADMIN_PASSWORD` you set.
-3. Grant location access. Choose "Always" when the phone offers it, otherwise
-   your position stops updating the moment Hearth leaves the screen, and allow
-   notifications so alerts arrive.
+3. Grant location access. Choose "Always" when the phone offers it, "Allow all
+   the time" on Android, otherwise your position stops updating the moment
+   Hearth leaves the screen, and allow notifications so alerts arrive.
 4. Create a circle. Hearth gives you an 8 character invite code and a QR code,
-   which is how everyone else joins.
+   which is how everyone else joins. The QR and the shared link carry the
+   server's address from `PUBLIC_URL`, and the page they open fills it in on a
+   new phone.
 
 You should now see yourself on the map. With the app open, updates arrive over
 a websocket. Waking a closed app needs push, which is off by default and covered

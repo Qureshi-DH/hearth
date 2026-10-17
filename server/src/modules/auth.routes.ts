@@ -1,4 +1,4 @@
-import { PLATFORMS, type DeviceHealth } from "@hearth/shared"
+import { PLATFORMS, type DeviceHealth, type RegisterResponse } from "@hearth/shared"
 import { and, desc, eq, gt, isNull, lte, sql } from "drizzle-orm"
 import type { FastifyRequest } from "fastify"
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod"
@@ -42,7 +42,8 @@ import {
   rotateSession,
   setPassword,
 } from "../services/auth"
-import { acceptInvite, previewInvite } from "../services/invites"
+import { exportActivityFeed, exportDevices, exportSosAlerts } from "../services/export"
+import { previewInvite, redeemAtSignUp } from "../services/invites"
 import { broadcastPresence } from "../services/locations"
 import { updateNotificationSettings } from "../services/notification-settings"
 import { portalRoutes } from "./portal.routes"
@@ -278,13 +279,10 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         )
       }
 
-      if (inviteCode) {
-        // A bad code must not strand an account that was just created.
-        try {
-          await acceptInvite(db, inviteCode, created.id)
-        } catch (error) {
-          request.log.warn({ err: error }, "invite redemption failed during registration")
-        }
+      // A bad code must not strand an account that was just created.
+      const redeemed = inviteCode ? await redeemAtSignUp(db, inviteCode, created.id) : null
+      if (redeemed?.error) {
+        request.log.warn({ err: redeemed.error }, "invite redemption failed during registration")
       }
 
       const tokens = await issueSession(app, db, created, {
@@ -292,7 +290,8 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         ip: request.ip,
         userAgent: request.headers["user-agent"] ?? null,
       })
-      return reply.code(201).send(tokens)
+      const response: RegisterResponse = redeemed ? { ...tokens, invite: redeemed.outcome } : tokens
+      return reply.code(201).send(response)
     },
   )
 
@@ -523,7 +522,12 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           ),
         )
         .orderBy(desc(sessions.lastUsedAt))
-      return rows.map((row) => toSessionSummary(row, auth.sessionId))
+      const [followed] = await db
+        .select({ deviceId: userPresence.deviceId })
+        .from(userPresence)
+        .where(eq(userPresence.userId, auth.userId))
+        .limit(1)
+      return rows.map((row) => toSessionSummary(row, auth.sessionId, followed?.deviceId ?? null))
     },
   )
 
@@ -574,13 +578,15 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         tags: ["account"],
         summary: "Export everything this server holds about you",
         description:
-          "A single JSON document: profile, circles, breadcrumbs, places, trips and check-ins.",
+          "One JSON document with your profile, circles, breadcrumbs, places, trips, " +
+          "check-ins, SOS alerts, signed-in devices and the activity feed entries about you.",
       },
     },
     async (request, reply) => {
       const user = await loadCurrentUser(request)
+      const { sessionId } = requireAuth(request)
 
-      const [memberships, myTrips, myCheckIns] = await Promise.all([
+      const [memberships, myTrips, myCheckIns, sosAlerts, devices] = await Promise.all([
         db
           .select({
             circleId: circleMembers.circleId,
@@ -594,6 +600,8 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           .where(eq(circleMembers.userId, user.id)),
         db.select().from(trips).where(eq(trips.userId, user.id)),
         db.select().from(checkIns).where(eq(checkIns.userId, user.id)),
+        exportSosAlerts(db, user.id),
+        exportDevices(db, user.id, sessionId),
       ])
 
       // Only places in circles this person still belongs to. A place they
@@ -626,8 +634,18 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           trips: myTrips,
           checkIns: myCheckIns,
           placesCreated,
+          sosAlerts,
+          devices,
         })
-        yield `${head.slice(0, -1)},"locationHistory":[`
+        yield `${head.slice(0, -1)},"activityFeed":[`
+
+        let firstEntry = true
+        for await (const page of exportActivityFeed(db, user.id)) {
+          const chunk = page.map((entry) => JSON.stringify(entry)).join(",")
+          yield firstEntry ? chunk : `,${chunk}`
+          firstEntry = false
+        }
+        yield `],"locationHistory":[`
 
         let before: Date | null = null
         let first = true

@@ -27,6 +27,13 @@ Responses carry `{ accessToken, refreshToken, expiresIn, user }`. Send the
 access token as `Authorization: Bearer <token>`. It's good for 15 minutes by
 default (`ACCESS_TOKEN_TTL_SECONDS`).
 
+A sign-up that sent an `inviteCode` also carries `invite`, which says what
+became of it. That's `{ joined: true, circleId, circleName }`, or
+`{ joined: false, reason, message }` with the same `reason` values as
+`GET /invites/:code`, or `failed`. The account is made either way. On the
+`invite` registration mode a code that is no good is still refused with a
+`400` before any account exists.
+
 Every distinct `deviceId` sent to `/auth/login` or `/auth/register` is a row
 on that account's Signed-in devices screen until it is signed out or its
 refresh token expires (`REFRESH_TOKEN_TTL_DAYS`, 60 by default). A session you
@@ -85,7 +92,7 @@ quarter of an hour answer `429` until the quarter is up.
 | Account   | `GET/PATCH /auth/me`, `POST/DELETE /auth/me/avatar`, `POST /auth/password`, `GET /auth/sessions`, `DELETE /auth/sessions/:id`, `POST /auth/sessions/revoke-all`, `GET /me/export`, `DELETE /me`, `GET /me/stats`, `DELETE /me/history`, `PATCH /me/health`, `PATCH /me/notifications` ([what the phone says about itself](mobile.md#what-the-phone-says-about-itself))                                |
 | Circles   | `GET/POST /circles`, `GET/PATCH/DELETE /circles/:id`, `GET /circles/:id/members`, `PATCH/DELETE /circles/:id/members/:userId`, `PATCH /circles/:id/sharing`, `PATCH /circles/:id/notifications`                                                                                                                                                                                                       |
 | Invites   | `GET/POST /circles/:id/invites` (list omits revoked, `expiresInHours: null` = never expires), `DELETE /circles/:id/invites/:inviteId`, `GET /invites/:code` (public preview), `POST /invites/:code/accept`                                                                                                                                                                                            |
-| Locations | `POST /locations/batch`, `GET /circles/:id/locations`, `POST /circles/:id/locations/refresh`, `GET /circles/:id/members/:userId/history`, `POST /circles/:id/members/:userId/refresh`, `POST /circles/:id/members/:userId/watch`                                                                                                                                                                      |
+| Locations | `POST /locations/batch`, `GET /circles/:id/locations`, `POST /circles/:id/locations/refresh`, `GET /circles/:id/members/:userId/history`, `POST /circles/:id/members/:userId/refresh`, `POST` and `DELETE /circles/:id/members/:userId/watch`, `GET /circles/:id/members/:userId/live-trail`                                                                                                          |
 | Places    | `GET/POST /circles/:id/places`, `PATCH/DELETE /circles/:id/places/:placeId`, `GET /circles/:id/places/:placeId/events`                                                                                                                                                                                                                                                                                |
 | Events    | `GET /circles/:id/events?limit&cursor`, `POST /circles/:id/events/read`, `GET /circles/:id/events/unread-count`                                                                                                                                                                                                                                                                                       |
 | Nudges    | `POST /circles/:id/nudge/:userId` (one member, no history)                                                                                                                                                                                                                                                                                                                                            |
@@ -98,6 +105,27 @@ quarter of an hour answer `429` until the quarter is up.
 `maxHistoryRetentionDays`. Whatever it stores overrides the matching environment
 variable from then on, with no redeploy. It writes the whole set rather than the
 fields you sent, so saving one field pins the current value of the others.
+
+`GET /server-info` publishes the history ceiling in force as
+`maxHistoryRetentionDays`, and an older server leaves it out. A circle's
+`historyRetentionDays` above it, on `POST /circles` or `PATCH /circles/:id`, is
+stored as the ceiling rather than refused, since the prune would never keep
+more anyway.
+
+An invite's `url` is `PUBLIC_URL/join/<code>`, a page for the browser. Its
+Open in Hearth button is `hearth://join/<code>?server=<PUBLIC_URL>`, with
+`APP_SCHEME` as the scheme, so an app that has no server yet can fill in the
+address. Every version of the app reads the code from the path, and links
+without `server` still work. The app's QR code is the `url` itself, so a phone
+camera opens the page too. For somebody without the app the page lists the
+steps, and links to `IOS_APP_URL` and `ANDROID_APP_URL` when they are set.
+
+`GET /me/export` is one JSON document. Beside the profile, circles, trips,
+check-ins, places and breadcrumbs, it carries `sosAlerts`, `devices` and
+`activityFeed`. `devices` is every session still stored, with the address and
+browser it was used from but never a token. `activityFeed` is the feed entries
+the person made or that are about them. Those three name circles and people
+rather than giving ids, and every time in them is ISO 8601.
 
 Avatar uploads are `multipart/form-data` with one image field: JPEG, PNG or
 WebP, at most 2 MB, and the content type is decided by sniffing the bytes rather
@@ -204,6 +232,8 @@ failing the whole batch. `policy` is the strictest setting across the
 caller's circles, and the device is expected to apply it. `watchedUntil` is
 set while somebody has the member's page open, see [watching](#watching-a-member),
 and while the member has an SOS open, see [raising an SOS](#raising-an-sos).
+It is `null`, or sooner than the window the phone holds, once the viewers who
+held it have gone, and the phone steps down then.
 
 Every authenticated upload, whatever it carried, records that the phone was
 heard (`user_presence.last_heard_at`). The offline sweep, the wake schedule
@@ -223,7 +253,12 @@ nothing about how it came to a stop.
 `GET /circles/:id/locations` returns one `MemberPresence` per member, already
 projected for the caller (see `packages/shared/src/types.ts`). `lat`/`lon` are
 `null` for paused members. `approximate: true` means the coordinates were
-snapped to a coarse grid.
+snapped to a coarse grid and `recordedAt` to the five minutes it fell in.
+
+A person signed in on two devices has one presence. A device saying it is
+parked doesn't take it from another of theirs whose position isn't stale, and
+a device on the move takes it at once. `GET /auth/sessions` marks the device
+the map follows with `onMap: true`.
 
 ## Watching a member
 
@@ -233,10 +268,11 @@ POST /api/v1/circles/:id/members/:userId/watch
 
 Called while someone has a member's Live page open, and every minute after to
 hold the window. The member's phone is asked to report at full accuracy, a fix
-a second, for `DEFAULTS.watchWindowSeconds`: over its control channel when it
-has one open (see the websocket section), by a silent push otherwise, and by
-its next upload reply either way. A parked phone goes live too. The reply is a
-`WatchResponse`.
+a second, for `DEFAULTS.watchWindowSeconds`. The ask goes over its control
+channel when one is open and the phone acknowledges it within 3 s (see the
+websocket section), by a silent push otherwise, and by its next upload reply
+either way. A parked phone goes live too. Each viewer holds a window of their
+own, and the phone's is the latest of them. The reply is a `WatchResponse`.
 
 ```json
 {
@@ -246,22 +282,50 @@ its next upload reply either way. A parked phone goes live too. The reply is a
   "lastFixAt": "2026-09-17T14:27:10.000Z",
   "lastHeardAt": "2026-09-17T14:27:11.204Z",
   "activity": "driving",
-  "issues": []
+  "issues": [],
+  "supports": { "release": true, "trail": true }
 }
 ```
 
 `pushed` says what became of the ask: `socket` when the phone's control
 channel carried it, `sent` when this call queued a silent push, `held` when
-the phone was pushed moments ago or has uploaded since,
+the phone was pushed moments ago or is uploading,
 `no_device` when the member has no push token, and `unsupported` when the
-push provider cannot carry a silent push. A phone that has not uploaded since
-the first push is pushed again after 90 s, three times per window at most.
+push provider cannot carry a silent push. A phone that has said nothing for
+20 s is pushed again once the last push is 90 s old, three times per window
+at most, so a phone whose live service Android stopped mid window is asked
+again rather than left until the window ends.
 `lastFixAt` is the last position, `lastHeardAt` the last upload of any kind,
 `activity` what the phone last called itself, and `issues` what the phone
 itself reported stands between it and reporting, or between it and reporting
 well, such as precise location or motion access being off (`PRESENCE_ISSUES`
 in the shared package). A member sharing approximately or paused cannot be watched,
-so `watching` is false and every other field is empty.
+and nor can somebody who has left the circle, so `watching` is false and every
+other field is empty. `supports` says the server takes the two calls below,
+and an older server leaves it out.
+
+```http
+DELETE /api/v1/circles/:id/members/:userId/watch
+```
+
+Called when the Live page closes or the app goes to the background. It takes
+away the caller's own hold and nobody else's, so it is always answered
+`{ ok: true }`. When nobody else is watching, the window ends. The phone hears
+it in its next upload reply and over its control channel as `watch` with no
+seconds left, unless the member has an SOS open. Turning a circle to
+approximate or pausing it ends every hold made through that circle, and so
+does leaving it, as the one watched or the one watching.
+
+```http
+GET /api/v1/circles/:id/members/:userId/live-trail?since=<iso>
+```
+
+The fixes after `since`, oldest first, as `TrailFix[]`, from the device the
+map follows and no further back than the watch window. A Live page fills the
+gap in its trail from here after a reconnect or a return to the front. The
+same fixes reached it as they arrived, so this works whether or not the
+circle keeps history. It is empty for a member sharing approximately or not
+at all, and for somebody who has left the circle.
 
 ## Asking one phone for a fix
 
@@ -312,8 +376,10 @@ after five that were resolved, is answered `429`.
 While an alert is open the sender's phone is on Live. Every upload reply names
 `watchedUntil` two minutes ahead, and the raise sends a `watch` down the
 phone's control channel when one is open. The window never shortens or moves
-the one a viewer's [watch](#watching-a-member) holds, and the phone falls back
-to its own cadence within two minutes of the alert being resolved.
+the one a viewer's [watch](#watching-a-member) holds. Once the alert is
+resolved the next upload reply names no window, unless somebody is watching,
+and the phone falls back to its own cadence then, or within two minutes if its
+uploads stop getting through.
 
 `POST /sos/:alertId/resolve` from the person who raised it closes their alert
 in every circle, each with its own `sos_resolved` entry, and everyone in those
@@ -336,20 +402,30 @@ Server → client messages (`WsServerMessage` in the shared package):
 | `hello`      | `{ userId, serverTime }`                                     |
 | `subscribed` | `{ circleIds }`                                              |
 | `presence`   | `{ circleId, presences[] }`, sent once per circle on connect |
-| `location`   | `{ circleId, presence }`, one member moved                   |
+| `location`   | `{ circleId, presence, fixes? }`, one member moved           |
 | `event`      | `{ circleId, event }`, new activity-feed entry               |
 | `sos`        | `{ circleId, alert }`, an alert raised or resolved           |
 | `nudge`      | `{ circleId, nudge }`, on the recipient's own topic          |
-| `control`    | `{ command, seconds? }`, to the phone's control channel only |
+| `control`    | `{ command, seconds?, ask? }`, to the control channel only   |
 | `pong`       | `{ serverTime }`                                             |
 | `error`      | `{ message }`, the socket could not honour what you sent     |
 
-Client → server: `{ type: "ping" }`, `{ type: "subscribe", circleIds }`,
-which may only narrow to circles the user belongs to, and
-`{ type: "control" }`, which the phone's tracker sends to declare the socket
-its control channel. The server answers `{ type: "control", command: "ready" }`
-and from then on delivers `watch` (go live for `seconds`) and `wake` (one fix
-now) down that socket and no other, the moment a viewer or the sweep asks.
+`fixes` on a `location` frame are the upload's own fixes, oldest first, as
+`TrailFix[]`. Only a viewer who sees the member precisely gets them. A frame
+goes only when what the viewer may see changed, so a viewer who sees the
+member approximately hears of a new cell or a new five minutes, not of every
+fix.
+
+Client → server: `{ type: "ping" }`, answered with a `pong`,
+`{ type: "subscribe", circleIds }`, which may only narrow to circles the user
+belongs to, and `{ type: "control" }`, which the phone's tracker sends to
+declare the socket its control channel. The server answers
+`{ type: "control", command: "ready" }` and from then on delivers `watch` (go
+live for `seconds`, or end the window when there are none left) and `wake`
+(one fix now) down that socket and no other, the moment a viewer or the sweep
+asks. Each carries an `ask`, which the phone answers with
+`{ type: "control", ack: <ask> }` at once. An older server reads an ack as the
+declaration again, which changes nothing.
 The server pings on-screen sockets every 30 s and a declared control socket
 every 2 minutes, since a phone in a pocket wakes its radio for every answer,
 and drops a socket that hasn't answered one ping by the time the next is due.
@@ -402,6 +478,9 @@ missing session are still errors.
   would go on showing the blank once storage is back.
 - `POST /circles/:id/nudge/:userId` answers `notified: "gone"` for somebody no
   longer in the circle.
+- `POST /circles/:id/members/:userId/watch` answers `watching: false` for
+  somebody no longer in the circle, since the Live page holds every minute,
+  and its `DELETE` is always answered `{ ok: true }`.
 - `GET /invites/:code` says `reason: "removed"` to a signed-in viewer the circle
   removed, holding a code made before that, so the app never offers a join
   that would be refused.

@@ -399,6 +399,6 @@ describe("a phone that says why it cannot report", () => {
     const rows = (await getDb().execute(
       sql`select summary from events where type = 'device_offline' and actor_user_id = ${user.user.id}::uuid`,
     )) as unknown as Array<{ summary: string }>
-    expect(rows[0]?.summary).toContain("location permission is not set to Always")
+    expect(rows[0]?.summary).toContain("location access is not allowed all the time")
   })
 })

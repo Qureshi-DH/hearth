@@ -8,7 +8,8 @@ import { ThemeProvider } from "../theme/context"
 import { storage } from "../utils/storage"
 
 const mockDeleteAccount = jest.fn(async (_password: string) => ({ ok: true as const }))
-const mockExport = jest.fn(async () => ({}))
+const mockExport = jest.fn(async (): Promise<unknown> => ({}))
+const mockWritten: string[] = []
 const mockSignedOut = jest.fn()
 
 jest.mock("../hooks/queries", () => ({
@@ -24,6 +25,19 @@ jest.mock("../services/api", () => ({
   },
 }))
 jest.mock("../services/location/tracker", () => ({ stopTracking: jest.fn(async () => {}) }))
+jest.mock("expo-file-system", () => ({
+  Paths: { cache: "cache" },
+  File: class {
+    uri = "file:///cache/hearth-export.json"
+    write(text: string) {
+      mockWritten.push(text)
+    }
+  },
+}))
+jest.mock("expo-sharing", () => ({
+  isAvailableAsync: async () => true,
+  shareAsync: jest.fn(async () => {}),
+}))
 // The real one scrolls with react-native-keyboard-controller, which has no
 // native half here and nothing to do with what is under test.
 jest.mock("../components/Screen", () => {
@@ -118,6 +132,56 @@ describe("PrivacyDataScreen export", () => {
   beforeEach(() => {
     jest.clearAllMocks()
     storage.clearAll()
+    mockWritten.length = 0
+  })
+
+  // The server writes the readable parts. The phone must hand them on whole.
+  it("saves every section the server sent, SOS alerts, devices and feed included", async () => {
+    const document = {
+      exportedAt: "2026-10-18T09:00:00.000Z",
+      sosAlerts: [
+        {
+          circle: "Family",
+          note: null,
+          startedAt: "2026-10-01T08:00:00.000Z",
+          resolvedAt: "2026-10-01T08:05:00.000Z",
+          resolvedBy: "Mum",
+        },
+      ],
+      devices: [{ device: "Dan's phone", thisDevice: true, signedOutAt: null }],
+      activityFeed: [
+        {
+          occurredAt: "2026-10-01T08:00:00.000Z",
+          circle: "Family",
+          type: "sos_started",
+          summary: "Dan needs help",
+          details: {},
+        },
+      ],
+      locationHistory: [],
+    }
+    mockExport.mockResolvedValueOnce(document)
+    const { getByText } = render(
+      <ThemeProvider>
+        <SafeAreaProvider
+          initialMetrics={{
+            frame: { x: 0, y: 0, width: 390, height: 844 },
+            insets: { top: 0, left: 0, right: 0, bottom: 0 },
+          }}
+        >
+          <PrivacyDataScreen
+            navigation={navigation as never}
+            route={{ key: "privacy", name: "PrivacyData" } as never}
+          />
+        </SafeAreaProvider>
+      </ThemeProvider>,
+    )
+    await act(async () => {})
+    await act(async () => {
+      fireEvent.press(getByText("settings:export"))
+    })
+    expect(mockWritten).toHaveLength(1)
+    expect(JSON.parse(mockWritten[0]!)).toEqual(document)
   })
 
   // The server takes three in ten minutes and answers the fourth with a 429,

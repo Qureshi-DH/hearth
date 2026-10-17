@@ -286,6 +286,13 @@ Install the Hearth app (see [the mobile app page](../developer/mobile.md) for bu
 at one, sign in as the admin account you configured, create a circle, and
 share the invite code or QR with the family.
 
+The invite link and the QR both carry the server's address. Opened on a phone,
+they land on a page with an Open in Hearth button that fills in the server and
+the code, and with the steps for somebody who doesn't have the app yet. Set
+`IOS_APP_URL` and `ANDROID_APP_URL` to wherever your family gets the app, such
+as a TestFlight invite or an APK you host, and the page links to them.
+Otherwise it tells them to ask you.
+
 ## The admin portal
 
 Open the server's address in a browser, `https://hearth.example.com`, and sign
@@ -505,6 +512,12 @@ History retention_. The value stored there overrides the environment variable
 from that point on, in both directions: the app can raise the ceiling as well as
 lower it, and the next sweep uses the new number without a redeploy. Clear the
 field in the app and the environment value is back in charge.
+
+The app reads the ceiling from `GET /server-info` and offers nothing longer in a
+circle's settings, with a line saying why. A circle that asks for more, from an
+older app or a script, is stored at the ceiling rather than refused. A circle
+set longer before you lowered the ceiling keeps its number but is pruned at the
+ceiling, and the app shows it at the ceiling.
 
 One wrinkle worth knowing before you touch anything on that screen: saving any
 server setting writes the whole set, so renaming the server also stores whatever

@@ -98,6 +98,14 @@ _You → Tracking status_.
 | Motion and activity            | `NSMotionUsageDescription`                                                    | `ACTIVITY_RECOGNITION` (+ the Play Services variant)        | Let the OS say when you are driving or still, so the GPS can sleep               | Onboarding, right after location. Hidden on a phone that cannot classify motion |
 | Photo library                  | `NSPhotoLibraryUsageDescription` (picker plugin)                              | system picker, no permission                                | Choose one profile picture                                                       | Only when you tap your avatar                                                   |
 
+Android calls the background choice _Allow all the time_ and the foreground
+one _Allow only while using the app_, so on Android the checklist uses those
+words where iOS says _Always_ and _While Using_. The Android text opens with
+the sentence Play's reviewers look for in a prominent disclosure, that Hearth
+collects location data even when the app is closed or not in use. The strings
+are chosen by platform when `i18n/en.ts` loads, and a member's issue line,
+which may describe a phone on the other platform, is worded to fit both.
+
 The motion classifier runs whenever tracking does. Core Motion and Play
 Services have already classified the movement for the system, so asking them
 costs far less than watching the phone's own position, which is what the GPS
@@ -184,12 +192,26 @@ unless it was built with `HEARTH_ALLOW_HTTP=1`, while a production iOS build
 can. Put TLS in front of the server (see [self-hosting](../install/self-hosting.md))
 and neither caveat applies.
 
+The app can't ask the OS which of these it was built with, so `app.config.ts`
+writes the answer into `extra.plainHttp`, and `utils/serverProbe.ts` reads it
+back with the platform. The server screen suggests typing `http://` only when
+that address could work from this build. Anywhere else, an Android release
+or a public name on an iPhone, it says the app connects only over HTTPS, and
+an `http://` address it can't use is refused in the same words rather than as
+a server that didn't answer. In development `extra` comes from whatever Metro
+evaluated, which can differ from the build on the phone.
+
 ### Invite links
 
 The API serves `https://your-server/join/ABCD1234` itself. It shows the code,
-hands off to `hearth://join/ABCD1234` when the app is installed, and explains
-itself when it isn't. That handoff works in every build, because the
-`hearth://` scheme is registered unconditionally.
+the server's address and the steps for somebody without the app, with an Open
+in Hearth button that goes to `hearth://join/ABCD1234?server=<address>`. That
+works in every build, because the `hearth://` scheme is registered
+unconditionally. The QR code in the app is the same web link, so a phone
+camera opens the page and Hearth's own scanner reads the server from it.
+`parseInviteLink` in `utils/inviteCode.ts` takes either, and an older link
+with only the code still works. On a phone that was never set up, the server
+it names goes into the server field, ready to confirm.
 
 Android App Links, where tapping the link opens the app directly rather than a
 browser page that then offers to, need a concrete domain compiled in and
@@ -226,7 +248,8 @@ All of this lives in `app/services/location/tracker.ts`.
    (single-flight upload, oldest first). The flush runs on every delivery
    whether or not it kept a fix, so an upload that failed earlier is not
    left waiting for the next kept fix, which on a parked phone is a quarter
-   hour away.
+   hour away. A retry already waiting keeps its timer, so a firewall that
+   locked the address out isn't met with a request for every fix.
 4. While the app is in the foreground, a heartbeat asks for one `Balanced` fix
    at the circle's interval whenever the last fix is older than that, tagged
    `source: "heartbeat"`. It reads the moving/stationary mode and never
@@ -546,7 +569,14 @@ the phone stopped.
 A failed upload (network, 5xx, 429) keeps the queue and retries on its own
 after thirty seconds, then a minute, then two, while the process lives. After
 that it waits for the next delivery, which flushes whether or not it kept a
-fix. An upload that gets through starts the ladder over. A 4xx that is not
+fix. An upload that gets through starts the ladder over. On Live the ladder is
+two, five and ten seconds, and the ten repeats, since the next delivery is a
+second away and waiting for it is no back-off at all. Every fix stays queued
+meanwhile. A live upload gets four seconds rather than thirty, and one that
+runs out goes again at once on a fresh request with the same fixes in the
+same order, because one stuck on a dead connection froze the viewer's map for
+as long as it waited. A second timeout in a row is a slow network rather than
+a stuck request, and the ladder takes over with the full time. A 4xx that is not
 an auth problem drops that batch so one bad fix cannot wedge the pipeline,
 and the next batch waits on the same ladder rather than going at once, since
 a firewall in front of the server can lock the phone out for a 4xx. A 403
@@ -640,7 +670,10 @@ server pings it every two minutes and the socket layer answers), reconnects
 with backoff, and rotates its token itself when the server refuses it
 (`services/location/control.ts`). An ask from the family
 (a page opened, Live, the map opened, the sweep's wake) comes down it and is
-answered within a second: `wake` takes one fix, `watch` goes live. The UI's
+answered within a second. A `wake` takes one fix, a `watch` goes live, and a
+`watch` with no seconds left ends the window. Each ask carries an id, and the
+channel sends `{ type: "control", ack }` back before it does anything else,
+because the server pushes instead when no answer comes within three seconds. The UI's
 socket in `services/realtime.ts` is a different thing: it lives with the
 screen and closes when the app goes to the background, which is exactly when
 this one matters. An ask for a parked Android phone goes by a silent, high
@@ -665,47 +698,69 @@ later.
 
 ### Watching
 
-The Live page is the one time the family wants to see a car move along a
-road. The page calls `POST /circles/:id/members/:userId/watch` on focus and
-every minute after. The server records the window on the member and sends
-the ask down the phone's control channel when it has one open, or a silent
-`watch` push otherwise, again after ninety seconds if the phone has
-not uploaded since, three times per window at most, and the reply says
-which (`pushed`), when the phone was last heard and what it said
-stands in its way. Every upload reply also carries `watchedUntil`, so a
+The Live page is for watching somebody right now, a car along a road or a
+child about to come out of school. The page calls
+`POST /circles/:id/members/:userId/watch` on focus and every minute after.
+Each viewer holds a window of their own, and the phone's is the latest of
+them. The server sends the ask down the phone's control channel when the
+phone says it has it within three seconds, or a silent `watch` push
+otherwise, and pushes again when the phone has said nothing for twenty
+seconds and the last push is ninety seconds old, three times per window at
+most. That catches a phone whose live service Android stopped mid window.
+The reply says which (`pushed`), when the phone was last heard and what it
+said stands in its way. Every upload reply also carries `watchedUntil`, so a
 phone that is already reporting picks the watch up on its next batch whether
-or not the push arrived. A channel ask that got no
-answer within twenty seconds is not repeated down the channel on the next
-hold: a socket iOS let die without a close keeps its stamp for minutes, and
-the hold goes by push instead. Either way the phone puts `watchedUntil` in
-its store and `currentOptions()` returns the live tier whatever the phone
-was doing: `High` accuracy, a fix a second, every one uploaded. A parked
-Android phone is no exception. The watch push brings the brief service up, the
-live request upgrades it in place, and the window's end takes it down. The
-resting request runs under it the whole time, so a service Android kills inside
-the window, or one a reboot takes, leaves the phone reporting as it was. Where
+or not the push arrived. Either way the phone puts `watchedUntil` in its
+store and `currentOptions()` returns the live tier whatever the phone was
+doing, at `High` accuracy with a fix a second and every one uploaded. A parked Android
+phone is no exception. The watch push brings the brief service up, the live
+request upgrades it in place, and the window's end takes it down. The resting
+request runs under it the whole time, so a service Android kills inside the
+window, or one a reboot takes, leaves the phone reporting as it was. Where
 Android refuses the service anyway, the phone answers with one fix, and the
 window stays held so the next upload reply doesn't ask again. iOS has no time
 interval, so the live session has no distance filter either, which is the only
 session shape that delivers to a phone standing still. `ingest` thins the
-stream at the live tier's own pace rather than the circle's. The phone also answers
-with one fix straight away. The window ends by a timer and by the first fix past it,
-whichever comes first, and the request steps back to the tier it was in.
+stream at the live tier's own pace rather than the circle's. The phone also
+answers with one fix straight away. A hold on a window already live only moves
+its end, with no fresh fix and no re-registration, though a hold that came by
+push still brings back a live service Android stopped, since a push is a
+moment Android allows the start.
+
+The page lets go with `DELETE` on the same path when it loses focus or the
+app goes to the background. Inactive, under Control Centre or a call, it goes
+on holding. With nobody else watching the server ends the window, and the
+phone hears it at once. An upload reply with no window, or a shorter one,
+ends or shortens what it holds, and so does a `watch` with no seconds left
+down the channel. A reply to an upload sent before the latest ask can't end
+it, since the ask is newer news. Otherwise the window ends by a timer and by
+the first fix past it, whichever comes first, and the request steps back to
+the tier it was in. The page sends neither the release nor a trail fill to a
+server whose watch reply has no `supports`.
+
 The Live page calls the phone live on any fix from the last thirty seconds,
 counting one from up to thirty seconds before the ask, since the one fix an
 ask gets out of an iPhone is stamped before the ask reached it. It holds the
 display on for as long as it is open (`expo-keep-awake`, its own tag), since
-following someone along a road is watching rather than reading.
+following someone along a road is watching rather than reading. Asks closer
+together than ten seconds go as one a moment later, so pulling to refresh
+can't reach the server's sixty in ten minutes, and a `429` says there were too
+many asks, not that the server could not be reached. The map follows them
+with a short linear glide until the viewer moves it, and then stays put, with
+a Follow button to pick them up again.
 
-The button that opens it is a promise that it will work, so it is offered
-only for a phone that is travelling _and_ has spoken within the last three
-minutes (`onTheMove` in `utils/activity.ts`). A travelling phone uploads
-every half minute. One that has said nothing for longer is out of signal or
-asleep, and the page would sit on "asking" until the window lapsed.
+The button that opens it is offered for anyone the viewer sees precisely,
+parked or on the move (`liveOffered` in `utils/activity.ts`), and never on
+your own page. A phone that doesn't answer is said to be not answering, with
+the reason.
 
 Where somebody is, in words, comes from the phone's own geocoder
-(`utils/geocode.ts`): no server, no account, and no coordinates sent to a
-third party. Answers are cached on a hundred metre grid. Android's geocoder
+(`utils/geocode.ts`), with no Hearth server and no account. It is not private
+to the phone. `reverseGeocodeAsync` hands the coordinates to Apple on an
+iPhone and, on most Android phones, to Google, which answer over the network.
+It is on by default, and _Street names_ under _You_ turns it off
+(`streetNames` in `stores/settings.ts`), after which `useNearby` asks nothing.
+Answers are cached on a hundred metre grid. Android's geocoder
 falls back to an Open Location Code where it has no street ("8H+2W",
 "7JVW4XPP+2H"), which is a coordinate spelled differently and means nothing
 to a family, so plus codes, bare house numbers and postcodes are read as no
@@ -717,10 +772,15 @@ A member settled somewhere no place covers gets a "Save this spot as a
 place" row on their profile, which opens the place editor on their position
 with the geocoder's name as a first draft.
 
-The Live page draws the fixes that arrive while it is open and nothing else.
+The Live page draws the fixes that arrive while it is open and nothing else,
+every fix of each upload, from the socket's `fixes` (`useLiveTrail`). After a
+reconnect or a return to the front it fills what it missed from
+`GET .../live-trail`, since the last point it drew. A fix far looser than the
+last few, a Wi-Fi grade fix in a stream of GPS ones, is left out of the line
+(`liveTrailToDraw` in `utils/trail.ts`), and so is a step under five metres.
 A trip draws its own trail, and only where the phone reported it: a silence
-between two fixes is dashed (`splitTrail` in `utils/trail.ts`), because the
-road between them is a guess. The profile map draws no trail.
+between two fixes is dashed (`splitTrail`), because the road between them is
+a guess. The profile map draws no trail.
 
 Opening the map calls `POST /circles/:id/locations/refresh`, which sends one
 `wake` to each member quiet for a couple of minutes. Each wake goes down the
@@ -815,7 +875,14 @@ suddenly after driving fast, and it posts that to the circle as a prompt.
 `app/services/realtime.ts` holds a single websocket while the app is in the
 foreground and writes every message straight into the TanStack Query cache.
 It disconnects in the background, where push takes over, and reconnects with
-back-off.
+back-off. Inactive is not the background, so pulling down Control Centre on
+an iPhone leaves the socket open. It pings every 25 s, every 5 s while a Live
+page is open, and opens a new socket when one goes 10 s, or 4 s, without a
+word, since a half-open socket looks open and carries nothing. Presence from
+the socket and from the minute's poll is merged by `recordedAt`
+(`utils/presence.ts`), so an answer that lost a race never steps a dot back.
+The map and the Live page show a quiet "Reconnecting…" once the socket has
+been down for five seconds (`useRealtimeDown`).
 
 Both that socket and the control channel hand every frame to
 `app/services/socketAlerts.ts`. On a server whose push provider is `none` or
@@ -863,6 +930,15 @@ modules/        hearth-motion: the Expo native module behind the motion classifi
   dashed amber = approximate, grey = stale.
 - Glass panels float over the map, with blur intensity reduced on Android.
 - SOS requires a three-second hold with a visible progress ring, never a tap.
+- A toast is read out to a screen reader as it appears, since focus never
+  reaches it before it goes. It stays up longer the longer it is, at least six
+  seconds for an error and at most fifteen, and a tap dismisses it early.
+- The header's back arrow and close cross are labelled Back and Close for a
+  screen reader.
+- Counted strings use i18next's `_one` keys beside the bare key, so one of
+  anything never reads "1 members". A time ahead reads "in 3 days". One less
+  than five minutes ahead reads "just now", since a phone clock running fast
+  stamps fixes that far ahead and the server takes them.
 
 ## Testing
 

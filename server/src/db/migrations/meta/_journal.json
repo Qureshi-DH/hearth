@@ -99,6 +99,13 @@
       "when": 1792261689970,
       "tag": "0013_quiet_hours_and_settling_crossings",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792266310759,
+      "tag": "0014_live_watches_and_presence_device",
+      "breakpoints": true
     }
   ]
 }

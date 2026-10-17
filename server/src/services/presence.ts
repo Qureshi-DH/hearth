@@ -202,6 +202,13 @@ export function presenceStale(
   return !recordedAt || now.getTime() - recordedAt.getTime() > staleAfter * 1000
 }
 
+/**
+ * The clock an approximate circle reads the time of a fix on. To the second,
+ * a fix a second while a precise circle watches would time each step from
+ * one grid cell into the next, and the cell would give away the street.
+ */
+export const APPROXIMATE_CLOCK_MS = 5 * 60 * 1000
+
 export function projectPresence(
   row: PresenceRow,
   viewerId: string,
@@ -254,6 +261,10 @@ export function projectPresence(
   const point = approximate
     ? coarsenLocation({ lat: row.lat!, lon: row.lon! })
     : { lat: row.lat!, lon: row.lon! }
+  const recordedAt =
+    approximate && row.recordedAt
+      ? new Date(Math.floor(row.recordedAt.getTime() / APPROXIMATE_CLOCK_MS) * APPROXIMATE_CLOCK_MS)
+      : row.recordedAt
 
   return {
     userId: row.userId,
@@ -261,7 +272,7 @@ export function projectPresence(
     lon: point.lon,
     // Widening the accuracy circle keeps the UI honest about the fuzzing.
     accuracyMeters: approximate ? Math.max(row.accuracyMeters ?? 0, 750) : row.accuracyMeters,
-    recordedAt: row.recordedAt?.toISOString() ?? null,
+    recordedAt: recordedAt?.toISOString() ?? null,
     batteryLevel: row.batteryLevel,
     isCharging: row.isCharging,
     // The phone's label, unless its own speed rules it out: a drive handed

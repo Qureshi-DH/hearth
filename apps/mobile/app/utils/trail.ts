@@ -65,3 +65,83 @@ export function splitTrail<T extends { lat: number; lon: number; recordedAt?: st
   if (run.length > 1) drawn.push(run)
   return { drawn, gaps }
 }
+
+/** One point of a Live trail, as the socket and the refill both carry it. */
+export interface LiveTrailPoint {
+  lat: number
+  lon: number
+  recordedAt: string
+  accuracyMeters: number | null
+}
+
+/**
+ * At a fix a second that is under an hour of driving, and hours on foot,
+ * where most fixes are a step from the last. A longer watch drops its
+ * oldest point.
+ */
+export const LIVE_TRAIL_MAX_POINTS = 3_000
+
+/** Every point once, in the order the phone recorded them, however they arrived. */
+export function mergeTrail<T extends { recordedAt: string }>(
+  current: T[],
+  incoming: T[],
+  max = LIVE_TRAIL_MAX_POINTS,
+): T[] {
+  if (incoming.length === 0) return current
+  const last = current[current.length - 1]
+  const ordered = incoming.every((point, i) =>
+    i === 0
+      ? !last || point.recordedAt > last.recordedAt
+      : point.recordedAt > incoming[i - 1]!.recordedAt,
+  )
+  if (ordered) return [...current, ...incoming].slice(-max)
+  const byTime = new Map<string, T>()
+  for (const point of [...current, ...incoming]) byTime.set(point.recordedAt, point)
+  return [...byTime.values()]
+    .sort((a, b) => Date.parse(a.recordedAt) - Date.parse(b.recordedAt))
+    .slice(-max)
+}
+
+/** Live fixes closer than this to the last drawn point are the same spot. */
+export const LIVE_TRAIL_MIN_STEP_METERS = 5
+/**
+ * A fix this much looser than the last few, and looser than the floor, is
+ * not where the phone went. On a parked Android phone the Wi-Fi grade
+ * request keeps delivering under the live one, and drawn, each of its fixes
+ * is a spike off the road and back. Three in a row are the phone's new
+ * normal, indoors or under trees, and are drawn.
+ */
+const OUTLIER_RATIO = 3
+const OUTLIER_FLOOR_METERS = 40
+const OUTLIER_SAMPLE = 5
+const OUTLIER_STREAK = 3
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  return sorted[Math.floor(sorted.length / 2)]!
+}
+
+/** The points of a Live trail worth drawing as the road. */
+export function liveTrailToDraw<T extends LiveTrailPoint>(points: T[]): T[] {
+  const kept: T[] = []
+  let recent: number[] = []
+  let streak: T[] = []
+  for (const point of points) {
+    const accuracy = point.accuracyMeters
+    if (accuracy != null && recent.length >= 3) {
+      const limit = Math.max(OUTLIER_FLOOR_METERS, OUTLIER_RATIO * median(recent))
+      if (accuracy > limit) {
+        streak.push(point)
+        if (streak.length < OUTLIER_STREAK) continue
+        recent = streak.map((loose) => loose.accuracyMeters!)
+        streak = []
+      }
+    }
+    streak = []
+    if (accuracy != null) recent = [...recent, accuracy].slice(-OUTLIER_SAMPLE)
+    const last = kept[kept.length - 1]
+    if (last && haversineMeters(last, point) < LIVE_TRAIL_MIN_STEP_METERS) continue
+    kept.push(point)
+  }
+  return kept
+}

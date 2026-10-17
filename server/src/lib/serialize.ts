@@ -50,7 +50,11 @@ export function toCurrentUser(row: User): CurrentUser {
   }
 }
 
-export function toSessionSummary(row: SessionRow, currentSessionId: string): SessionSummary {
+export function toSessionSummary(
+  row: SessionRow,
+  currentSessionId: string,
+  mapDeviceId?: string | null,
+): SessionSummary {
   return {
     id: row.id,
     deviceName: row.deviceName,
@@ -61,6 +65,7 @@ export function toSessionSummary(row: SessionRow, currentSessionId: string): Ses
     lastUsedAt: iso(row.lastUsedAt),
     current: row.id === currentSessionId,
     pushEnabled: Boolean(row.pushToken),
+    ...(mapDeviceId === undefined ? {} : { onMap: row.deviceId === mapDeviceId }),
   }
 }
 

@@ -9,6 +9,7 @@ import {
   type ActivityType,
   type LocationFixInput,
   type LocationSource,
+  type TrailFix,
 } from "@hearth/shared"
 import { and, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm"
 
@@ -28,7 +29,12 @@ import { getBus } from "../runtime"
 import { recordEvent } from "./feed"
 import { evaluateGeofenceBatch, reseedPlaceMemberships } from "./geofence"
 import { phoneGroup } from "./notification-groups"
-import { effectiveSharingState, loadRawPresenceByCircle, preciseSinceOnLapse } from "./presence"
+import {
+  effectiveSharingState,
+  loadRawPresenceByCircle,
+  preciseSinceOnLapse,
+  presenceStale,
+} from "./presence"
 
 /** Fixes older than this are almost certainly a buggy client clock. */
 const MAX_BACKDATE_MS = 7 * 24 * 60 * 60 * 1000
@@ -315,6 +321,8 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
   const [presence] = await db
     .select({
       recordedAt: userPresence.recordedAt,
+      deviceId: userPresence.deviceId,
+      activity: userPresence.activity,
       incidentFlaggedAt: userPresence.incidentFlaggedAt,
       lowBatteryNotifiedAt: userPresence.lowBatteryNotifiedAt,
       lowBatteryNotifiedLevel: userPresence.lowBatteryNotifiedLevel,
@@ -325,11 +333,22 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
 
   const offlineCutoff = new Date(now.getTime() - DEFAULTS.offlineAfterSeconds * 1000)
 
+  // A parked word is dated now, but all it says is that the device has not
+  // moved, so it does not take the dot from another device of theirs that is
+  // still reporting. A tablet left at home would otherwise pull the dot back
+  // from the road every quarter hour. Moving, it takes the dot like any fix.
+  const otherDeviceLeads =
+    latest.activity === "still" &&
+    presence?.deviceId != null &&
+    presence.deviceId !== options.deviceId &&
+    !presenceStale(presence.recordedAt, presence.activity, now)
+
   await db
     .insert(userPresence)
     .values({
       userId: options.userId,
       lastPointId: idByTime.get(latest.recordedAt.getTime()) ?? null,
+      deviceId: options.deviceId,
       lat: latest.lat,
       lon: latest.lon,
       accuracyMeters: latest.accuracyMeters,
@@ -345,6 +364,7 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
       target: userPresence.userId,
       set: {
         lastPointId: sql`coalesce(excluded.last_point_id, ${userPresence.lastPointId})`,
+        deviceId: sql`excluded.device_id`,
         lat: sql`excluded.lat`,
         lon: sql`excluded.lon`,
         accuracyMeters: sql`excluded.accuracy_meters`,
@@ -367,9 +387,9 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
       // parked at Home by the rule for one last seen on the road. Only a
       // re-report the history insert took gets that far, so a retried copy
       // of the older word cannot undo the stop.
-      setWhere: sql`${userPresence.recordedAt} is null
+      setWhere: sql`not ${otherDeviceLeads} and (${userPresence.recordedAt} is null
         or ${userPresence.recordedAt} < excluded.recorded_at
-        or (${userPresence.recordedAt} = excluded.recorded_at and ${latestLanded})`,
+        or (${userPresence.recordedAt} = excluded.recorded_at and ${latestLanded}))`,
     })
 
   // A buffered or retried upload can be older than the presence row it lost
@@ -377,7 +397,8 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
   // too, or a stale 4% reading raises "low battery" about a phone that has
   // been on the charger for hours.
   const isCurrent =
-    !presence?.recordedAt || presence.recordedAt.getTime() < latest.recordedAt.getTime()
+    !otherDeviceLeads &&
+    (!presence?.recordedAt || presence.recordedAt.getTime() < latest.recordedAt.getTime())
 
   // That refusal leaves the whole row alone, updated_at included, so a phone
   // that lands after a day abroad and drains a queue of yesterday's fixes has
@@ -478,7 +499,21 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
     }
   }
 
-  await broadcastPresence(db, options.userId, [...sharing.keys()])
+  // The trail a Live page draws is every fix the dot moved through, not one
+  // per upload. Only fixes past the old position, and only when this batch
+  // moved the dot, so a backlog or the tablet at home draws nothing.
+  const trail: TrailFix[] = isCurrent
+    ? freshFixes
+        .filter((fix) => !presence?.recordedAt || fix.recordedAt > presence.recordedAt)
+        .map((fix) => ({
+          lat: fix.lat,
+          lon: fix.lon,
+          recordedAt: fix.recordedAt.toISOString(),
+          accuracyMeters: fix.accuracyMeters,
+        }))
+    : []
+
+  await broadcastPresence(db, options.userId, [...sharing.keys()], trail)
 
   return { accepted: inserted.length, rejected, placeEvents: transitions.length }
 }
@@ -492,6 +527,7 @@ export async function broadcastPresence(
   db: Database,
   userId: string,
   circleIds?: string[],
+  fixes: TrailFix[] = [],
 ): Promise<void> {
   const bus = getBus()
   if (!bus) return
@@ -512,6 +548,7 @@ export async function broadcastPresence(
       circleId,
       userId,
       raw,
+      ...(fixes.length > 0 ? { fixes } : {}),
     })
   }
 }

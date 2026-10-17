@@ -263,7 +263,7 @@ export const AdminScreen: FC<AppStackScreenProps<"Admin">> = ({ navigation }) =>
             subtitle={[
               user.email,
               relativeTime(user.lastSeenAt),
-              `${user.circleCount} circles`,
+              translate("admin:circlesCount", { count: user.circleCount }),
               user.longestSilenceSeconds != null && user.longestSilenceSeconds >= 60
                 ? translate("admin:longestSilence", {
                     minutes: Math.round(user.longestSilenceSeconds / 60),

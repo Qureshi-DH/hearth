@@ -42,7 +42,7 @@ describe("the portal's labels", () => {
   it("say what a phone's issue is in a sentence", () => {
     expect(ISSUE_LABEL).toEqual({
       sharing_off: "Location sharing is switched off on the phone",
-      location_permission: "Location permission is not set to Always",
+      location_permission: "Location access is not allowed all the time",
       precise_location: "Precise location is off",
       location_services: "Location services are off",
       motion_permission: "Motion and activity access is off",

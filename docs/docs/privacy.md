@@ -32,23 +32,28 @@ under a random key, and the app strips the EXIF by re-encoding the photo before
 it uploads, which matters because a phone photo usually records where it was
 taken.
 
-No analytics, no crash reporting, no third-party SDKs phone home. The only
-outbound connections the server makes are to the push provider you configured,
-if any, and to your object storage. Map tiles and street names are fetched by
-the phone, not the server, as described below.
+No analytics, no crash reporting and no tracking SDK. The only outbound
+connections the server makes are to the push provider you configured, if any,
+and to your object storage. The phone makes a few of its own, for map tiles,
+street names and push, described below.
 
 ## Who can see what
 
 A user has one location stream. Each circle sees it through the mode you picked.
 
 Precise is exact coordinates, accuracy, speed, heading, activity and battery,
-plus trips and breadcrumb history when the circle allows history. Approximate
+plus trips and breadcrumb history when the circle allows history. A precise
+circle can also read your last ten minutes of fixes, whether or not it keeps
+history, which is how a Live page fills in what it missed. Approximate
 snaps your position to a deterministic ~750 m grid and reports accuracy as
-≥750 m. Speed, heading, activity, trail, trips, "at a place", place
-arrive/leave alerts, speed alerts and possible-incident alerts are all hidden
-there. Battery stays visible, and low battery and phone offline alerts still
-reach the circle. Paused is nothing at all. Members see that you paused, not
-where.
+≥750 m, and the time of your last fix to the five minutes it fell in. An
+approximate circle hears of you when the grid cell or those five minutes
+change, not with every fix, so it can't time you crossing from one cell to the
+next while somebody else watches you live. Speed, heading, activity, trail,
+trips, "at a place", place arrive/leave alerts, speed alerts and
+possible-incident alerts are all hidden there. Battery stays visible, and low
+battery and phone offline alerts still reach the circle. Paused is nothing at
+all. Members see that you paused, not where.
 
 Pausing or going approximate changes what a circle sees, not what the phone
 sends. It keeps uploading, and the server keeps your breadcrumbs under the
@@ -103,30 +108,41 @@ A quick message wakes only the person it names, but the circle's activity feed
 records it with both names and the line itself. It is a short word said in front
 of the family rather than a private channel, and there is no chat to read back.
 
-## What leaves the server
+## What leaves the server and the phone
 
 Push notifications carry a title, a body and identifiers (`{type, circleId,
 eventId?, placeId?, userId?, alertId?, fromUserId?}`), plus the time an arrival
 happened. Coordinates are never included. The app fetches them from your server
 when the notification is tapped. With `PUSH_PROVIDER=expo` they pass through
-Expo and then Apple or Google. With `ntfy` the content stays on your own ntfy
-instance, though on iPhone the ntfy app's wake-up signal goes through Apple and
-may go through ntfy's public server, depending on how your ntfy is set up. See
-[push notifications](install/push-notifications.md).
+Expo and then Apple or Google, and the phone registers with Expo's push service
+for its token. On Android, a build that includes Firebase, which Expo push
+needs, registers the phone with Google's Firebase Cloud Messaging when it
+starts, whichever provider your server uses. That carries identifiers for the
+app and the phone, never a position. With `ntfy` the content stays on your own
+ntfy instance, though on iPhone the ntfy app's wake-up signal goes through Apple
+and may go through ntfy's public server, depending on how your ntfy is set up.
+See [push notifications](install/push-notifications.md).
 
 Map tiles also leave. The phone requests them from the style URL your server
 advertises, OpenFreeMap by default, so the tile host sees the viewed area, as
 with any map. Self-host tiles to avoid it.
 
 Street names under members and trips come from the phone's own geocoder, Apple's
-on iPhone and Google's on Android, which is handed the coordinates it names.
-Turn _Street names_ off under _You_ to stop that.
+on iPhone and Google's on most Android phones, which is handed the coordinates
+it names. They are on out of the box. Turn _Street names_ off under _You_ to
+stop that.
+
+Asking for directions to somebody opens your phone's maps app at their
+position, and that app is then handed it.
 
 ## Your rights, built in
 
 - `GET /api/v1/me/export` returns your profile, circle memberships,
-  breadcrumbs, trips, check-ins and the places you created, as JSON. Also in
-  the app under _You → Privacy & data → Export_.
+  breadcrumbs, trips, check-ins, the places you created, your SOS alerts, the
+  devices signed in to your account with the address and browser each last
+  used, and the feed entries you made or that are about you, as JSON. Circles
+  and people go by name. Also in the app under _You → Privacy & data →
+  Export_.
 - `DELETE /api/v1/me/history` erases your breadcrumbs, and the trips derived
   from them, and keeps the account. Check-ins and arrive/leave history stay.
 - `DELETE /api/v1/me` deletes the account. Rows keyed to you go with it:
@@ -153,7 +169,8 @@ location_ on the phone is shown as exactly that rather than as a pause.
 
 ## What the app asks the phone for
 
-Location (foreground, then _Always_) and notifications, plus a
+Location (foreground, then _Always_, which Android calls _Allow all the time_)
+and notifications, plus a
 battery-optimisation exemption on Android. Camera only when you scan a QR code,
 and the photo library only when you pick a profile picture, through the system
 picker that hands back the one file you chose rather than the album. On iPhone,
@@ -185,7 +202,8 @@ reason for each.
 
 ## Security summary
 
-- TLS is required in production (phones refuse background HTTP anyway).
+- TLS is required in production. A store build refuses plain HTTP to a public
+  address, and on Android to every address.
 - Access tokens expire in 15 minutes. Refresh tokens are single-use and stored
   hashed. Signing a device out invalidates its token and push registration.
 - Passwords: scrypt, N=2¹⁵, 64-byte keys, per-user salt.

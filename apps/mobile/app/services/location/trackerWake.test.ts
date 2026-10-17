@@ -385,6 +385,48 @@ describe("being watched", () => {
     expect(isDriving()).toBe(true)
   })
 
+  // The Live page holds its window with an ask a minute, and each one came
+  // down the channel as a fresh watch with a one-shot Wi-Fi grade fix, which
+  // could land on the map as the dot jumping across the street.
+  it("takes a hold on a window already live as a later end and nothing more", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    await enterWatched(600)
+    getPosition.mockClear()
+    fake.startService.mockClear()
+    start.mockClear()
+    jest.setSystemTime(Date.now() + 60_000)
+    await enterWatched(600)
+    expect(getPosition).not.toHaveBeenCalled()
+    expect(fake.startService).not.toHaveBeenCalled()
+    expect(start).not.toHaveBeenCalled()
+    const held = Date.parse(useTrackingStore.getState().watchedUntil!) - Date.now()
+    expect(held).toBeGreaterThan(599_000)
+  })
+
+  // The server pushes again when a live phone goes quiet mid window, which
+  // is Android stopping its live service. A push is a moment Android lets
+  // the service start, and the hold it carries brings it back.
+  it("brings a live service Android stopped back when a hold comes by push", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    await enterWatched(600)
+    fake.status = "none"
+    fake.startService.mockClear()
+    await enterWatched(600, { push: true })
+    expect(requestOf(0)).toEqual({ priority: "high", intervalMs: 1_000, distanceMeters: 0 })
+    expect(fake.status).toBe("running")
+  })
+
+  it("steps down at once when the channel says the window is over", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    await enterWatched(600)
+    expect(fake.status).toBe("running")
+    getPosition.mockClear()
+    await enterWatched(0)
+    expect(useTrackingStore.getState().watchedUntil).toBeNull()
+    expect(fake.status).toBe("none")
+    expect(getPosition).not.toHaveBeenCalled()
+  })
+
   it("does nothing when sharing is off", async () => {
     await stopTracking()
     fake.startService.mockClear()
@@ -1089,6 +1131,52 @@ describe("a watched phone learns so from its own upload", () => {
 
     expect(start).not.toHaveBeenCalled()
     expect(useTrackingStore.getState().watchedUntil).toBe(later)
+  })
+
+  // The last viewer left. The phone would otherwise stay on a fix a second
+  // for the rest of a ten minute window nobody is looking at.
+  it("steps down at once when the reply says nobody is watching any more", async () => {
+    await enterMoving()
+    await enterWatched(600)
+    jest.setSystemTime(Date.now() + 1_000)
+    mockUpload.mockResolvedValueOnce(reply(null))
+    queued()
+    await flush()
+    await jest.advanceTimersByTimeAsync(0)
+    expect(useTrackingStore.getState().watchedUntil).toBeNull()
+    expect(lastRequest().intervalMs).not.toBe(1_000)
+  })
+
+  it("takes a shorter window when the viewer who held it longest has left", async () => {
+    await enterMoving()
+    await enterWatched(600)
+    jest.setSystemTime(Date.now() + 1_000)
+    const sooner = new Date(Date.now() + 120_000).toISOString()
+    mockUpload.mockResolvedValueOnce(reply(sooner))
+    queued()
+    await flush()
+    await jest.advanceTimersByTimeAsync(0)
+    const held = Date.parse(useTrackingStore.getState().watchedUntil!) - Date.now()
+    expect(held).toBeGreaterThan(115_000)
+    expect(held).toBeLessThanOrEqual(120_000)
+  })
+
+  // An upload sent a moment before a viewer asked comes back saying nobody
+  // is watching, and it is older news than the ask.
+  it("keeps a window taken after the upload was sent", async () => {
+    await enterMoving()
+    let answer: (value: unknown) => void = () => {}
+    mockUpload.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
+    queued()
+    const flushed = flush()
+    await jest.advanceTimersByTimeAsync(0)
+    const watching = enterWatched(600)
+    await jest.advanceTimersByTimeAsync(0)
+    answer(reply(null))
+    await flushed
+    await watching
+    await jest.advanceTimersByTimeAsync(0)
+    expect(useTrackingStore.getState().watchedUntil).not.toBeNull()
   })
 
   it("measures the window by the server's clock, not the phone's", async () => {

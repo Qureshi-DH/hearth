@@ -14,20 +14,33 @@ import { useSettingsStore } from "@/stores/settings"
 import { toast } from "@/stores/toast"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
-import { cleanInviteCode } from "@/utils/inviteCode"
+import {
+  cleanInviteCode,
+  inviteRefusalText,
+  parseInviteLink,
+  type InviteLink,
+} from "@/utils/inviteCode"
+import { sameServer } from "@/utils/serverAddress"
 
-/** Accepts a URL, a deep link, or a bare code, since a QR could hold any of them. */
-export function extractInviteCode(raw: string): string | null {
+/**
+ * Accepts a link, a deep link, or a bare code, since a QR could hold any of
+ * them. Text that only ends in a code still gives the code.
+ */
+export function readScannedInvite(raw: string): InviteLink | null {
+  const link = parseInviteLink(raw)
+  if (link) return link
   const match = raw.trim().match(/([A-Z0-9]{6,16})\s*$/i)
-  return match ? match[1]!.toUpperCase() : null
+  return match ? { code: match[1]!.toUpperCase(), server: null } : null
 }
 
 export const JoinCircleScreen: FC<AppStackScreenProps<"JoinCircle">> = ({ navigation, route }) => {
   const { themed, theme } = useAppTheme()
   const status = useAuthStore((state) => state.status)
   const setPendingInvite = useAuthStore((state) => state.setPendingInvite)
+  const serverUrl = useAuthStore((state) => state.serverUrl)
   const setActiveCircle = useSettingsStore((state) => state.setActiveCircle)
   const [code, setCode] = useState(cleanInviteCode(route.params?.code ?? ""))
+  const [linkServer, setLinkServer] = useState(route.params?.server ?? null)
   const [scanning, setScanning] = useState(false)
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
 
@@ -37,9 +50,9 @@ export const JoinCircleScreen: FC<AppStackScreenProps<"JoinCircle">> = ({ naviga
   // A deep link can land here signed out, so stash the code for after login.
   useEffect(() => {
     if (status !== "signed_in" && code) {
-      setPendingInvite(code)
+      setPendingInvite(code, linkServer)
     }
-  }, [status, code, setPendingInvite])
+  }, [status, code, linkServer, setPendingInvite])
 
   const join = async () => {
     try {
@@ -61,20 +74,14 @@ export const JoinCircleScreen: FC<AppStackScreenProps<"JoinCircle">> = ({ naviga
   }
 
   const reason = preview.data && !preview.data.valid ? preview.data.reason : null
-  const reasonText =
-    reason === "expired"
-      ? translate("join:expired")
-      : reason === "revoked"
-        ? translate("join:revoked")
-        : reason === "exhausted"
-          ? translate("join:exhausted")
-          : reason === "already_member"
-            ? translate("join:alreadyMember")
-            : reason === "not_found"
-              ? translate("join:notFound")
-              : reason === "removed"
-                ? translate("join:removed")
-                : null
+  // Codes belong to one server, and this phone only asks its own.
+  const otherServer =
+    reason === "not_found" && linkServer && serverUrl && !sameServer(linkServer, serverUrl)
+      ? linkServer
+      : null
+  const reasonText = otherServer
+    ? translate("join:otherServer", { server: otherServer })
+    : inviteRefusalText(reason ?? undefined)
 
   return (
     <SheetScreen scroll>
@@ -89,9 +96,10 @@ export const JoinCircleScreen: FC<AppStackScreenProps<"JoinCircle">> = ({ naviga
               facing="back"
               barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
               onBarcodeScanned={({ data }) => {
-                const found = extractInviteCode(data)
+                const found = readScannedInvite(data)
                 if (found) {
-                  setCode(found)
+                  setCode(found.code)
+                  setLinkServer(found.server)
                   setScanning(false)
                 }
               }}
@@ -109,7 +117,11 @@ export const JoinCircleScreen: FC<AppStackScreenProps<"JoinCircle">> = ({ naviga
 
         <SheetTextField
           value={code}
-          onChangeText={(value) => setCode(cleanInviteCode(value))}
+          onChangeText={(value) => {
+            setCode(cleanInviteCode(value))
+            // A typed code came from nowhere the link knows about.
+            setLinkServer(null)
+          }}
           labelTx="join:codeLabel"
           autoCapitalize="characters"
           autoCorrect={false}

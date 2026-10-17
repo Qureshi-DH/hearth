@@ -1,17 +1,28 @@
-import type { CircleInvite, InvitePreview } from "@hearth/shared"
+import type { CircleInvite, InvitePreview, RegisterInviteOutcome } from "@hearth/shared"
 import { and, eq, sql } from "drizzle-orm"
 
 import type { Database } from "../db/client"
 import { circleMembers, circleRemovals, circles, invites, users } from "../db/schema"
 import { getConfig } from "../env"
-import { badRequest, forbidden, notFound } from "../lib/errors"
+import { AppError, badRequest, forbidden, notFound } from "../lib/errors"
 import { inviteCode } from "../lib/ids"
 import { toPublicUser } from "../lib/serialize"
 import { recordEvent } from "./feed"
 
+export function serverAddress(): string {
+  return getConfig().PUBLIC_URL.replace(/\/+$/, "")
+}
+
 export function inviteUrl(code: string): string {
-  const config = getConfig()
-  return `${config.PUBLIC_URL.replace(/\/+$/, "")}/join/${code}`
+  return `${serverAddress()}/join/${code}`
+}
+
+/**
+ * The app reads the code from the path, as every version has, and an app with
+ * no server yet reads where to look it up from `server`.
+ */
+export function appInviteLink(code: string): string {
+  return `${getConfig().APP_SCHEME}://join/${code}?server=${encodeURIComponent(serverAddress())}`
 }
 
 export async function createInvite(
@@ -293,4 +304,30 @@ export async function acceptInvite(
   })
 
   return { circleId: circle.id, circleName: circle.name, role: invite.role, alreadyMember: false }
+}
+
+/**
+ * The code sent with sign-up. The account already exists by now, so a code
+ * that does not work is answered with why rather than thrown, and the person
+ * learns why they are in no circle.
+ */
+export async function redeemAtSignUp(
+  db: Database,
+  code: string,
+  userId: string,
+): Promise<{ outcome: RegisterInviteOutcome; error?: unknown }> {
+  try {
+    const joined = await acceptInvite(db, code, userId)
+    return {
+      outcome: { joined: true, circleId: joined.circleId, circleName: joined.circleName },
+    }
+  } catch (error) {
+    const preview = await previewInvite(db, code, userId).catch(() => null)
+    const reason = preview && !preview.valid && preview.reason ? preview.reason : "failed"
+    const message =
+      error instanceof AppError
+        ? error.message
+        : "Your account is ready, but joining the circle failed."
+    return { outcome: { joined: false, reason, message }, error }
+  }
 }

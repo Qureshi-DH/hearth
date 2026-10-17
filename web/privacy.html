@@ -573,7 +573,7 @@
 
     <main class="wrap doc">
       <h1>Privacy policy</h1>
-      <p class="meta">For the Hearth app on iOS and Android. Effective 30 September 2026.</p>
+      <p class="meta">For the Hearth app on iOS and Android. Effective 18 October 2026.</p>
 
       <div class="summary">
         <p>
@@ -684,8 +684,11 @@
           Messaging. With ntfy, notifications go through an ntfy server your operator runs and are
           shown by the ntfy app. On iPhone the ntfy app's wake-up signal still goes through Apple,
           and may go through ntfy's public server depending on how that ntfy server is set up. With
-          neither, no notification service is used. A notification carries names, a short line of
-          text such as "Maya arrived at School", and ids. It never contains coordinates.
+          neither, no notification is sent through any service. On Android, an app built with
+          Firebase, which Expo push needs, registers the phone with Firebase Cloud Messaging when it
+          starts, whichever of these your server uses. That registration carries identifiers for the
+          app and the phone and no location. A notification carries names, a short line of text such
+          as "Maya arrived at School", and ids. It never contains coordinates.
         </li>
         <li>
           <strong>Maps.</strong> Map images are downloaded from the map provider your server is

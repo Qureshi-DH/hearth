@@ -8,7 +8,7 @@ import {
   ViewStyle,
 } from "react-native"
 
-import { isRTL } from "@/i18n"
+import { isRTL, type TxKeyPath } from "@/i18n"
 import { translate } from "@/i18n/translate"
 import { useAppTheme } from "@/theme/context"
 import { $styles } from "@/theme/styles"
@@ -160,6 +160,7 @@ function HeaderAction(props: HeaderActionProps) {
         onPress={onPress}
         disabled={!onPress}
         activeOpacity={0.8}
+        accessibilityRole="button"
       >
         <Text weight="medium" size="md" text={content} style={themed($actionText)} />
       </TouchableOpacity>
@@ -173,6 +174,8 @@ function HeaderAction(props: HeaderActionProps) {
         icon={icon}
         color={iconColor}
         onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={ICON_LABELS[icon] ? translate(ICON_LABELS[icon]) : undefined}
         containerStyle={themed([$actionIconContainer, { backgroundColor }])}
         style={isRTL ? { transform: [{ rotate: "180deg" }] } : {}}
       />
@@ -180,6 +183,14 @@ function HeaderAction(props: HeaderActionProps) {
   }
 
   return <View style={[$actionFillerContainer, { backgroundColor }]} />
+}
+
+// A screen reader has nothing to read on a bare image, so it says "button"
+// and leaves the person guessing which way it goes.
+const ICON_LABELS: Partial<Record<IconTypes, TxKeyPath>> = {
+  back: "common:back",
+  caretLeft: "common:back",
+  x: "common:close",
 }
 
 const $wrapper: ViewStyle = {

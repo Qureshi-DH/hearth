@@ -5,6 +5,7 @@ import { z } from "zod"
 import { getDb } from "../db/client"
 import { defaultMapStyleUrl, getConfig } from "../env"
 import { uptimeSeconds } from "../runtime"
+import { appInviteLink, serverAddress } from "../services/invites"
 import { getServerSettings } from "../services/settings"
 import { storageEnabled } from "../services/storage"
 
@@ -48,6 +49,8 @@ export const systemRoutes: FastifyPluginAsyncZod = async (app) => {
         mapStyleUrlDark: defaultMapStyleUrl(config.mapStyles, "dark"),
         mapStyles: config.mapStyles,
         mapAttribution: config.MAP_ATTRIBUTION,
+        maxHistoryRetentionDays:
+          settings.maxHistoryRetentionDays ?? config.MAX_HISTORY_RETENTION_DAYS,
         features: {
           places: true,
           history: true,
@@ -83,33 +86,62 @@ export const joinRoutes: FastifyPluginAsyncZod = async (app) => {
       const config = getConfig()
       const settings = await getServerSettings(db)
       const code = request.params.code.toUpperCase().replace(/[^A-Z0-9]/g, "")
-      const deepLink = `${config.APP_SCHEME}://join/${code}`
+      const deepLink = appInviteLink(code)
+      const stores = [
+        config.IOS_APP_URL ? { label: "Get it for iPhone", href: config.IOS_APP_URL } : null,
+        config.ANDROID_APP_URL
+          ? { label: "Get it for Android", href: config.ANDROID_APP_URL }
+          : null,
+      ].filter((store) => store !== null)
+      const install =
+        stores.length > 0
+          ? `<span class="stores">${stores
+              .map((store) => `<a href="${escapeHtml(store.href)}">${escapeHtml(store.label)}</a>`)
+              .join("")}</span>`
+          : " Ask whoever invited you how to get it."
 
+      // Nothing opens the app on its own. On a phone without it, a scheme
+      // nothing has claimed is an error dialog in front of the steps below.
       return reply.type("text/html; charset=utf-8").send(`<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
 <title>Join on ${escapeHtml(settings.serverName)}</title>
 <style>
   :root { color-scheme: dark light }
   body { margin:0; min-height:100dvh; display:grid; place-items:center;
          font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-         background:#171412; color:#F4EEE8; padding:24px }
-  .card { max-width:22rem; text-align:center }
+         background:#171412; color:#F4EEE8; padding:24px; box-sizing:border-box }
+  .card { max-width:24rem; width:100%; text-align:center }
   .code { font-size:2rem; font-weight:700; letter-spacing:.35em; margin:1rem 0 .25rem }
   .muted { color:#A79C91; font-size:.875rem }
   a.btn { display:block; margin-top:1.5rem; padding:.9rem 1rem; border-radius:14px;
           background:linear-gradient(135deg,#F0673B,#FF5C7A); color:#fff;
           text-decoration:none; font-weight:600 }
+  h2 { font-size:1.05rem; margin:2.25rem 0 .5rem }
+  ol { text-align:left; padding-left:1.25rem; margin:0 }
+  li { margin:.6rem 0 }
+  .stores { display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.5rem }
+  .stores a { flex:1; padding:.6rem .8rem; border-radius:12px; background:#2A2420;
+              color:#F4EEE8; text-decoration:none; text-align:center; font-size:.9rem }
+  .address { display:block; margin-top:.5rem; padding:.6rem .8rem; border-radius:12px;
+             background:#2A2420; font-family:ui-monospace, Menlo, monospace;
+             font-size:.9rem; word-break:break-all; user-select:all }
 </style></head><body>
 <div class="card">
   <h1>Join a circle</h1>
   <p class="muted">You have been invited to a circle on ${escapeHtml(settings.serverName)}.</p>
   <div class="code">${escapeHtml(code)}</div>
-  <p class="muted">Open Hearth and enter this code, or tap below if the app is installed.</p>
   <a class="btn" href="${escapeHtml(deepLink)}">Open in Hearth</a>
-  <p class="muted" style="margin-top:1.5rem">Server address: ${escapeHtml(config.PUBLIC_URL)}</p>
+  <p class="muted">If Hearth is already on this phone, that's all you need to do.</p>
+  <h2>New to Hearth?</h2>
+  <ol>
+    <li>Install Hearth on your phone.${install}</li>
+    <li>Come back to this page and tap Open in Hearth. The app fills in the server and the code.</li>
+    <li>If it doesn't, open Hearth and type this server address, then create an account with the code above.
+      <span class="address">${escapeHtml(serverAddress())}</span></li>
+  </ol>
 </div>
-<script>setTimeout(function(){ location.href = ${JSON.stringify(deepLink)} }, 400)</script>
 </body></html>`)
     },
   )

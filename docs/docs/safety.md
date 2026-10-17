@@ -299,8 +299,9 @@ every circle at once. Any admin of a circle can close it in that circle, and
 only there. Each circle gets its own entry in its feed, and a resolution notice
 goes to everyone in it, the person who raised it included. Somebody in several
 of those circles gets one notice. Like the SOS itself, that notice ignores
-notification mutes. The phone leaves Live within two minutes of the alert being
-resolved.
+notification mutes. The phone leaves Live at its next upload after the alert
+is resolved, unless somebody still has its Live page open, or within two
+minutes if its uploads stop getting through.
 
 **Limits on it.** Five fresh alerts per person per ten minutes, since an SOS
 bypasses mutes and fires at top priority. Pressing again on an alert that is

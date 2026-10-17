@@ -107,34 +107,25 @@ export function activityIconName(
 }
 
 /**
- * How recently a phone has to have spoken for Live to be worth offering.
- * A travelling phone uploads every half minute; one that has said nothing
- * for this long is out of signal, asleep, or has stopped reporting, and
- * the page would sit on "asking" until the window lapsed. The button is a
- * promise that pressing it works, so it is shown only when it will.
+ * Whether Live can be offered for a member. Anyone this viewer sees
+ * precisely, parked or on the move, since a parked phone goes live too and
+ * the page says so when a phone does not answer. Never yourself, and never
+ * somebody sharing approximately or paused, whose phone the server will not
+ * ask.
  */
-export const LIVE_OFFER_MAX_AGE_MS = 3 * 60 * 1000
-
-/**
- * Whether a member is travelling right now, as their phone last said. Live
- * is offered for them and nobody else: a parked phone has nothing to show
- * live, and asking it would only cost battery.
- */
-export function onTheMove(
+export function liveOffered(
   presence:
-    | { activity: string | null; stale: boolean; sharingState: string; recordedAt?: string | null }
+    | { sharingState: string; approximate: boolean; lat: number | null; lon: number | null }
     | null
     | undefined,
-  now: number = Date.now(),
+  isSelf: boolean,
 ): boolean {
-  if (!presence || presence.stale || presence.sharingState !== "precise") return false
-  const heardAt = presence.recordedAt ? Date.parse(presence.recordedAt) : NaN
-  if (!Number.isFinite(heardAt) || now - heardAt > LIVE_OFFER_MAX_AGE_MS) return false
+  if (isSelf || !presence) return false
   return (
-    presence.activity === "driving" ||
-    presence.activity === "cycling" ||
-    presence.activity === "running" ||
-    presence.activity === "walking"
+    presence.sharingState === "precise" &&
+    !presence.approximate &&
+    presence.lat != null &&
+    presence.lon != null
   )
 }
 

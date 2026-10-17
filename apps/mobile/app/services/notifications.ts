@@ -189,7 +189,7 @@ TaskManager.defineTask(NOTIFICATION_WAKE_TASK, async ({ data, error }) => {
   const type = pushType(data)
   logTracker("push", { type })
   if (type === WATCH_TYPE) {
-    await enterWatched(watchSeconds(data))
+    await enterWatched(watchSeconds(data), { push: true })
     return
   }
   if (!type || !WAKE_TYPES.has(type)) return
@@ -233,7 +233,7 @@ export function attachNotificationListeners(
     const data = notification.request.content.data as
       (NotificationTarget & { seconds?: number }) | undefined
     if (!data?.type) return
-    if (data.type === WATCH_TYPE) void enterWatched(watchSeconds({ data }))
+    if (data.type === WATCH_TYPE) void enterWatched(watchSeconds({ data }), { push: true })
     else if (WAKE_TYPES.has(data.type)) void wakeFix()
   })
 

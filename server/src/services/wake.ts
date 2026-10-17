@@ -4,7 +4,7 @@ import { and, eq, isNotNull, isNull } from "drizzle-orm"
 import type { Database } from "../db/client"
 import { sessions, userPresence } from "../db/schema"
 import { getPushDriver } from "../runtime"
-import { sendControl } from "./control"
+import { CONTROL_ACK_MS, sendControl } from "./control"
 import { enqueuePush, recentSilentPushes } from "./push"
 
 /**
@@ -35,7 +35,11 @@ export async function askPhoneForFix(
     presence?.lastHeardAt?.getTime() ?? 0,
   )
   if (now.getTime() - heardAt < MEMBER_REFRESH_FRESH_MS) return "fresh"
-  if (await sendControl(db, userId, { command: "wake" }, now)) return "socket"
+  // Believed only when the phone says it has it, or a page opened on an
+  // iPhone iOS suspended asks nobody until the next open.
+  if (await sendControl(db, userId, { command: "wake" }, now, { awaitAckMs: CONTROL_ACK_MS })) {
+    return "socket"
+  }
   if (getPushDriver()?.provider !== "expo") return "unsupported"
 
   const [device] = await db

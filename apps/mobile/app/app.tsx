@@ -43,6 +43,7 @@ import { registerWakeTask, setupChannels } from "./services/notifications"
 import { useAuthStore } from "./stores/auth"
 import { tokenVault } from "./stores/tokenVault"
 import { customFontsToLoad } from "./theme/typography"
+import { parseInviteLink } from "./utils/inviteCode"
 import * as storage from "./utils/storage"
 
 /**
@@ -60,17 +61,12 @@ setHealthReporter(() => reportHealth({ background: true }))
 
 export const NAVIGATION_PERSISTENCE_KEY = "NAVIGATION_STATE"
 
-export function extractInviteCode(url: string | null): string | null {
-  if (!url) return null
-  const match = url.match(/\/join\/([A-Za-z0-9]{4,16})/)
-  return match ? match[1]!.toUpperCase() : null
-}
-
 const prefix = Linking.createURL("/")
 
 /**
- * Deep links: `hearth://join/CODE` from a QR, `https://<server>/join/CODE`
- * from a shared link, and the notification payloads mapped in AppNavigator.
+ * Deep links: `hearth://join/CODE?server=<address>` from the join page, the
+ * same without `server` from older QR codes and join pages, and the
+ * notification payloads mapped in AppNavigator.
  */
 const linkingConfig = {
   screens: {
@@ -103,12 +99,13 @@ export function App() {
     initI18n().then(() => setIsI18nInitialized(true))
   }, [])
 
-  // Invite links (hearth://join/CODE or https://<server>/join/CODE) can arrive
-  // before there is a session. Park the code. AppNavigator redeems it later.
+  // Invite links can arrive before there is a session, or a server. Park the
+  // code and the server it names. AppNavigator redeems the code later, and the
+  // server screen offers the address.
   useEffect(() => {
     const capture = (url: string | null) => {
-      const code = extractInviteCode(url)
-      if (code) useAuthStore.getState().setPendingInvite(code)
+      const link = url ? parseInviteLink(url) : null
+      if (link) useAuthStore.getState().setPendingInvite(link.code, link.server)
     }
     void Linking.getInitialURL().then(capture)
     const subscription = Linking.addEventListener("url", (event) => capture(event.url))

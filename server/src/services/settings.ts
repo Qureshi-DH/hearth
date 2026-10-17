@@ -47,6 +47,12 @@ export async function updateServerSettings(
   return next
 }
 
+/** What the prune sweeps at. A circle asking for longer gets this. */
+export async function historyCeilingDays(db: Database): Promise<number> {
+  const settings = await getServerSettings(db)
+  return settings.maxHistoryRetentionDays ?? getConfig().MAX_HISTORY_RETENTION_DAYS
+}
+
 export async function registrationMode(db: Database): Promise<RegistrationMode> {
   return (await getServerSettings(db)).registrationMode
 }

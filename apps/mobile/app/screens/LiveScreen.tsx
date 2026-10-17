@@ -1,47 +1,60 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react"
-import { AppState, RefreshControl, ScrollView, View, type ViewStyle } from "react-native"
+import {
+  AppState,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  View,
+  type AppStateStatus,
+  type ViewStyle,
+} from "react-native"
 import { Ionicons } from "@expo/vector-icons"
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake"
 import { Marker, type CameraRef } from "@maplibre/maplibre-react-native"
-import { haversineMeters, type PresenceIssue, type WatchResponse } from "@hearth/shared"
+import type { PresenceIssue, WatchResponse } from "@hearth/shared"
 import { useFocusEffect } from "@react-navigation/native"
 
 import { HearthMap, PlaceLayers, TrailGapLayer, TrailLayer } from "@/components/HearthMap"
 import { MemberMarker, MEMBER_MARKER_LABEL_HEIGHT } from "@/components/MemberMarker"
 import { ringFor } from "@/components/MemberRow"
 import { PrimaryButton } from "@/components/PrimaryButton"
+import { ReconnectingNotice } from "@/components/ReconnectingNotice"
 import { Screen } from "@/components/Screen"
 import { Text } from "@/components/Text"
 import { useMember, usePlaces, usePresence } from "@/hooks/queries"
 import { useLiveness } from "@/hooks/useLiveness"
+import { useLiveTrail } from "@/hooks/useLiveTrail"
 import { useNearby } from "@/hooks/useNearby"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { endpoints } from "@/services/api"
+import { realtime } from "@/services/realtime"
 import { useSettingsStore } from "@/stores/settings"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 import { activityIconName } from "@/utils/activity"
 import { formatSpeed } from "@/utils/format"
 import { formatClock, relativeTime } from "@/utils/time"
-import { splitTrail } from "@/utils/trail"
+import { liveTrailToDraw, mergeTrail, splitTrail } from "@/utils/trail"
 import { useHeader } from "@/utils/useHeader"
 
 /** The watch window is ten minutes; asking each minute holds it open. */
 const WATCH_HOLD_MS = 60_000
+/**
+ * Asks closer together than this go as one, a moment later. The server
+ * takes sixty in ten minutes, and a pull to refresh pulled again and again
+ * would otherwise reach that, and the 429 is a 4xx a firewall in front of
+ * the server can lock the household out for.
+ */
+const ASK_SPACING_MS = 10_000
+/**
+ * Fixes come a second apart, so a glide a little shorter than that keeps
+ * the dot moving without the map lurching or falling behind.
+ */
+const FOLLOW_EASE_MS = 800
 const KEEP_AWAKE_TAG = "hearth-live"
-/** Anything closer than this to the last drawn point is the same spot. */
-const TRAIL_MIN_STEP_METERS = 5
-/** Four hours of five-second fixes. A longer watch drops its oldest point. */
-const TRAIL_MAX_POINTS = 3_000
 
-interface TrailPoint {
-  lat: number
-  lon: number
-  recordedAt?: string
-}
-
-type Reason = WatchResponse["pushed"] | "unreachable"
+type Reason = WatchResponse["pushed"] | "unreachable" | "busy"
 
 function reasonKey(reason: Reason) {
   switch (reason) {
@@ -51,19 +64,24 @@ function reasonKey(reason: Reason) {
       return "live:reason_unsupported" as const
     case "unreachable":
       return "live:reason_unreachable" as const
+    case "busy":
+      return "live:reason_busy" as const
     default:
       return "live:reason_sent" as const
   }
 }
 
 /**
- * Following one person as they travel. Their phone is asked to report every
- * few seconds for as long as this is open, the map keeps them centred, and
- * the trail is the fixes that arrived while it was open, no more. What the
- * card claims is judged against that cadence: a fix from before the ask is
- * where they were, not where they are, and a phone that has not replied
- * in two minutes is said to be not answering, with the reason the server
- * gave, rather than left as a red dot on an old spot.
+ * Following one person, on the move or parked. Their phone is asked to
+ * report every second for as long as this is open, and let go of when it
+ * closes or the app goes to the background, so the phone steps down at
+ * once rather than at the end of its window. The map follows them until the
+ * viewer moves it, and the trail is every fix since the page opened, with
+ * whatever the page missed while it was away filled in when it comes back.
+ * What the card claims is judged against that cadence. A fix from before
+ * the ask is where they were, not where they are, and a phone that has not
+ * replied in two minutes is said to be not answering, with the reason the
+ * server gave, rather than left as a red dot on an old spot.
  */
 export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route }) => {
   const { circleId, userId } = route.params
@@ -103,51 +121,102 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
   const [until, setUntil] = useState<number | null>(null)
   const untilRef = useRef<number | null>(null)
   const [reply, setReply] = useState<WatchResponse | null>(null)
+  const supports = useRef<WatchResponse["supports"]>(undefined)
   const [reason, setReason] = useState<Reason | null>(null)
   const [pulling, setPulling] = useState(false)
+  const lastAskAt = useRef(0)
+  const deferred = useRef<{ timer: ReturnType<typeof setTimeout> | null; fresh: boolean }>({
+    timer: null,
+    fresh: false,
+  })
+  const asking = useRef<Promise<void> | null>(null)
+  const releasing = useRef<Promise<void> | null>(null)
 
+  // `now` is for an ask the viewer made once, opening the page, coming back
+  // to it or Start again. Pulls and the minute's holds keep their spacing.
   const ask = useCallback(
-    async (fresh: boolean) => {
+    async (fresh: boolean, now = false): Promise<void> => {
+      const wait = lastAskAt.current + ASK_SPACING_MS - Date.now()
+      if (!now && wait > 0) {
+        deferred.current.fresh ||= fresh
+        deferred.current.timer ??= setTimeout(() => {
+          const again = deferred.current.fresh
+          deferred.current = { timer: null, fresh: false }
+          void ask(again)
+        }, wait)
+        return
+      }
       const at = Date.now()
+      lastAskAt.current = at
       // A hold that lands after the window lapsed is a new ask in all but
       // name: nothing the phone sent in between was in reply to anything.
       // A hold with no window yet is not: the viewer has been waiting since
       // the ask that failed, and the clock keeps running from there.
       if (fresh || (untilRef.current != null && at > untilRef.current)) setAskedAt(at)
-      try {
-        const response = await endpoints.locations.watch(circleId, userId)
-        const end = response.watching ? at + response.seconds * 1000 : null
-        untilRef.current = end
-        setUntil(end)
-        setReply(response)
-        setReason(response.pushed)
-      } catch {
-        setReason("unreachable")
-      }
+      const request = (async () => {
+        try {
+          // A release still on its way would otherwise land after this ask
+          // and take away the window it opens.
+          await releasing.current
+          const response = await endpoints.locations.watch(circleId, userId)
+          const end = response.watching ? at + response.seconds * 1000 : null
+          untilRef.current = end
+          supports.current = response.supports
+          setUntil(end)
+          setReply(response)
+          setReason(response.pushed)
+        } catch (error) {
+          setReason((error as { status?: number }).status === 429 ? "busy" : "unreachable")
+        }
+      })()
+      asking.current = request
+      await request
     },
     [circleId, userId],
   )
 
+  // Let go of the phone, once any ask still on its way has landed, or the
+  // window it opens would outlive the page. A server that does not say it
+  // takes a release would answer one with a 404.
+  const letGo = useCallback(() => {
+    if (deferred.current.timer) clearTimeout(deferred.current.timer)
+    deferred.current = { timer: null, fresh: false }
+    untilRef.current = null
+    const inFlight = asking.current ?? Promise.resolve()
+    releasing.current = inFlight.then(async () => {
+      if (!supports.current?.release) return
+      await endpoints.locations.unwatch(circleId, userId).catch(() => undefined)
+    })
+  }, [circleId, userId])
+
+  const { points, add, fill } = useLiveTrail(circleId, userId, Boolean(reply?.supports?.trail))
+
   useFocusEffect(
     useCallback(() => {
-      let active = AppState.currentState === "active"
-      void ask(true)
+      let state: AppStateStatus = AppState.currentState
+      const stopWatching = realtime.watchClosely()
+      void ask(true, true)
+      // Inactive is the screen still showing under Control Centre or a call,
+      // and the holds go on. Only the background lets the phone go.
       const timer = setInterval(() => {
-        if (active) void ask(false)
+        if (state !== "background") void ask(false)
       }, WATCH_HOLD_MS)
-      // Away, the socket is closed and the holds stop, so a return is a
-      // fresh ask: whatever the window did meanwhile, the viewer is looking
-      // again now.
       const subscription = AppState.addEventListener("change", (next) => {
-        const wasActive = active
-        active = next === "active"
-        if (active && !wasActive) void ask(true)
+        const away = state === "background"
+        state = next
+        if (next === "background" && !away) letGo()
+        else if (next === "active" && away) {
+          void ask(true, true)
+          fill()
+        }
       })
       return () => {
         clearInterval(timer)
         subscription.remove()
+        stopWatching()
+        letGo()
       }
-    }, [ask]),
+    }, [ask, letGo, fill]),
   )
 
   const pull = async () => {
@@ -156,29 +225,65 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
     setPulling(false)
   }
 
-  const [trail, setTrail] = useState<TrailPoint[]>([])
-  // The first fix sets the zoom; after that the map only follows, so a
-  // viewer who zoomed out to see the road ahead is not snapped back in.
+  // The first fix sets the zoom, and after that the map only follows, so a
+  // viewer who zoomed out to see the road ahead is not snapped back in. A
+  // viewer who moves the map is looking at something else, and it stays
+  // where they put it until they ask to follow again.
   const framed = useRef(false)
-  useEffect(() => {
-    if (entry?.lat == null || entry.lon == null) return
-    const here = { lat: entry.lat, lon: entry.lon, recordedAt: entry.recordedAt ?? undefined }
-    setTrail((current) => {
-      const last = current[current.length - 1]
-      if (last && haversineMeters(last, here) < TRAIL_MIN_STEP_METERS) return current
-      return [...current, here].slice(-TRAIL_MAX_POINTS)
-    })
-    cameraRef.current?.flyTo({
-      center: [here.lon, here.lat],
+  const [following, setFollowing] = useState(true)
+  const followTo = useCallback((lat: number, lon: number) => {
+    cameraRef.current?.easeTo({
+      center: [lon, lat],
       ...(framed.current ? {} : { zoom: 16 }),
-      duration: 600,
+      duration: FOLLOW_EASE_MS,
+      easing: "linear",
     })
     framed.current = true
-  }, [entry?.lat, entry?.lon, entry?.recordedAt])
+  }, [])
+  // A grid cell is not a place they went, so a member who turns to
+  // approximate mid watch leaves the trail where it was.
+  const precise = entry?.sharingState === "precise" && !entry.approximate
+  useEffect(() => {
+    if (entry?.lat == null || entry.lon == null) return
+    if (entry.recordedAt && precise) {
+      add([
+        {
+          lat: entry.lat,
+          lon: entry.lon,
+          recordedAt: entry.recordedAt,
+          accuracyMeters: entry.accuracyMeters,
+        },
+      ])
+    }
+    if (following) followTo(entry.lat, entry.lon)
+  }, [
+    entry?.lat,
+    entry?.lon,
+    entry?.recordedAt,
+    entry?.accuracyMeters,
+    precise,
+    add,
+    followTo,
+    following,
+  ])
   // The socket is closed while the app is away, so a Live view brought back
-  // has a hole in its trail, and a hole is dashed, not drawn as the road.
-  const { drawn, gaps } = useMemo(() => splitTrail(trail), [trail])
-
+  // has a hole in its trail until the fill lands, and a hole is dashed, not
+  // drawn as the road. Where they are now is drawn with the dot, not a
+  // moment after it.
+  const { drawn, gaps } = useMemo(() => {
+    const here =
+      precise && entry?.lat != null && entry.lon != null && entry.recordedAt
+        ? [
+            {
+              lat: entry.lat,
+              lon: entry.lon,
+              recordedAt: entry.recordedAt,
+              accuracyMeters: entry.accuracyMeters,
+            },
+          ]
+        : []
+    return splitTrail(liveTrailToDraw(mergeTrail(points, here)))
+  }, [points, precise, entry?.lat, entry?.lon, entry?.recordedAt, entry?.accuracyMeters])
   const liveness = useLiveness(entry, askedAt, until)
   const paused = entry?.sharingState === "paused"
   const live = !paused && liveness === "live"
@@ -211,6 +316,9 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
         style={{ flex: 1 }}
         initialCenter={entry?.lat != null && entry.lon != null ? [entry.lon, entry.lat] : undefined}
         initialZoom={16}
+        onRegionWillChange={(event) => {
+          if (event.nativeEvent.userInteraction) setFollowing(false)
+        }}
       >
         <PlaceLayers places={places ?? []} highlightId={entry?.atPlace?.id} />
         <TrailLayer id="live-trail" segments={drawn} width={5} />
@@ -236,6 +344,23 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
           </Marker>
         ) : null}
       </HearthMap>
+      <View style={themed($overlay)} pointerEvents="box-none">
+        <ReconnectingNotice />
+        {!following && entry?.lat != null ? (
+          <Pressable
+            onPress={() => setFollowing(true)}
+            accessibilityRole="button"
+            accessibilityLabel={translate("live:follow", { name })}
+            hitSlop={8}
+            style={themed($follow)}
+          >
+            <Ionicons name="locate" size={18} color={theme.colors.tint} />
+            <Text size="sm" style={{ color: theme.colors.tint }}>
+              {translate("live:follow", { name })}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
 
       <ScrollView
         style={{ flexGrow: 0 }}
@@ -276,6 +401,11 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
               {where}
             </Text>
           ) : null}
+          {!paused && !live && reason === "busy" && liveness !== "unanswered" ? (
+            <Text size="sm" style={{ color: theme.colors.textDim }}>
+              {translate("live:reason_busy")}
+            </Text>
+          ) : null}
           {!paused && liveness === "unanswered" ? (
             <View style={{ gap: 2 }}>
               {reason ? (
@@ -307,7 +437,7 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
             <PrimaryButton
               tx="live:startAgain"
               variant="soft"
-              onPress={() => void ask(true)}
+              onPress={() => void ask(true, true)}
               style={{ marginTop: theme.spacing.xs }}
               Left={<Ionicons name="radio-outline" size={18} color={theme.colors.tint} />}
             />
@@ -321,6 +451,23 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
 const $container: ThemedStyle<ViewStyle> = ({ colors }) => ({
   flex: 1,
   backgroundColor: colors.background,
+})
+const $overlay: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  position: "absolute",
+  top: spacing.sm,
+  left: spacing.md,
+  right: spacing.md,
+  alignItems: "flex-end",
+  gap: spacing.xs,
+})
+const $follow: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
+  flexDirection: "row",
+  alignItems: "center",
+  gap: spacing.xxs,
+  paddingHorizontal: spacing.sm,
+  paddingVertical: spacing.xs,
+  borderRadius: 999,
+  backgroundColor: colors.surface,
 })
 const $card: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
   margin: spacing.md,

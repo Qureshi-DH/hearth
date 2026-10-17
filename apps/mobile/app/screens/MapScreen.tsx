@@ -48,6 +48,7 @@ import { ListGroup } from "@/components/ListRow"
 import { MemberRow, ringFor } from "@/components/MemberRow"
 import { Pill } from "@/components/Pill"
 import { PrimaryButton } from "@/components/PrimaryButton"
+import { ReconnectingNotice } from "@/components/ReconnectingNotice"
 import { Text } from "@/components/Text"
 import { useActiveSos, useMembers, usePresence } from "@/hooks/queries"
 import { useActiveCircle } from "@/hooks/useActiveCircle"
@@ -607,6 +608,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
             onPress={() => circle && navigation.navigate("Circle", { circleId: circle.id })}
           />
         </View>
+        <ReconnectingNotice style={{ alignSelf: "center", marginTop: theme.spacing.xs }} />
 
         {switcherOpen ? (
           <Animated.View entering={FadeInUp.duration(180)} exiting={FadeOutUp.duration(140)}>

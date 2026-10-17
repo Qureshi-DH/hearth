@@ -20,9 +20,11 @@ S3-compatible object store for profile pictures. It is published as
 `dhqureshi/hearth-api` for amd64 and arm64, so running it needs no clone.
 
 The **app** is an iOS and Android build made with Expo. You type your server's
-address in on first launch. Apart from map tiles, and Expo push if you turn it
-on, it talks to your server and nothing else. There is no Hearth relay, broker
-or account in between.
+address in on first launch. Apart from your server it reaches the map tile
+host, Expo push if your server uses it, and the phone's own geocoder for street
+names, which is sent the spots it names. An Android build with Firebase in it
+also registers with Google for push when it starts. There is no Hearth relay,
+broker or account in between.
 
 ## What it does for a family
 
@@ -56,19 +58,26 @@ or account in between.
 
 ## What it deliberately does not do
 
-There is no hosted version to sign up for, and no browser dashboard. Nobody
-operates Hearth as a service, which is the point, and the map lives in the phone
-app while the server just serves an API.
+There is no hosted version to sign up for, and no map in a browser. Nobody
+operates Hearth as a service, which is the point. The map lives in the phone
+app. In a browser the server offers only an
+[admin portal](../install/self-hosting.md#the-admin-portal) for whoever runs
+it, with accounts, devices and settings and no positions.
 
 There is no chat either. Everyone already has a messenger, and a family map does
 not need to be a second one. A quick message is one line to one person, seen
 once and then only in the feed, so there is no thread to keep up with.
 
-Nothing phones home. No analytics, no crash reporting, no tracking SDKs. Two
-things do leave your server, and both are your choice: map tiles come from the
-style URL your server advertises (OpenFreeMap by default, self-hostable), and
-push payloads go through a relay only if you configure one. Those payloads carry
-names, place labels and ids, never coordinates. See [Privacy](../privacy.md).
+Nothing phones home. No analytics, no crash reporting, no tracking SDKs. Three
+things go somewhere other than your server. The phone fetches map tiles from
+the style URL your server advertises, OpenFreeMap by default, so that host sees
+the area being viewed. Self-host the tiles to avoid it. Street names come from
+the phone's own geocoder, Apple's on iPhone and Google's on most Android phones,
+which is sent the coordinates it names. It is on out of the box and can be
+switched off under _You_. And push goes through a provider only if you configure
+one, though an Android build with Firebase in it registers with Google for push
+when it starts either way. The payloads carry names, place labels and ids,
+never coordinates. See [Privacy](../privacy.md).
 
 ## What it costs you to run
 
