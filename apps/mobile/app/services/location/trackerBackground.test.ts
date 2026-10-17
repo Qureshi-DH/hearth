@@ -6,6 +6,7 @@ import * as Location from "expo-location"
 import { useTrackingStore } from "@/stores/tracking"
 import { storage } from "@/utils/storage"
 
+import { clearTrackerLog, logTracker, readTrackerLog } from "./log"
 import {
   BACKGROUND_SYNC_TASK,
   enterStationary,
@@ -308,6 +309,21 @@ describe("the resting watch", () => {
     expect(useTrackingStore.getState().mode).toBe("stationary")
   })
 
+  it("sends the heartbeat from where the phone parked, not from a wandering estimate", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    const t0 = Date.now() + RESTING_HEARTBEAT_MS
+    const wandering = sample(HOME.lat + 90 / 111_195, HOME.lon, t0)
+    await ingest([{ ...wandering, coords: { ...wandering.coords, accuracy: 150 } }], "background")
+    expect(useTrackingStore.getState().lastFix).toMatchObject({
+      lat: HOME.lat,
+      lon: HOME.lon,
+      accuracyMeters: 20,
+      recordedAt: new Date(t0).toISOString(),
+      activity: "still",
+    })
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+
   it("brings the full service back when a resting fix shows the phone has left", async () => {
     await enterStationary(HOME.lat, HOME.lon)
     start.mockClear()
@@ -432,5 +448,50 @@ describe("the persisted queue", () => {
     upgraded.store.getState().enqueue([fix(3)])
 
     expect(relaunch().store.getState().queue).toEqual([...waiting, fix(3)])
+  })
+})
+
+describe("the tracker log", () => {
+  const bytesWritten = () => shared.__hearthWrites.reduce((total, write) => total + write.bytes, 0)
+  const line = { got: 1, kept: 1, mode: "moving", acc: 12, speed: 13.4 }
+
+  // Live logs a line a second, and each one rewrote all thousand before it.
+  it("writes a new line without rewriting the ones before it", () => {
+    clearTrackerLog()
+    for (let i = 0; i < 999; i += 1) logTracker("fixes", line)
+    shared.__hearthWrites.length = 0
+    logTracker("fixes", line)
+    expect(readTrackerLog()).toHaveLength(1000)
+    expect(bytesWritten()).toBeLessThan(JSON.stringify(readTrackerLog()).length / 5)
+  })
+
+  it("comes back after a relaunch with its lines in order", () => {
+    clearTrackerLog()
+    for (let i = 0; i < 250; i += 1) logTracker("line", { i })
+    let read: number[] = []
+    jest.isolateModules(() => {
+      const fresh = require("./log") as typeof import("./log")
+      read = fresh.readTrackerLog().map((entry) => entry.detail?.i as number)
+    })
+    expect(read).toEqual(Array.from({ length: 250 }, (_, i) => i))
+  })
+
+  it("keeps the lines an older version wrote", () => {
+    clearTrackerLog()
+    for (const key of storage.getAllKeys()) {
+      if (key.startsWith("hearth.tracklog")) storage.delete(key)
+    }
+    const older = [
+      { at: "2026-10-01T08:00:00.000Z", what: "boot" },
+      { at: "2026-10-01T08:00:01.000Z", what: "stationary", detail: { from: "moving" } },
+    ]
+    storage.set("hearth.tracklog.v1", JSON.stringify(older))
+    let read: unknown[] = []
+    jest.isolateModules(() => {
+      const fresh = require("./log") as typeof import("./log")
+      fresh.logTracker("off")
+      read = fresh.readTrackerLog().map((entry) => entry.what)
+    })
+    expect(read).toEqual(["boot", "stationary", "off"])
   })
 })

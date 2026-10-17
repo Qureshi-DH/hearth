@@ -59,12 +59,16 @@ export const ACTIVITY_TYPES = [
 export type ActivityType = (typeof ACTIVITY_TYPES)[number]
 
 /**
- * What a phone can say stands between it and reporting, in the order the
- * checklist asks about them. The circle sees these under the member's name.
+ * What a phone can say stands between it and reporting, or between it and
+ * reporting well, most fundamental first. The circle sees these under the
+ * member's name.
  */
 export const PRESENCE_ISSUES = [
+  "sharing_off",
   "location_permission",
+  "precise_location",
   "location_services",
+  "motion_permission",
   "background_refresh",
   "battery_optimisation",
   "low_power_mode",
@@ -169,6 +173,14 @@ export const DEFAULTS = {
   minUpdateIntervalSeconds: 30,
   distanceFilterMeters: 60,
   staleAfterSeconds: 15 * 60,
+  /** How often a parked phone says it is still there. */
+  restingHeartbeatSeconds: 15 * 60,
+  /**
+   * A parked phone's word comes on the heartbeat, and a stale line on the
+   * beat itself would fade a healthy phone at home in and out on the map.
+   * Two beats and some, so one late beat does not fade it either.
+   */
+  parkedStaleAfterSeconds: 35 * 60,
   offlineAfterSeconds: 60 * 60,
   /**
    * A phone that said it had parked is expected to go quiet: iOS suspends

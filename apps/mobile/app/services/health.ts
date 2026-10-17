@@ -2,8 +2,11 @@ import { Platform } from "react-native"
 import type { DeviceHealth } from "@hearth/shared"
 
 import { endpoints } from "@/services/api"
+import { motionPermission } from "@/services/location/motion"
 import { addPowerStateListener, getPermissionSnapshot } from "@/services/permissions"
 import { useAuthStore } from "@/stores/auth"
+import { tokenVault } from "@/stores/tokenVault"
+import { useTrackingStore } from "@/stores/tracking"
 import { load, save } from "@/utils/storage"
 
 /**
@@ -15,10 +18,18 @@ import { load, save } from "@/utils/storage"
  */
 const LAST_KEY = "hearth.health.v1"
 const RESEND_AFTER_MS = 24 * 60 * 60 * 1000
+/**
+ * What the tracker notices in the background can flap, Location off and on
+ * again in a car park, and every change would be a request. The app opening
+ * always sends.
+ */
+const BACKGROUND_GAP_MS = 10 * 60 * 1000
 
 interface Sent {
   body: string
   at: number
+  /** Whose it was. The next account on this phone has told the server nothing yet. */
+  user?: string | null
 }
 
 let watchingPower = false
@@ -37,14 +48,28 @@ function watchPowerState(): void {
   })
 }
 
-export async function reportHealth(): Promise<void> {
-  if (useAuthStore.getState().status !== "signed_in") return
+/**
+ * A process the OS started for the tracker never derives the session's
+ * status, which stays "booting" there, so the stored session is asked.
+ */
+async function hasSession(): Promise<boolean> {
+  const { status, serverUrl, user } = useAuthStore.getState()
+  if (status === "signed_in") return true
+  if (status !== "booting" || !serverUrl || !user) return false
+  return (await tokenVault.hydrate()) != null
+}
+
+export async function reportHealth({ background = false }: { background?: boolean } = {}) {
+  if (!(await hasSession())) return
   watchPowerState()
-  const snapshot = await getPermissionSnapshot()
+  const [snapshot, motion] = await Promise.all([getPermissionSnapshot(), motionPermission()])
   const android = Platform.OS === "android"
   const health: DeviceHealth = {
     locationPermission: snapshot.location,
     locationServices: snapshot.servicesEnabled,
+    preciseLocation: snapshot.preciseLocation,
+    ...(motion !== "unavailable" ? { motionPermission: motion } : {}),
+    sharingEnabled: useTrackingStore.getState().enabled,
     ...(Platform.OS === "ios" && snapshot.backgroundRefresh !== "n/a"
       ? { backgroundRefresh: snapshot.backgroundRefresh }
       : {}),
@@ -57,11 +82,14 @@ export async function reportHealth(): Promise<void> {
     ...(android ? { serviceStopped: snapshot.serviceStopped } : {}),
   }
   const body = JSON.stringify(health)
-  const last = load<Sent>(LAST_KEY)
+  const user = useAuthStore.getState().user?.id ?? null
+  const stored = load<Sent>(LAST_KEY)
+  const last = stored && (stored.user ?? null) === user ? stored : null
   if (last && last.body === body && Date.now() - last.at < RESEND_AFTER_MS) return
+  if (background && last && Date.now() - last.at < BACKGROUND_GAP_MS) return
   try {
     await endpoints.auth.health(health)
-    save(LAST_KEY, { body, at: Date.now() } satisfies Sent)
+    save(LAST_KEY, { body, at: Date.now(), user } satisfies Sent)
   } catch {
     // Offline, or a server without the route. It is sent again next time.
   }

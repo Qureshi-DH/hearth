@@ -675,6 +675,27 @@ describe("the classifier on a parked phone", () => {
     expect(fake.status).toBe("running")
   })
 
+  // The one confirming fix comes half a minute to a minute out of the door,
+  // still inside the fence and its error, and nothing looked again.
+  it("looks again a few minutes after a walk the first fix could not confirm", async () => {
+    mockHere = { ...HOME }
+    classifier()!("walking", 100, "transition")
+    await jest.advanceTimersByTimeAsync(0)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    mockHere = { lat: HOME.lat + 0.003, lon: HOME.lon }
+    await jest.advanceTimersByTimeAsync(3 * 60_000)
+    expect(getPosition).toHaveBeenCalledTimes(2)
+    expect(useTrackingStore.getState().mode).toBe("moving")
+  })
+
+  it("looks only once more for a walk that was a phone handled in bed", async () => {
+    mockHere = { ...HOME }
+    classifier()!("walking", 100, "transition")
+    await jest.advanceTimersByTimeAsync(10 * 60_000)
+    expect(getPosition).toHaveBeenCalledTimes(2)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+
   it("asks for the confirming fix at most every two minutes", async () => {
     mockHere = { ...HOME }
     classifier()!("walking", 60)
@@ -697,6 +718,25 @@ describe("the classifier on a parked phone", () => {
     // One walking registration on the way up, one driving. Not a third.
     const priorities = fake.startService.mock.calls.map(([request]) => request.priority)
     expect(priorities).toEqual(["balanced", "high"])
+  })
+
+  // Core Motion keeps the automotive flag on a car idling in a car park, and
+  // every sample of it un-parked the car the tracker had just parked.
+  it("confirms a sure vehicle sample that only repeats the verdict it parked on", async () => {
+    useTrackingStore.getState().setLastVerdict("automotive")
+    mockHere = { ...HOME }
+    classifier()!("automotive", 90)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(getPosition).toHaveBeenCalledTimes(1)
+
+    // A car that pulls away is clear of the spot by the next look.
+    mockHere = { lat: HOME.lat + 0.003, lon: HOME.lon }
+    await jest.advanceTimersByTimeAsync(2 * 60_000)
+    classifier()!("automotive", 90)
+    await jest.advanceTimersByTimeAsync(0)
+    expect(useTrackingStore.getState().mode).toBe("moving")
+    expect(isDriving()).toBe(true)
   })
 
   it("confirms a doubtful vehicle sample the way it confirms a walk", async () => {

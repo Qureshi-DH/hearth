@@ -11,7 +11,14 @@ import {
 import { and, asc, eq, inArray, isNull, sql, type AnyColumn, type SQL } from "drizzle-orm"
 
 import type { Database } from "../db/client"
-import { circleMembers, placeMemberships, places, sosAlerts, userPresence } from "../db/schema"
+import {
+  circleMembers,
+  circles,
+  placeMemberships,
+  places,
+  sosAlerts,
+  userPresence,
+} from "../db/schema"
 
 export function effectiveSharingState(
   state: SharingState,
@@ -124,19 +131,45 @@ export interface PresenceRow {
   speedMps: number | null
   headingDegrees: number | null
   health?: DeviceHealth | null
+  /**
+   * The circle's own setting, where the read knows it. Unknown reads as
+   * "no pausing", so a member who switched sharing off is named as that
+   * rather than hidden.
+   */
+  allowSharingPause?: boolean
+}
+
+/**
+ * The phone said its owner turned Share my location off, and nothing it
+ * has sent since says otherwise. A fix newer than the report is a phone
+ * sharing again whose next report has not landed yet.
+ */
+export function sharingSwitchedOff(
+  health: DeviceHealth | null | undefined,
+  lastFixAt?: Date | null,
+): boolean {
+  if (health?.sharingEnabled !== false) return false
+  if (!lastFixAt || !health.reportedAt) return true
+  return lastFixAt.getTime() <= Date.parse(health.reportedAt)
 }
 
 /**
  * What the phone said stands between it and reporting, as a list the app
  * can put under the member's name. Nothing wrong, or nothing said, is empty.
  */
-export function presenceIssues(health: DeviceHealth | null | undefined): PresenceIssue[] {
+export function presenceIssues(
+  health: DeviceHealth | null | undefined,
+  lastFixAt?: Date | null,
+): PresenceIssue[] {
   if (!health) return []
   const issues: PresenceIssue[] = []
+  if (sharingSwitchedOff(health, lastFixAt)) issues.push("sharing_off")
   if (health.locationPermission !== "always" && health.locationPermission !== "unknown") {
     issues.push("location_permission")
   }
+  if (health.preciseLocation === false) issues.push("precise_location")
   if (!health.locationServices) issues.push("location_services")
+  if (health.motionPermission === "denied") issues.push("motion_permission")
   if (health.backgroundRefresh && health.backgroundRefresh !== "available") {
     issues.push("background_refresh")
   }
@@ -158,13 +191,21 @@ export function projectPresence(
 ): MemberPresence {
   const now = extras.now ?? new Date()
   const isSelf = row.userId === viewerId
+  // Switching sharing off on the phone is a pause of every circle that
+  // allows one. A circle that does not is told it was switched off.
+  const switchedOff =
+    row.allowSharingPause === true && sharingSwitchedOff(row.health, row.recordedAt)
   const state = isSelf
     ? "precise"
-    : effectiveSharingState(row.sharingState, row.pausedUntil, now, row.resumeToState ?? null)
+    : switchedOff
+      ? "paused"
+      : effectiveSharingState(row.sharingState, row.pausedUntil, now, row.resumeToState ?? null)
 
   const hasFix = row.lat != null && row.lon != null
-  const stale =
-    !row.recordedAt || now.getTime() - row.recordedAt.getTime() > DEFAULTS.staleAfterSeconds * 1000
+  // A phone that said it parked speaks on its heartbeat, not its interval.
+  const staleAfter =
+    row.activity === "still" ? DEFAULTS.parkedStaleAfterSeconds : DEFAULTS.staleAfterSeconds
+  const stale = !row.recordedAt || now.getTime() - row.recordedAt.getTime() > staleAfter * 1000
 
   if (state === "paused" || !hasFix) {
     return {
@@ -183,7 +224,7 @@ export function projectPresence(
       stale: state === "paused" ? false : stale,
       atPlace: state === "paused" ? null : extras.atPlace,
       sosAlertId: extras.sosAlertId,
-      issues: state === "paused" ? [] : presenceIssues(row.health),
+      issues: state === "paused" ? [] : presenceIssues(row.health, row.recordedAt),
     }
   }
 
@@ -213,7 +254,7 @@ export function projectPresence(
     // viewers on the coarse grid do not get it.
     atPlace: approximate ? null : extras.atPlace,
     sosAlertId: extras.sosAlertId,
-    issues: presenceIssues(row.health),
+    issues: presenceIssues(row.health, row.recordedAt),
   }
 }
 
@@ -239,6 +280,7 @@ export async function loadRawCirclePresence(
       sharingState: circleMembers.sharingState,
       pausedUntil: circleMembers.pausedUntil,
       resumeToState: circleMembers.resumeToState,
+      allowSharingPause: sql<boolean>`(${circles.settings} ->> 'allowSharingPause')::boolean`,
       lat: userPresence.lat,
       lon: userPresence.lon,
       accuracyMeters: userPresence.accuracyMeters,
@@ -251,6 +293,7 @@ export async function loadRawCirclePresence(
       health: userPresence.health,
     })
     .from(circleMembers)
+    .innerJoin(circles, eq(circles.id, circleMembers.circleId))
     .leftJoin(userPresence, eq(userPresence.userId, circleMembers.userId))
     .where(eq(circleMembers.circleId, circleId))
 
@@ -313,6 +356,7 @@ export async function loadRawPresenceByCircle(
       sharingState: circleMembers.sharingState,
       pausedUntil: circleMembers.pausedUntil,
       resumeToState: circleMembers.resumeToState,
+      allowSharingPause: sql<boolean>`(${circles.settings} ->> 'allowSharingPause')::boolean`,
       lat: userPresence.lat,
       lon: userPresence.lon,
       accuracyMeters: userPresence.accuracyMeters,
@@ -325,6 +369,7 @@ export async function loadRawPresenceByCircle(
       health: userPresence.health,
     })
     .from(circleMembers)
+    .innerJoin(circles, eq(circles.id, circleMembers.circleId))
     .leftJoin(userPresence, eq(userPresence.userId, circleMembers.userId))
     .where(and(eq(circleMembers.userId, userId), inArray(circleMembers.circleId, circleIds)))
 
@@ -370,6 +415,7 @@ export async function loadRawPresenceByCircle(
       sharingState: row.sharingState,
       pausedUntil: row.pausedUntil,
       resumeToState: row.resumeToState,
+      allowSharingPause: row.allowSharingPause,
       lat: row.lat,
       lon: row.lon,
       accuracyMeters: row.accuracyMeters,

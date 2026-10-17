@@ -1,5 +1,7 @@
 import { Platform } from "react-native"
 
+import { useTrackingStore } from "@/stores/tracking"
+
 import { reportHealth } from "./health"
 
 const mockHealth = jest.fn(async () => ({ ok: true }))
@@ -29,8 +31,21 @@ jest.mock("@/services/permissions", () => ({
     }
   }),
 }))
+let mockAuth: { status: string; serverUrl: string | null; user: object | null } = {
+  status: "signed_in",
+  serverUrl: "https://hearth.test",
+  user: { id: "u1" },
+}
 jest.mock("@/stores/auth", () => ({
-  useAuthStore: { getState: () => ({ status: "signed_in" }) },
+  useAuthStore: { getState: () => mockAuth },
+}))
+let mockTokens: object | null = { accessToken: "a", refreshToken: "r" }
+jest.mock("@/stores/tokenVault", () => ({
+  tokenVault: { hydrate: async () => mockTokens },
+}))
+let mockMotion = "granted"
+jest.mock("@/services/location/motion", () => ({
+  motionPermission: jest.fn(async () => mockMotion),
 }))
 
 const os = Platform.OS
@@ -39,6 +54,10 @@ describe("reportHealth", () => {
   beforeEach(() => {
     mockHealth.mockClear()
     require("@/utils/storage").clear()
+    mockAuth = { status: "signed_in", serverUrl: "https://hearth.test", user: { id: "u1" } }
+    mockTokens = { accessToken: "a", refreshToken: "r" }
+    mockMotion = "granted"
+    useTrackingStore.getState().setEnabled(true)
     mockSnapshot = {
       location: "always",
       servicesEnabled: true,
@@ -65,6 +84,9 @@ describe("reportHealth", () => {
     expect(mockHealth).toHaveBeenCalledWith({
       locationPermission: "always",
       locationServices: true,
+      preciseLocation: true,
+      motionPermission: "granted",
+      sharingEnabled: true,
       backgroundRefresh: "available",
       lowPowerMode: false,
       manufacturer: "apple",
@@ -93,6 +115,9 @@ describe("reportHealth", () => {
     expect(mockHealth).toHaveBeenCalledWith({
       locationPermission: "always",
       locationServices: true,
+      preciseLocation: true,
+      motionPermission: "granted",
+      sharingEnabled: true,
       batteryOptimised: true,
       backgroundRestricted: true,
       lowPowerMode: true,
@@ -131,6 +156,77 @@ describe("reportHealth", () => {
   it("keeps quiet when the server cannot be reached, and tries again next time", async () => {
     mockHealth.mockRejectedValueOnce(new Error("offline"))
     await reportHealth()
+    await reportHealth()
+    expect(mockHealth).toHaveBeenCalledTimes(2)
+  })
+
+  // Neither stops the phone reporting, so nothing said so, and the family
+  // read rough positions and a phone that never slept as a broken one.
+  it("says when precise location, motion access or Share my location is off", async () => {
+    Platform.OS = "android"
+    mockSnapshot = { ...mockSnapshot, preciseLocation: false, backgroundRefresh: "n/a" }
+    mockMotion = "denied"
+    useTrackingStore.getState().setEnabled(false)
+    await reportHealth()
+    expect(mockHealth).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preciseLocation: false,
+        motionPermission: "denied",
+        sharingEnabled: false,
+      }),
+    )
+  })
+
+  it("leaves motion out where the phone cannot classify it", async () => {
+    mockMotion = "unavailable"
+    await reportHealth()
+    const [sent] = (mockHealth.mock.calls as unknown as [Record<string, unknown>][])[0]!
+    expect(Object.keys(sent)).not.toContain("motionPermission")
+  })
+
+  // The tracker's own process never derives the session's status, and the
+  // report it owes the family is the one nobody opens the app to send.
+  it("sends from a process the OS started for the tracker", async () => {
+    mockAuth = { status: "booting", serverUrl: "https://hearth.test", user: { id: "u1" } }
+    await reportHealth({ background: true })
+    expect(mockHealth).toHaveBeenCalledTimes(1)
+
+    mockHealth.mockClear()
+    require("@/utils/storage").clear()
+    mockTokens = null
+    await reportHealth({ background: true })
+    mockAuth = { status: "signed_out", serverUrl: "https://hearth.test", user: null }
+    await reportHealth({ background: true })
+    expect(mockHealth).not.toHaveBeenCalled()
+  })
+
+  it("sends from the background once in ten minutes however often it changes", async () => {
+    jest.useFakeTimers()
+    try {
+      await reportHealth({ background: true })
+      mockSnapshot = { ...mockSnapshot, servicesEnabled: false }
+      await reportHealth({ background: true })
+      expect(mockHealth).toHaveBeenCalledTimes(1)
+
+      jest.setSystemTime(Date.now() + 10 * 60_000 + 1)
+      await reportHealth({ background: true })
+      expect(mockHealth).toHaveBeenCalledTimes(2)
+      expect(mockHealth).toHaveBeenLastCalledWith(
+        expect.objectContaining({ locationServices: false }),
+      )
+
+      // The app opening is somebody looking, and always goes.
+      mockSnapshot = { ...mockSnapshot, servicesEnabled: true }
+      await reportHealth()
+      expect(mockHealth).toHaveBeenCalledTimes(3)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it("sends for the account signed in now, though the last one said the same", async () => {
+    await reportHealth()
+    mockAuth = { ...mockAuth, user: { id: "u2" } }
     await reportHealth()
     expect(mockHealth).toHaveBeenCalledTimes(2)
   })

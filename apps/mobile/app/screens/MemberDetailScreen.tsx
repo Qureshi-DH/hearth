@@ -219,6 +219,9 @@ export const MemberDetailScreen: FC<AppStackScreenProps<"MemberDetail">> = ({
             {entry?.approximate ? (
               <Pill text={translate("map:approximate")} tone="warning" icon="radio-button-on" />
             ) : null}
+            {entry?.issues?.includes("precise_location") ? (
+              <Pill text={translate("map:preciseOff")} tone="warning" icon="locate" />
+            ) : null}
             {entry?.sosAlertId ? <Pill text="SOS" tone="error" icon="alert" /> : null}
           </View>
         </View>

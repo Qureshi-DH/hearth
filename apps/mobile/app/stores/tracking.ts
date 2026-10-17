@@ -20,6 +20,18 @@ export type PermissionLevel = "unknown" | "denied" | "foreground" | "always"
  */
 export type TrackingMode = "off" | "moving" | "stationary"
 
+/**
+ * Where the phone settled, and when it got there. Once parked it carries the
+ * accuracy of the fix that said "arrived", which the parked heartbeat
+ * repeats from here.
+ */
+export interface StillAnchor {
+  lat: number
+  lon: number
+  since: string
+  accuracyMeters?: number | null
+}
+
 export interface DriveState {
   distance: number
   slowSince: number | null
@@ -36,13 +48,15 @@ interface TrackingState {
   permission: PermissionLevel
   /** The OS location switch, separate from whether we were granted access. */
   servicesEnabled: boolean
+  /** False when the person allowed only approximate location, Android's coarse or iOS's reduced accuracy. */
+  preciseLocation: boolean
   backgroundActive: boolean
   /** Android only. Records that the dialog was shown, not that it was granted. */
   onboardedPermissions: boolean
   policy: TrackingPolicy
   mode: TrackingMode
-  /** Where the phone settled, and when it got there. Survives a process kill. */
-  stillAnchor: { lat: number; lon: number; since: string } | null
+  /** Survives a process kill. */
+  stillAnchor: StillAnchor | null
   /**
    * Outlives the process for the same reason the anchor does: the OS may
    * still reclaim a parked phone's process between sync wakes, and anything
@@ -74,6 +88,13 @@ interface TrackingState {
   serviceStoppedAt: string | null
   /** When Android last refused to start the service, so deliveries do not retry it in a loop. */
   serviceRefusedAt: string | null
+  /**
+   * When the server refused this account's fixes outright, as it does for a
+   * deactivated account. Nothing uploads or starts again on its own until a
+   * new sign-in or the Sharing switch, since every request would be refused
+   * the same way.
+   */
+  uploadsRefusedAt: string | null
   lastFix: LocationFixInput | null
   lastUploadAt: string | null
   lastError: string | null
@@ -84,11 +105,12 @@ interface TrackingState {
   setEnabled(enabled: boolean): void
   setPermission(level: PermissionLevel): void
   setServicesEnabled(enabled: boolean): void
+  setPreciseLocation(precise: boolean): void
   setBackgroundActive(active: boolean): void
   setOnboardedPermissions(value: boolean): void
   setPolicy(policy: TrackingPolicy): void
   setMode(mode: TrackingMode): void
-  setStillAnchor(anchor: { lat: number; lon: number; since: string } | null): void
+  setStillAnchor(anchor: StillAnchor | null): void
   markDriftChecked(): void
   setWatchedUntil(until: string | null): void
   setDriving(driving: DriveState | null): void
@@ -97,6 +119,7 @@ interface TrackingState {
   setMotionStillSince(since: number | null): void
   setServiceStoppedAt(at: string | null): void
   setServiceRefusedAt(at: string | null): void
+  setUploadsRefusedAt(at: string | null): void
   enqueue(fixes: LocationFixInput[]): void
   dequeue(fixes: LocationFixInput[]): void
   recordUpload(accepted: number): void
@@ -273,6 +296,7 @@ export const useTrackingStore = create<TrackingState>()(
       enabled: true,
       permission: "unknown",
       servicesEnabled: true,
+      preciseLocation: true,
       backgroundActive: false,
       onboardedPermissions: false,
       policy: { minUpdateIntervalSeconds: 30, distanceFilterMeters: 60 },
@@ -286,15 +310,17 @@ export const useTrackingStore = create<TrackingState>()(
       motionStillSince: null,
       serviceStoppedAt: null,
       serviceRefusedAt: null,
+      uploadsRefusedAt: null,
       lastFix: restored.lastFix,
       lastUploadAt: null,
       lastError: null,
       queue: restored.queue,
       uploadedCount: 0,
 
-      setEnabled: (enabled) => set({ enabled }),
+      setEnabled: (enabled) => set(enabled ? { enabled, uploadsRefusedAt: null } : { enabled }),
       setPermission: (permission) => set({ permission }),
       setServicesEnabled: (servicesEnabled) => set({ servicesEnabled }),
+      setPreciseLocation: (preciseLocation) => set({ preciseLocation }),
       setBackgroundActive: (backgroundActive) => set({ backgroundActive }),
       setOnboardedPermissions: (onboardedPermissions) => set({ onboardedPermissions }),
       setPolicy: (policy) => set({ policy }),
@@ -308,6 +334,7 @@ export const useTrackingStore = create<TrackingState>()(
       setMotionStillSince: (motionStillSince) => set({ motionStillSince }),
       setServiceStoppedAt: (serviceStoppedAt) => set({ serviceStoppedAt }),
       setServiceRefusedAt: (serviceRefusedAt) => set({ serviceRefusedAt }),
+      setUploadsRefusedAt: (uploadsRefusedAt) => set({ uploadsRefusedAt }),
       enqueue: (fixes) => {
         const lastFix = fixes[fixes.length - 1] ?? get().lastFix
         set({ queue: pushFixes(fixes, lastFix), lastFix })
@@ -340,6 +367,7 @@ export const useTrackingStore = create<TrackingState>()(
           motionStillSince: null,
           serviceStoppedAt: null,
           serviceRefusedAt: null,
+          uploadsRefusedAt: null,
           lastFix: null,
           lastUploadAt: null,
           lastError: null,
@@ -355,6 +383,7 @@ export const useTrackingStore = create<TrackingState>()(
       partialize: (state) => ({
         enabled: state.enabled,
         permission: state.permission,
+        preciseLocation: state.preciseLocation,
         onboardedPermissions: state.onboardedPermissions,
         policy: state.policy,
         mode: state.mode,
@@ -367,6 +396,7 @@ export const useTrackingStore = create<TrackingState>()(
         motionStillSince: state.motionStillSince,
         serviceStoppedAt: state.serviceStoppedAt,
         serviceRefusedAt: state.serviceRefusedAt,
+        uploadsRefusedAt: state.uploadsRefusedAt,
         lastUploadAt: state.lastUploadAt,
       }),
       // v2 put the motion permission on the setup checklist. The checklist only

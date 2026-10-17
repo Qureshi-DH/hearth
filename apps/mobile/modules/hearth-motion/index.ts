@@ -155,6 +155,8 @@ export interface NativeFix {
 export type NativeEvent =
   | { type: "transition"; activity: MotionActivity; at: number }
   | { type: "fence"; id: string; transition: "enter" | "exit"; at: number }
+  /** Play Services dropped the fences, with its GeofenceStatusCodes reason. */
+  | { type: "fence_lost"; code: number; at: number }
   | { type: "service"; status: "started" | "refused" | "stopped"; reason: string; at: number }
   | { type: "boot"; at: number }
 

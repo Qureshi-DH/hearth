@@ -1,3 +1,4 @@
+import { DEFAULTS } from "@hearth/shared"
 import { sql } from "drizzle-orm"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
 
@@ -67,7 +68,13 @@ async function addPlace(headers: Headers, circleId: string, name: string, point:
 
 async function uploadFixes(
   headers: Headers,
-  points: { lat: number; lon: number; recordedAt: string; accuracyMeters?: number }[],
+  points: {
+    lat: number
+    lon: number
+    recordedAt: string
+    accuracyMeters?: number
+    activity?: string
+  }[],
 ) {
   const response = await ctx.app.inject({
     method: "POST",
@@ -133,6 +140,8 @@ async function presenceFor(headers: Headers, circleId: string, userId: string) {
     accuracyMeters: number | null
     approximate: boolean
     sharingState: string
+    stale: boolean
+    issues: string[]
   }[]
   return rows.find((row) => row.userId === userId)!
 }
@@ -366,6 +375,118 @@ describe("a timed pause lapsing on the map", () => {
     const seen = await presenceFor(bob.headers, circle.id, alice.user.id)
     expect(seen.sharingState).toBe("precise")
     expect(seen.lat).toBe(HOME.lat)
+  })
+})
+
+describe("Share my location switched off on the phone", () => {
+  async function reportSharing(headers: Headers, sharingEnabled: boolean) {
+    const response = await ctx.app.inject({
+      method: "PATCH",
+      url: "/api/v1/me/health",
+      headers,
+      payload: { locationPermission: "always", locationServices: true, sharingEnabled },
+    })
+    expect(response.statusCode).toBe(200)
+  }
+
+  async function allowPausing(headers: Headers, circleId: string, allowSharingPause: boolean) {
+    const response = await ctx.app.inject({
+      method: "PATCH",
+      url: `/api/v1/circles/${circleId}`,
+      headers,
+      payload: { settings: { allowSharingPause } },
+    })
+    expect(response.statusCode).toBe(200)
+  }
+
+  // The family saw a dot fade where sharing had stopped, with nothing to say
+  // that it had been switched off.
+  it("reads as a pause where the circle allows one, and as switched off where it does not", async () => {
+    const alice = await registerUser(ctx.app, { displayName: "Alice" })
+    const bob = await registerUser(ctx.app, { displayName: "Bob" })
+    const circle = await createCircle(bob.headers)
+    await joinCircle(alice.headers, circle.invite.code)
+    await uploadFixes(alice.headers, [{ ...HOME, recordedAt: iso(-60), accuracyMeters: 12 }])
+    await reportSharing(alice.headers, false)
+
+    const paused = await presenceFor(bob.headers, circle.id, alice.user.id)
+    expect(paused).toMatchObject({ sharingState: "paused", lat: null, issues: [] })
+
+    await allowPausing(bob.headers, circle.id, false)
+    const told = await presenceFor(bob.headers, circle.id, alice.user.id)
+    expect(told).toMatchObject({ sharingState: "precise", lat: HOME.lat })
+    expect(told.issues[0]).toBe("sharing_off")
+
+    // Her own row is hers whatever the switch says.
+    expect((await presenceFor(alice.headers, circle.id, alice.user.id)).lat).toBe(HOME.lat)
+  })
+
+  // Switched off on purpose, a phone going quiet is not a phone that broke.
+  it("keeps the offline alert from a circle that allows pausing, and says why to one that does not", async () => {
+    const teen = await registerUser(ctx.app, { displayName: "Teen" })
+    const parent = await registerUser(ctx.app, { displayName: "Parent" })
+    const coach = await registerUser(ctx.app, { displayName: "Coach" })
+    const family = await createCircle(parent.headers, "Family")
+    const team = await createCircle(coach.headers, "Team")
+    await joinCircle(teen.headers, family.invite.code)
+    await joinCircle(teen.headers, team.invite.code)
+    await allowPausing(coach.headers, team.id, false)
+
+    await uploadFixes(teen.headers, [{ ...HOME, recordedAt: iso(-95 * 60), accuracyMeters: 14 }])
+    await silentSinceLastFix(teen.user.id)
+    await reportSharing(teen.headers, false)
+    await runJobs(getDb(), getConfig(), ctx.app.log)
+
+    expect(await feedTypes(parent.headers, family.id)).not.toContain("device_offline")
+    const told = (await feed(coach.headers, team.id)).body.items.find(
+      (item) => item.type === "device_offline",
+    )
+    expect(told?.summary).toMatch(/location sharing is turned off/)
+  })
+
+  it("takes a fix newer than the report as sharing back on", async () => {
+    const alice = await registerUser(ctx.app, { displayName: "Alice" })
+    const bob = await registerUser(ctx.app, { displayName: "Bob" })
+    const circle = await createCircle(bob.headers)
+    await joinCircle(alice.headers, circle.invite.code)
+    await reportSharing(alice.headers, false)
+    await uploadFixes(alice.headers, [{ ...HOME, recordedAt: iso(1), accuracyMeters: 12 }])
+
+    const seen = await presenceFor(bob.headers, circle.id, alice.user.id)
+    expect(seen).toMatchObject({ sharingState: "precise", lat: HOME.lat })
+    expect(seen.issues).not.toContain("sharing_off")
+  })
+})
+
+describe("how fresh a dot reads", () => {
+  // A parked phone says it is still there every quarter hour, and the stale
+  // line sat on the beat itself, so a healthy phone at home faded in and out.
+  it("gives a parked phone room past its heartbeat, and a moving one none", async () => {
+    const alice = await registerUser(ctx.app, { displayName: "Alice" })
+    const bob = await registerUser(ctx.app, { displayName: "Bob" })
+    const circle = await createCircle(alice.headers)
+    await joinCircle(bob.headers, circle.invite.code)
+
+    const beat = DEFAULTS.restingHeartbeatSeconds
+    await uploadFixes(alice.headers, [
+      { ...HOME, recordedAt: iso(-beat - 5 * 60), accuracyMeters: 12, activity: "still" },
+    ])
+    await uploadFixes(bob.headers, [
+      { ...CLINIC, recordedAt: iso(-beat - 5 * 60), accuracyMeters: 12, activity: "walking" },
+    ])
+    expect((await presenceFor(bob.headers, circle.id, alice.user.id)).stale).toBe(false)
+    expect((await presenceFor(alice.headers, circle.id, bob.user.id)).stale).toBe(true)
+
+    const quiet = DEFAULTS.parkedStaleAfterSeconds
+    await uploadFixes(alice.headers, [
+      { ...HOME, recordedAt: iso(-quiet + 60), accuracyMeters: 12, activity: "still" },
+    ])
+    expect((await presenceFor(bob.headers, circle.id, alice.user.id)).stale).toBe(false)
+    await getDb().execute(
+      sql`update user_presence set recorded_at = now() - interval '1 second' * ${quiet + 60}
+          where user_id = ${alice.user.id}::uuid`,
+    )
+    expect((await presenceFor(bob.headers, circle.id, alice.user.id)).stale).toBe(true)
   })
 })
 

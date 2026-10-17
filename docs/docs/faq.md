@@ -96,7 +96,9 @@ The details worth knowing:
 - Uploads are single-flight, oldest first, up to 200 fixes per request.
 - A network error, a 5xx or a 429 leaves the batch in the queue for the next
   attempt. A 4xx that is not an auth failure drops that batch, so one malformed
-  fix cannot wedge the pipeline forever.
+  fix cannot wedge the pipeline forever, and the next batch waits half a minute
+  rather than going straight after it. A firewall that locks out an address
+  after a failed request is the reason.
 - The server ignores duplicates by device and timestamp, so a retried upload is
   safe.
 - A parked phone in the background is in stationary mode and takes one cheap
@@ -108,8 +110,10 @@ The background sync task also flushes the queue whenever the OS grants it time,
 and takes a fresh fix if the last one is over 15 minutes old.
 
 While the server is down nobody can see anybody, and after 15 minutes without a
-fix everyone shows as stale. The job that alerts on a phone going quiet holds
-its alerts back when at least eight phones count and most of them have gone
+fix everyone shows as stale, or after 35 for a phone that said it had parked,
+since a parked phone only reports every quarter of an hour. The job that
+alerts on a phone going quiet holds its alerts back when at least eight
+phones count and most of them have gone
 quiet at once, on the grounds that a simultaneous outage is the server's fault
 rather than everyone's, so a reboot does not send the family an alert each.
 
@@ -131,9 +135,13 @@ An iPhone keeps a cell-only location session, which costs almost nothing and
 keeps the app alive to report once a quarter of an hour. That 90 metres is one
 and a half times the distance filter and never less than 60, so a circle that
 asks for coarser updates waits out a wider stop. Leaving the geofence puts it
-back into moving. So a phone sitting in a house overnight is costing you a few
-cheap fixes an hour, not a GPS. A parked phone is expected to be quiet, so the
-server only calls it offline after twelve hours of silence. A phone last seen
+back into moving. A phone allowed only approximate location gets no geofence,
+because neither Android nor iOS arms one for it, so it parks without one and
+leaves on the classifier's word or on a fix far enough away to say so. The
+member's page then says precise location is off. So a phone sitting in a house
+overnight is costing you a few cheap fixes an hour, not a GPS. A parked phone
+is expected to be quiet, so the server only calls it offline after twelve
+hours of silence. A phone last seen
 moving is reported after an hour, and the server asks it for a fix before
 that. A phone that has told the server why it cannot report, a permission not
 set to Always, Location Services off, is shown as that under its name instead.
@@ -273,7 +281,12 @@ Two behaviours surprise people:
 - **The phone keeps uploading and the server keeps storing your breadcrumbs
   while you are paused.** Pausing hides you from a circle, it does not stop
   collection. To stop collection, turn off _Share my location_ on the phone,
-  which stops the OS updates so nothing is captured or queued at all.
+  which stops the OS updates so nothing is captured or queued at all. The
+  phone tells the server it did. A circle that allows pausing sees that as a
+  pause, and a circle that has pausing turned off sees "Turned off location
+  sharing" under your name with your last position, so a switch on the phone
+  cannot get round a circle's rule unnoticed. Your own map says the switch is
+  off until you turn it back on.
 - **SOS overrides a pause.** Raising one switches you to precise in that circle
   and notifies everyone regardless of mutes. Resolving it does not put the
   pause back. See [safety](safety.md).

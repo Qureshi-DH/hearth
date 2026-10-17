@@ -215,9 +215,10 @@ push provider cannot carry a silent push. A phone that has not uploaded since
 the first push is pushed again after 90 s, three times per window at most.
 `lastFixAt` is the last position, `lastHeardAt` the last upload of any kind,
 `activity` what the phone last called itself, and `issues` what the phone
-itself reported stands between it and reporting (`PRESENCE_ISSUES` in the
-shared package). A member sharing approximately or paused cannot be watched:
-`watching` is false and every other field is empty.
+itself reported stands between it and reporting, or between it and reporting
+well, such as precise location or motion access being off (`PRESENCE_ISSUES`
+in the shared package). A member sharing approximately or paused cannot be watched,
+so `watching` is false and every other field is empty.
 
 ## Asking one phone for a fix
 

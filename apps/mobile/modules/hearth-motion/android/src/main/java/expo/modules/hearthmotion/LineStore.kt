@@ -40,7 +40,10 @@ internal class LineStore(private val file: File, private val maxBytes: Long = MA
 
   companion object {
     private val LOCK = Any()
-    /** About five thousand fixes, a day of the live tier with nothing draining it. */
+    /**
+     * About five thousand fixes with nothing draining it, which is an hour
+     * and a half of the live tier or most of a day of driving.
+     */
     private const val MAX_BYTES = 1_000_000L
   }
 }

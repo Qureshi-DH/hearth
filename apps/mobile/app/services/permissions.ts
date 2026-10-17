@@ -31,7 +31,7 @@ export interface PermissionSnapshot {
   location: PermissionLevel
   /** The device-wide switch. Granted access is worth nothing while this is off. */
   servicesEnabled: boolean
-  /** Android can grant coarse only. iOS is always fine at the permission level. */
+  /** False for Android's approximate grant, or iOS with Precise Location off. */
   preciseLocation: boolean
   notifications: SimpleStatus
   /** Android only. "exempt" is the real answer from the OS, not a record of having asked. */
@@ -100,7 +100,9 @@ export async function getPermissionSnapshot(): Promise<PermissionSnapshot> {
   }
 
   const preciseLocation =
-    Platform.OS === "android" ? foreground.android?.accuracy !== "coarse" : true
+    Platform.OS === "android"
+      ? foreground.android?.accuracy !== "coarse"
+      : foreground.ios?.accuracy !== "reduced"
 
   const notificationStatus: SimpleStatus = !notifications
     ? "n/a"

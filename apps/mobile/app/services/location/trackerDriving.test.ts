@@ -175,10 +175,31 @@ describe("the driving tier", () => {
 
   it("scales the filter with speed in steps, within bounds", () => {
     expect(drivingDistanceMeters(null)).toBe(30)
-    expect(drivingDistanceMeters(15)).toBe(150)
+    expect(drivingDistanceMeters(15)).toBe(100)
     expect(drivingDistanceMeters(17)).toBe(150)
-    expect(drivingDistanceMeters(30)).toBe(300)
+    expect(drivingDistanceMeters(30)).toBe(250)
     expect(drivingDistanceMeters(45)).toBe(300)
+  })
+
+  // A gate rounded up past the distance a car covers in one interval drops
+  // every other fix, and at 50, 70 and 100 km/h the trail cut the corners.
+  it("keeps every fix of a steady drive at town, main road and motorway speeds", async () => {
+    for (const kmh of [50, 70, 100]) {
+      const mps = kmh / 3.6
+      expect(drivingDistanceMeters(mps)).toBeLessThan((mps * DRIVING_INTERVAL_MS) / 1000)
+      useTrackingStore.setState({ lastFix: null, driving: null })
+      const before = useTrackingStore.getState().queue.length
+      const t0 = Date.now() + kmh * 60_000
+      for (let i = 0; i < 6; i += 1) {
+        const north = (mps * (DRIVING_INTERVAL_MS / 1000) * i) / 111_195
+        await ingest(
+          [sample(HOME.lat + north, HOME.lon, t0 + i * DRIVING_INTERVAL_MS, mps)],
+          "background",
+        )
+      }
+      const added = useTrackingStore.getState().queue.slice(before)
+      expect(added.filter((fix) => fix.source === "background")).toHaveLength(6)
+    }
   })
 
   // Speed and heading only come from GPS, and the walking tier never turns
@@ -190,7 +211,7 @@ describe("the driving tier", () => {
     const options = lastOptions()
     expect(options.accuracy).toBe(Location.Accuracy.High)
     expect(options.timeInterval).toBe(DRIVING_INTERVAL_MS)
-    expect(options.distanceInterval).toBe(150)
+    expect(options.distanceInterval).toBe(100)
     expect(options.deferredUpdatesInterval).toBeUndefined()
   })
 
@@ -201,7 +222,7 @@ describe("the driving tier", () => {
     await ingest([sample(HOME.lat + 0.002, HOME.lon, t0 + 10_000, 16)], "background")
     expect(start).not.toHaveBeenCalled()
     await ingest([sample(HOME.lat + 0.004, HOME.lon, t0 + 20_000, 31)], "background")
-    expect(lastOptions().distanceInterval).toBe(300)
+    expect(lastOptions().distanceInterval).toBe(250)
   })
 
   // On iOS the walking tier is GPS too, so what the end of a drive changes is

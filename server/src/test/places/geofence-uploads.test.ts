@@ -38,6 +38,8 @@ interface Fix {
   recordedAt: string
   accuracyMeters?: number
   speedMps?: number
+  activity?: string
+  source?: string
 }
 
 async function createCircle(headers: Record<string, string>, name = "Family") {
@@ -214,6 +216,40 @@ describe("a drive-past is a drive-past however the phone chunked the upload", ()
       reported: 1,
       crossings: ["arrive"],
     })
+  })
+})
+
+describe("a parked phone's quarter hour heartbeat", () => {
+  // The phone sends where it parked, at the arrival fix's accuracy, rather
+  // than a cell estimate that may be hundreds of metres off.
+  it("keeps the member at home on every beat, and a real departure still leaves", async () => {
+    const { parent, kid, circle } = await household(150, HOME, "Home")
+    const parked = { ...HOME, accuracyMeters: 20, speedMps: 0, activity: "still" }
+
+    await uploadFixes(kid.headers, [{ ...parked, recordedAt: iso(-2400) }])
+    const lastBeat = iso(-600)
+    for (const recordedAt of [iso(-1500), lastBeat]) {
+      await uploadFixes(kid.headers, [{ ...parked, recordedAt, source: "heartbeat" }])
+    }
+    const presence = await ctx.app.inject({
+      method: "GET",
+      url: `/api/v1/circles/${circle.id}/locations`,
+      headers: parent.headers,
+    })
+    const row = (
+      presence.json() as Array<{
+        userId: string
+        recordedAt: string
+        atPlace: { name: string } | null
+        stale: boolean
+      }>
+    ).find((item) => item.userId === kid.user.id)!
+    expect(row).toMatchObject({ recordedAt: lastBeat, atPlace: { name: "Home" } })
+
+    await uploadFixes(kid.headers, [
+      { ...northOf(HOME, 600), recordedAt: iso(-30), accuracyMeters: 15, speedMps: 1.4 },
+    ])
+    expect(await crossings()).toEqual(["arrive", "leave"])
   })
 })
 

@@ -11,6 +11,7 @@ import {
   enterMoving,
   enterStationary,
   enterWatched,
+  ingest,
   isDriving,
   processNativeQueue,
   reassertService,
@@ -213,6 +214,28 @@ describe("the tiers on Android", () => {
     expect(stop).toHaveBeenCalledWith(BACKGROUND_LOCATION_TASK)
   })
 
+  // A background app with no service and no request gets nothing at all,
+  // and that was a refused journey until the next allowed moment.
+  it("keeps a request running on the moving options while Android refuses the service", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    fake.refuse = true
+    start.mockClear()
+    stop.mockClear()
+    await enterMoving()
+    expect(fake.status).toBe("refused")
+    expect(stop).not.toHaveBeenCalled()
+    const options = start.mock.calls[
+      start.mock.calls.length - 1
+    ]![1] as Location.LocationTaskOptions
+    expect(options).toMatchObject({ accuracy: Location.Accuracy.Balanced, timeInterval: 30_000 })
+    expect(options.foregroundService).toBeUndefined()
+
+    fake.refuse = false
+    await reassertService({ exempt: true })
+    expect(fake.status).toBe("running")
+    expect(stop).toHaveBeenCalledWith(BACKGROUND_LOCATION_TASK)
+  })
+
   it("tells native when sharing goes off", async () => {
     await enterMoving()
     await stopTracking()
@@ -364,6 +387,91 @@ describe("what the OS delivered while JavaScript was down", () => {
   })
 })
 
+describe("a phone allowed only approximate location", () => {
+  const foreground = Location.getForegroundPermissionsAsync as unknown as jest.Mock
+  const precise = async () => ({ status: "granted", canAskAgain: true })
+
+  afterEach(() => {
+    foreground.mockImplementation(precise)
+    useTrackingStore.getState().setPreciseLocation(true)
+  })
+
+  // Play Services will not arm a fence without fine location, and the stop
+  // that could not arm one ran the service all day instead.
+  it("parks on Android without the fence Play Services refuses it", async () => {
+    foreground.mockImplementation(async () => ({
+      status: "granted",
+      canAskAgain: true,
+      android: { accuracy: "coarse" },
+    }))
+    fake.refuseFence = true
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(fake.status).toBe("none")
+    expect(fake.armFence).not.toHaveBeenCalled()
+  })
+
+  it("still leaves on a resting fix far enough off for its looseness to clear the fence", async () => {
+    foreground.mockImplementation(async () => ({
+      status: "granted",
+      canAskAgain: true,
+      android: { accuracy: "coarse" },
+    }))
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    const far = at({ lat: HOME.lat + 4_000 / 111_195, lon: HOME.lon }, Date.now(), null)
+    await ingest([{ ...far, coords: { ...far.coords, accuracy: 2_000 } }], "background")
+    expect(useTrackingStore.getState().mode).toBe("moving")
+  })
+
+  it("parks on iOS without the region iOS will not monitor with Precise Location off", async () => {
+    Platform.OS = "ios"
+    foreground.mockImplementation(async () => ({
+      status: "granted",
+      canAskAgain: true,
+      ios: { scope: "always", accuracy: "reduced" },
+    }))
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(startExpoFence).not.toHaveBeenCalled()
+  })
+})
+
+describe("a loose fix on a parked phone", () => {
+  /** Four hundred metres north, with two hundred metres of doubt. */
+  const loose = (when: number): Location.LocationObject =>
+    ({
+      timestamp: when,
+      coords: {
+        latitude: HOME.lat + 400 / 111_195,
+        longitude: HOME.lon,
+        altitude: 0,
+        accuracy: 200,
+        altitudeAccuracy: 5,
+        heading: -1,
+        speed: null,
+      },
+    }) as Location.LocationObject
+  const getPosition = Location.getCurrentPositionAsync as unknown as jest.Mock
+
+  it("is not taken as the phone leaving, and is checked with a sharper one", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    getPosition.mockClear()
+    await ingest([loose(Date.now())], "background")
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(getPosition).toHaveBeenCalledTimes(1)
+  })
+
+  it("ends the stop once the sharper fix agrees", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    mockHere = { ...AWAY }
+    await ingest([loose(Date.now())], "background")
+    expect(useTrackingStore.getState().mode).toBe("moving")
+  })
+})
+
 describe("live, while somebody is watching", () => {
   it("asks for a fix every second and uploads every one of them, moving or not", async () => {
     await enterMoving()
@@ -376,6 +484,33 @@ describe("live, while somebody is watching", () => {
     fake.status = "running"
     await processNativeQueue()
     expect(uploaded().filter((fix) => fix.source === "background")).toHaveLength(3)
+  })
+
+  // Three lines a fix rewrote the log three times a second and pushed the
+  // night's evidence out of it within minutes.
+  it("logs a line every half minute for the window, not three for every fix", async () => {
+    await enterMoving()
+    await enterWatched(600)
+    const window = useTrackingStore.getState().watchedUntil
+    mockUpload.mockImplementation(async (batch: LocationFixInput[]) => ({
+      ...reply(batch.length),
+      watchedUntil: window,
+    }))
+    clearTrackerLog()
+    fake.status = "running"
+    for (let i = 1; i <= 60; i += 1) {
+      await jest.advanceTimersByTimeAsync(1_000)
+      fake.fixes = [at({ lat: AWAY.lat + i * 0.0001, lon: AWAY.lon }, Date.now(), 12)]
+      await processNativeQueue()
+    }
+    expect(uploaded().filter((fix) => fix.source === "background")).toHaveLength(60)
+    const names = readTrackerLog().map((entry) => entry.what)
+    const tallies = names.filter((name) => name === "live").length
+    expect(tallies).toBeGreaterThanOrEqual(1)
+    expect(tallies).toBeLessThanOrEqual(2)
+    expect(names.filter((name) => name === "fixes" || name === "flush")).toHaveLength(0)
+    expect(names.filter((name) => name === "watch adopted")).toHaveLength(0)
+    expect(names.length).toBeLessThan(10)
   })
 })
 

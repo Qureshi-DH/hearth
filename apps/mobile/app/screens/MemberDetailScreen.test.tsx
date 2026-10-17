@@ -280,6 +280,15 @@ describe("what a quiet phone says about itself", () => {
   })
 })
 
+describe("a phone allowed only approximate location", () => {
+  // Its positions keep coming, kilometres wide, and nothing said why.
+  it("says so on the profile while its fixes are fresh", async () => {
+    mockPresence = [{ ...presenceFor("still"), issues: ["precise_location"] }]
+    const screen = await renderProfile()
+    expect(screen.getByText(/map:preciseOff/)).toBeTruthy()
+  })
+})
+
 describe("the profile map", () => {
   it("does not draw the day's trail", async () => {
     await renderProfile()

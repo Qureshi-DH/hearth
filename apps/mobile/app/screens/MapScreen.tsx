@@ -711,6 +711,28 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
           </Pressable>
         ) : null}
 
+        {!trackingEnabled ? (
+          <Pressable
+            onPress={() => circle && navigation.navigate("Sharing", { circleId: circle.id })}
+          >
+            <GlassPanel
+              radius={16}
+              style={{ marginTop: theme.spacing.xs, paddingHorizontal: 12, paddingVertical: 10 }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="eye-off-outline" size={16} color={theme.colors.warning} />
+                <Text size="xs" style={{ flex: 1 }} tx="map:sharingSwitchedOff" />
+                <Text
+                  size="xs"
+                  weight="semiBold"
+                  style={{ color: theme.colors.tint }}
+                  tx="map:turnOn"
+                />
+              </View>
+            </GlassPanel>
+          </Pressable>
+        ) : null}
+
         {mySharingPaused ? (
           <Pressable
             onPress={() => circle && navigation.navigate("Sharing", { circleId: circle.id })}

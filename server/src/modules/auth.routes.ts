@@ -42,6 +42,7 @@ import {
   setPassword,
 } from "../services/auth"
 import { acceptInvite, previewInvite } from "../services/invites"
+import { broadcastPresence } from "../services/locations"
 import { portalRoutes } from "./portal.routes"
 import { passwordGuesses } from "../plugins/password-guesses"
 import { registrationMode } from "../services/settings"
@@ -680,14 +681,19 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "What stands between this phone and reporting",
         description:
           "The phone's own account of its permissions and switches: the location permission " +
-          "level, Location Services, Background App Refresh on iOS, battery optimisation and " +
-          "background restriction on Android, power saving on either, and whether the " +
-          "location service died without being asked. The circle sees it under the member's " +
-          "name instead of a mystery, and a quiet phone that has said why is reported as such " +
-          "rather than as offline.",
+          "level, whether it is precise, Location Services, motion access, Background App " +
+          "Refresh on iOS, battery optimisation and background restriction on Android, power " +
+          "saving on either, whether the location service died without being asked, and " +
+          "whether the person turned Share my location off. The circle sees it under the " +
+          "member's name instead of a mystery, and a quiet phone that has said why is reported " +
+          "as such rather than as offline. Sharing switched off reads as a pause in a circle " +
+          "that allows one.",
         body: z.object({
           locationPermission: z.enum(["always", "foreground", "denied", "unknown"]),
           locationServices: z.boolean(),
+          preciseLocation: z.boolean().optional(),
+          motionPermission: z.enum(["granted", "denied", "undetermined"]).optional(),
+          sharingEnabled: z.boolean().optional(),
           backgroundRefresh: z.enum(["available", "denied", "restricted"]).optional(),
           batteryOptimised: z.boolean().optional(),
           backgroundRestricted: z.boolean().optional(),
@@ -705,6 +711,9 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         .insert(userPresence)
         .values({ userId: auth.userId, health })
         .onConflictDoUpdate({ target: userPresence.userId, set: { health } })
+      // Sharing switched off sends no fix to carry the news, so the circle's
+      // open maps hear it from here.
+      await broadcastPresence(db, auth.userId)
       return { ok: true as const }
     },
   )

@@ -33,17 +33,23 @@ export function ringFor(presence: MemberPresence | undefined, isSelf: boolean): 
 }
 
 /**
- * One line under a name. A place the family named comes first, then the
- * street the phone's geocoder knows, then only when it was heard from.
+ * One line under a name. A phone gone quiet says so first, since "At Home
+ * since two" reads as fine for a phone that died at home. Then a place the
+ * family named, then the street the phone's geocoder knows, then only when
+ * it was heard from.
  */
 export function statusLine(presence: MemberPresence | undefined, nearby?: string | null): string {
   if (!presence) return translate("map:noLocation")
   if (presence.sharingState === "paused") return translate("map:paused")
   // What the phone said is wrong with it comes before where it last was:
-  // "location permission off" is the sentence a parent can act on.
+  // "location permission off" is the sentence a parent can act on. Sharing
+  // switched off says so however fresh the last fix is, since no more come.
   const issue = presence.issues?.[0]
-  if (issue && (presence.stale || !presence.recordedAt)) {
+  if (issue && (issue === "sharing_off" || presence.stale || !presence.recordedAt)) {
     return translate(`map:issue_${issue}` as const)
+  }
+  if (presence.recordedAt && presence.stale) {
+    return `${translate("map:stale")} · ${relativeTime(presence.recordedAt)}`
   }
   if (presence.atPlace) {
     const since = presence.atPlace.since ? sinceTime(presence.atPlace.since) : null
@@ -52,13 +58,10 @@ export function statusLine(presence: MemberPresence | undefined, nearby?: string
       : translate("map:atPlace", { place: presence.atPlace.name })
   }
   if (!presence.recordedAt) return translate("map:noLocation")
-  const when = presence.stale
-    ? `${translate("map:stale")} · ${relativeTime(presence.recordedAt)}`
-    : translate("map:lastSeen", { time: relativeTime(presence.recordedAt) })
   if (nearby && !presence.approximate) {
     return `${translate("map:near", { where: nearby })} · ${relativeTime(presence.recordedAt)}`
   }
-  return when
+  return translate("map:lastSeen", { time: relativeTime(presence.recordedAt) })
 }
 
 /** The street under a member, where there is no named place and they share precisely. */

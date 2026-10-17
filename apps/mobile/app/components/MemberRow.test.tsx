@@ -39,4 +39,24 @@ describe("statusLine", () => {
     expect(statusLine(presence, "F-8")).toMatch(/map:issue_service_stopped/)
     expect(statusLine(presence, "F-8")).not.toMatch(/map:near/)
   })
+
+  // "At Home since" read as fine for a phone that had died at home.
+  it("says a phone has gone quiet before it says where it last was", () => {
+    const presence = {
+      ...quietWith([]),
+      atPlace: { id: "home", name: "Home", icon: null, since: new Date().toISOString() },
+    }
+    expect(statusLine(presence)).toMatch(/^map:stale/)
+    expect(statusLine({ ...presence, stale: false })).toMatch(/map:atPlace/)
+  })
+
+  it("says sharing was switched off even while the last fix is fresh", () => {
+    const presence = {
+      ...quietWith(["sharing_off", "precise_location"]),
+      stale: false,
+      recordedAt: new Date().toISOString(),
+    }
+    expect(statusLine(presence, "F-8")).toMatch(/map:issue_sharing_off/)
+    expect(statusLine({ ...presence, issues: ["precise_location"] }, "F-8")).toMatch(/map:near/)
+  })
 })

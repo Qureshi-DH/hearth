@@ -1,6 +1,7 @@
 import { Linking, Platform } from "react-native"
 import * as Battery from "expo-battery"
 import * as IntentLauncher from "expo-intent-launcher"
+import * as Location from "expo-location"
 
 import {
   addPowerStateListener,
@@ -169,6 +170,31 @@ describe("getPermissionSnapshot", () => {
     const snapshot = await getPermissionSnapshot()
 
     expect(snapshot.lowPowerMode).toBe(true)
+  })
+
+  it("reads Precise Location off on iOS, as well as Android's approximate grant", async () => {
+    const foreground = Location.getForegroundPermissionsAsync as jest.Mock
+    onPlatform("ios")
+    foreground.mockResolvedValueOnce({
+      status: "granted",
+      canAskAgain: true,
+      ios: { scope: "always", accuracy: "reduced" },
+    })
+    expect((await getPermissionSnapshot()).preciseLocation).toBe(false)
+
+    onPlatform("android")
+    foreground.mockResolvedValueOnce({
+      status: "granted",
+      canAskAgain: true,
+      android: { accuracy: "coarse" },
+    })
+    expect((await getPermissionSnapshot()).preciseLocation).toBe(false)
+    foreground.mockResolvedValueOnce({
+      status: "granted",
+      canAskAgain: true,
+      android: { accuracy: "fine" },
+    })
+    expect((await getPermissionSnapshot()).preciseLocation).toBe(true)
   })
 
   it("has no manufacturer when the OS does not say", async () => {

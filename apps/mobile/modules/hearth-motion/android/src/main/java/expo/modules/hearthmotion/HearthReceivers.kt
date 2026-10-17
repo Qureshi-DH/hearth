@@ -66,7 +66,13 @@ class HearthFenceReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     val event = GeofencingEvent.fromIntent(intent) ?: return
     if (event.hasError()) {
+      // Location switched off, most often, and Play Services has removed
+      // every fence. The record of ours goes too, and the tracker's next
+      // sync adds the fence back and looks for a departure.
       Log.w(TAG, "Fence event error ${event.errorCode}")
+      Fences.forget(context)
+      TrackerQueue.event(context, JSONObject().put("type", "fence_lost").put("code", event.errorCode))
+      TrackerQueue.poke(context)
       return
     }
     val transition =

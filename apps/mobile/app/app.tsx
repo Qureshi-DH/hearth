@@ -32,6 +32,7 @@ import {
   refreshLocationStatus,
   reassertService,
   resumeIfEnabled,
+  setHealthReporter,
   startBackgroundClock,
   startForegroundHeartbeat,
   stopBackgroundClock,
@@ -51,6 +52,11 @@ import * as storage from "./utils/storage"
  */
 SplashScreen.preventAutoHideAsync().catch(() => {})
 SplashScreen.setOptions({ duration: 300, fade: true })
+
+// Here rather than in the tracker, which the report reads. A process the OS
+// starts for the tracker runs this module too, so what it notices with the
+// app closed reaches the family the same way the app's own report does.
+setHealthReporter(() => reportHealth({ background: true }))
 
 export const NAVIGATION_PERSISTENCE_KEY = "NAVIGATION_STATE"
 

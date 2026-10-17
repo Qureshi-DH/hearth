@@ -88,7 +88,7 @@ _You → Tracking status_.
 | ------------------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | Location, foreground           | `NSLocationWhenInUseUsageDescription`                                         | `ACCESS_FINE_LOCATION` (+ coarse)                           | Show you on the map                                                              | Onboarding, step 1                                                              |
 | Location, **Always**           | `NSLocationAlwaysAndWhenInUseUsageDescription`, `UIBackgroundModes: location` | `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE_LOCATION` | Updates while the app is closed, plus arrive/leave alerts                        | Onboarding, step 1 (second prompt)                                              |
-| Precise location               | `NSLocationDefaultAccuracyReduced = false`                                    | fine vs coarse detected                                     | Places and trips need GPS accuracy                                               | Detected, checklist links to Settings                                           |
+| Precise location               | `NSLocationDefaultAccuracyReduced = false`, full vs reduced detected          | fine vs coarse detected                                     | Places and trips need GPS accuracy                                               | Detected, checklist links to Settings                                           |
 | Notifications                  | runtime, `UIBackgroundModes: remote-notification` for the silent wake         | `POST_NOTIFICATIONS`                                        | Arrivals, battery, **SOS**. Local SOS banners need it even with no push provider | Onboarding, step 2                                                              |
 | Battery optimisation exemption | n/a                                                                           | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`                      | Doze and vendor power managers are the #1 reason background location dies        | Onboarding (Android), opens the system dialog                                   |
 | Background refresh / tasks     | `UIBackgroundModes: fetch, processing`, `BGTaskSchedulerPermittedIdentifiers` | `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`                       | Flush the offline queue when the OS allows                                       | Declared, checklist explains the iOS toggle                                     |
@@ -237,7 +237,10 @@ All of this lives in `app/services/location/tracker.ts`.
 5. `expo-background-task` registers `com.binary.rewind.hearth.sync` to flush
    the queue, re-arm the fence and take a fix if the last one is stale, when
    the OS grants time, which is never while the app is open. Its fixes are
-   bounded at fifteen seconds, since iOS gives the task about thirty.
+   bounded at fifteen seconds, since iOS gives the task about thirty. On
+   Android it adds the fence again on every pass while parked, because Play
+   Services drops fences without the app's own record of one knowing, and
+   a pass that finds the record gone also looks for a departure.
    `patches/expo-background-task@55.0.22.patch` makes it an app refresh task
    on iOS (`BGAppRefreshTaskRequest`) rather than a processing task, which
    iOS tends to hold for a phone that is idle and charging.
@@ -245,7 +248,19 @@ All of this lives in `app/services/location/tracker.ts`.
    restart with the new intervals, throttled to once a minute.
 
 Turning off _Share my location_ in the app stops the OS updates entirely. No
-fixes are captured or queued.
+fixes are captured or queued. The phone tells the server it did, and the map
+shows its owner a banner saying so with a button to turn it back on.
+
+The switch stays on through things that stop the tracker without the person
+asking, such as a session that ended, a change of server, a permission dropped below
+Always or Location Services switched off. `refreshLocationStatus()` runs every
+time the app comes to the front and after every sign-in. It stops the tracker
+when the permission or the switch rules it out, and starts it again once
+the phone is signed in, the switch is on, the permission is Always and
+Location Services are on. It never starts a tracker whose switch is off, and
+never one the server refused, see Uploads below. `startTracking()` runs one
+start at a time, so the app coming back and a sign-in in the same moment
+start it once.
 
 ### The tiers
 
@@ -267,7 +282,11 @@ only come from GPS, and without this tier a driver's dot sat off the road and
 their speed read as noise. It starts when the classifier says automotive, or
 from speed alone on a phone without the permission, and asks for `High`
 accuracy every ten seconds with a distance gate that follows the speed in
-fifty metre steps. It ends when the classifier says otherwise, after three
+fifty metre steps. The step is always the one below nine tenths of what the
+car covers in ten seconds, so a steady drive keeps every fix. Rounded to the
+nearest step, the gate came out wider than ten seconds of travel at 50, 70
+and 100 km/h, the OS dropped every other fix, and the trail cut the corners.
+It ends when the classifier says otherwise, after three
 minutes of crawling, or when the phone parks. The drive, the classifier's last
 verdict and the start of its still streak are persisted in the tracking
 store rather than held in module scope: a process the OS cold-starts for a
@@ -284,8 +303,13 @@ fixes under a flyover no longer ends one. A zero on a GPS fix is a real stop.
 **Parked** (`stationary`) is quiet but never silent. Once the phone has stayed
 for five minutes inside a circle of 60 m, or 1.5 times the policy's distance
 filter where that is wider, the request steps down and an exit geofence is
-armed around where it stopped. Before it steps down, while the moving
-registration still holds the process and, on Android, the service, the
+armed around where it stopped. A phone allowed only approximate location,
+Android's "Approximate" or iOS with Precise Location off, gets no fence,
+because neither OS arms one for it. It parks without one, and the resting
+request and the classifier are what notice it leave. Waiting for a fence
+that never came, it kept the full tier and ran the service all day. Before
+it steps down, while the moving registration still holds the process and,
+on Android, the service, the
 tracker takes one arrival fix, stamps it `still` whatever its own verdict,
 and waits for the upload. If the OS does not answer within thirty seconds a
 fix is made up from the parking spot, dated now, so the word `still` always
@@ -299,9 +323,12 @@ cell-only session (`Accuracy.Lowest`) with no distance filter, because a low
 accuracy session with one is the shape iOS 16.4 and later suspend once
 significant-change monitoring is on, and expo-location always adds that. It
 costs almost nothing, it keeps the process alive so the tracker's own timer
-can send a `still` fix every quarter hour from the fix the OS already has,
-and a departure is seen by the session's own fixes rather than at the
-fence's leisure. The 200 m fence stays as a third signal. Whether a parked
+can send a `still` fix every quarter hour, and a departure is seen by the
+session's own fixes rather than at the fence's leisure. On both platforms a
+parked phone's quarter hour fix is sent from the anchor, with the arrival
+fix's accuracy, whenever the fix the OS has does not clear the fence. Sent
+as it came, a cell-only session's estimate put a member at home hundreds of
+metres down the road on the family's map. The 200 m fence stays as a third signal. Whether a parked
 iPhone stays resident with this shape has not yet been confirmed on a
 device: the tracker log's `heartbeat` lines over a parked hour are the
 check.
@@ -347,7 +374,10 @@ native Kotlin in `modules/hearth-motion/android`:
   A vehicle transition or a fence exit on a parked phone brings the
   tracking service up with the moving request. On foot is confirmed first
   under the brief service, at most every two minutes. A transition on a
-  moving phone whose service has gone brings it back.
+  moving phone whose service has gone brings it back. When Play Services
+  sends the fence receiver an error, most often because Location was
+  switched off and it removed every fence, the receiver forgets the fence
+  and queues a `fence_lost` event, and the sync task adds the fence back.
 - `HearthTrackingService` is the foreground service and owns the location
   request through a `LocationCallback`, so the fixes of a journey are
   taken whether or not JavaScript is up. Each fix is appended to a native
@@ -374,6 +404,12 @@ native Kotlin in `modules/hearth-motion/android`:
   It does the same for a `nudge_requested` push, but only when Firebase
   hands that message to the app, which for a visible push means the app is
   in the foreground.
+
+While Android refuses the service, a moving phone keeps expo's request
+running on the tier's options with no service of its own. Android holds a
+background app to a few fixes an hour, and each one is a chance to judge the
+journey until the service can start. Without it a refused phone had no
+request at all.
 
 `reassertService` answers a refusal for a moving phone at every allowed
 moment: an activity transition, a fence exit, a wake or watch push and the
@@ -467,12 +503,24 @@ judges the stop from it. For any of this the session must never pause:
 suspends the app with it and a suspended app calls no stop and arms no fence.
 
 A parked phone does not leave on the classifier's word alone unless the word
-is a sure "automotive" (a transition, or a sample at 75% or better). Handled
-in bed, a phone reads as walking at fifty or sixty percent, and taking that
-alone brought the full tier back to a phone going nowhere. On foot the
-verdict is confirmed by one Balanced fix, at most every two minutes, and only
-a fix clear of the anchor by more than its own error ends the stop. Otherwise
-the fence is the judge, as it would have been a minute later anyway. A fence
+is a sure "automotive" (a transition, or a sample at 75% or better that is
+not just the verdict the phone parked on). Core Motion keeps calling a car
+idling in a car park automotive, and every such sample brought the GPS back.
+Handled in bed, a phone reads as walking at fifty or sixty percent, and
+taking that alone brought the full tier back to a phone going nowhere. On
+foot the verdict is confirmed by one Balanced fix, at most every two minutes,
+and one more about three minutes later if the first could not confirm it,
+since half a minute out of the door a walker is still inside the fence and
+its error. The second look is a timer, so it lands while the process is
+about, which is always on a parked iPhone and on Android only while Android
+keeps the process. Otherwise the fence is the judge.
+
+Only a fix clear of the anchor by more than its own error, and no looser
+than 100 m, ends a stop. A 200 m Wi-Fi estimate 400 m off once cleared the
+fence by its own error and un-parked a phone lying in bed. A looser fix that
+clears the fence is a reason to take one Balanced fix and judge that
+instead. A phone with only approximate location never gets a sharper fix,
+so for it the old rule stands. A fence
 exit on Android brings the full tier up first, inside the allowed moment, and
 then checks the exit against one bounded fix: a sharp fix clearly inside the
 circle is a false exit and the phone parks again at once.
@@ -488,24 +536,48 @@ A failed upload (network, 5xx, 429) keeps the queue and retries on its own
 after thirty seconds, then a minute, then two, while the process lives. After
 that it waits for the next delivery, which flushes whether or not it kept a
 fix. An upload that gets through starts the ladder over. A 4xx that is not
-an auth problem drops that batch so one bad fix cannot wedge the pipeline.
+an auth problem drops that batch so one bad fix cannot wedge the pipeline,
+and the next batch waits on the same ladder rather than going at once, since
+a firewall in front of the server can lock the phone out for a 4xx. A 403
+from Hearth itself ends sharing. The tracker stops, says why on the You
+screen, and uploads nothing more until the next sign-in or the person turns
+sharing back on. A deactivated account answers that, though deactivating
+through the admin routes also revokes the sessions, and the phone then signs
+itself out on the 401 that follows.
 
 ### What the phone says about itself
 
 `services/health.ts` sends `PATCH /me/health` with the checklist's reading
-of the phone: the location permission level, Location Services, Background
-App Refresh on iOS, battery optimisation and the Restricted background
-setting on Android, Low Power Mode or Battery Saver on either, the
-manufacturer in lowercase, and on Android whether the location service died
-without the tracker asking. It goes when the app comes to the front, after
-the checklist changes anything, and the moment Low Power Mode or Battery
-Saver flips, which the native module reports as an `onPowerStateChange`
-event. Otherwise it goes again only when something changes or a day has
-passed. The server keeps it on
-`user_presence.health`, projects it as `issues` on presence, and the rows put
-the first issue under the member's name once the phone is stale. The offline
-sweep reads it too: a quiet phone that has said why it cannot report is
-reported as that, not as offline.
+of the phone. That covers the location permission level, whether location is precise,
+Location Services, motion access, Background App Refresh on iOS, battery
+optimisation and the Restricted background setting on Android, Low Power
+Mode or Battery Saver on either, the manufacturer in lowercase, on Android
+whether the location service died without the tracker asking, and whether
+_Share my location_ is on. It goes when the app comes to the front, after a
+sign-in, after the checklist or the Sharing switch changes anything, and the
+moment Low Power Mode or Battery Saver flips, which the native module reports
+as an `onPowerStateChange` event. The tracker sends it from the background
+too, when it finds the service dead, a fence Play Services dropped, or a
+changed permission or Location switch, which the sync task and a parked
+iPhone's quarter hour timer read for it. Those sends go at most once in ten
+minutes, so a switch flapping in a car park cannot spam the server, and they
+read the switches without acting on them, since a tracker stopped in the
+background would stay off once Location came back. Otherwise it goes again
+only when something changes, the account changes, or a day has passed. The
+server keeps it on `user_presence.health`, projects it as `issues` on
+presence, and the rows put the first issue under the member's name once the
+phone is stale. Sharing switched off is named at once, whatever the
+staleness, and the member page shows a pill while precise location is off.
+The offline sweep reads it too, so a quiet phone that has said why it cannot
+report is reported as that, not as offline.
+
+Sharing switched off on the phone is a pause of every circle that allows
+one. Those circles see "Sharing paused" and no position, and hear no offline
+alert. A circle with pausing turned off is told plainly instead. It keeps the
+last position, faded once stale, the member's name says "Turned off location
+sharing", and its offline alert says that is why. A fix newer than the
+report reads as sharing back on, in case the report that said so has not
+landed.
 
 Every fix carries `activity` from the tracker's own tiers, `still` while
 parked and on the arrival fix, `driving` on the GPS tier, the classifier's
@@ -515,16 +587,22 @@ and calls it offline only after twelve hours rather than one.
 ### Diagnostics
 
 `services/location/log.ts` keeps the last thousand things the tracker did,
-on the phone: `boot` with whether the process was headless, tier changes and
+on the phone, in chunks of a hundred so a line costs one short write. While
+somebody watches Live the deliveries and uploads are counted rather than
+logged, and go in as one `live` line every half minute and one when the
+window ends, so a window cannot wash the night's evidence out of the log.
+Otherwise it records `boot` with whether the process was headless, tier changes and
 why, `fixes` delivered and kept, `report` / `report done` / `report failed`
 for every one-shot fix with its source, accuracy and elapsed time, `flush` /
 `flush failed` with sizes and status, `service` with the Android service's
 status after every registration, `reassert` before and after, `sync` for
-each run of the sync task, `watched` and `watch adopted`, `wake`, fence
-exits and whether they were false, the classifier's verdicts, and
-`heartbeat skipped` with the reason. A shared log opens with a header from
-`headerForTrackerLog()`: mode, when the anchor was set, queue length, last
-error, permission, service status, the watch window and the platform. The log
+each run of the sync task, `watched` and `watch adopted` when an upload
+reply starts or moves a window, `wake`, fence exits and whether they were
+false, `fence lost`, `walk checked again`, `refused`, `resumed`, the
+classifier's verdicts, and `heartbeat skipped` with the reason. A shared log opens with a header from
+`headerForTrackerLog()` with the mode, when the anchor was set, queue length,
+whether the server is refusing uploads, last error, permission, whether
+location is precise, service status, the watch window and the platform. The log
 holds no coordinates, so it can be pasted into an issue without saying where
 the phone parks. When a family
 member says "the notification stayed" or "it went quiet at home", this is the

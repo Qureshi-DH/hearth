@@ -27,6 +27,19 @@ Notable changes to Hearth. The format is loosely
   `mapStyleUrlDark`, which stay the defaults.
 - Every password field in the app, sign-in included, has a button that shows
   what you typed.
+- Your own map says when _Share my location_ is off, with a button that turns
+  it back on, and your circles are told as well. A circle that allows pausing
+  sees it as a pause. One with pausing turned off sees "Turned off location
+  sharing" under your name, keeps your last position, and its offline alert
+  says that is why rather than that the phone stopped reporting. A fix newer
+  than the report reads as sharing back on.
+- The family is told when a phone's precise location or its motion access is
+  off. Neither stops a phone reporting, so nothing said so, and rough
+  positions or a GPS that never sleeps looked like a broken phone. Precise
+  location off shows on the member's page while the fixes are fresh, and both
+  show under the name once the phone goes quiet, as they do in the admin
+  portal. Health reports gain `preciseLocation`, `motionPermission` and
+  `sharingEnabled`, and an older server ignores them.
 
 ### Changed
 
@@ -34,9 +47,66 @@ Notable changes to Hearth. The format is loosely
   nothing, and says so when the feed couldn't load, with a button to try
   again. "All quiet" now only appears once the server has answered with no
   events.
+- A parked phone's dot stays fresh for 35 minutes rather than 15. It reports
+  every quarter of an hour, so the stale line sat on the beat itself and a
+  healthy phone at home faded in and out on the map. A phone gone quiet now
+  says "Not updated recently" before it says where it last was, so a phone
+  that died at home no longer reads as "At Home since two".
+- The phone sends its health report from the background as well as when the
+  app opens. It goes when the location service dies, when Play Services drops
+  the geofence, and when the sync task or a parked iPhone's quarter hour timer
+  finds the permission or Location switched off, at most once in ten minutes.
+  It also goes for each account that signs in on the phone, where a second
+  account that said the same as the first within a day was never heard.
+- While somebody watches Live, the tracker log gets one line every half minute
+  rather than three for every fix, and each line is written on its own rather
+  than rewriting all thousand. A Live window used to push the night's evidence
+  out of the log within minutes.
 
 ### Fixed
 
+- Tracking starts again on its own once it can. After a session expired and
+  you signed back in, after a change of server, or after you fixed the
+  location permission in Settings, the switch stayed on and the phone shared
+  nothing until Hearth was closed and opened again. It now starts on sign-in
+  and whenever the app comes to the front, and never while you have sharing
+  turned off.
+- An Android phone set to Approximate location, or an iPhone with Precise
+  Location off, could never park. Neither OS arms a geofence for it, so the
+  tracker kept the moving tier all day, with the location notification up and
+  the dot flipping between still and moving. It now parks without the fence,
+  and the resting request and the motion classifier notice it leave.
+- A loose network fix no longer ends a stop on its own. A 200 m Wi-Fi
+  estimate 400 m off counted as the phone leaving. A fix looser than 100 m is
+  now a reason to take a sharper one and go by that.
+- An Android phone that set off while Android refused its location service
+  had no location request at all until the next moment Android allowed the
+  start. It now keeps one running, which Android throttles but still answers,
+  until the service can start.
+- Android driving trails keep every fix at 50, 70 and 100 km/h. The distance
+  gate rounded up past what the car covers in ten seconds, so every other fix
+  was dropped and the trail cut the corners.
+- A parked phone's quarter hour report is sent from where it parked, with the
+  arrival fix's accuracy. A parked iPhone sent its cell-only estimate dated
+  now, which could put somebody at home hundreds of metres to a kilometre
+  away. A fix sharp enough to say the phone left still ends the stop.
+- A geofence Play Services dropped is added back. It drops every fence when
+  Location is switched off, and the app's own record still said armed, so the
+  sync task never re-armed it and the hourly check was all that noticed a
+  departure.
+- After Hearth refuses a batch of fixes, the phone waits before sending the
+  next rather than sending the rest of its queue straight after it, each one a
+  failed request to a firewall that locks out an address for it. A 403 from
+  Hearth stops sharing and says why on the You screen.
+- Walking out of the house is noticed within minutes rather than at the
+  geofence. The one fix that confirms a walk comes half a minute in, still
+  inside the fence, and nothing looked again. A second look now comes about
+  three minutes later, wherever the process is still running, which on
+  Android is up to Android.
+- A car parked with somebody still in it no longer has its GPS come back every
+  few minutes. Core Motion keeps calling a stopped car automotive, and every
+  sample of it un-parked the phone. A sample that only repeats the verdict the
+  phone parked on now needs a fix to agree.
 - Live stays live when the Android phone you're watching is standing still or
   stops. A parked phone used to answer with one fix, and one that parked while
   watched dropped back to its resting report, so the page showed a speed and

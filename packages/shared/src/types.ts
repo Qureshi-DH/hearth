@@ -248,7 +248,7 @@ export interface MemberPresence {
   /** The coordinates have been snapped to a grid. */
   approximate: boolean
   sharingState: SharingState
-  /** No fix within DEFAULTS.staleAfterSeconds. */
+  /** No fix within DEFAULTS.staleAfterSeconds, or parkedStaleAfterSeconds for a parked phone. */
   stale: boolean
   atPlace: { id: string; name: string; icon: PlaceIcon | null; since: string | null } | null
   sosAlertId: string | null
@@ -285,6 +285,12 @@ export interface DeviceHealth {
   /** "always" is the only level that reports from the background. */
   locationPermission: "always" | "foreground" | "denied" | "unknown"
   locationServices: boolean
+  /** False for Android's approximate grant, or iOS with Precise Location off. */
+  preciseLocation?: boolean
+  /** Motion and activity access. Absent where the phone cannot classify motion. */
+  motionPermission?: "granted" | "denied" | "undetermined"
+  /** The person's own "Share my location" switch. Off, the phone sends nothing. */
+  sharingEnabled?: boolean
   /** iOS Background App Refresh. Absent where it does not exist. */
   backgroundRefresh?: "available" | "denied" | "restricted"
   /** Android: the app is still subject to battery optimisation. */

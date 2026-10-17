@@ -45,8 +45,11 @@ export const PHONE_STATE_LABEL: Record<AdminPhoneState, string> = {
 
 /** Shown under the person's name, so the operator can tell them which switch to flip. */
 export const ISSUE_LABEL: Record<PresenceIssue, string> = {
+  sharing_off: "Location sharing is switched off on the phone",
   location_permission: "Location permission is not set to Always",
+  precise_location: "Precise location is off",
   location_services: "Location services are off",
+  motion_permission: "Motion and activity access is off",
   background_refresh: "Background App Refresh is off",
   battery_optimisation: "Battery optimisation is on",
   low_power_mode: "Power saving mode is on",

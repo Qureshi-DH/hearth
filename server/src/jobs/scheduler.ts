@@ -4,13 +4,17 @@ import type { FastifyBaseLogger } from "fastify"
 
 import { getSql, type Database } from "../db/client"
 import { CONTROL_FRESH_MS, controlOpenSql, sendControl } from "../services/control"
-import { circleMembers, events, sessions, userPresence, users } from "../db/schema"
+import { circleMembers, circles, events, sessions, userPresence, users } from "../db/schema"
 import type { AppConfig } from "../env"
 import { getPushDriver } from "../runtime"
 import { broadcastEvent, recordEvent } from "../services/feed"
 import { phoneGroup } from "../services/notification-groups"
 import { heardAt, parked, silentPastCutoff } from "../services/reporting"
-import { effectiveSharingState, preciseSinceOnLapse } from "../services/presence"
+import {
+  effectiveSharingState,
+  preciseSinceOnLapse,
+  sharingSwitchedOff,
+} from "../services/presence"
 import {
   drainOutbox,
   enqueuePush,
@@ -223,8 +227,12 @@ export async function wakeQuietPhones(db: Database, driver: PushDriver | null): 
 }
 
 /** The first thing the phone said stands between it and reporting, in words. */
-export function healthReason(health: DeviceHealth | null | undefined): string | null {
+export function healthReason(
+  health: DeviceHealth | null | undefined,
+  lastFixAt?: Date | null,
+): string | null {
   if (!health) return null
+  if (sharingSwitchedOff(health, lastFixAt)) return "location sharing is turned off"
   if (health.locationPermission !== "always" && health.locationPermission !== "unknown") {
     return "location permission is not set to Always"
   }
@@ -320,6 +328,7 @@ async function flagOfflineDevices(
       displayName: users.displayName,
       notifiedAt: userPresence.offlineNotifiedAt,
       health: userPresence.health,
+      recordedAt: userPresence.recordedAt,
     })
     .from(userPresence)
     .innerJoin(users, eq(users.id, userPresence.userId))
@@ -347,8 +356,10 @@ async function flagOfflineDevices(
       sharingState: circleMembers.sharingState,
       pausedUntil: circleMembers.pausedUntil,
       resumeToState: circleMembers.resumeToState,
+      allowSharingPause: sql<boolean>`(${circles.settings} ->> 'allowSharingPause')::boolean`,
     })
     .from(circleMembers)
+    .innerJoin(circles, eq(circles.id, circleMembers.circleId))
     .where(inArray(circleMembers.userId, staleIds))
 
   const told = await alreadyToldThisOutage(db, staleIds)
@@ -359,10 +370,13 @@ async function flagOfflineDevices(
   for (const row of stale) {
     // A circle the member paused sharing with hears nothing. "Their phone went
     // quiet" is still a presence signal about someone who opted out of sharing
-    // with them, the way low-battery alerts skip paused circles.
+    // with them, the way low-battery alerts skip paused circles. Sharing
+    // switched off on the phone is a pause wherever the circle allows one.
+    const switchedOff = sharingSwitchedOff(row.health, row.recordedAt)
     const visible = memberships.filter(
       (m) =>
         m.userId === row.userId &&
+        !(switchedOff && m.allowSharingPause) &&
         effectiveSharingState(m.sharingState, m.pausedUntil, now, m.resumeToState) !== "paused",
     )
 
@@ -398,7 +412,7 @@ async function flagOfflineDevices(
         // The phone may have said why it cannot report, and that is the
         // useful sentence: "Sami's location permission is off" is something
         // a parent can act on, "phone offline" is a worry.
-        const reason = healthReason(row.health)
+        const reason = healthReason(row.health, row.recordedAt)
         const event = await recordEvent(tx as unknown as Database, {
           deferBroadcast: true,
           circleId: membership.circleId,

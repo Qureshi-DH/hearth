@@ -251,4 +251,28 @@ describe("what a phone can say stands between it and reporting", () => {
       "service_stopped",
     ])
   })
+
+  // None of these stop a phone reporting, so nothing said so, and the family
+  // read rough positions and a GPS that never slept as a broken phone.
+  it("names sharing switched off, approximate location and motion access off", async () => {
+    const user = await registerUser(ctx.app)
+    const circle = await createCircle(user.headers, 0)
+    await report(user.headers, {
+      sharingEnabled: false,
+      preciseLocation: false,
+      motionPermission: "denied",
+    })
+    expect(await issuesOf(user.headers, circle.id, user.user.id)).toEqual([
+      "sharing_off",
+      "precise_location",
+      "motion_permission",
+    ])
+
+    await report(user.headers, {
+      sharingEnabled: true,
+      preciseLocation: true,
+      motionPermission: "granted",
+    })
+    expect(await issuesOf(user.headers, circle.id, user.user.id)).toEqual([])
+  })
 })

@@ -111,7 +111,15 @@ decides what _this viewer_ may see of _that member_:
 - `paused` → coordinates, battery, activity all `null`
 - `approximate` → position snapped to a deterministic 750 m grid, accuracy
   widened to ≥750 m, speed/heading/activity hidden, history and trips refused
+- _Share my location_ switched off on the phone, as its last health report
+  says and no newer fix contradicts → `paused` in a circle that allows
+  pausing. A circle that does not keeps the last position, and `issues`
+  starts with `sharing_off`
 - viewer looking at themselves → always exact
+
+`stale` is a fix older than 15 minutes, or 35 for a phone whose last fix said
+`still`, since a parked phone reports on a quarter hour heartbeat and a line
+on the beat itself faded healthy phones in and out.
 
 Because the projection is per viewer, the bus carries the unprojected row and
 the websocket layer projects it on each socket.
@@ -225,7 +233,9 @@ running is skipped.
    the last fix measured under 1 m/s with an accuracy of 250 m or better. A
    phone the server can push is only called offline once two wakes have gone
    unanswered. Each circle hears it once per outage, with the reason when the
-   phone's own health report gave one. The step is withheld entirely when at
+   phone's own health report gave one. A circle the member paused, or one that
+   allows pausing when the member switched sharing off on the phone, hears
+   nothing. The step is withheld entirely when at
    least eight phones count and more of them are quiet than reporting, which
    means the outage was the server's.
 5. Announce returned devices. A circle that was told a phone went quiet gets a
@@ -282,8 +292,11 @@ Ignite conventions with a few deliberate substitutions:
 OS fix → `toFix()` (adds battery) → `thin()` (drops near-duplicates) →
 `useTrackingStore.enqueue()` (MMKV-persisted queue, capped at 2000) →
 `flush()` (single-flight, oldest first, 200 per batch). Network failures keep
-the queue. A 4xx validation error drops the poison batch. The server's response
-carries the tracking policy (interval / distance), which is applied live.
+the queue. A 4xx validation error drops the poison batch, and the next batch
+waits on the retry ladder, since a firewall in front of the server may lock
+the phone out for a 4xx. A 403 from Hearth itself stops sharing until the
+next sign-in. The server's response carries the tracking policy (interval /
+distance), which is applied live.
 
 `reportNow(source)` takes an immediate high-accuracy fix for check-ins, SOS
 (every 20 s while the SOS screen is open), and a _nudge_ arriving over the
@@ -296,7 +309,10 @@ stationary: the GPS goes off, the service and its notification go with it,
 and an exit geofence around the stopping point is what brings it back.
 Android keeps a Wi-Fi grade request the OS answers a few times an hour. An
 iPhone keeps a cell-only session, which keeps the app alive to report once a
-quarter of an hour and to hold the control channel open. The server's asks
+quarter of an hour and to hold the control channel open. That report is sent
+from where the phone parked unless a fix sharp enough to mean it shows it
+has left. A phone allowed only approximate location parks without the
+geofence, which neither OS arms for it. The server's asks
 are a parked phone's other heartbeat: the wake after half an hour of quiet,
 the map or a member's page being opened, and Live. Live, offered while the
 member is on the move, is the live tier: full accuracy, a fix a second, for

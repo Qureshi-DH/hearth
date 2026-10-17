@@ -53,7 +53,9 @@ where.
 Pausing or going approximate changes what a circle sees, not what the phone
 sends. It keeps uploading, and the server keeps your breadcrumbs under the
 retention above. Only the _Share my location_ switch stops the phone reporting
-in the background.
+in the background. Switching it off tells your circles it is off. One that
+allows pausing sees a pause, and one that has pausing turned off sees that you
+turned sharing off, with your last position.
 
 Going back to precise does not open up the time in between. History and trips
 recorded while a circle saw you paused or approximate stay out of that circle's
@@ -136,7 +138,8 @@ Hearth is designed for families and therefore for tracking minors by their
 guardians. That's a decision for each family and, in many jurisdictions, a
 legal one. The tracked person gets the same controls as everyone else (pause,
 approximate, leave) unless an admin of the circle disables pausing. That
-setting is visible to every member.
+setting is visible to every member, and in such a circle turning off _Share my
+location_ on the phone is shown as exactly that rather than as a pause.
 
 ## What the app asks the phone for
 

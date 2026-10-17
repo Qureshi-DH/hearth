@@ -523,7 +523,7 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         lastFixAt: presence?.recordedAt?.toISOString() ?? null,
         lastHeardAt: heardAt?.toISOString() ?? null,
         activity: presence?.activity ?? null,
-        issues: presenceIssues(presence?.health),
+        issues: presenceIssues(presence?.health, presence?.recordedAt),
       } satisfies WatchResponse
     },
   )

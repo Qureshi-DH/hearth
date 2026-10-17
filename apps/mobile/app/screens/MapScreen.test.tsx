@@ -252,9 +252,15 @@ jest.mock("../stores/settings", () => ({
 }))
 let mockLastFix: { lat: number; lon: number; recordedAt: string; speedMps: number | null } | null =
   null
+let mockSharingEnabled = true
 jest.mock("../stores/tracking", () => {
   const useTrackingStore = (selector: (state: unknown) => unknown) =>
-    selector({ permission: "always", servicesEnabled: true, enabled: true, lastFix: mockLastFix })
+    selector({
+      permission: "always",
+      servicesEnabled: true,
+      enabled: mockSharingEnabled,
+      lastFix: mockLastFix,
+    })
   // The focus effect reads the store outside React to record the permission.
   useTrackingStore.getState = () => ({ setPermission: () => {} })
   return { useTrackingStore }
@@ -535,6 +541,28 @@ describe("the SOS banner", () => {
     fireEvent.press(getByText(/sos:mine/))
     expect(navigation.navigate).toHaveBeenCalledWith("Sos", { circleId: "circle-1" })
     mockActiveSos = []
+  })
+})
+
+describe("your own sharing switched off", () => {
+  // Turned off on the phone, the switch was a fading dot to the family and
+  // nothing at all to the person who had turned it off.
+  it("says so on your map, and takes you to the switch", async () => {
+    mockPresence = mockMembers.map((member, index) => presenceFor(member.userId, 51 + index))
+    mockSharingEnabled = false
+    try {
+      const { getByText } = await renderMap()
+      fireEvent.press(getByText(/map:sharingSwitchedOff/))
+      expect(navigation.navigate).toHaveBeenCalledWith("Sharing", { circleId: "circle-1" })
+    } finally {
+      mockSharingEnabled = true
+    }
+  })
+
+  it("says nothing while you share", async () => {
+    mockPresence = mockMembers.map((member, index) => presenceFor(member.userId, 51 + index))
+    const { queryByText } = await renderMap()
+    expect(queryByText(/map:sharingSwitchedOff/)).toBeNull()
   })
 })
 

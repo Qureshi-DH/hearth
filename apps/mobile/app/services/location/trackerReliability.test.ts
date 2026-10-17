@@ -20,10 +20,12 @@ import {
   headerForTrackerLog,
   ingest,
   isDriving,
+  processNativeQueue,
   reassertService,
   reportNow,
   RESTING_HEARTBEAT_MS,
   serviceDiedUnexpectedly,
+  setHealthReporter,
   startForegroundHeartbeat,
   startTracking,
   stopBackgroundClock,
@@ -428,6 +430,149 @@ describe("a stop the phone cannot arm", () => {
   })
 })
 
+describe("the fence Play Services keeps for a parked phone", () => {
+  const sync = () => taskBodies.get(BACKGROUND_SYNC_TASK)!({ data: null, error: null })
+
+  // The app's own flag said armed long after Play Services had dropped the
+  // fence, so the sync task's re-arm never ran.
+  it("is added again on every sync, whatever the app last recorded", async () => {
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    fake.armFence.mockClear()
+    await sync()
+    await sync()
+    expect(fake.armFence).toHaveBeenCalledTimes(2)
+    expect(fake.armFence).toHaveBeenLastCalledWith(HOME.lat, HOME.lon, expect.any(Number))
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+
+  it("is noted when Play Services drops it, and the next sync looks for a departure", async () => {
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    await sync()
+    getPosition.mockClear()
+    // What the receiver does with the error Play Services sends.
+    fake.fence = null
+    fake.events = [{ type: "fence_lost", code: 1000, at: Date.now() } as never]
+    await processNativeQueue()
+    expect(readTrackerLog().some((entry) => entry.what === "fence lost")).toBe(true)
+    await sync()
+    expect(fake.fence).not.toBeNull()
+    expect(getPosition).toHaveBeenCalled()
+  })
+})
+
+describe("tracking that should be running and is not", () => {
+  const background = Location.getBackgroundPermissionsAsync as unknown as jest.Mock
+  const services = Location.hasServicesEnabledAsync as unknown as jest.Mock
+  /** Long enough for a start, its first fix and the park, all on fake timers. */
+  const settle = () => jest.advanceTimersByTimeAsync(1_000)
+
+  beforeEach(() => {
+    // Signed in at launch, which the launch path answers on its own.
+    useAuthStore.setState({ status: "booting" })
+    useAuthStore.setState({ status: "signed_in", user: { id: "u1" } as never })
+  })
+
+  afterEach(() => {
+    useAuthStore.getState().signedOut()
+  })
+
+  // The switch stayed on through a permission fixed in Settings, an expired
+  // session signed back into and a change of server, and only a cold start
+  // brought the tracker back.
+  it("starts again on the way back to the app once it can", async () => {
+    expect(useTrackingStore.getState().mode).toBe("off")
+    await refreshLocationStatus()
+    await settle()
+    expect(useTrackingStore.getState().mode).not.toBe("off")
+  })
+
+  it("starts on a fresh sign-in", async () => {
+    useAuthStore.getState().signedOut()
+    useAuthStore.getState().signedIn({ id: "u2" } as never)
+    await settle()
+    expect(useTrackingStore.getState().mode).not.toBe("off")
+  })
+
+  it("never starts when the person turned sharing off", async () => {
+    useTrackingStore.getState().setEnabled(false)
+    await refreshLocationStatus()
+    useAuthStore.getState().signedOut()
+    useAuthStore.getState().signedIn({ id: "u2" } as never)
+    await settle()
+    expect(useTrackingStore.getState().mode).toBe("off")
+  })
+
+  it("stays off signed out, short of Always, with Location off, or refused by the server", async () => {
+    useAuthStore.getState().signedOut()
+    await refreshLocationStatus()
+    expect(useTrackingStore.getState().mode).toBe("off")
+    useAuthStore.getState().signedIn({ id: "u1" } as never)
+    await settle()
+    await stopTracking()
+
+    background.mockResolvedValueOnce({ status: "denied" })
+    await refreshLocationStatus()
+    services.mockResolvedValueOnce(false)
+    await refreshLocationStatus()
+    useTrackingStore.getState().setUploadsRefusedAt(new Date().toISOString())
+    await refreshLocationStatus()
+    await settle()
+    expect(useTrackingStore.getState().mode).toBe("off")
+  })
+})
+
+describe("what the family hears with the app closed", () => {
+  const reporter = jest.fn(async () => {})
+  const sync = () => taskBodies.get(BACKGROUND_SYNC_TASK)!({ data: null, error: null })
+  const services = Location.hasServicesEnabledAsync as unknown as jest.Mock
+  const background = Location.getBackgroundPermissionsAsync as unknown as jest.Mock
+
+  beforeAll(() => setHealthReporter(reporter))
+
+  // The report only went when the app was opened, and the phones in trouble
+  // are the ones nobody opens.
+  it("hears of a location service that died under a moving phone", async () => {
+    await enterMoving()
+    reporter.mockClear()
+    fake.status = "none"
+    await reassertService()
+    expect(reporter).toHaveBeenCalled()
+  })
+
+  it("hears of Location switched off from the sync task, which leaves the tracker as it was", async () => {
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    reporter.mockClear()
+    services.mockResolvedValueOnce(false)
+    await sync()
+    expect(useTrackingStore.getState().servicesEnabled).toBe(false)
+    expect(reporter).toHaveBeenCalled()
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+
+  it("hears of a fence Play Services dropped", async () => {
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    reporter.mockClear()
+    fake.events = [{ type: "fence_lost", code: 1000, at: Date.now() } as never]
+    await processNativeQueue()
+    expect(reporter).toHaveBeenCalled()
+  })
+
+  it("hears of a parked iPhone changed to While Using", async () => {
+    Platform.OS = "ios"
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    reporter.mockClear()
+    background.mockResolvedValueOnce({ status: "denied" })
+    await jest.advanceTimersByTimeAsync(RESTING_HEARTBEAT_MS + 10)
+    expect(useTrackingStore.getState().permission).toBe("foreground")
+    expect(reporter).toHaveBeenCalled()
+  })
+})
+
 describe("the park fix", () => {
   it("leaves as 'still' from the moving registration before the request steps down", async () => {
     await enterMoving()
@@ -564,7 +709,7 @@ describe("a parked iPhone", () => {
     lastKnown.mockResolvedValue(at(HOME.lat + 0.0001, HOME.lon, Date.now() - 10 * 60_000, 0, 65))
     await jest.advanceTimersByTimeAsync(RESTING_HEARTBEAT_MS + 10)
     const beat = uploaded().find((fix) => fix.source === "heartbeat")
-    expect(beat).toMatchObject({ activity: "still", accuracyMeters: 65 })
+    expect(beat).toMatchObject({ activity: "still", lat: HOME.lat, accuracyMeters: mockAccuracy })
     // It says "here, now", which is what a phone that has not left the fence means.
     expect(Date.now() - Date.parse(beat!.recordedAt)).toBeLessThan(1_000)
     expect(getPosition).not.toHaveBeenCalled()
@@ -574,6 +719,26 @@ describe("a parked iPhone", () => {
     mockUpload.mockClear()
     await jest.advanceTimersByTimeAsync(RESTING_HEARTBEAT_MS + 10)
     expect(uploaded().some((fix) => fix.source === "heartbeat")).toBe(true)
+  })
+
+  // A cell-only session's estimate, re-dated now, put a parked member
+  // hundreds of metres from home on the family's map every quarter hour.
+  it("says so from where it parked, not from a cell estimate down the road", async () => {
+    await enterMoving()
+    await enterStationary(HOME.lat, HOME.lon)
+    mockUpload.mockClear()
+    lastKnown.mockResolvedValue(
+      at(HOME.lat + 600 / 111_195, HOME.lon, Date.now() - 60_000, null, 1_000),
+    )
+    await jest.advanceTimersByTimeAsync(RESTING_HEARTBEAT_MS + 10)
+    const beat = uploaded().find((fix) => fix.source === "heartbeat")
+    expect(beat).toMatchObject({
+      lat: HOME.lat,
+      lon: HOME.lon,
+      accuracyMeters: mockAccuracy,
+      activity: "still",
+    })
+    expect(useTrackingStore.getState().mode).toBe("stationary")
   })
 
   it("takes the last known fix's word for a departure the fence missed", async () => {
@@ -718,7 +883,7 @@ describe("what survives a relaunch", () => {
   it("keeps the drive, so a headless delivery does not start it over", async () => {
     await enterMoving()
     await enterDriving(30)
-    expect(useTrackingStore.getState().driving).toEqual({ distance: 300, slowSince: null })
+    expect(useTrackingStore.getState().driving).toEqual({ distance: 250, slowSince: null })
     ;(startMotion as jest.Mock).mockClear()
     const fresh = relaunch()
     expect(fresh.tracker.isDriving()).toBe(true)
@@ -1084,6 +1249,47 @@ describe("uploads", () => {
     expect(mockUpload).toHaveBeenCalledTimes(1)
   })
 
+  // A firewall in front of the server locks an address out after a 4xx, so
+  // the next batch straight after a refused one only made it worse.
+  it("wait before the next batch once the server refused one", async () => {
+    await enterMoving()
+    const t0 = Date.now()
+    useTrackingStore.getState().enqueue(
+      Array.from({ length: 250 }, (_, i) => ({
+        ...HOME,
+        recordedAt: new Date(t0 - (250 - i) * 1_000).toISOString(),
+        accuracyMeters: 10,
+        source: "background" as const,
+      })),
+    )
+    mockUpload.mockRejectedValueOnce(new ApiError(400, "validation_error", "Invalid body"))
+    await flush()
+    expect(mockUpload).toHaveBeenCalledTimes(1)
+    expect(useTrackingStore.getState().queue).toHaveLength(50)
+    await jest.advanceTimersByTimeAsync(30_000 + 10)
+    expect(mockUpload).toHaveBeenCalledTimes(2)
+    expect(useTrackingStore.getState().queue).toHaveLength(0)
+  })
+
+  // A deactivated account is answered 403 on every request, and each one
+  // tripped the firewall in front of the server.
+  it("stop sharing and say so when the server refuses the account", async () => {
+    await enterMoving()
+    mockUpload.mockRejectedValue(
+      new ApiError(403, "forbidden", "This account has been deactivated."),
+    )
+    queued()
+    await flush()
+    expect(useTrackingStore.getState().mode).toBe("off")
+    expect(useTrackingStore.getState().lastError).toMatch(/deactivated/)
+    expect(readTrackerLog().some((entry) => entry.what === "refused")).toBe(true)
+
+    queued()
+    await flush()
+    await jest.advanceTimersByTimeAsync(10 * 60_000)
+    expect(mockUpload).toHaveBeenCalledTimes(1)
+  })
+
   it("stop and say so once the server has ended the session", async () => {
     await enterMoving()
     mockUpload.mockRejectedValueOnce(new ApiError(401, "unauthorized", "expired"))
@@ -1168,7 +1374,15 @@ describe("diagnostics", () => {
     expect(header).toContain("queue 0")
     expect(header).toContain("service none")
     expect(header).toContain("permission")
+    expect(header).toContain("location precise")
+    expect(header).toContain("uploads accepted")
     expect(formatTrackerLog().startsWith(header)).toBe(true)
+
+    useTrackingStore.getState().setPreciseLocation(false)
+    useTrackingStore.getState().setUploadsRefusedAt("2026-09-17T10:00:00.000Z")
+    expect(headerForTrackerLog()).toContain("location approximate")
+    expect(headerForTrackerLog()).toContain("uploads refused since 2026-09-17T10:00:00.000Z")
+    useTrackingStore.getState().setPreciseLocation(true)
   })
 
   it("holds no position, since it is shared into issues and chats", async () => {

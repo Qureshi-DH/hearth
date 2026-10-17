@@ -11,6 +11,7 @@ import { Text } from "@/components/Text"
 import { useCircles, useMembers, useSetSharing } from "@/hooks/queries"
 import { translate } from "@/i18n/translate"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
+import { reportHealth } from "@/services/health"
 import { startTracking, stopTracking } from "@/services/location/tracker"
 import { useAuthStore } from "@/stores/auth"
 import { toast } from "@/stores/toast"
@@ -50,7 +51,13 @@ export const SharingScreen: FC<AppStackScreenProps<"Sharing">> = ({ navigation, 
     [navigation],
   )
 
+  // The family is told either way, rather than left watching a dot fade.
   const toggleMaster = async (value: boolean) => {
+    await switchSharing(value)
+    void reportHealth()
+  }
+
+  const switchSharing = async (value: boolean) => {
     if (!value) {
       setEnabled(false)
       await stopTracking().catch((error) => toast.error((error as Error).message))

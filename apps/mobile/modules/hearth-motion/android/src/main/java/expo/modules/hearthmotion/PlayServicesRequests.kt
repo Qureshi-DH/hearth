@@ -164,5 +164,11 @@ internal object Fences {
     }
   }
 
+  /** What the app last armed, which Play Services may since have dropped without a word. */
   fun armed(context: Context): Boolean = TrackerPrefs(context).fence != null
+
+  /** Play Services said it dropped the fence, so the record of it goes too. */
+  fun forget(context: Context) {
+    TrackerPrefs(context).fence = null
+  }
 }
