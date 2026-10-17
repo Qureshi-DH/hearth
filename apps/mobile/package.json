@@ -71,7 +71,7 @@
     "expo-splash-screen": "~55.0.10",
     "expo-system-ui": "~55.0.9",
     "expo-task-manager": "~55.0.20",
-    "i18next": "^23.14.0",
+    "i18next": "^26.4.5",
     "intl-pluralrules": "^2.0.1",
     "react": "19.2.0",
     "react-dom": "19.2.0",
