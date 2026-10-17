@@ -6,6 +6,15 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-18
+
+Phones that keep sharing and say why when they can't, two notifications for a
+journey instead of three, Live for anyone you see precisely with the whole
+trail, SOS and crash alerts that hold up, and Hearth at a path on a domain you
+already use. Update the server first. Migrations 0012 to 0014 run on start.
+Older phones keep working against it, and the app shows the new controls only
+on a server that has them.
+
 ### Added
 
 - More say over what you hear. Each circle's notification settings let you
@@ -1581,7 +1590,8 @@ security audit and there are no store builds yet.
   trusting the token
 - Push payloads never carry coordinates
 
-[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/Qureshi-DH/hearth/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Qureshi-DH/hearth/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Qureshi-DH/hearth/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Qureshi-DH/hearth/compare/v0.10.0...v1.0.0
