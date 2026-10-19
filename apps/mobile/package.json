@@ -38,7 +38,7 @@
     "@maplibre/maplibre-react-native": "^11.3.9",
     "@react-navigation/bottom-tabs": "^7.2.0",
     "@react-navigation/native": "^7.0.14",
-    "@react-navigation/native-stack": "^7.2.0",
+    "@react-navigation/native-stack": "^7.21.0",
     "@tanstack/react-query": "^5.102.8",
     "@types/geojson": "^7946.0.16",
     "expo": "55.0.31",
