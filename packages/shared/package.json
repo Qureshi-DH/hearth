@@ -1,6 +1,6 @@
 {
   "name": "@hearth/shared",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "private": true,
   "license": "AGPL-3.0-only",
   "description": "Shared, dependency-free contract types and geo helpers for the Hearth server and mobile app.",

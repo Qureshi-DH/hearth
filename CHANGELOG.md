@@ -6,6 +6,15 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-22
+
+Android phones answer a wake and a Live request from the location service
+itself, parked, in the background or swiped away, and the tracker log says why
+when Android stops them. A phone Android has force stopped still answers
+nothing until it is opened, and its owner is now asked to open it. Update the
+server first. It hands each Android session the key the phone uploads with, and
+a phone on an older server answers as before. There are no migrations.
+
 ### Fixed
 
 - An Android phone answered a wake or a Live request once and then often not
@@ -1666,7 +1675,8 @@ security audit and there are no store builds yet.
   trusting the token
 - Push payloads never carry coordinates
 
-[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/Qureshi-DH/hearth/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Qureshi-DH/hearth/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Qureshi-DH/hearth/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Qureshi-DH/hearth/compare/v1.1.0...v1.2.0
