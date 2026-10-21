@@ -1310,11 +1310,47 @@ async function onNativeEvent(event: native.NativeEvent): Promise<void> {
 /**
  * Android starts this in a process it woke for the native queue, with no
  * screen and no React tree. Everything it needs is in module scope, and
- * the queue is the whole job.
+ * the queue is the whole job, unless the tracking service opened it to
+ * hold this side awake.
  */
 export async function runHeadlessTask(data: { reason?: string } = {}): Promise<void> {
+  if (data.reason === "awake") return keepTrackerAwake()
   logTracker("headless", { reason: data.reason ?? "unknown" })
   await processNativeQueue()
+}
+
+/**
+ * React Native runs no JavaScript timer while the app is in the background
+ * and no headless task is open, and fetch hands every response over on one.
+ * A moving phone with its screen off sent nothing until a push or the sync
+ * task happened to open a task, and Live showed a fix or two and then
+ * stood still. The tracking service opens one task for as long as it runs,
+ * and this holds it, draining the queue every few seconds, until the phone
+ * parks with nobody watching. One hold however many tasks ask.
+ */
+const AWAKE_TICK_MS = 5_000
+let awake: Promise<void> | null = null
+
+export function keepTrackerAwake(): Promise<void> {
+  awake ??= (async () => {
+    logTracker("awake")
+    try {
+      while (wantsAwake()) {
+        await processNativeQueue()
+        await new Promise((resolve) => setTimeout(resolve, AWAKE_TICK_MS))
+      }
+    } finally {
+      awake = null
+      logTracker("awake over")
+      await native.releaseAwake()
+    }
+  })()
+  return awake
+}
+
+function wantsAwake(): boolean {
+  const { enabled, mode } = useTrackingStore.getState()
+  return enabled && mode !== "off" && (mode === "moving" || watchedNow())
 }
 
 /** Waking the location stack is the one thing "stationary" exists to avoid. */

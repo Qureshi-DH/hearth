@@ -170,6 +170,8 @@ class HearthMotionModule : Module() {
 
     AsyncFunction("stopBriefAsync") { HearthTrackingService.stopBrief(context) }
 
+    AsyncFunction("releaseAwakeAsync") { HearthHeadlessService.released() }
+
     AsyncFunction("getServiceStatusAsync") { HearthTrackingService.status }
 
     AsyncFunction("armFenceAsync") { lat: Double, lon: Double, radius: Double ->

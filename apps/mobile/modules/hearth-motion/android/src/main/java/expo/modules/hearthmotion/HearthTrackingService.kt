@@ -130,6 +130,7 @@ class HearthTrackingService : Service() {
     handler.removeCallbacks(briefStop)
     if (next == request && callback != null) {
       status = "running"
+      HearthHeadlessService.keepAwake(this)
       return
     }
     val client = client ?: LocationServices.getFusedLocationProviderClient(this).also { client = it }
@@ -138,7 +139,10 @@ class HearthTrackingService : Service() {
       object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
           for (location in result.locations) TrackerQueue.fix(this@HearthTrackingService, location)
-          if (result.locations.isNotEmpty()) TrackerQueue.poke(this@HearthTrackingService)
+          if (result.locations.isNotEmpty()) {
+            TrackerQueue.poke(this@HearthTrackingService)
+            HearthHeadlessService.keepAwake(this@HearthTrackingService)
+          }
         }
       }
     try {
@@ -155,6 +159,7 @@ class HearthTrackingService : Service() {
     status = "running"
     TrackerQueue.event(this, JSONObject().put("type", "service").put("status", "started").put("reason", reason))
     bootJavaScript(reason)
+    HearthHeadlessService.keepAwake(this)
   }
 
   /**

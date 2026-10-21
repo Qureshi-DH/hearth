@@ -113,6 +113,8 @@ declare class HearthMotionModule extends NativeModule<{
   startBriefAsync(): Promise<boolean>
   /** Takes the brief service down with the fix it carried; a tracking service stays. */
   stopBriefAsync(): Promise<void>
+  /** JavaScript no longer needs the headless task that holds its timers awake. */
+  releaseAwakeAsync(): Promise<void>
   getServiceStatusAsync(): Promise<ServiceStatus>
   /** The fence around the parking spot, armed with Play Services. True when it took. */
   armFenceAsync(lat: number, lon: number, radius: number): Promise<boolean>

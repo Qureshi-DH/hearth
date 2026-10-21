@@ -27,6 +27,7 @@ type NativeModule = {
   stopServiceAsync(): Promise<void>
   startBriefAsync(): Promise<boolean>
   stopBriefAsync(): Promise<void>
+  releaseAwakeAsync(): Promise<void>
   getServiceStatusAsync(): Promise<ServiceStatus>
   armFenceAsync(lat: number, lon: number, radius: number): Promise<boolean>
   disarmFenceAsync(): Promise<void>
@@ -82,6 +83,15 @@ export async function stopBrief(): Promise<void> {
     await required().stopBriefAsync()
   } catch {
     // Already gone, or never started.
+  }
+}
+
+/** The headless task the tracking service holds open for this side is no longer wanted. */
+export async function releaseAwake(): Promise<void> {
+  try {
+    await required().releaseAwakeAsync()
+  } catch {
+    // A build from before the hold, which never opened one.
   }
 }
 

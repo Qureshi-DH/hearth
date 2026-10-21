@@ -17,6 +17,13 @@ Notable changes to Hearth. The format is loosely
   otherwise from the last fix that was. The server also waits for a second
   fix outside before telling anyone that a phone which says it hasn't moved
   has left.
+- Android phones on the move sent their fixes minutes late, in bursts, and
+  Live showed a fix or two and then stood still unless the app was open.
+  React Native runs no JavaScript timer while the app is in the background
+  and no headless task is open, and fetch hands every response over on one,
+  so each upload waited until a push or the sync task happened to open one.
+  The location service now holds a task open for as long as it runs, while
+  moving, driving, watched or in an SOS, and lets go once the phone parks.
 
 ## [1.3.0] - 2026-10-18
 

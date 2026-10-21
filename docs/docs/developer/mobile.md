@@ -430,6 +430,12 @@ native Kotlin in `modules/hearth-motion/android`:
   the live ones (`onMotion` for a transition, `onFenceExit` for the
   fence). While JavaScript is up and listening the service and the
   receivers poke it directly (`onNativeQueue`) and it drains the same way.
+  For as long as the service tracks, it also holds one task open, `awake`,
+  which `keepTrackerAwake` keeps until the phone parks with nobody
+  watching. React Native runs no JavaScript timer in the background without
+  an open task, and fetch hands every response over on one, so without it
+  a moving phone with its screen off uploaded nothing until a push or the
+  sync task came by.
 - `HearthBootReceiver` puts the requests back after a reboot or an update,
   which drop everything Play Services held, and restarts the service for
   a phone that was on the move. expo-task-manager restores the resting

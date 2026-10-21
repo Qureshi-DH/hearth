@@ -28,6 +28,7 @@ export const fake = {
   stopService: jest.fn(),
   startBrief: jest.fn(),
   stopBrief: jest.fn(),
+  releaseAwake: jest.fn(),
   armFence: jest.fn(),
   disarmFence: jest.fn(),
   reset() {
@@ -43,6 +44,7 @@ export const fake = {
     fake.stopService.mockClear()
     fake.startBrief.mockClear()
     fake.stopBrief.mockClear()
+    fake.releaseAwake.mockClear()
     fake.armFence.mockClear()
     fake.disarmFence.mockClear()
   },
@@ -73,6 +75,10 @@ export async function startBrief(): Promise<boolean> {
   fake.startBrief()
   if (fake.status === "none" || fake.status === "refused") fake.status = "brief"
   return true
+}
+
+export async function releaseAwake(): Promise<void> {
+  fake.releaseAwake()
 }
 
 export async function stopBrief(): Promise<void> {

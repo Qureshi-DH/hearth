@@ -13,6 +13,7 @@ import {
   enterWatched,
   ingest,
   isDriving,
+  keepTrackerAwake,
   processNativeQueue,
   reassertService,
   RESTING_HEARTBEAT_MS,
@@ -262,6 +263,69 @@ describe("fixes the service took on its way down", () => {
     expect(fake.fixes).toHaveLength(0)
     expect(useTrackingStore.getState().queue).toHaveLength(0)
     expect(mockUpload).not.toHaveBeenCalled()
+  })
+})
+
+// React Native runs no JavaScript timer while the app is in the background
+// and no headless task is open, and fetch hands every response over on one.
+// A phone on the move with its screen off sent nothing until a push or the
+// sync task opened a task for it, and Live showed one fix and then nothing.
+describe("JavaScript held awake while the service runs", () => {
+  it("drains what the service buffered on its own while moving", async () => {
+    await enterMoving()
+    fake.status = "running"
+    const held = keepTrackerAwake()
+    fake.fixes = [at(AWAY, Date.now(), 9)]
+    await jest.advanceTimersByTimeAsync(6_000)
+    expect(fake.fixes).toHaveLength(0)
+    expect(uploaded().some((fix) => fix.source === "background")).toBe(true)
+
+    await stopTracking()
+    await jest.advanceTimersByTimeAsync(6_000)
+    await held
+  })
+
+  it("lets go once the phone parks with nobody watching, and says so to the native side", async () => {
+    await enterMoving()
+    const held = keepTrackerAwake()
+    await enterStationary(HOME.lat, HOME.lon)
+    await jest.advanceTimersByTimeAsync(6_000)
+    await held
+    expect(fake.releaseAwake).toHaveBeenCalledTimes(1)
+  })
+
+  it("stays awake on a parked phone somebody is watching", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    await enterWatched(600)
+    let done = false
+    void keepTrackerAwake().then(() => {
+      done = true
+    })
+    await jest.advanceTimersByTimeAsync(30_000)
+    expect(done).toBe(false)
+    await stopTracking()
+    await jest.advanceTimersByTimeAsync(6_000)
+    expect(done).toBe(true)
+  })
+
+  it("is one hold however many tasks ask for it", async () => {
+    await enterMoving()
+    expect(keepTrackerAwake()).toBe(keepTrackerAwake())
+    await stopTracking()
+    await jest.advanceTimersByTimeAsync(6_000)
+  })
+
+  it("runs as the headless task the service opens for it", async () => {
+    await enterMoving()
+    let done = false
+    void runHeadlessTask({ reason: "awake" }).then(() => {
+      done = true
+    })
+    await jest.advanceTimersByTimeAsync(10_000)
+    expect(done).toBe(false)
+    await stopTracking()
+    await jest.advanceTimersByTimeAsync(6_000)
+    expect(done).toBe(true)
   })
 })
 
