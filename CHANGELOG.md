@@ -30,6 +30,9 @@ Notable changes to Hearth. The format is loosely
   gets its one retry at any time while no token issued after the old one has
   been used. A token presented after its replacement was used still ends the
   session.
+- The devices list and the admin portal named the app version a phone signed
+  in with, so a phone updated since looked months out of date. The health
+  report now carries the app and OS versions, and the session follows it.
 
 ## [1.3.0] - 2026-10-18
 

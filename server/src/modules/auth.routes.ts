@@ -758,13 +758,27 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           lowPowerMode: z.boolean().optional(),
           manufacturer: z.string().max(80).optional(),
           serviceStopped: z.boolean().optional(),
+          appVersion: z.string().max(40).optional(),
+          osVersion: z.string().max(40).optional(),
         }),
         response: { 200: z.object({ ok: z.literal(true) }) },
       },
     },
     async (request) => {
       const auth = requireAuth(request)
-      const health: DeviceHealth = { ...request.body, reportedAt: new Date().toISOString() }
+      const { appVersion, osVersion, ...reported } = request.body
+      const health: DeviceHealth = { ...reported, reportedAt: new Date().toISOString() }
+      // Signing in wrote what the phone ran then, and an update since never
+      // reached the session, so the devices list named builds long gone.
+      if (appVersion || osVersion) {
+        await db
+          .update(sessions)
+          .set({
+            ...(appVersion ? { appVersion } : {}),
+            ...(osVersion ? { osVersion } : {}),
+          })
+          .where(eq(sessions.id, auth.sessionId))
+      }
       await db
         .insert(userPresence)
         .values({ userId: auth.userId, health })

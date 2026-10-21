@@ -1,5 +1,7 @@
 import { Platform } from "react-native"
 import type { DeviceHealth } from "@hearth/shared"
+import * as Application from "expo-application"
+import * as Device from "expo-device"
 
 import { endpoints } from "@/services/api"
 import { motionPermission } from "@/services/location/motion"
@@ -64,7 +66,7 @@ export async function reportHealth({ background = false }: { background?: boolea
   watchPowerState()
   const [snapshot, motion] = await Promise.all([getPermissionSnapshot(), motionPermission()])
   const android = Platform.OS === "android"
-  const health: DeviceHealth = {
+  const health: DeviceHealth & { appVersion?: string; osVersion?: string } = {
     locationPermission: snapshot.location,
     locationServices: snapshot.servicesEnabled,
     preciseLocation: snapshot.preciseLocation,
@@ -80,6 +82,12 @@ export async function reportHealth({ background = false }: { background?: boolea
     lowPowerMode: snapshot.lowPowerMode,
     ...(snapshot.manufacturer ? { manufacturer: snapshot.manufacturer } : {}),
     ...(android ? { serviceStopped: snapshot.serviceStopped } : {}),
+    // The session keeps what the phone signed in with, and an update since
+    // would never reach it otherwise.
+    ...(Application.nativeApplicationVersion
+      ? { appVersion: Application.nativeApplicationVersion }
+      : {}),
+    ...(Device.osVersion ? { osVersion: Device.osVersion } : {}),
   }
   const body = JSON.stringify(health)
   const user = useAuthStore.getState().user?.id ?? null

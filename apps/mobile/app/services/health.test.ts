@@ -5,6 +5,8 @@ import { useTrackingStore } from "@/stores/tracking"
 import { reportHealth } from "./health"
 
 const mockHealth = jest.fn(async () => ({ ok: true }))
+jest.mock("expo-application", () => ({ nativeApplicationVersion: "1.3.0" }))
+jest.mock("expo-device", () => ({ osVersion: "17.2" }))
 jest.mock("@/services/api", () => ({
   endpoints: { auth: { health: (...args: unknown[]) => mockHealth(...(args as [])) } },
 }))
@@ -90,6 +92,8 @@ describe("reportHealth", () => {
       backgroundRefresh: "available",
       lowPowerMode: false,
       manufacturer: "apple",
+      appVersion: "1.3.0",
+      osVersion: "17.2",
     })
 
     mockSnapshot = { ...mockSnapshot, location: "foreground" }
@@ -123,6 +127,8 @@ describe("reportHealth", () => {
       lowPowerMode: true,
       manufacturer: "xiaomi",
       serviceStopped: true,
+      appVersion: "1.3.0",
+      osVersion: "17.2",
     })
   })
 
