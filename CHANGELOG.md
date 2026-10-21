@@ -6,6 +6,18 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Fixed
+
+- A parked phone could send "left Home" and "arrived at Home" all night. Since
+  1.3.0 its quarter hour report came from the spot where it stopped, and that
+  spot can be a walk from the door, outside Home while the phone sat inside
+  it. Every report put the phone outside and the next real fix put it back,
+  and one family got some fifty notifications between evening and morning.
+  The report now comes from the newest fix when it is 100 m or better, and
+  otherwise from the last fix that was. The server also waits for a second
+  fix outside before telling anyone that a phone which says it hasn't moved
+  has left.
+
 ## [1.3.0] - 2026-10-18
 
 Phones that keep sharing and say why when they can't, two notifications for a

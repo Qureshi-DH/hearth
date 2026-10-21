@@ -118,6 +118,41 @@ describe("left", () => {
     expect(driver.delivered).toEqual([])
   })
 
+  // A parked phone sent where it had stopped, 202 m from the middle of a
+  // 150 m Home, every quarter hour, and its real fix from inside in
+  // between. Each lone fix outside stood after a minute with no answer,
+  // and the family heard "left Home" and "arrived at Home" all night.
+  it("is not sent for one fix outside from a phone that says it is still", async () => {
+    const { kid } = await household()
+    const driver = new FakeDriver()
+
+    await uploadFixes(ctx.app, kid.headers, [
+      at(northOf(HOME, 202), 5, { accuracyMeters: 13, activity: "still" }),
+    ])
+    await drainOutbox(getDb(), driver, { now: new Date(Date.now() + 2 * 60_000) })
+    await uploadFixes(ctx.app, kid.headers, [
+      at(HOME, 0, { accuracyMeters: 100, activity: "still" }),
+    ])
+    await drainOutbox(getDb(), driver, { now: new Date(Date.now() + 2 * 60_000) })
+
+    expect(driver.delivered).toEqual([])
+  })
+
+  it("is sent once a second fix outside agrees with a phone that says it is still", async () => {
+    const { kid } = await household()
+
+    await uploadFixes(ctx.app, kid.headers, [
+      at(northOf(HOME, 260), 40, { accuracyMeters: 13, activity: "still" }),
+    ])
+    await uploadFixes(ctx.app, kid.headers, [
+      at(northOf(HOME, 270), 10, { accuracyMeters: 13, activity: "still" }),
+    ])
+
+    const driver = new FakeDriver()
+    await drainOutbox(getDb(), driver, { now: soon() })
+    expect(driver.delivered.map((message) => message.body)).toEqual(["Left Home"])
+  })
+
   it("waits about a minute for the fix that would undo it", async () => {
     const { parent, kid } = await household()
 

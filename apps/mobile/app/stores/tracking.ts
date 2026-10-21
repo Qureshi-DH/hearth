@@ -32,6 +32,13 @@ export interface StillAnchor {
   accuracyMeters?: number | null
 }
 
+/** Where a parked phone was last placed well, which can be a walk from its anchor. */
+export interface RestingFix {
+  lat: number
+  lon: number
+  accuracyMeters: number | null
+}
+
 export interface DriveState {
   distance: number
   slowSince: number | null
@@ -57,6 +64,12 @@ interface TrackingState {
   mode: TrackingMode
   /** Survives a process kill. */
   stillAnchor: StillAnchor | null
+  /**
+   * The quarter hour report goes from here, not from the anchor. The anchor
+   * is where the phone stopped, and a stop circle is wide enough for the
+   * walk from the car to the door.
+   */
+  restingFix: RestingFix | null
   /**
    * Outlives the process for the same reason the anchor does: the OS may
    * still reclaim a parked phone's process between sync wakes, and anything
@@ -111,6 +124,7 @@ interface TrackingState {
   setPolicy(policy: TrackingPolicy): void
   setMode(mode: TrackingMode): void
   setStillAnchor(anchor: StillAnchor | null): void
+  setRestingFix(fix: RestingFix | null): void
   markDriftChecked(): void
   setWatchedUntil(until: string | null): void
   setDriving(driving: DriveState | null): void
@@ -302,6 +316,7 @@ export const useTrackingStore = create<TrackingState>()(
       policy: { minUpdateIntervalSeconds: 30, distanceFilterMeters: 60 },
       mode: "off",
       stillAnchor: null,
+      restingFix: null,
       lastDriftCheckAt: null,
       watchedUntil: null,
       driving: null,
@@ -326,6 +341,7 @@ export const useTrackingStore = create<TrackingState>()(
       setPolicy: (policy) => set({ policy }),
       setMode: (mode) => set({ mode }),
       setStillAnchor: (stillAnchor) => set({ stillAnchor }),
+      setRestingFix: (restingFix) => set({ restingFix }),
       markDriftChecked: () => set({ lastDriftCheckAt: new Date().toISOString() }),
       setWatchedUntil: (watchedUntil) => set({ watchedUntil }),
       setDriving: (driving) => set({ driving }),
@@ -388,6 +404,7 @@ export const useTrackingStore = create<TrackingState>()(
         policy: state.policy,
         mode: state.mode,
         stillAnchor: state.stillAnchor,
+        restingFix: state.restingFix,
         lastDriftCheckAt: state.lastDriftCheckAt,
         watchedUntil: state.watchedUntil,
         driving: state.driving,

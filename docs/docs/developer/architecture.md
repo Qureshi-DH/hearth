@@ -116,6 +116,8 @@ and keeps the ingest path free of per-circle fan-out.
    What the family hears is narrower than what the feed records. A departure
    is pushed once a second fix is clear of the place too, or a minute passes
    with no fix back inside, and a fix back inside before then cancels both.
+   From a phone that says it is `still`, one fix outside waits for a second to
+   agree, up to 45 minutes, since a phone that has not moved has not left.
    An arrival is pushed at once, unless the phone was doing 5 m/s or more,
    when it waits up to a minute in case the car is driving past. Either wait
    is `settles_at` on the membership and `next_attempt_at` on the row, and a

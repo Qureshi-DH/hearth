@@ -429,6 +429,7 @@ export async function ingestPoints(db: Database, options: IngestOptions): Promis
       recordedAt: fix.recordedAt,
       pointId: idByTime.get(fix.recordedAt.getTime()) ?? null,
       speedMps: fix.speedMps,
+      activity: fix.activity,
     })),
     {
       visibleCircleIds: [...sharing.entries()].filter(([, s]) => s === "precise").map(([id]) => id),

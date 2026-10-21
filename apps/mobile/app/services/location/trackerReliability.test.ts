@@ -715,7 +715,7 @@ describe("a parked iPhone", () => {
     lastKnown.mockResolvedValue(at(HOME.lat + 0.0001, HOME.lon, Date.now() - 10 * 60_000, 0, 65))
     await jest.advanceTimersByTimeAsync(RESTING_HEARTBEAT_MS + 10)
     const beat = uploaded().find((fix) => fix.source === "heartbeat")
-    expect(beat).toMatchObject({ activity: "still", lat: HOME.lat, accuracyMeters: mockAccuracy })
+    expect(beat).toMatchObject({ activity: "still", lat: HOME.lat + 0.0001, accuracyMeters: 65 })
     // It says "here, now", which is what a phone that has not left the fence means.
     expect(Date.now() - Date.parse(beat!.recordedAt)).toBeLessThan(1_000)
     expect(getPosition).not.toHaveBeenCalled()
@@ -784,6 +784,57 @@ describe("a parked iPhone", () => {
     expect(start).toHaveBeenCalled()
     expect(lastOptions().timeInterval).not.toBe(1_000)
     expect(lastOptions().accuracy).toBe(Location.Accuracy.Lowest)
+  })
+})
+
+/** Two hundred metres north of HOME, where the car stopped. */
+const STOP = { lat: HOME.lat + 200 / 111_195, lon: HOME.lon }
+
+describe("the quarter hour report of a parked phone", () => {
+  beforeEach(() => {
+    // A circle whose filter gives a 225 m stop circle, wide enough that the
+    // walk from the car to the door never ends the stop.
+    const policy = { minUpdateIntervalSeconds: 300, distanceFilterMeters: 150 }
+    useTrackingStore.getState().setPolicy(policy)
+    mockUpload.mockImplementation(async (batch: LocationFixInput[]) => ({
+      ...reply(batch.length),
+      policy,
+    }))
+  })
+
+  // The phone parked where the car stopped and was carried indoors, inside
+  // its own stop circle but across the line of the family's Home. Sent as
+  // where it was now, the stop put it outside Home every quarter hour and
+  // the next real fix put it back, and the family heard "left Home" and
+  // "arrived at Home" all night.
+  it("says where the phone is now, not where it stopped", async () => {
+    await enterMoving()
+    await enterStationary(STOP.lat, STOP.lon)
+    mockUpload.mockClear()
+    const t0 = Date.now()
+    await ingest([at(HOME.lat, HOME.lon, t0 + 60_000, 0, 12)], "background")
+    jest.setSystemTime(t0 + RESTING_HEARTBEAT_MS + 120_000)
+    await ingest([at(HOME.lat, HOME.lon, Date.now(), null, 100)], "background")
+
+    // What went up after the stop, the quarter hour report among it.
+    const sent = uploaded().filter((fix) => Date.parse(fix.recordedAt) > t0)
+    expect(sent.length).toBeGreaterThan(0)
+    for (const fix of sent) expect(fix.lat).toBeCloseTo(HOME.lat, 5)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+
+  it("falls back to the last good position, not the stop, for a fix too vague to place", async () => {
+    await enterMoving()
+    await enterStationary(STOP.lat, STOP.lon)
+    const t0 = Date.now()
+    await ingest([at(HOME.lat, HOME.lon, t0 + 60_000, 0, 12)], "background")
+    mockUpload.mockClear()
+    jest.setSystemTime(t0 + RESTING_HEARTBEAT_MS + 120_000)
+    await ingest([at(HOME.lat + 0.004, HOME.lon, Date.now(), null, 1_500)], "background")
+
+    const beat = uploaded().at(-1)
+    expect(beat).toMatchObject({ lat: HOME.lat, lon: HOME.lon, accuracyMeters: 12 })
+    expect(Date.now() - Date.parse(beat!.recordedAt)).toBeLessThan(1_000)
   })
 })
 

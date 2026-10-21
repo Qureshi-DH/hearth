@@ -1,3 +1,4 @@
+import type { ActivityType } from "@hearth/shared"
 import { sql } from "drizzle-orm"
 import type { FastifyInstance } from "fastify"
 
@@ -173,6 +174,7 @@ export interface Fix {
   speedMps?: number
   batteryLevel?: number
   isCharging?: boolean
+  activity?: ActivityType
 }
 
 export async function uploadFixes(app: FastifyInstance, headers: Headers, points: Fix[]) {

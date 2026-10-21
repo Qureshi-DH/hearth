@@ -30,7 +30,7 @@ import { crossesPlace, knownPlaces, usePlacesStore } from "@/stores/places"
 import {
   useTrackingStore,
   type PermissionLevel,
-  type StillAnchor,
+  type RestingFix,
   type TrackingPolicy,
 } from "@/stores/tracking"
 
@@ -707,35 +707,68 @@ async function restingFixes(fixes: LocationFixInput[], live: boolean): Promise<L
     await enterMoving()
     return []
   }
+  for (const fix of fixes) rememberRestingFix(fix)
   if (live) return fixes
   const newest = fixes[fixes.length - 1]
   if (!newest) return []
   const age = lastFix ? Date.parse(newest.recordedAt) - Date.parse(lastFix.recordedAt) : Infinity
   if (age < RESTING_HEARTBEAT_MS) return []
-  if (!stillAnchor) return [newest]
+  if (!stillAnchor || placesPhone(newest)) return [newest]
   const battery = {
     batteryLevel: newest.batteryLevel ?? null,
     isCharging: newest.isCharging ?? null,
   }
-  return [parkedAt(stillAnchor, newest.recordedAt, newest.source ?? "background", battery)]
+  return [stillHere(newest.recordedAt, newest.source ?? "background", battery)]
+}
+
+/** Sharp enough to say where a phone is, rather than only that it is about. */
+function placesPhone(fix: { accuracyMeters?: number | null }): boolean {
+  const accuracy = fix.accuracyMeters
+  return accuracy != null && accuracy >= 0 && accuracy <= DEPARTURE_MAX_ACCURACY_METERS
 }
 
 /**
- * A parked phone's heartbeat, sent from where it parked. A fix that does not
- * clear the anchor says only that the phone has not left, and sent as it
- * came, a cell-only session's estimate would put a member at home hundreds
- * of metres down the road. The accuracy is the arrival fix's.
+ * A fix that places a parked phone without taking it out of its stop circle
+ * is where it now is. The anchor stays put for the fence, and the quarter
+ * hour report goes from here.
  */
-function parkedAt(
-  anchor: StillAnchor,
+function rememberRestingFix(fix: {
+  lat: number
+  lon: number
+  accuracyMeters?: number | null
+}): void {
+  const { mode, stillAnchor, policy } = useTrackingStore.getState()
+  if (mode !== "stationary" || !stillAnchor || !placesPhone(fix)) return
+  if (clearOf(stillAnchor, fix, stationaryRadiusMeters(policy))) return
+  useTrackingStore.getState().setRestingFix({
+    lat: fix.lat,
+    lon: fix.lon,
+    accuracyMeters: fix.accuracyMeters ?? null,
+  })
+}
+
+/**
+ * A parked phone's report when its newest fix is too vague to place it, a
+ * cell-only session's estimate a kilometre wide, sent from the last fix that
+ * did. Never from the anchor while there is one, since the anchor is where
+ * the phone stopped, and the walk from there to the door can cross the line
+ * of a place and back on every report.
+ */
+function stillHere(
   recordedAt: string,
   source: LocationSource,
   battery: BatterySnapshot,
 ): LocationFixInput {
+  const { restingFix, stillAnchor } = useTrackingStore.getState()
+  const here: RestingFix = restingFix ?? {
+    lat: stillAnchor!.lat,
+    lon: stillAnchor!.lon,
+    accuracyMeters: stillAnchor!.accuracyMeters ?? null,
+  }
   return {
-    ...syntheticFix(anchor.lat, anchor.lon, source, battery),
+    ...syntheticFix(here.lat, here.lon, source, battery),
     recordedAt,
-    accuracyMeters: anchor.accuracyMeters ?? null,
+    accuracyMeters: here.accuracyMeters,
   }
 }
 
@@ -875,6 +908,8 @@ export async function reportNow(
       leftAnchor(stillAnchor, fix, stationaryRadiusMeters(policy))
     ) {
       await enterMoving()
+    } else {
+      rememberRestingFix(fix)
     }
     await flush()
     return fix
@@ -1083,11 +1118,13 @@ async function restingHeartbeat(): Promise<void> {
       return
     }
     if (!last && !stillAnchor) return
+    if (here) rememberRestingFix(here)
     const battery = await batterySnapshot()
     const now = new Date().toISOString()
-    const fix: LocationFixInput = stillAnchor
-      ? parkedAt(stillAnchor, now, "heartbeat", battery)
-      : { ...toFix(last!, "heartbeat", battery, "still"), recordedAt: now }
+    const fix: LocationFixInput =
+      last && here && (!stillAnchor || placesPhone(here))
+        ? { ...toFix(last, "heartbeat", battery, "still"), recordedAt: now }
+        : stillHere(now, "heartbeat", battery)
     useTrackingStore.getState().enqueue([fix])
     logTracker("heartbeat", { mode, acc: Math.round(fix.accuracyMeters ?? -1) })
     await flush()
@@ -2362,8 +2399,9 @@ export async function enterMoving(): Promise<void> {
   const previous = store.mode
   cancelSecondLook()
   // A still streak counted before the departure is not evidence about the
-  // journey that follows.
+  // journey that follows, and nor is where the phone sat.
   store.setMotionStillSince(null)
+  store.setRestingFix(null)
   // Registering again on a running task swaps its options, which is how the
   // resting watch is stepped back up to the full one. A drive is decided
   // afresh from the fixes that follow, unless the phone is already moving,
@@ -2435,8 +2473,11 @@ async function settle(lat: number, lon: number, parkFix: ParkFix): Promise<void>
   // taken while the phone is still called moving, so without this the server
   // never heard the stop and applied its hour rule to a phone at home.
   let arrival: number | null | undefined = store.stillAnchor?.accuracyMeters
+  let resting: RestingFix | null = store.restingFix
   if (previous !== "stationary" && parkFix !== "none") {
-    arrival = (await sendParkFix(lat, lon, parkFix)).accuracyMeters
+    const park = await sendParkFix(lat, lon, parkFix)
+    arrival = park.accuracyMeters
+    resting = { lat: park.lat, lon: park.lon, accuracyMeters: park.accuracyMeters ?? null }
     // Sharing went off, or a departure landed, while the fix was on its way.
     if (useTrackingStore.getState().mode !== previous) {
       logTracker("park abandoned", { mode: useTrackingStore.getState().mode })
@@ -2494,6 +2535,7 @@ async function settle(lat: number, lon: number, parkFix: ParkFix): Promise<void>
     since: new Date().toISOString(),
     accuracyMeters: arrival ?? null,
   })
+  store.setRestingFix(resting ?? { lat, lon, accuracyMeters: arrival ?? null })
   store.setBackgroundActive(true)
   armBackgroundClock()
 }
@@ -2813,6 +2855,7 @@ export async function stopTracking(): Promise<void> {
   await stopMotionWatch()
   stopDriveSensors()
   store.setStillAnchor(null)
+  store.setRestingFix(null)
   store.setBackgroundActive(false)
   // Sign-out, a server change and a deleted account all land here, and none of
   // them turn the master switch off, so the wake had nothing left to stop it.

@@ -131,7 +131,8 @@ A journey between two named places is at most two notifications.
 - **Left.** "Amina left Home", once the departure is real. That takes a second
   fix outside the place, or a minute with no fix back inside, so a Wi-Fi fix
   that jumps down the street doesn't send "left Home" and then "arrived at
-  Home". If the phone's next word after leaving is already from somewhere
+  Home". A phone that says it hasn't moved needs that second fix, however
+  long it takes. If the phone's next word after leaving is already from somewhere
   named, as a parked phone's often is, only the arrival is sent.
 - **Arrived.** "Amina arrived at School, 4.2 km from Home in 14 min", with the
   distance and time worked out from the fixes since she left. It goes as soon

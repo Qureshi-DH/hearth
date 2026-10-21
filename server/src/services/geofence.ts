@@ -35,6 +35,14 @@ const TRANSIENT_VISIT_MS = 2 * 60 * 1000
  */
 const SETTLE_MS = 60 * 1000
 
+/**
+ * How long a departure waits on a phone that says it has not moved. One fix
+ * of it outside a place is the phone's word against itself, so it waits for
+ * a second fix to agree, a parked phone's next report or two, and goes late
+ * if none comes.
+ */
+const STILL_LEAVE_HOLD_MS = 45 * 60 * 1000
+
 /** Faster than anybody runs. An arrival at this pace may be a car going past. */
 const DRIVE_PAST_MPS = 5
 
@@ -75,6 +83,8 @@ export interface GeofenceFix {
   recordedAt: Date
   pointId?: number | null
   speedMps?: number | null
+  /** The phone's own word on what it was doing, "still" for one that has not moved. */
+  activity?: string | null
 }
 
 /** How far one device wandered over the lookback, as a corner-to-corner span. */
@@ -494,10 +504,13 @@ export async function evaluateGeofenceBatch(
             // or once a minute has passed with no fix back inside. One Wi-Fi
             // fix that jumps past the buffer is otherwise "left Home" and a
             // minute later "arrived at Home".
-            const confirmed =
-              covered >= SETTLE_MS ||
-              usable.slice(last.fixIndex + 1).some((fix) => judge(place, fix, false).clear)
-            hold = confirmed ? 0 : SETTLE_MS - covered
+            const agreed = usable
+              .slice(last.fixIndex + 1)
+              .some((fix) => judge(place, fix, false).clear)
+            const still =
+              usable[last.fixIndex]!.activity === "still" && speedAt(last.fixIndex) < DRIVE_PAST_MPS
+            const confirmed = agreed || (!still && covered >= SETTLE_MS)
+            hold = confirmed ? 0 : still ? STILL_LEAVE_HOLD_MS : SETTLE_MS - covered
           } else if (speedAt(last.fixIndex) >= DRIVE_PAST_MPS) {
             // An arrival at walking pace is an arrival. At driving speed it
             // may be a car passing, which is out the far side well inside a
@@ -509,9 +522,13 @@ export async function evaluateGeofenceBatch(
         settlesAt = hold > 0 ? new Date(now.getTime() + hold) : null
       } else if (open && row && kept.length === 0) {
         // Nothing crossed, so the open crossing either held or is still open.
+        // A departure held on a still phone's word waits for a fix outside to
+        // agree, not for the time to pass.
         const covered = lastFixAt.getTime() - row.since.getTime()
+        const heldStill =
+          !row.isInside && row.settlesAt!.getTime() - row.since.getTime() > 2 * SETTLE_MS
         const confirmed =
-          covered >= SETTLE_MS ||
+          (!heldStill && covered >= SETTLE_MS) ||
           (!row.isInside &&
             usable.some((fix) => fix.recordedAt > row.since && judge(place, fix, false).clear))
         if (confirmed) {

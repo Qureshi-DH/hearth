@@ -354,11 +354,13 @@ significant-change monitoring is on, and expo-location always adds that. It
 costs almost nothing, it keeps the process alive so the tracker's own timer
 can send a `still` fix every quarter hour, and a departure is seen by the
 session's own fixes rather than at the fence's leisure. On both platforms a
-parked phone's quarter hour fix is sent from the anchor, with the arrival
-fix's accuracy, whenever the fix the OS has does not clear the fence. Sent
-as it came, a cell-only session's estimate put a member at home hundreds of
-metres down the road on the family's map. The 200 m fence stays as a third signal. Whether a parked
-iPhone stays resident with this shape has not yet been confirmed on a
+parked phone's quarter hour fix is the newest one when it is 100 m or
+better, and otherwise the last fix that was, which the tracker keeps as
+`restingFix` from the park fix on. Sent as it came, a cell-only session's
+estimate put a member at home hundreds of metres down the road. Sent from
+the anchor instead, it put a phone carried in from the car outside Home on
+every report, and the next real fix put it back. The 200 m fence stays as a
+third signal. Whether a parked iPhone stays resident with this shape has not yet been confirmed on a
 device: the tracker log's `heartbeat` lines over a parked hour are the
 check.
 A parked iPhone used to run no session at all and was suspended within
