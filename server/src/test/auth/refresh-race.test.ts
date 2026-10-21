@@ -7,8 +7,10 @@ import { registerUser, startTestApp, type TestContext } from "../helpers"
 
 /**
  * One Android phone can run two JavaScript runtimes, each with its own copy of
- * the token pair. A replay of a spent refresh token from the same device inside
- * one access token's lifetime is that race, not a theft.
+ * the token pair, and any phone can lose the answer to a renewal. A replay of a
+ * spent refresh token from the same device inside one access token's lifetime
+ * is that race, and one while nothing newer has been used is the lost answer.
+ * Neither is a theft.
  */
 
 let ctx: TestContext
@@ -96,9 +98,25 @@ describe("a spent refresh token replayed by the same device", () => {
     expect(await reuseAudits()).toHaveLength(1)
   })
 
-  it("is still a theft once the access token that could explain it has expired", async () => {
+  // A parked phone that lost one renewal's answer next renews when it next
+  // wakes, often a quarter of an hour or more later. Counted as a theft, it
+  // signed the phone out, and with it the tracking, for good.
+  it("is answered however late, while the token that replaced it was never used", async () => {
     const bob = await registerUser(ctx.app, { deviceId: "device-bob-pixel" })
     expect((await refresh(bob.refreshToken)).statusCode).toBe(200)
+    await rotatedMinutesAgo(bob.user.id, 81)
+
+    const replay = await refresh(bob.refreshToken, "device-bob-pixel")
+    expect(replay.statusCode).toBe(200)
+    expect(await liveSessions(bob.user.id)).toBe(1)
+    expect(await reuseAudits()).toHaveLength(0)
+  })
+
+  it("is still a theft once the token that replaced it has been used", async () => {
+    const bob = await registerUser(ctx.app, { deviceId: "device-bob-pixel" })
+    const rotated = await refresh(bob.refreshToken)
+    const next = (rotated.json() as { refreshToken: string }).refreshToken
+    expect((await refresh(next, "device-bob-pixel")).statusCode).toBe(200)
     await rotatedMinutesAgo(bob.user.id, 20)
 
     expect((await refresh(bob.refreshToken, "device-bob-pixel")).statusCode).toBe(401)

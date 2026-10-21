@@ -330,8 +330,9 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
         description:
           "Refresh tokens are single-use. Each call rotates the token. A spent token " +
           "presented again ends the session, unless it comes from the device the session " +
-          "belongs to within one access token's lifetime, which is a client racing itself " +
-          "rather than a thief; send `deviceId` so that can be told apart.",
+          "belongs to, once, within one access token's lifetime or while no token issued " +
+          "after it has been used. That is a client racing itself or one whose answer was " +
+          "lost, not a thief. Send `deviceId` so that can be told apart.",
         body: z.object({
           refreshToken: z.string().min(10).max(512),
           deviceId: z.string().min(6).max(128).optional(),

@@ -173,11 +173,23 @@ export async function rotateSession(
       .for("update", { of: sessions })
     if (!spentRow) return { kind: "unknown" as const }
 
-    const spent = spentRow.session.spentRefresh.find((entry) => entry.h === hash)!
+    const spentEntries = spentRow.session.spentRefresh
+    const index = spentEntries.findIndex((entry) => entry.h === hash)
+    const spent = spentEntries[index]!
     if (spent.displaced) return { kind: "unknown" as const }
     const age = Date.now() - Date.parse(spent.at)
     const sameDevice = origin.deviceId != null && origin.deviceId === spentRow.session.deviceId
-    if (sameDevice && !spent.retried && age <= config.ACCESS_TOKEN_TTL_SECONDS * 1000) {
+    // Every token issued after this one went unused, so whoever holds this
+    // one never had a newer one. That is the phone whose renewal answer was
+    // lost, however long it slept before trying again, and it is answered
+    // once. A thief shows once the phone has used the token that replaced
+    // the stolen one.
+    const nothingNewerUsed = spentEntries.slice(index + 1).every((entry) => entry.displaced)
+    if (
+      sameDevice &&
+      !spent.retried &&
+      (nothingNewerUsed || age <= config.ACCESS_TOKEN_TTL_SECONDS * 1000)
+    ) {
       return {
         kind: "rotated" as const,
         ...(await rotate(

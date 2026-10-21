@@ -24,6 +24,12 @@ Notable changes to Hearth. The format is loosely
   so each upload waited until a push or the sync task happened to open one.
   The location service now holds a task open for as long as it runs, while
   moving, driving, watched or in an SOS, and lets go once the phone parks.
+- A phone was signed out when it lost the answer to a token renewal and tried
+  again more than a quarter of an hour later, which a parked phone usually
+  does. The server took the retry for a stolen token. The same device now
+  gets its one retry at any time while no token issued after the old one has
+  been used. A token presented after its replacement was used still ends the
+  session.
 
 ## [1.3.0] - 2026-10-18
 

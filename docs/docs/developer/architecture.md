@@ -504,8 +504,11 @@ plain SVG and CSS, so the page still loads nothing from anywhere else.
 - Access tokens: 15 min, HS256, `{sub, sid}`. The admin flag is read from the
   database per request. Refresh: 60 days, rotated on every use, SHA-256 at
   rest. A spent one presented again is refused, and ends the session if it
-  comes more than 30 s after the rotation. The same device gets one retry
-  within the access token's lifetime, answered with a fresh pair.
+  comes more than 30 s after the rotation. The same device gets one retry,
+  answered with a fresh pair, within the access token's lifetime or at any
+  time while no token issued after the spent one has been used. That is a
+  phone whose renewal answer was lost. A thief shows once the phone has used
+  the token that replaced the stolen one.
 - Passwords: scrypt N=2¹⁵ via `node:crypto`. Login timing is equalised for
   unknown emails.
 - Authorisation is always "is the caller a member of this circle with role ≥ X",
