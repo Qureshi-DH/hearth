@@ -62,7 +62,8 @@ const mockWatched = jest.fn(async (_seconds: number) => {})
 jest.mock("@/services/location/tracker", () => ({
   BACKGROUND_LOCATION_TASK: "hearth-background-location",
   reassertService: () => mockReassert(),
-  wakeFix: (...args: unknown[]) => mockReportNow(...args),
+  // The tracker decides whether the service already answered. Either way the wake is answered.
+  answerWake: (...args: unknown[]) => mockReportNow(...args),
   enterWatched: (seconds: number) => mockWatched(seconds),
 }))
 

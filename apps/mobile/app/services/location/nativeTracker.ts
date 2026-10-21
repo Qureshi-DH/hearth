@@ -24,7 +24,13 @@ export type NativeTrackerState = TrackerState
 
 type NativeModule = {
   startServiceAsync(request: ServiceRequest): Promise<ServiceStatus>
-  stopServiceAsync(): Promise<void>
+  stopServiceAsync(force: boolean): Promise<void>
+  watchAsync(seconds: number): Promise<boolean>
+  endWatchAsync(): Promise<void>
+  setUploaderAsync(url: string, key: string): Promise<void>
+  clearUploaderAsync(): Promise<void>
+  answersNativelyAsync(): Promise<boolean>
+  moveTaskToBackAsync(): Promise<boolean>
   startBriefAsync(): Promise<boolean>
   stopBriefAsync(): Promise<void>
   releaseAwakeAsync(): Promise<void>
@@ -60,8 +66,60 @@ export function startService(request: ServiceRequest): Promise<ServiceStatus> {
   return required().startServiceAsync(request)
 }
 
-export function stopService(): Promise<void> {
-  return required().stopServiceAsync()
+/** Forced for signing out or sharing off. Unforced, a watch the service holds outlives the tier. */
+export function stopService(force = false): Promise<void> {
+  return required().stopServiceAsync(force)
+}
+
+/** True when Android accepted the start. */
+export async function watch(seconds: number): Promise<boolean> {
+  try {
+    return await required().watchAsync(seconds)
+  } catch {
+    return false
+  }
+}
+
+export async function endWatch(): Promise<void> {
+  try {
+    await required().endWatchAsync()
+  } catch {
+    // Nothing running to end.
+  }
+}
+
+export async function setUploader(url: string, key: string): Promise<void> {
+  try {
+    await required().setUploaderAsync(url, key)
+  } catch {
+    // An older build without the uploader. JavaScript answers, as before.
+  }
+}
+
+export async function clearUploader(): Promise<void> {
+  try {
+    await required().clearUploaderAsync()
+  } catch {
+    // As above.
+  }
+}
+
+export async function answersNatively(): Promise<boolean> {
+  if (!native) return false
+  try {
+    return await native.answersNativelyAsync()
+  } catch {
+    return false
+  }
+}
+
+export async function moveTaskToBack(): Promise<boolean> {
+  if (!native) return false
+  try {
+    return await native.moveTaskToBackAsync()
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -115,8 +173,9 @@ export function setTrackerState(state: NativeTrackerState): Promise<void> {
   return required().setTrackerStateAsync(state)
 }
 
-export function drainFixes(): Promise<Location.LocationObject[]> {
-  return required().drainFixesAsync() as Promise<Location.LocationObject[]>
+/** The fixes the service took, oldest first. `sent` marks one the native uploader already sent. */
+export function drainFixes(): Promise<(Location.LocationObject & { sent?: boolean })[]> {
+  return required().drainFixesAsync() as Promise<(Location.LocationObject & { sent?: boolean })[]>
 }
 
 export function drainEvents(): Promise<NativeEvent[]> {

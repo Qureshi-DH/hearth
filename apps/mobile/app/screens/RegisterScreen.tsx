@@ -56,6 +56,7 @@ export const RegisterScreen: FC<AppStackScreenProps<"Register">> = ({ navigation
       await tokenVault.set({
         accessToken: response.accessToken,
         refreshToken: response.refreshToken,
+        ...(response.uploadKey ? { uploadKey: response.uploadKey } : {}),
       })
       setPendingInvite(null)
       signedIn(response.user)

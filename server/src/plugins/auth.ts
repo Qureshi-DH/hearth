@@ -9,6 +9,7 @@ import { circleMembers, sessions, users } from "../db/schema"
 import { getConfig } from "../env"
 import { forbidden, unauthorized } from "../lib/errors"
 import { clientBucket } from "../lib/net"
+import { isUploadKey, sessionOfUploadKey } from "../services/uploadKey"
 
 export interface AuthContext {
   userId: string
@@ -29,6 +30,10 @@ export interface AccessTokenClaims {
 declare module "fastify" {
   interface FastifyRequest {
     auth?: AuthContext
+  }
+  interface FastifyContextConfig {
+    /** The route also takes a session's upload key in place of an access token. */
+    acceptsUploadKey?: boolean
   }
   interface FastifyInstance {
     /** preHandler that rejects unauthenticated requests. */
@@ -69,6 +74,10 @@ export function isWebsocketUpgrade(request: FastifyRequest): boolean {
 export function rateLimitKey(app: FastifyInstance, request: FastifyRequest): string {
   const token = extractToken(request)
   if (!token) return `ip:${clientBucket(request.ip)}`
+  if (isUploadKey(token)) {
+    const sessionId = sessionOfUploadKey(token)
+    return sessionId ? `session:${sessionId}` : `ip:${clientBucket(request.ip)}`
+  }
   try {
     const claims = app.jwt.verify<AccessTokenClaims>(token)
     return `user:${claims.sub}`
@@ -91,20 +100,23 @@ export interface ResolvedSession {
  * the claims: the token only says which session to look up.
  */
 export async function resolveSession(claims: AccessTokenClaims): Promise<ResolvedSession | null> {
-  const db = getDb()
-  const [row] = await db
-    .select({ userId: sessions.userId, isActive: users.isActive, isAdmin: users.isAdmin })
-    .from(sessions)
-    .innerJoin(users, eq(users.id, sessions.userId))
-    .where(and(eq(sessions.id, claims.sid), isNull(sessions.revokedAt)))
-    .limit(1)
-
+  const row = await liveSession(claims.sid)
   if (!row) return null
   // Neither signing path ever puts a subject on a token that is not the
   // session's own owner, so a mismatch is a forged or muddled token rather than
   // a client, and it must not authorise the account it names.
   if (row.userId !== claims.sub) return null
   return row
+}
+
+async function liveSession(sessionId: string): Promise<ResolvedSession | null> {
+  const [row] = await getDb()
+    .select({ userId: sessions.userId, isActive: users.isActive, isAdmin: users.isAdmin })
+    .from(sessions)
+    .innerJoin(users, eq(users.id, sessions.userId))
+    .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt)))
+    .limit(1)
+  return row ?? null
 }
 
 export const authPlugin = fp(async (app: FastifyInstance) => {
@@ -119,6 +131,17 @@ export const authPlugin = fp(async (app: FastifyInstance) => {
   app.decorate("authenticate", async (request: FastifyRequest) => {
     const token = extractToken(request)
     if (!token) throw unauthorized("Missing bearer token.")
+    if (isUploadKey(token)) {
+      if (!request.routeOptions.config.acceptsUploadKey) {
+        throw unauthorized("An upload key only uploads locations.")
+      }
+      const sessionId = sessionOfUploadKey(token)
+      const session = sessionId ? await liveSession(sessionId) : null
+      if (!sessionId || !session) throw unauthorized("This upload key is no longer valid.")
+      if (!session.isActive) throw forbidden("This account has been deactivated.")
+      request.auth = { userId: session.userId, sessionId, isAdmin: false }
+      return
+    }
     let claims: AccessTokenClaims
     try {
       claims = app.jwt.verify<AccessTokenClaims>(token)

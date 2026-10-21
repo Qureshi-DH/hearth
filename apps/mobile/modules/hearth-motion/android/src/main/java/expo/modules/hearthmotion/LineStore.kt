@@ -32,6 +32,8 @@ internal class LineStore(private val file: File, private val maxBytes: Long = MA
     synchronized(LOCK) { file.delete() }
   }
 
+  fun isEmpty(): Boolean = synchronized(LOCK) { !file.exists() || file.length() == 0L }
+
   private fun compact() {
     val lines = file.readLines(Charsets.UTF_8).filter { it.isNotBlank() }
     val kept = lines.drop(lines.size / 2)

@@ -57,6 +57,25 @@ internal class TrackerPrefs(context: Context) {
     get() = prefs.getBoolean(KEY_MOTION_WANTED, false)
     set(value) = write { putBoolean(KEY_MOTION_WANTED, value) }
 
+  /** What JavaScript calls the phone's activity, so a fix sent from here is labelled as it would have been. */
+  var activity: String
+    get() = prefs.getString(KEY_ACTIVITY, "unknown") ?: "unknown"
+    set(value) = write { putString(KEY_ACTIVITY, value) }
+
+  /** Where the native uploader posts, and the session key it posts with. Both or neither. */
+  var uploadUrl: String?
+    get() = prefs.getString(KEY_UPLOAD_URL, null)
+    set(value) = write { putString(KEY_UPLOAD_URL, value) }
+
+  var uploadKey: String?
+    get() = prefs.getString(KEY_UPLOAD_KEY, null)
+    set(value) = write { putString(KEY_UPLOAD_KEY, value) }
+
+  /** The last process exit already put in the log, so each is told once. */
+  var exitSeenAt: Long
+    get() = prefs.getLong(KEY_EXIT_SEEN, 0L)
+    set(value) = write { putLong(KEY_EXIT_SEEN, value) }
+
   /** When the brief service was last brought up to confirm a walk, so a fidgeting phone does not flash it every transition. */
   var lastConfirmAt: Long
     get() = prefs.getLong(KEY_LAST_CONFIRM, 0L)
@@ -81,5 +100,9 @@ internal class TrackerPrefs(context: Context) {
     private const val KEY_FENCE = "fence"
     private const val KEY_MOTION_WANTED = "motionWanted"
     private const val KEY_LAST_CONFIRM = "lastConfirmAt"
+    private const val KEY_ACTIVITY = "activity"
+    private const val KEY_UPLOAD_URL = "uploadUrl"
+    private const val KEY_UPLOAD_KEY = "uploadKey"
+    private const val KEY_EXIT_SEEN = "exitSeenAt"
   }
 }

@@ -7,6 +7,7 @@ import { useTrackingStore } from "@/stores/tracking"
 
 import { clearTrackerLog, readTrackerLog } from "./log"
 import {
+  answerWake,
   BACKGROUND_LOCATION_TASK,
   enterMoving,
   enterStationary,
@@ -100,11 +101,20 @@ jest.mock("./driveSensors", () => ({
 const mockUpload = jest.fn()
 jest.mock("@/services/api", () => ({
   ApiError: jest.requireActual("@/services/api/client").ApiError,
-  api: { websocketUrl: () => null, refreshTokens: async () => null },
+  api: {
+    websocketUrl: () => null,
+    refreshTokens: async () => null,
+    url: (path: string) => `https://hearth.example/api/v1${path}`,
+  },
   endpoints: { locations: { upload: (...args: unknown[]) => mockUpload(...args) } },
 }))
+/** The session's tokens as the vault holds them. A test gives them an upload key to answer natively. */
+let mockTokens: { accessToken: string; refreshToken: string; uploadKey?: string } | null = null
 jest.mock("@/stores/tokenVault", () => ({
-  tokenVault: { hydrate: async () => ({ accessToken: "a", refreshToken: "r" }), peek: () => null },
+  tokenVault: {
+    hydrate: async () => ({ accessToken: "a", refreshToken: "r" }),
+    peek: () => mockTokens,
+  },
 }))
 
 const start = Location.startLocationUpdatesAsync as unknown as jest.Mock
@@ -587,5 +597,194 @@ describe("a wake on a parked Android phone", () => {
     expect(start).not.toHaveBeenCalled()
     expect(uploaded().map((fix) => fix.source)).toContain("nudge")
     expect(useTrackingStore.getState().mode).toBe("stationary")
+  })
+})
+
+// Android runs no JavaScript timer for an app in the background, and fetch
+// hands every response over on one, so a wake or a Live request answered
+// from this side reached the server when somebody next opened the app. With
+// the session's upload key the service takes the fix and sends it itself.
+describe("a wake or a Live request the service answers itself", () => {
+  const key = "hk1.11111111-2222-3333-4444-555555555555.signature"
+
+  beforeEach(() => {
+    mockTokens = { accessToken: "a", refreshToken: "r", uploadKey: key }
+  })
+
+  afterEach(() => {
+    mockTokens = null
+  })
+
+  it("hands the service the key and where to send while sharing is on", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    expect(fake.uploader).toEqual({ url: "https://hearth.example/api/v1/locations/batch", key })
+  })
+
+  it("takes the key away, and ends any watch, when sharing stops", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    await enterWatched(600)
+    await stopTracking()
+    expect(fake.uploader).toBeNull()
+    expect(fake.stopService).toHaveBeenLastCalledWith(true)
+  })
+
+  it("has nothing to hand over from a server that gave no key", async () => {
+    mockTokens = { accessToken: "a", refreshToken: "r" }
+    await enterStationary(HOME.lat, HOME.lon)
+    expect(fake.uploader).toBeNull()
+  })
+
+  it("takes no fix of its own for a wake the service answered", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    mockUpload.mockClear()
+    ;(Location.getCurrentPositionAsync as jest.Mock).mockClear()
+    await answerWake()
+    expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled()
+    expect(fake.startBrief).not.toHaveBeenCalled()
+    expect(mockUpload).not.toHaveBeenCalled()
+  })
+
+  it("still answers a wake from here without a key", async () => {
+    mockTokens = { accessToken: "a", refreshToken: "r" }
+    await enterStationary(HOME.lat, HOME.lon)
+    await answerWake()
+    expect(uploaded().map((fix) => fix.source)).toContain("nudge")
+  })
+
+  it("goes live through the service, with the parked phone's resting request left running", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    mockUpload.mockClear()
+    fake.startService.mockClear()
+    ;(Location.getCurrentPositionAsync as jest.Mock).mockClear()
+    await enterWatched(600)
+    expect(fake.watch).toHaveBeenCalledWith(600)
+    expect(fake.startService).not.toHaveBeenCalled()
+    expect(stop).not.toHaveBeenCalledWith(BACKGROUND_LOCATION_TASK)
+    expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled()
+    expect(useTrackingStore.getState().watchedUntil).not.toBeNull()
+  })
+
+  it("hands a moving phone's tier to the service under the watch, to go back to", async () => {
+    await enterMoving()
+    fake.startService.mockClear()
+    await enterWatched(600)
+    expect(fake.watch).toHaveBeenCalledWith(600)
+    expect(lastRequest()).toEqual({ priority: "balanced", intervalMs: 30_000, distanceMeters: 0 })
+  })
+
+  it("learns from the fixes the service sent and sends none of them again", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    mockUpload.mockClear()
+    const t = Date.now()
+    fake.fixes = [
+      { ...at(HOME, t + 1_000), sent: true },
+      { ...at(HOME, t + 2_000), sent: true },
+    ]
+    await processNativeQueue()
+    expect(mockUpload).not.toHaveBeenCalled()
+    expect(useTrackingStore.getState().lastFix?.recordedAt).toBe(new Date(t + 2_000).toISOString())
+  })
+
+  it("sends a fix the service handed back unsent", async () => {
+    await enterMoving()
+    mockUpload.mockClear()
+    const t = Date.now()
+    fake.fixes = [{ ...at(HOME, t + 1_000), sent: true }, at(AWAY, t + 31_000, 1)]
+    await processNativeQueue()
+    expect(uploaded().map((fix) => fix.recordedAt)).toEqual([new Date(t + 31_000).toISOString()])
+  })
+
+  it("takes the window the service opened on a push", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    const until = Date.now() + 600_000
+    fake.events = [{ type: "watch", until, reason: "push", at: Date.now() }]
+    await processNativeQueue()
+    expect(useTrackingStore.getState().watchedUntil).toBe(new Date(until).toISOString())
+  })
+
+  it("ends the watch when the service says the server let it go, without telling it again", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    await enterWatched(600)
+    fake.events = [{ type: "watch over", reason: "released", at: Date.now() }]
+    await processNativeQueue()
+    expect(useTrackingStore.getState().watchedUntil).toBeNull()
+    expect(fake.endWatch).not.toHaveBeenCalled()
+  })
+
+  it("reads the server's answer to an upload the service sent", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    fake.events = [
+      {
+        type: "uploaded",
+        sent: 1,
+        accepted: 1,
+        sentAt: Date.now(),
+        watchedUntil: new Date(Date.now() + 300_000).toISOString(),
+        serverTime: new Date().toISOString(),
+        at: Date.now(),
+      },
+    ]
+    await processNativeQueue()
+    expect(useTrackingStore.getState().watchedUntil).not.toBeNull()
+    expect(fake.watch).toHaveBeenCalled()
+  })
+
+  // The service follows the server's answers and its own clock. This side's
+  // timer can run ahead of an answer not yet drained, and must not end a
+  // watch the server still holds.
+  it("passes on a viewer leaving, and not its own clock running out", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    await enterWatched(600)
+    await enterWatched(0)
+    expect(fake.endWatch).toHaveBeenCalledTimes(1)
+    fake.endWatch.mockClear()
+    await enterWatched(60)
+    await jest.advanceTimersByTimeAsync(62_000)
+    expect(useTrackingStore.getState().watchedUntil).toBeNull()
+    expect(fake.endWatch).not.toHaveBeenCalled()
+  })
+
+  it("puts what the phone says about a push and about its own death in the log", async () => {
+    fake.events = [
+      {
+        type: "push",
+        kind: "watch",
+        priority: "normal",
+        original: "high",
+        lateMs: 4_000,
+        at: Date.now(),
+      },
+      {
+        type: "exit",
+        reason: "user_requested",
+        description: "stop com.binary.rewind.hearth due to MARs #2",
+        importance: 400,
+        at: Date.now() - 60_000,
+      },
+      { type: "start", reason: "push", forceStopped: true, at: Date.now() },
+      {
+        type: "power",
+        bucket: "rare",
+        exempt: false,
+        restricted: false,
+        saver: false,
+        at: Date.now(),
+      },
+    ]
+    await processNativeQueue()
+    const log = readTrackerLog()
+    expect(log.find((entry) => entry.what === "push")?.detail).toMatchObject({
+      kind: "watch",
+      priority: "normal",
+      original: "high",
+      late: 4,
+    })
+    expect(log.find((entry) => entry.what === "exit")?.detail).toMatchObject({
+      reason: "user_requested",
+    })
+    expect(log.find((entry) => entry.what === "start")?.detail).toMatchObject({
+      forceStopped: true,
+    })
+    expect(log.find((entry) => entry.what === "power")?.detail).toMatchObject({ bucket: "rare" })
   })
 })

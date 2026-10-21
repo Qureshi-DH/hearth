@@ -473,6 +473,7 @@ async function flagOfflineDevices(
         .where(and(eq(userPresence.userId, row.userId), isNull(userPresence.offlineNotifiedAt)))
         .returning({ userId: userPresence.userId })
       flagged += claimed.length
+      if (claimed.length > 0) await askOwnerToOpen(db, row)
     }
 
     const pending = visible.filter((m) => !told.has(outageKey(row.userId, m.circleId)))
@@ -524,6 +525,28 @@ async function flagOfflineDevices(
   }
 
   return flagged
+}
+
+/**
+ * The family hears that the phone went quiet, but the person holding it is
+ * the one who can do something. An app the phone has stopped comes back
+ * only when somebody opens it, so they are asked to, once an outage. A
+ * phone that ran out of battery has nothing to open.
+ */
+async function askOwnerToOpen(
+  db: Database,
+  row: { userId: string; batteryLevel: number | null; isCharging: boolean | null },
+): Promise<void> {
+  if (batteryRanOut(row.batteryLevel, row.isCharging)) return
+  await enqueuePush(db, [
+    {
+      userId: row.userId,
+      title: "Hearth can't reach your phone",
+      body: "Open Hearth so your family keeps seeing where you are.",
+      channel: "alerts",
+      data: { type: "self_offline" },
+    },
+  ])
 }
 
 /**

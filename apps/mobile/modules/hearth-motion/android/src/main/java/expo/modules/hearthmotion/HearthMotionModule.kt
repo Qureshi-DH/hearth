@@ -28,6 +28,7 @@ import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.Exceptions
+import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import kotlin.math.sqrt
@@ -145,6 +146,8 @@ class HearthMotionModule : Module() {
 
     Events("onMotionChange", "onSensorBatch", "onPowerStateChange", "onNativeQueue")
 
+    OnCreate { appContext.reactContext?.let { HearthDiagnostics.onProcessStart(it) } }
+
     AsyncFunction("isAvailableAsync") { playServicesReady() }
 
     AsyncFunction("getBackgroundRestrictedAsync") { backgroundRestricted() }
@@ -164,7 +167,22 @@ class HearthMotionModule : Module() {
       HearthTrackingService.start(context, ServiceRequest.fromMap(request), "js")
     }
 
-    AsyncFunction("stopServiceAsync") { HearthTrackingService.stop(context) }
+    AsyncFunction("stopServiceAsync") { force: Boolean? -> HearthTrackingService.stop(context, force == true) }
+
+    AsyncFunction("watchAsync") { seconds: Double -> HearthTrackingService.watch(context, seconds.toLong(), "js") }
+
+    AsyncFunction("endWatchAsync") { HearthTrackingService.unwatch(context) }
+
+    AsyncFunction("setUploaderAsync") { url: String, key: String -> NativeUploader.configure(context, url, key) }
+
+    AsyncFunction("clearUploaderAsync") { NativeUploader.forget(context) }
+
+    AsyncFunction("answersNativelyAsync") { NativeUploader.ready(context) }
+
+    // Back on the first screen hides Hearth as Home does, rather than ending
+    // its activity. Samsung clears a process with no activity much sooner.
+    AsyncFunction("moveTaskToBackAsync") { appContext.currentActivity?.moveTaskToBack(true) ?: false }
+      .runOnQueue(Queues.MAIN)
 
     AsyncFunction("startBriefAsync") { HearthTrackingService.brief(context) }
 
@@ -230,6 +248,7 @@ class HearthMotionModule : Module() {
     val prefs = TrackerPrefs(context)
     prefs.enabled = state["enabled"] as? Boolean ?: false
     prefs.mode = state["mode"] as? String ?: "off"
+    (state["activity"] as? String)?.let { prefs.activity = it }
     (state["movingRequest"] as? Map<String, Any?>)?.let { prefs.movingRequest = ServiceRequest.fromMap(it) }
   }
 
@@ -294,6 +313,15 @@ class HearthMotionModule : Module() {
    */
   private fun openVendorPowerManager(): String? {
     val make = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
+    // Samsung documents this one, its "Never sleeping apps" list, where a
+    // family app has to be for One UI to leave it running.
+    if (SAMSUNG.any { make.contains(it) }) {
+      val neverSleeping =
+        Intent("com.samsung.android.sm.ACTION_OPEN_CHECKABLE_LISTACTIVITY")
+          .setPackage("com.samsung.android.lool")
+          .putExtra("activity_type", 2)
+      if (launch(neverSleeping)) return "samsung_never_sleeping"
+    }
     for (target in VENDOR_TARGETS) {
       if (target.makes.none { make.contains(it) }) continue
       val intent = Intent().setComponent(ComponentName(target.pkg, target.cls))

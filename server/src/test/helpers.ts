@@ -77,7 +77,13 @@ export async function startTestApp(env: Record<string, string> = {}): Promise<Te
 
 export async function registerUser(
   app: FastifyInstance,
-  overrides: { email?: string; displayName?: string; inviteCode?: string; deviceId?: string } = {},
+  overrides: {
+    email?: string
+    displayName?: string
+    inviteCode?: string
+    deviceId?: string
+    platform?: "ios" | "android"
+  } = {},
 ) {
   const email = overrides.email ?? `user-${Math.random().toString(36).slice(2, 10)}@example.com`
   const response = await app.inject({
@@ -91,7 +97,7 @@ export async function registerUser(
       device: {
         deviceId: overrides.deviceId ?? `device-${Math.random().toString(36).slice(2, 12)}`,
         deviceName: "Test Phone",
-        platform: "ios",
+        platform: overrides.platform ?? "ios",
       },
     },
   })
@@ -101,6 +107,7 @@ export async function registerUser(
   const body = response.json() as {
     accessToken: string
     refreshToken: string
+    uploadKey?: string
     user: { id: string; email: string; isAdmin: boolean }
   }
   return {

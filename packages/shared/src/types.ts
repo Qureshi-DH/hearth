@@ -127,6 +127,12 @@ export interface AuthTokens {
   refreshToken: string
   /** Seconds until `accessToken` expires. */
   expiresIn: number
+  /**
+   * Android only. What the native tracker uploads with when JavaScript is not
+   * running to refresh `accessToken`. It opens the location upload and nothing
+   * else, and it ends with the session.
+   */
+  uploadKey?: string
 }
 
 export interface AuthResponse extends AuthTokens {

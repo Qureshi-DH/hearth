@@ -26,6 +26,17 @@ internal object TrackerQueue {
     fixes(context).append(toJson(location).toString())
   }
 
+  /**
+   * A fix in the queue's own shape, for the native uploader to hold until it
+   * knows whether the server took it. One it sent goes in marked, so
+   * JavaScript learns from it and does not send it again.
+   */
+  fun fixJson(location: Location): JSONObject = toJson(location)
+
+  fun appendFix(context: Context, fix: JSONObject) {
+    fixes(context).append(fix.toString())
+  }
+
   fun event(context: Context, event: JSONObject) {
     if (!event.has("at")) event.put("at", System.currentTimeMillis())
     events(context).append(event.toString())

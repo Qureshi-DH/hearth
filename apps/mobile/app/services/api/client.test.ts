@@ -192,3 +192,25 @@ describe("a 401 about something other than the token", () => {
     expect(calls).toHaveLength(1)
   })
 })
+
+// The native tracker uploads with the session's key when JavaScript cannot
+// run, and the key lasts as long as the session, whatever its tokens do.
+describe("the session's upload key", () => {
+  it("is taken from a renewal that carries one", async () => {
+    const { client, tokens } = setup([
+      () => ({ status: 200, body: { ...renewed("second")().body, uploadKey: "hk1.key" } }),
+    ])
+    await client.refreshTokens()
+    expect(tokens()).toMatchObject({ refreshToken: "refresh-second", uploadKey: "hk1.key" })
+  })
+
+  it("is kept through a renewal from a server that sends none", async () => {
+    const { client, tokens } = setup([
+      () => ({ status: 200, body: { ...renewed("second")().body, uploadKey: "hk1.key" } }),
+      renewed("third"),
+    ])
+    await client.refreshTokens()
+    await client.refreshTokens()
+    expect(tokens()).toMatchObject({ refreshToken: "refresh-third", uploadKey: "hk1.key" })
+  })
+})

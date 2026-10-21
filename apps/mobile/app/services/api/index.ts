@@ -6,6 +6,7 @@ import { tokenVault } from "@/stores/tokenVault"
 
 import { ApiClient } from "./client"
 import { createEndpoints } from "./endpoints"
+import { tokenListeners } from "./tokenListeners"
 
 export const api = new ApiClient({
   getBaseUrl: () => useAuthStore.getState().serverUrl,
@@ -19,6 +20,7 @@ export const api = new ApiClient({
       realtime.refresh()
       control.refresh()
     }
+    for (const listener of tokenListeners) listener()
   },
   onSessionExpired: () => {
     void sessionExpired()

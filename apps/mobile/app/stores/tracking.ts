@@ -135,6 +135,8 @@ interface TrackingState {
   setServiceRefusedAt(at: string | null): void
   setUploadsRefusedAt(at: string | null): void
   enqueue(fixes: LocationFixInput[]): void
+  /** Fixes the native side sent itself. The newest becomes the last fix, and nothing is queued. */
+  noteSent(fixes: LocationFixInput[]): void
   dequeue(fixes: LocationFixInput[]): void
   recordUpload(accepted: number): void
   setError(message: string | null): void
@@ -354,6 +356,10 @@ export const useTrackingStore = create<TrackingState>()(
       enqueue: (fixes) => {
         const lastFix = fixes[fixes.length - 1] ?? get().lastFix
         set({ queue: pushFixes(fixes, lastFix), lastFix })
+      },
+      noteSent: (fixes) => {
+        const lastFix = fixes[fixes.length - 1] ?? get().lastFix
+        set({ queue: pushFixes([], lastFix), lastFix })
       },
       dequeue: (fixes) => {
         // Match by timestamp, not position. `enqueue` may have trimmed the head

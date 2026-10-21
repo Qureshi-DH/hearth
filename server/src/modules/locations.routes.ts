@@ -92,6 +92,7 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
       config: {
         // Background uploads are chatty, so they get a budget of their own.
         rateLimit: { max: 240, timeWindow: "1 minute" },
+        acceptsUploadKey: true,
       },
       schema: {
         tags: ["locations"],
@@ -103,7 +104,9 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
           "the device should apply from now on, and `watchedUntil` while the device should " +
           "report live, because somebody has the member's page open or the member has an SOS " +
           "open in a circle they share precisely with. For an SOS the window is two minutes ahead and " +
-          "named again on every upload, so it ends soon after the alert is resolved.",
+          "named again on every upload, so it ends soon after the alert is resolved. An Android " +
+          "phone's native tracker may send the session's `uploadKey` as its bearer token instead " +
+          "of an access token.",
         body: z.object({
           points: z.array(fixSchema).min(1).max(DEFAULTS.maxLocationBatchSize),
         }),

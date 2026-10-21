@@ -399,8 +399,12 @@ describe("the record of who was told", () => {
       sql`update notification_outbox set created_at = now() - interval '8 days'`,
     )
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    const told = (await rows("device_offline")).length
 
-    expect(await pruneOutbox(getDb(), weekAgo)).toBe(0)
+    // The teen's own ask to open Hearth goes with the week's other mail.
+    // The record of who was told stays while the phone is out.
+    expect(await pruneOutbox(getDb(), weekAgo)).toBe(1)
+    expect(await rows("device_offline")).toHaveLength(told)
     await phoneBack(teen.headers)
     await tick()
     expect(await rows("device_online")).toHaveLength(2)

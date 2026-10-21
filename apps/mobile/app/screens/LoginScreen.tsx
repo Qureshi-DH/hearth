@@ -37,6 +37,7 @@ export const LoginScreen: FC<AppStackScreenProps<"Login">> = ({ navigation }) =>
       await tokenVault.set({
         accessToken: response.accessToken,
         refreshToken: response.refreshToken,
+        ...(response.uploadKey ? { uploadKey: response.uploadKey } : {}),
       })
       signedIn(response.user)
     } catch (caught) {

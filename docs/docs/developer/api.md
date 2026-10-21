@@ -43,15 +43,22 @@ opened from curl or from Swagger's "Try it out" is one of those rows, so call
 A refresh token works once. Presenting a spent one again ends the session,
 because a token replayed minutes after it was rotated is in somebody else's
 hands. The exception is the device the session belongs to, inside one access
-token's lifetime: a phone on the road whose refresh reached the server but
-whose answer was lost to the network still holds the spent token, and
-presents it again at its next upload. That is a retry, and it is answered
-with a fresh pair. The pair nobody received is spent by it. The grace is
+token's lifetime or at any time while no token issued after the spent one has
+been used: a phone on the road whose refresh reached the server but whose
+answer was lost to the network still holds the spent token, and presents it
+again at its next upload, which on a parked phone can be hours later. That is
+a retry, and it is answered with a fresh pair. The pair nobody received is spent by it. The grace is
 counted from the rotation the phone missed, not from each retry, and a spent
 token is answered this way once. A spent token from any other device, or
 from a request that names no device, is refused. Presented more than thirty
 seconds after the rotation, it also ends the session. Send `deviceId` with
 the refresh so the server can tell these apart.
+
+An Android session also gets an `uploadKey` with its tokens, the same one at
+every refresh. The phone's native tracker sends it as its bearer token to
+`POST /locations/batch`, and nothing else takes it, so a wake or a Live
+request is answered without the app's JavaScript renewing an access token.
+It is signed for the session and ends with it.
 
 The admin portal signs in through its own three routes, for administrators
 only:

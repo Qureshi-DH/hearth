@@ -12,6 +12,7 @@ import { hashPassword, validatePasswordStrength, verifyPassword } from "../lib/p
 import { toCurrentUser } from "../lib/serialize"
 import type { AccessTokenClaims } from "../plugins/auth"
 import { getBus } from "../runtime"
+import { uploadKeyField } from "./uploadKey"
 
 export interface IssueOptions {
   device: DeviceInfo
@@ -116,6 +117,7 @@ export async function issueSession(
     accessToken,
     refreshToken,
     expiresIn: config.ACCESS_TOKEN_TTL_SECONDS,
+    ...uploadKeyField(options.device.platform, session.id),
     user: toCurrentUser(user),
   }
 }
@@ -231,6 +233,7 @@ export async function rotateSession(
     accessToken: app.jwt.sign(claims),
     refreshToken: outcome.refreshToken,
     expiresIn: config.ACCESS_TOKEN_TTL_SECONDS,
+    ...uploadKeyField(outcome.session.platform, outcome.session.id),
     user: toCurrentUser(outcome.user),
   }
 }

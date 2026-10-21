@@ -144,12 +144,26 @@ const SILENT_TTL_SECONDS: Record<string, number> = {
 const DEFAULT_SILENT_TTL_SECONDS = 300
 
 /**
+ * Alerts that are only true for a while. Asking somebody to open Hearth
+ * because their phone went quiet is wrong once the phone is back, and FCM
+ * would otherwise hand it over whenever the phone next comes online.
+ */
+const VISIBLE_TTL_SECONDS: Record<string, number> = {
+  self_offline: 60 * 60,
+}
+
+/**
  * The longest one provider call may take. A provider, or a web push endpoint
  * somebody registered, that accepts the connection and never answers would
  * otherwise hold a worker for good, and with it every job the scheduler runs
  * after the drain.
  */
 const SEND_TIMEOUT_MS = 15_000
+
+function visibleLifetime(data: Record<string, unknown> | undefined, queuedAt: number) {
+  const ttl = VISIBLE_TTL_SECONDS[typeof data?.type === "string" ? data.type : ""]
+  return ttl ? { ttl, expiration: queuedAt + ttl } : {}
+}
 
 function silentTtlSeconds(data: Record<string, unknown> | undefined): number {
   const type = typeof data?.type === "string" ? data.type : ""
@@ -218,6 +232,7 @@ class ExpoDriver implements PushDriver {
               title: message.title,
               body: message.body,
               data: message.data ?? {},
+              ...visibleLifetime(message.data, queuedAt),
               // Android plays the channel's sound for every one of these, and
               // a notification that is worth showing is worth hearing, so iOS
               // is asked for the same.

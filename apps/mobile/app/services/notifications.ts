@@ -13,8 +13,8 @@ import { logTracker } from "@/services/location/log"
 import {
   BACKGROUND_LOCATION_TASK,
   enterWatched,
+  answerWake,
   reassertService,
-  wakeFix,
 } from "@/services/location/tracker"
 
 export type PushSetupResult =
@@ -198,7 +198,7 @@ TaskManager.defineTask(NOTIFICATION_WAKE_TASK, async ({ data, error }) => {
   // moment Android refused has been on throttled fixes since, and this is
   // where the service comes back. The service first, while the moment lasts.
   await reassertService({ exempt: true })
-  await wakeFix()
+  await answerWake()
 })
 
 function watchSeconds(payload: unknown): number {
@@ -234,7 +234,7 @@ export function attachNotificationListeners(
       (NotificationTarget & { seconds?: number }) | undefined
     if (!data?.type) return
     if (data.type === WATCH_TYPE) void enterWatched(watchSeconds({ data }), { push: true })
-    else if (WAKE_TYPES.has(data.type)) void wakeFix()
+    else if (WAKE_TYPES.has(data.type)) void answerWake()
   })
 
   const open = async (response: Notifications.NotificationResponse | null) => {

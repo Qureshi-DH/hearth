@@ -1062,7 +1062,7 @@ const mockUpload = jest.fn()
 jest.mock("@/services/api", () => ({
   ApiError: jest.requireActual("@/services/api/client").ApiError,
   // No server in these tests, so the control channel has nowhere to open.
-  api: { websocketUrl: () => null },
+  api: { websocketUrl: () => null, url: (path: string) => `https://hearth.example/api/v1${path}` },
   endpoints: { locations: { upload: (...args: unknown[]) => mockUpload(...args) } },
 }))
 jest.mock("@/stores/tokenVault", () => ({

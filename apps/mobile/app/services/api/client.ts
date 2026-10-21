@@ -32,6 +32,8 @@ export class ApiError extends Error {
 export interface TokenPair {
   accessToken: string
   refreshToken: string
+  /** What the native tracker uploads with, on Android. It lasts as long as the session. */
+  uploadKey?: string
 }
 
 export interface ApiClientHooks {
@@ -279,7 +281,14 @@ export class ApiClient {
 
     this.refused = false
     this.renewalError = null
-    const next = { accessToken: result.data.accessToken, refreshToken: result.data.refreshToken }
+    // A session's key does not change with its tokens, and an older server
+    // sends none, so the one in hand is kept.
+    const uploadKey = result.data.uploadKey ?? current.uploadKey
+    const next: TokenPair = {
+      accessToken: result.data.accessToken,
+      refreshToken: result.data.refreshToken,
+      ...(uploadKey ? { uploadKey } : {}),
+    }
     await this.hooks.setTokens(next)
     return next
   }

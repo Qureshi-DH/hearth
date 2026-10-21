@@ -105,7 +105,18 @@ declare class HearthMotionModule extends NativeModule<{
    * background outside its allowed moments.
    */
   startServiceAsync(request: ServiceRequest): Promise<ServiceStatus>
-  stopServiceAsync(): Promise<void>
+  /** Forced, for signing out or sharing off, it ends a watch too. Otherwise a watch outlives the tier. */
+  stopServiceAsync(force: boolean): Promise<void>
+  /** Live for this long, answered natively. False when Android refused the start. */
+  watchAsync(seconds: number): Promise<boolean>
+  endWatchAsync(): Promise<void>
+  /** The upload address and the session's key, so wakes and Live are answered without JavaScript. */
+  setUploaderAsync(url: string, key: string): Promise<void>
+  clearUploaderAsync(): Promise<void>
+  /** Whether a wake or a watch is answered natively, so JavaScript need not take its own fix. */
+  answersNativelyAsync(): Promise<boolean>
+  /** Back on the first screen, as Home does it. The activity stays, and so does the process. */
+  moveTaskToBackAsync(): Promise<boolean>
   /**
    * The brief service: foreground for one fix and its "Updating your
    * location", then gone on its own. True when Android accepted the start.
@@ -142,12 +153,16 @@ export interface TrackerState {
   enabled: boolean
   mode: "off" | "moving" | "stationary"
   movingRequest?: ServiceRequest
+  /** What a fix sent natively is labelled, the tracker's own verdict. */
+  activity?: string
 }
 
 /** The shape expo-location gives a fix, so the tracker reads both alike. */
 export interface NativeFix {
   timestamp: number
   mocked?: boolean
+  /** The native uploader sent it, so it is learned from and not sent again. */
+  sent?: boolean
   coords: {
     latitude: number
     longitude: number
@@ -164,7 +179,47 @@ export type NativeEvent =
   | { type: "fence"; id: string; transition: "enter" | "exit"; at: number }
   /** Play Services dropped the fences, with its GeofenceStatusCodes reason. */
   | { type: "fence_lost"; code: number; at: number }
-  | { type: "service"; status: "started" | "refused" | "stopped"; reason: string; at: number }
+  | {
+      type: "service"
+      status: "started" | "refused" | "stopped"
+      reason: string
+      error?: string
+      at: number
+    }
   | { type: "boot"; at: number }
+  /** A wake or a watch as it arrived, and whether FCM still called it urgent. */
+  | {
+      type: "push"
+      kind: string
+      priority: string
+      original: string
+      lateMs: number | null
+      at: number
+    }
+  /** Why the process last ended, from ApplicationExitInfo. */
+  | { type: "exit"; reason: string; description: string | null; importance: number; at: number }
+  | { type: "start"; reason: string; forceStopped: boolean; at: number }
+  | {
+      type: "power"
+      exempt: boolean | null
+      saver: boolean | null
+      bucket?: string | null
+      restricted?: boolean | null
+      at: number
+    }
+  | {
+      type: "uploaded"
+      sent: number
+      sentAt: number
+      accepted?: number
+      watchedUntil?: string | null
+      serverTime?: string
+      policy?: { minUpdateIntervalSeconds: number; distanceFilterMeters: number }
+      at: number
+    }
+  | { type: "upload"; status: "failed" | "refused" | "rejected"; code: number; at: number }
+  | { type: "wake"; native: boolean; fix?: boolean; service?: boolean; sent?: boolean; at: number }
+  | { type: "watch"; until: number; reason: string; at: number }
+  | { type: "watch over"; reason: string; at: number }
 
 export default requireNativeModule<HearthMotionModule>("HearthMotion")

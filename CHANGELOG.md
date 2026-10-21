@@ -6,6 +6,46 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Fixed
+
+- An Android phone answered a wake or a Live request once and then often not
+  again, and on some phones not at all, even with the app only in the
+  background. The push started the location service, but the fix and its
+  upload waited for JavaScript, which React Native runs no timer for in the
+  background, so nothing reached the server until somebody opened the app.
+  The service now takes the fix and sends it itself, with a key the server
+  gives each Android session for that upload alone. A watch runs a fix a
+  second, each sent as it comes, for as long as the server's answers say
+  somebody is looking. Phones on an older server answer as before.
+- When Android refuses to start the service for a push, which it does once
+  FCM has demoted the push, the phone still takes one fix and sends it.
+- Back on the app's first screen hides Hearth the way Home does instead of
+  closing it. Samsung clears a closed app far sooner.
+- A push that started a closed app found nothing there to answer it, because
+  the code that does is only loaded with the first screen, and Expo then
+  forgot the answer for good. Every push after went unanswered until somebody
+  opened Hearth. It is loaded at start now.
+- A moving Android phone's fixes are sent by the location service too. One UI
+  holds back an app's JavaScript timers in the background, and a journey
+  waited for the screen to come on.
+- A request the server had answered could still never finish in the
+  background, since fetch handed every answer over on a timer. It no longer
+  needs one.
+- A push that started the location service just as it was stopping could be
+  lost, or could crash the app.
+
+### Added
+
+- The tracker log says why Android last stopped Hearth, whether it was force
+  stopped, its standby bucket and battery exemption, and how urgent each wake
+  arrived. A phone a battery manager stopped can be told from one with no
+  signal.
+- A phone that goes quiet asks its owner to open Hearth, once an outage. The
+  ask lapses after an hour, and a phone whose battery ran out is not asked.
+- On Samsung the setup screen opens Never sleeping apps directly and names
+  High battery usage restriction, which can freeze Hearth with everything
+  else allowed.
+
 ## [1.3.1] - 2026-10-21
 
 Fixes for a parked phone that left home and came back all night, Android

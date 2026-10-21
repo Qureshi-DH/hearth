@@ -421,7 +421,25 @@ native Kotlin in `modules/hearth-motion/android`:
   is every event the receivers take. It is sticky: killed under a journey,
   it restarts with the request it persisted. `startForegroundService`
   throws at the call on Android 12 and later when the start is not
-  allowed, and that is the `refused` the module answers with.
+  allowed, and that is the `refused` the module answers with. The refusal
+  goes on the queue too, so the tracker log shows it. A command for a
+  service already in the foreground goes by a plain `startService`, which
+  needs no exemption.
+- `NativeUploader` sends the service's fixes, a tier's as well as the ones
+  that answer a wake or a watch, from the service, with the session's upload key (`uploadKey`, which the server hands
+  an Android session with its tokens and the tracker passes down in
+  `syncUploader`). A fix waits in its own file until the server has it, then
+  goes on the queue marked `sent`, so `ingest` learns from it and sends nothing
+  again. One that cannot be sent, because the key was refused or the service
+  is going, goes on the queue unmarked and JavaScript sends it. The server's
+  answer comes back as an `uploaded` event and moves the watch.
+- `HearthDiagnostics` puts what the phone says about Hearth in the log, once
+  per process: the last exits from `ApplicationExitInfo`, whether the app was
+  force stopped (`ApplicationStartInfo`, Android 15 and later), the standby
+  bucket, the battery exemption and background restriction, and for every
+  wake or watch push its priority against the one it was sent with. A
+  `normal` against `high` is FCM having demoted the push, which no longer
+  lets the service start from the background.
 - `HearthHeadlessService` runs the JavaScript tracker's headless task
   (`HearthTracker`, registered in `index.tsx`) once the service holds the
   foreground, which is what lets the process start another service. The
@@ -441,11 +459,19 @@ native Kotlin in `modules/hearth-motion/android`:
   a phone that was on the move. expo-task-manager restores the resting
   request on its own.
 - `HearthMessagingService` sits in front of expo-notifications' own and
-  brings the brief service up inside the message handler for a wake or a
-  watch push, the one other moment a background app may start a service.
-  It does the same for a `nudge_requested` push, but only when Firebase
-  hands that message to the app, which for a visible push means the app is
-  in the foreground.
+  answers a wake or a watch push inside the message handler, the one other
+  moment a background app may start a service. With an upload key it starts
+  the service with the ask itself. A wake takes the first fix within 50 m, or
+  the best one in twenty seconds, sends it, and the service goes once the
+  server has it. A watch runs a fix a second, each sent as it comes, until the
+  server's answers to those uploads say nobody is looking. Nothing waits for
+  JavaScript, which React Native runs no timer for in the background. Where
+  Android refuses the start, most often because FCM demoted the push, the
+  handler takes one fix without the service and sends it from its own
+  thread. Without a key, from a server older than 1.3.2, the brief service
+  comes up and JavaScript takes the fix, as before. It does the same for a
+  `nudge_requested` push, but only when Firebase hands that message to the
+  app, which for a visible push means the app is in the foreground.
 
 While Android refuses the service, a moving phone keeps expo's request
 running on the tier's options with no service of its own. Android holds a
@@ -474,7 +500,13 @@ apps) and, on the vendors that kill background apps, walks the person
 through the vendor's own settings.
 
 The rules the receivers act on and the queue's store have plain checks in
-`modules/hearth-motion/test/DepartureTest.kt`, run the way the file says.
+`modules/hearth-motion/test/DepartureTest.kt`, and the upload's wire format and
+the watch window in `UploadWireTest.kt`, run the way each file says.
+
+`patches/whatwg-fetch@3.6.20.patch` settles every `fetch` as a microtask rather
+than on a zero delay timer. React Native's networking events need no timer, but
+the polyfill resolved each answer on one, and One UI holds an app's timers back
+in the background, so a request the server had already answered never finished.
 
 `patches/expo-location@55.1.14.patch` remains for iOS (the one-shot
 manager's `allowsBackgroundLocationUpdates`) and for the resting request's
@@ -686,14 +718,16 @@ socket in `services/realtime.ts` is a different thing: it lives with the
 screen and closes when the app goes to the background, which is exactly when
 this one matters. An ask for a parked Android phone goes by a silent, high
 priority Expo push, and `HearthMessagingService` in the motion module, which
-sits in front of expo-notifications' own service, brings the tracking service up
-brief inside the message handler: "Updating your location" for the one
-fix, gone with it, and stopping itself after the fix's deadline if nothing
-else does. That is the moment Android allows a service to start from the
-background, and the notification it posts is what keeps the app's pushes
-at high priority. The JavaScript task then takes the fix under it
-(`wakeFix` in `tracker.ts`, `startBrief` in `services/location/nativeTracker.ts`),
-or, for a watch, upgrades that service in place to the live request.
+sits in front of expo-notifications' own service, starts the tracking service
+with the ask inside the message handler: "Updating your location" for as long
+as the answer takes, gone with it. That is the moment Android allows a service
+to start from the background, and the notification it posts is what keeps the
+app's pushes at high priority. The service takes the fix and sends it itself,
+and the JavaScript task that follows only learns what it sent (`answerWake` in
+`tracker.ts`). On a server that hands out no upload key the JavaScript task
+takes the fix under a brief service instead (`wakeFix`, `startBrief` in
+`services/location/nativeTracker.ts`), or, for a watch, upgrades that service in
+place to the live request.
 
 Opening a member's page calls `POST /circles/:id/members/:userId/refresh`
 for one fix now, the way opening the map calls
@@ -721,8 +755,13 @@ phone that is already reporting picks the watch up on its next batch whether
 or not the push arrived. Either way the phone puts `watchedUntil` in its
 store and `currentOptions()` returns the live tier whatever the phone was
 doing, at `High` accuracy with a fix a second and every one uploaded. A parked Android
-phone is no exception. The watch push brings the brief service up, the live
-request upgrades it in place, and the window's end takes it down. The resting
+phone is no exception. The watch push starts the service live, the service
+sends every fix itself and follows the window the server names in each answer,
+and the window's end takes it down. JavaScript hands the service its tier as
+well (`applyNativeWatch`), so a moving phone goes back to it after the watch,
+and a stop for the tier leaves the watch running. Only a viewer leaving is
+passed on to the service, since the tracker's own timer can run ahead of an
+answer it has not drained yet. The resting
 request runs under it the whole time, so a service Android kills inside the
 window, or one a reboot takes, leaves the phone reporting as it was. Where
 Android refuses the service anyway, the phone answers with one fix, and the

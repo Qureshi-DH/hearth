@@ -330,7 +330,10 @@ running is skipped.
    the `offline_alerts_held` row of `server_settings`, and the step stays
    withheld for 30 minutes after it, so the first phone back does not expose
    the rest. Each phone is checked again under its lock before it is
-   announced.
+   announced. The member is asked once an outage, on every device they are
+   signed in on, to open Hearth, since an app the phone stopped comes back
+   only when somebody opens it. That push lapses after an hour, and a phone
+   whose battery ran out is not asked.
 6. Announce returned devices. A circle that was told a phone went quiet gets a
    `device_online` feed line once it reports again. Whoever was sent that
    `device_offline` row, or has it still sending, and does not mute it now
@@ -509,6 +512,12 @@ plain SVG and CSS, so the page still loads nothing from anywhere else.
   time while no token issued after the spent one has been used. That is a
   phone whose renewal answer was lost. A thief shows once the phone has used
   the token that replaced the stolen one.
+- Upload keys: an Android session's native tracker answers wakes and Live with
+  `hk1.<session id>.<HMAC>` (`services/uploadKey.ts`), keyed from the JWT
+  secret. It opens `POST /locations/batch` and no other route, carries no
+  admin rights, has its own rate-limit bucket, and is worth nothing once the
+  session is revoked or the account deactivated, since the session row is
+  read on every request.
 - Passwords: scrypt N=2¹⁵ via `node:crypto`. Login timing is equalised for
   unknown emails.
 - Authorisation is always "is the caller a member of this circle with role ≥ X",

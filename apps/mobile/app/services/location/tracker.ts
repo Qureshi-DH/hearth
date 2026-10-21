@@ -11,7 +11,8 @@ import {
   type LocationSource,
 } from "@hearth/shared"
 
-import { ApiError, endpoints } from "@/services/api"
+import { ApiError, api, endpoints } from "@/services/api"
+import { tokenListeners } from "@/services/api/tokenListeners"
 import { checkIncident, raiseIncident } from "@/services/incidentAlarm"
 import { useAuthStore } from "@/stores/auth"
 import {
@@ -301,6 +302,8 @@ useTrackingStore.subscribe((state, previous) => {
     state.lastVerdict !== previous.lastVerdict
   ) {
     noteActivity()
+    // A fix the native side sends is labelled with this verdict.
+    void syncNativeState()
   }
 })
 
@@ -574,7 +577,11 @@ function inJourney(): boolean {
   return travelled || fast
 }
 
-export async function ingest(locations: Location.LocationObject[], source: LocationSource) {
+export async function ingest(
+  locations: Location.LocationObject[],
+  source: LocationSource,
+  { sent = false }: { sent?: boolean } = {},
+) {
   if (locations.length === 0) return
   const battery = await batterySnapshot()
   const state = useTrackingStore.getState()
@@ -584,6 +591,48 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
   const newest = all[all.length - 1]!
   if (source === "background" || source === "significant") rememberFixes(all)
   const live = watchedNow()
+  if (sent) {
+    // The native side sent these already, answering a wake or a watch. They
+    // still say where the phone is and how it moves, and nothing goes again.
+    if (state.mode === "stationary") for (const fix of all) rememberRestingFix(fix)
+    state.noteSent(all)
+    if (live) tallyLive({ fixes: all.length, kept: all.length }, newest.accuracyMeters)
+    else logTracker("fixes", { got: all.length, sent: true, mode: state.mode })
+  } else {
+    await keepFixes(all, newest, source, live)
+  }
+  if (source === "background") {
+    // From the fix itself, not from what was kept: a still phone's fixes are
+    // exactly the ones the gate drops and exactly the ones that say it is
+    // still. The drive is judged first, so the fix that ends one is also
+    // the fix that starts the stop.
+    if (useTrackingStore.getState().mode === "moving") {
+      await trackDriveBySpeed(withDerivedSpeed(newest, state.lastFix))
+    }
+    await evaluateStillness(newest)
+    // A fix arriving is the clock's "not still yet"; the stop is judged from
+    // how long they stop coming.
+    armBackgroundClock()
+    // The live tier delivers on its interval whether or not the phone moves,
+    // so the first fix past the window is what steps it back down, whether or
+    // not the timer got there.
+    await endWatchIfOver()
+  }
+  // Whether or not this delivery kept a fix: the queue may hold an upload
+  // that failed, and on a parked phone the next kept fix is a quarter hour off.
+  // A retry already waiting is left to its timer, so a firewall that locked
+  // the address out is not met with a request for every fix.
+  if (!retryTimer) await flush()
+}
+
+/** What of a delivery goes up, and when. */
+async function keepFixes(
+  all: LocationFixInput[],
+  newest: LocationFixInput,
+  source: LocationSource,
+  live: boolean,
+): Promise<void> {
+  const state = useTrackingStore.getState()
   // The tier's distance filter, applied to what is uploaded rather than by
   // the OS on Android, so the fixes keep coming while the phone is still
   // and the stop can be judged from them. Live means every fix, at the live
@@ -622,28 +671,6 @@ export async function ingest(locations: Location.LocationObject[], source: Locat
       speed: newest.speedMps == null ? null : Number(newest.speedMps.toFixed(1)),
     })
   }
-  if (source === "background") {
-    // From the fix itself, not from what was kept: a still phone's fixes are
-    // exactly the ones the gate drops and exactly the ones that say it is
-    // still. The drive is judged first, so the fix that ends one is also
-    // the fix that starts the stop.
-    if (useTrackingStore.getState().mode === "moving") {
-      await trackDriveBySpeed(withDerivedSpeed(newest, state.lastFix))
-    }
-    await evaluateStillness(newest)
-    // A fix arriving is the clock's "not still yet"; the stop is judged from
-    // how long they stop coming.
-    armBackgroundClock()
-    // The live tier delivers on its interval whether or not the phone moves,
-    // so the first fix past the window is what steps it back down, whether or
-    // not the timer got there.
-    await endWatchIfOver()
-  }
-  // Whether or not this delivery kept a fix: the queue may hold an upload
-  // that failed, and on a parked phone the next kept fix is a quarter hour off.
-  // A retry already waiting is left to its timer, so a firewall that locked
-  // the address out is not met with a request for every fix.
-  if (!retryTimer) await flush()
 }
 
 /**
@@ -1269,7 +1296,16 @@ async function drainNativeQueue(): Promise<void> {
     logTracker("native dropped", { fixes: fixes.length })
   } else if (fixes.length > 0) {
     fixes.sort((a, b) => a.timestamp - b.timestamp)
-    await ingest(fixes, "background")
+    // In order, in runs, so the stream reads as one journey whichever side sent each fix.
+    let run: (Location.LocationObject & { sent?: boolean })[] = []
+    for (const fix of fixes) {
+      if (run.length > 0 && Boolean(run[0]!.sent) !== Boolean(fix.sent)) {
+        await ingest(run, "background", { sent: Boolean(run[0]!.sent) })
+        run = []
+      }
+      run.push(fix)
+    }
+    await ingest(run, "background", { sent: Boolean(run[0]!.sent) })
   }
   const events = await native.drainEvents().catch(() => [])
   for (const event of events) {
@@ -1299,12 +1335,104 @@ async function onNativeEvent(event: native.NativeEvent): Promise<void> {
       await checkStatusInBackground()
       return
     case "service":
-      logTracker("native service", { status: event.status, reason: event.reason })
+      logTracker("native service", {
+        status: event.status,
+        reason: event.reason,
+        ...(event.error ? { error: event.error } : {}),
+      })
       return
     case "boot":
       logTracker("native boot")
       return
+    case "push":
+      // "normal" against "high" is FCM having demoted the ask, which no
+      // longer lets the service start from the background.
+      logTracker("push", {
+        kind: event.kind,
+        priority: event.priority,
+        original: event.original,
+        late: event.lateMs == null ? null : Math.round(event.lateMs / 1000),
+      })
+      return
+    case "exit":
+      logTracker("exit", {
+        reason: event.reason,
+        description: event.description,
+        importance: event.importance,
+        at: new Date(event.at).toISOString(),
+      })
+      return
+    case "start":
+      logTracker("start", { reason: event.reason, forceStopped: event.forceStopped })
+      return
+    case "power":
+      logTracker("power", {
+        bucket: event.bucket ?? null,
+        exempt: event.exempt,
+        restricted: event.restricted ?? null,
+        saver: event.saver,
+      })
+      return
+    case "uploaded":
+      await onNativeUpload(event)
+      return
+    case "upload":
+      logTracker("native flush failed", { status: event.status, code: event.code })
+      return
+    case "wake":
+      logTracker("native wake", {
+        ...(event.fix === false ? { fix: false } : {}),
+        ...(event.service === false ? { service: false, sent: event.sent ?? false } : {}),
+      })
+      return
+    case "watch":
+      adoptNativeWatch(event.until, event.at)
+      return
+    case "watch over":
+      if (useTrackingStore.getState().watchedUntil) await endWatch("released", { native: true })
+      return
   }
+}
+
+/** The answer to an upload the native side sent, read as doFlush reads its own. */
+async function onNativeUpload(
+  event: Extract<native.NativeEvent, { type: "uploaded" }>,
+): Promise<void> {
+  const store = useTrackingStore.getState()
+  store.recordUpload(event.accepted ?? 0)
+  if (watchedNow()) tallyLive({ sent: event.sent, accepted: event.accepted ?? 0 })
+  else logTracker("flush", { sent: event.sent, accepted: event.accepted ?? 0, native: true })
+  await adoptWatch(event.watchedUntil, event.serverTime, event.sentAt)
+  const policy = event.policy
+  if (
+    policy &&
+    (policy.minUpdateIntervalSeconds !== store.policy.minUpdateIntervalSeconds ||
+      policy.distanceFilterMeters !== store.policy.distanceFilterMeters)
+  ) {
+    store.setPolicy(policy)
+    void applyPolicy()
+  }
+}
+
+/**
+ * The service went live on a push, before this side heard. The window is
+ * taken as the service holds it, and nothing is registered, since the
+ * service is already doing it.
+ */
+function adoptNativeWatch(until: number, openedAt: number): void {
+  if (until <= Date.now()) return
+  const store = useTrackingStore.getState()
+  const held = store.watchedUntil ? Date.parse(store.watchedUntil) : 0
+  windowTakenAt = Math.max(windowTakenAt, openedAt)
+  liveInPlace = true
+  if (until <= held) return
+  logTracker("watched", {
+    seconds: Math.round((until - Date.now()) / 1000),
+    mode: store.mode,
+    native: true,
+  })
+  store.setWatchedUntil(new Date(until).toISOString())
+  armWatchTimer()
 }
 
 /**
@@ -1335,8 +1463,11 @@ export function keepTrackerAwake(): Promise<void> {
   awake ??= (async () => {
     logTracker("awake")
     try {
-      while (wantsAwake()) {
+      // Drained before it decides, since what woke the service, a departure
+      // or a watch, is in the queue and not yet in the store.
+      for (;;) {
         await processNativeQueue()
+        if (!wantsAwake()) break
         await new Promise((resolve) => setTimeout(resolve, AWAKE_TICK_MS))
       }
     } finally {
@@ -1709,7 +1840,7 @@ function restingOptions(): Location.LocationTaskOptions {
  * so no re-registration can disagree with the tier it is in: a wake landing
  * mid drive re-asserts the driving request, not the walking one.
  */
-function currentOptions(): Location.LocationTaskOptions | null {
+function currentOptions(watched = watchedNow()): Location.LocationTaskOptions | null {
   const { enabled, mode, policy, driving } = useTrackingStore.getState()
   // Off is derived like every other tier, so a transition that was queued
   // behind the stop lands on nothing rather than re-registering the service.
@@ -1717,10 +1848,10 @@ function currentOptions(): Location.LocationTaskOptions | null {
   if (mode === "stationary") {
     // A phone lying still is as live as a moving one while somebody looks.
     // One fix and then silence reads as a broken connection on Live.
-    return watchedNow() ? liveOptions(Location.Accuracy.High) : restingOptions()
+    return watched ? liveOptions(Location.Accuracy.High) : restingOptions()
   }
   // Somebody is looking. Full accuracy at the live interval for the window.
-  if (watchedNow()) return liveOptions(Location.Accuracy.High)
+  if (watched) return liveOptions(Location.Accuracy.High)
   if (driving) return drivingOptions(driving.distance)
   return updateOptions(policy)
 }
@@ -1920,9 +2051,14 @@ async function applyAndroid(
     if (await locationUpdatesRunning()) {
       await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
     }
-    await native.stopService()
+    // Off is sign-out, a server change or sharing off, and ends a watch too.
+    await native.stopService(true)
     lastServiceStatus = "none"
     return "none"
+  }
+  if (watchedNow() && (await native.answersNatively())) {
+    const status = await applyNativeWatch()
+    if (status !== "refused") return status
   }
   if (options.foregroundService) {
     // A parked phone being watched keeps its resting request under the live
@@ -1957,6 +2093,34 @@ async function applyAndroid(
 }
 
 /**
+ * Somebody is watching and the service answers it itself, with a fix a
+ * second, each sent as it comes, following the server's answers. The tier
+ * underneath goes to the service too, so it steps back to it when the watch
+ * ends, and a parked phone keeps its resting request running under the
+ * watch, as it always has. A start Android refuses falls through to the
+ * old way.
+ */
+async function applyNativeWatch(): Promise<ForegroundServiceStatus> {
+  const { watchedUntil, mode } = useTrackingStore.getState()
+  const seconds = Math.max(1, Math.ceil((Date.parse(watchedUntil!) - Date.now()) / 1000))
+  if (mode === "stationary" && !(await locationUpdatesRunning())) {
+    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, restingOptions())
+  }
+  if (!(await native.watch(seconds))) return "refused"
+  const tier = currentOptions(false)
+  if (tier?.foregroundService) {
+    await native.startService(toServiceRequest(tier))
+    if (await locationUpdatesRunning())
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)
+  } else {
+    await native.stopService()
+  }
+  lastServiceStatus = "running"
+  logTracker("service", { status: "running", live: true, native: true })
+  return "running"
+}
+
+/**
  * What the native receivers act on without this side: sharing on, the tier,
  * and the request to run at a departure. Written at every registration and
  * at every boot, so an install upgraded under a parked phone has it before
@@ -1971,9 +2135,34 @@ async function syncNativeState(): Promise<void> {
       enabled: on,
       mode: on ? mode : "off",
       movingRequest: toServiceRequest(updateOptions(policy)),
+      activity: currentActivity(),
     })
     .catch(() => undefined)
+  await syncUploader()
 }
+
+/**
+ * Where the native side sends, and the session's upload key to send with,
+ * so a wake or a Live request is answered without this side. Only while
+ * sharing is on, and only once the server has handed out a key. An older
+ * server has none, and the phone answers from here as it always did.
+ */
+async function syncUploader(): Promise<void> {
+  if (!androidNative()) return
+  const { enabled, mode } = useTrackingStore.getState()
+  const key = tokenVault.peek()?.uploadKey
+  let url: string | null = null
+  try {
+    url = api.url("/locations/batch")
+  } catch {
+    url = null
+  }
+  if (enabled && mode !== "off" && key && url) await native.setUploader(url, key)
+  else await native.clearUploader()
+}
+
+// A rotation can bring the first key a session has, after an update.
+tokenListeners.add(() => void syncUploader())
 
 /**
  * Android 12 lets a background app start its location service only at a few
@@ -2062,6 +2251,7 @@ export async function enterWatched(
   if (liveInPlace && watchedNow()) {
     store.setWatchedUntil(until)
     armWatchTimer()
+    if (await answeredNatively()) await native.watch(seconds)
     await reassertService({ exempt: push })
     return
   }
@@ -2078,6 +2268,8 @@ export async function enterWatched(
     await wakeFix()
     return
   }
+  // The service sends its first live fix itself, a second or two from now.
+  if (await answeredNatively()) return
   await reportNow(
     "nudge",
     store.mode === "stationary" ? Location.Accuracy.Balanced : Location.Accuracy.High,
@@ -2160,7 +2352,10 @@ async function endWatchIfOver(): Promise<void> {
   await endWatch("over")
 }
 
-async function endWatch(why: "over" | "ended" | "released"): Promise<void> {
+async function endWatch(
+  why: "over" | "ended" | "released",
+  { native: fromNative = false }: { native?: boolean } = {},
+): Promise<void> {
   const store = useTrackingStore.getState()
   liveInPlace = false
   liveTimeouts = 0
@@ -2169,8 +2364,34 @@ async function endWatch(why: "over" | "ended" | "released"): Promise<void> {
   if (watchTimer) clearTimeout(watchTimer)
   watchTimer = null
   logLiveTally()
-  logTracker("watch over", { mode: store.mode, ...(why === "over" ? {} : { why }) })
+  logTracker("watch over", {
+    mode: store.mode,
+    ...(why === "over" ? {} : { why }),
+    ...(fromNative ? { native: true } : {}),
+  })
+  // The service follows the server's answers and its own clock, so only a
+  // viewer leaving is passed on. A timer here running ahead of an answer
+  // not yet drained must not end a watch the server still holds.
+  if (why === "ended" && !fromNative && androidNative()) await native.endWatch()
   if (store.mode !== "off") await applyRegistration()
+}
+
+/** Whether the native side answers a wake or a watch on this phone, with its own upload. */
+export async function answeredNatively(): Promise<boolean> {
+  return androidNative() && (await native.answersNatively())
+}
+
+/**
+ * A wake from a push. The native service has already answered it where it
+ * can, and what it sent is in the queue to learn from. Otherwise the fix
+ * is taken from here.
+ */
+export async function answerWake(): Promise<void> {
+  if (await answeredNatively()) {
+    await processNativeQueue()
+    return
+  }
+  await wakeFix()
 }
 
 /**

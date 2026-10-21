@@ -18,6 +18,7 @@ import org.json.JSONObject
  */
 class HearthTransitionReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
+    HearthDiagnostics.onProcessStart(context)
     if (ActivityTransitionResult.hasResult(intent)) {
       val last = ActivityTransitionResult.extractResult(intent)?.transitionEvents?.lastOrNull() ?: return
       onTransition(context, Departure.activityName(last.activityType))
@@ -64,6 +65,7 @@ class HearthTransitionReceiver : BroadcastReceiver() {
 
 class HearthFenceReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
+    HearthDiagnostics.onProcessStart(context)
     val event = GeofencingEvent.fromIntent(intent) ?: return
     if (event.hasError()) {
       // Location switched off, most often, and Play Services has removed
@@ -108,6 +110,7 @@ class HearthFenceReceiver : BroadcastReceiver() {
  */
 class HearthBootReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
+    HearthDiagnostics.onProcessStart(context)
     val action = intent.action
     if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
     val prefs = TrackerPrefs(context)

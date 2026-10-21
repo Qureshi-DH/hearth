@@ -323,3 +323,38 @@ describe("the admin portal and the app agree on a parked phone", () => {
     expect((await adminSees(admin, user.user.id)).batteryRanOut).toBe(true)
   })
 })
+
+async function toldTheOwner(userId: string) {
+  return (await getDb().execute(
+    sql`select title, body from notification_outbox
+        where user_id = ${userId}::uuid and data->>'type' = 'self_offline'`,
+  )) as unknown as Array<{ title: string; body: string }>
+}
+
+describe("the owner of a phone gone quiet", () => {
+  // Opening Hearth is the one thing that brings back an app the phone has
+  // stopped, and only the person holding it can do that.
+  it("is asked once to open Hearth", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await phone({ minutesAgo: 105 })
+    await wakesSpent(user.user.id, 3, 15)
+
+    await tick()
+    await tick()
+
+    const told = await toldTheOwner(user.user.id)
+    expect(told).toHaveLength(1)
+    expect(told[0]!.title).toBe("Hearth can't reach your phone")
+    expect(told[0]!.body).toBe("Open Hearth so your family keeps seeing where you are.")
+  })
+
+  it("is not asked about a phone whose battery ran out", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await phone({ minutesAgo: 105, battery: 0.03 })
+    await wakesSpent(user.user.id, 3, 15)
+
+    await tick()
+
+    expect(await toldTheOwner(user.user.id)).toHaveLength(0)
+  })
+})

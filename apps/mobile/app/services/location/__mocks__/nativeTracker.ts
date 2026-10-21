@@ -21,7 +21,11 @@ export const fake = {
   refuseFence: false,
   fence: null as { lat: number; lon: number; radius: number } | null,
   state: null as NativeTrackerState | null,
-  fixes: [] as Location.LocationObject[],
+  fixes: [] as (Location.LocationObject & { sent?: boolean })[],
+  /** The upload address and key JavaScript handed over, which is what lets native answer a wake. */
+  uploader: null as { url: string; key: string } | null,
+  /** The seconds of the last watch asked for, while the service holds it. */
+  watching: null as number | null,
   events: [] as NativeEvent[],
   handlers: [] as Array<() => void>,
   startService: jest.fn(),
@@ -29,6 +33,9 @@ export const fake = {
   startBrief: jest.fn(),
   stopBrief: jest.fn(),
   releaseAwake: jest.fn(),
+  watch: jest.fn(),
+  endWatch: jest.fn(),
+  moveTaskToBack: jest.fn(),
   armFence: jest.fn(),
   disarmFence: jest.fn(),
   reset() {
@@ -39,12 +46,17 @@ export const fake = {
     fake.state = null
     fake.fixes = []
     fake.events = []
+    fake.uploader = null
+    fake.watching = null
     // Listeners stay: the tracker adds its one when it loads, for good.
     fake.startService.mockClear()
     fake.stopService.mockClear()
     fake.startBrief.mockClear()
     fake.stopBrief.mockClear()
     fake.releaseAwake.mockClear()
+    fake.watch.mockClear()
+    fake.endWatch.mockClear()
+    fake.moveTaskToBack.mockClear()
     fake.armFence.mockClear()
     fake.disarmFence.mockClear()
   },
@@ -66,9 +78,42 @@ export async function startService(request: ServiceRequest): Promise<ServiceStat
   return "running"
 }
 
-export async function stopService(): Promise<void> {
-  fake.stopService()
+export async function stopService(force = false): Promise<void> {
+  fake.stopService(force)
+  // A watch the service holds outlives the tier, as on the phone.
+  if (fake.watching != null && !force) return
+  fake.watching = null
   fake.status = "none"
+}
+
+export async function watch(seconds: number): Promise<boolean> {
+  fake.watch(seconds)
+  if (fake.refuse) return false
+  fake.watching = seconds
+  fake.status = "running"
+  return true
+}
+
+export async function endWatch(): Promise<void> {
+  fake.endWatch()
+  fake.watching = null
+}
+
+export async function setUploader(url: string, key: string): Promise<void> {
+  fake.uploader = { url, key }
+}
+
+export async function clearUploader(): Promise<void> {
+  fake.uploader = null
+}
+
+export async function answersNatively(): Promise<boolean> {
+  return fake.uploader != null && fake.state?.enabled === true && fake.state.mode !== "off"
+}
+
+export async function moveTaskToBack(): Promise<boolean> {
+  fake.moveTaskToBack()
+  return true
 }
 
 export async function startBrief(): Promise<boolean> {
@@ -110,7 +155,7 @@ export async function setTrackerState(state: NativeTrackerState): Promise<void> 
   fake.state = state
 }
 
-export async function drainFixes(): Promise<Location.LocationObject[]> {
+export async function drainFixes(): Promise<(Location.LocationObject & { sent?: boolean })[]> {
   const drained = fake.fixes
   fake.fixes = []
   return drained

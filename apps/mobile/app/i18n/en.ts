@@ -194,7 +194,7 @@ const en = {
       "Settings > Battery > Background power consumption management > Hearth: allow.\ni Manager > App manager > Autostart manager: turn Hearth on. On some versions it is under Settings > More settings > Applications > Autostart.\nOpen Recents, pull Hearth's card down and tap the lock.",
     samsungTitle: "On Samsung",
     samsungSteps:
-      "Settings > Apps > Hearth > Battery: choose Unrestricted.\nSettings > Battery and device care > Battery > Background usage limits: turn off Put unused apps to sleep, and add Hearth to Never sleeping apps.\nOn the same page check Sleeping apps and Deep sleeping apps, and remove Hearth if it is there.\nSettings > Battery > More battery settings: turn off Adaptive battery if Hearth still stops.",
+      "Settings > Apps > Hearth > Battery: choose Unrestricted.\nSettings > Battery > Background usage limits: add Hearth to Never sleeping apps, take it out of Sleeping apps and Deep sleeping apps, and turn off Put unused apps to sleep.\nSearch Settings for High battery usage restriction and turn it off. While it is on, One UI can freeze Hearth even with everything else allowed.\nCheck these again after a system update, which can put Hearth back to sleep.",
     transsionTitle: "On Infinix, Tecno and itel",
     transsionSteps:
       "Phone Master > Auto-start management: turn Hearth on. Older phones call it Phone Manager.\nPhone Master > Power saving > App battery management: allow Hearth in the background.\nSettings > Apps > Hearth > Battery: choose Unrestricted.\nOpen Recents and tap the lock on Hearth's card.",

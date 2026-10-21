@@ -411,6 +411,20 @@ describe("a location request", () => {
     expect(sent[0]).not.toHaveProperty("ttl")
   })
 
+  // Asking somebody to open Hearth is wrong once their phone is back, and
+  // FCM would otherwise hand it over whenever the phone next comes online.
+  it("lets the ask to open Hearth lapse after an hour", async () => {
+    const driver = stubExpo()
+    await driver.send(target("android"), {
+      userId: "u",
+      title: "Hearth can't reach your phone",
+      body: "Open Hearth so your family keeps seeing where you are.",
+      channel: "alerts",
+      data: { type: "self_offline" },
+    })
+    expect(sent[0]).toMatchObject({ ttl: 3600, title: "Hearth can't reach your phone" })
+  })
+
   it("needs no flag on Android, where the app's task sees every push", async () => {
     const driver = stubExpo()
     await driver.send(target("android"), nudge)

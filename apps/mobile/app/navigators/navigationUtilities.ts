@@ -8,6 +8,7 @@ import {
 
 import Config from "@/config"
 import type { PersistNavigationConfig } from "@/config/config.base"
+import { moveTaskToBack } from "@/services/location/nativeTracker"
 import * as storage from "@/utils/storage"
 import { useIsMounted } from "@/utils/useIsMounted"
 
@@ -57,7 +58,12 @@ export function useBackButtonHandler(canExit: (routeName: string) => boolean) {
       const routeName = getActiveRouteName(rootState)
 
       if (canExitRef.current(routeName)) {
-        BackHandler.exitApp()
+        // Hidden as Home hides it, not ended. Samsung clears a process
+        // whose activity has gone far sooner than one sent to the back,
+        // and a family app that goes with it stops reporting.
+        void moveTaskToBack().then((moved) => {
+          if (!moved) BackHandler.exitApp()
+        })
         return true
       }
 
