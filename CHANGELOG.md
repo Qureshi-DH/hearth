@@ -6,6 +6,14 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-21
+
+Fixes for a parked phone that left home and came back all night, Android
+phones that sent their fixes minutes late and froze Live, and phones signed
+out for retrying a renewal late. Update the server first, which on its own
+stops most of those notifications from phones still on 1.3.0. There are no
+migrations, and older phones keep working against it.
+
 ### Fixed
 
 - A parked phone could send "left Home" and "arrived at Home" all night. Since
@@ -1618,7 +1626,8 @@ security audit and there are no store builds yet.
   trusting the token
 - Push payloads never carry coordinates
 
-[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Qureshi-DH/hearth/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Qureshi-DH/hearth/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Qureshi-DH/hearth/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Qureshi-DH/hearth/compare/v1.0.0...v1.1.0
