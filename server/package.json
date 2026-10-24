@@ -20,7 +20,7 @@
     "lint": "eslint src --max-warnings 0"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1127.0",
+    "@aws-sdk/client-s3": "^3.1154.0",
     "@fastify/cors": "^11.3.1",
     "@fastify/helmet": "^13.1.1",
     "@fastify/jwt": "^10.2.2",
