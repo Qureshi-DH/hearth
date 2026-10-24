@@ -3,6 +3,7 @@ import { detectDriveEvent, IMPACT, type DriveEvent, type DriveSample } from "@he
 
 import { useTrackingStore } from "@/stores/tracking"
 
+import { recentSpeeds } from "./driveSpeeds"
 import { startSensorBatches, stopSensorBatches, type SensorSample } from "./motion"
 
 /**
@@ -158,7 +159,10 @@ function judge(): void {
   verdictTimer = null
   verdictDueAt = null
   const since = firstSpikeAt - VERDICT_CONTEXT_MS
-  const event = detectDriveEvent(liveSamples().filter((sample) => sample.t >= since))
+  const event = detectDriveEvent(
+    liveSamples().filter((sample) => sample.t >= since),
+    recentSpeeds(),
+  )
   const suppressed = event.kind === "possibleImpact" && Date.now() - lastVerdictAt < COOLDOWN_MS
   if (event.kind !== "none" && !suppressed) {
     if (event.kind === "possibleImpact") lastVerdictAt = Date.now()

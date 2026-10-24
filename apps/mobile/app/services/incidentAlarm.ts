@@ -1,6 +1,6 @@
 import { AppState, Platform } from "react-native"
 import * as Notifications from "expo-notifications"
-import type { Circle, DriveEvent } from "@hearth/shared"
+import { IMPACT, type Circle, type DriveEvent, type LocationFixInput } from "@hearth/shared"
 
 import { queryKeys } from "@/hooks/queryKeys"
 import { translate } from "@/i18n/translate"
@@ -26,8 +26,12 @@ import { tokenVault } from "@/stores/tokenVault"
  * the app coming to the front, or the prompt's own tick while it is on screen.
  */
 
-/** Long enough to reach a phone after a shock, short enough to still matter. */
-export const INCIDENT_COUNTDOWN_MS = 30_000
+/**
+ * Long enough to reach a phone after a shock, and to find it in a bag or a
+ * footwell, short enough to still matter. Every alert a family gets for a
+ * phone that was only dropped teaches them to ignore the next one.
+ */
+export const INCIDENT_COUNTDOWN_MS = 60_000
 /**
  * Beyond this the phone can no longer vouch for where the person is. They may
  * have walked away, been driven off, or the process may only now be coming back
@@ -75,8 +79,34 @@ export async function raiseIncident(
   event: Extract<DriveEvent, { kind: "possibleImpact" }>,
 ): Promise<void> {
   useIncidentStore.getState().raise(event, useAuthStore.getState().user?.id ?? null)
-  logTracker("incident", { step: "raised" })
+  // Everything the detector weighed, so an alert nobody believes can be read back.
+  logTracker("incident", {
+    step: "raised",
+    peakG: Number(event.peakDeltaG.toFixed(1)),
+    rotation: Number(event.rotationRps.toFixed(1)),
+    pressure: event.pressureJumpHpa == null ? null : Number(event.pressureJumpHpa.toFixed(2)),
+    speedBefore: Number(event.speedBeforeMps.toFixed(1)),
+    speedAgeS: Math.round(event.speedBeforeAgeMs / 1000),
+    speedDrop: event.speedDropMps == null ? null : Number(event.speedDropMps.toFixed(1)),
+    corroborations: event.corroborations,
+  })
   await checkIncident()
+}
+
+/**
+ * A crashed car does not drive on. A fix at driving speed a few seconds past
+ * the jolt, before anybody was alerted, takes the question back. Once the
+ * alert has gone it stays, and only the person can call it off.
+ */
+const DROVE_ON_AFTER_MS = 5_000
+
+export function noteIncidentFix(fix: LocationFixInput): void {
+  const pending = useIncidentStore.getState().pending
+  if (!pending || pending.escalatedAt != null) return
+  if (fix.speedMps == null || fix.speedMps < IMPACT.droveOnSpeedMps) return
+  if (fix.accuracyMeters != null && fix.accuracyMeters > IMPACT.speedAccuracyMeters) return
+  if (Date.parse(fix.recordedAt) - pending.detectedAt < DROVE_ON_AFTER_MS) return
+  void finish("drove on")
 }
 
 let sending: Promise<void> | null = null

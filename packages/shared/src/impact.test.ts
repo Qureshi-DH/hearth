@@ -319,12 +319,11 @@ describe("detectDriveEvent", () => {
   /* Vibration, for the many seconds when GPS has nothing to say       */
   /* ---------------------------------------------------------------- */
 
-  it("catches a crash with no GPS speed at all, on vibration alone", () => {
-    // Between deferred location batches every sample carries no speed. The car
-    // shaking beforehand and not shaking afterwards is the whole signal.
-    const rng = noise(3)
-    const samples = [
-      ...trace(6, () => ({ accelG: 1 + ROAD_G * rng(), rotationRps: 0.3, pressure: 1013 })),
+  /** A crash with no speed on any sample, as most are between deferred location batches. */
+  const unlabelledCrash = (seed: number, roadG: number): DriveSample[] => {
+    const rng = noise(seed)
+    return [
+      ...trace(6, () => ({ accelG: 1 + roadG * rng(), rotationRps: 0.3, pressure: 1013 })),
       { t: 6000, accelG: 1 + 9.2, rotationRps: 7, pressure: 1014.3 },
       ...trace(0.4, () => ({ accelG: 1 + 1.1, rotationRps: 2.2, pressure: 1014.1 }), 6020),
       ...trace(
@@ -333,9 +332,24 @@ describe("detectDriveEvent", () => {
         6500,
       ),
     ]
-    const event = detectDriveEvent(samples)
+  }
+
+  it("catches a crash whose speed came in a fix that arrived after the samples", () => {
+    const event = detectDriveEvent(unlabelledCrash(3, ROAD_G), [
+      { t: 3000, speedMps: 22, accuracyMeters: 8 },
+    ])
     expect(event.kind).toBe("possibleImpact")
-    if (event.kind === "possibleImpact") expect(event.speedDropMps).toBeNull()
+    if (event.kind === "possibleImpact") {
+      expect(event.speedDropMps).toBeNull()
+      expect(event).toMatchObject({ speedBeforeMps: 22, speedBeforeAgeMs: 3000 })
+    }
+  })
+
+  // The price of never shouting about a phone dropped in a car park. With no
+  // GPS to place the car at speed, the shaking before and the stillness after
+  // are exactly what a phone handled in the hand and then put down produce.
+  it("does not report a crash nothing can place at road speed", () => {
+    expect(detectDriveEvent(unlabelledCrash(3, ROAD_G)).kind).toBe("none")
   })
 
   it("ignores a phone landing in the footwell of a car that is still driving", () => {
@@ -367,18 +381,10 @@ describe("detectDriveEvent", () => {
   })
 
   it("still catches a crash on that smooth motorway, where the car stops shaking", () => {
-    const rng = noise(41)
-    const samples = [
-      ...trace(6, () => ({ accelG: 1 + SMOOTH_ROAD_G * rng(), rotationRps: 0.2, pressure: 1013 })),
-      { t: 6000, accelG: 1 + 9.2, rotationRps: 7, pressure: 1014.3 },
-      ...trace(0.4, () => ({ accelG: 1 + 1.1, rotationRps: 2.2, pressure: 1014.1 }), 6020),
-      ...trace(
-        8,
-        () => ({ accelG: 1 + PARKED_G * rng(), rotationRps: 0.03, pressure: 1014 }),
-        6500,
-      ),
-    ]
-    expect(detectDriveEvent(samples).kind).toBe("possibleImpact")
+    const samples = unlabelledCrash(41, SMOOTH_ROAD_G)
+    expect(detectDriveEvent(samples, [{ t: 4000, speedMps: 30, accuracyMeters: 5 }]).kind).toBe(
+      "possibleImpact",
+    )
   })
 
   it("still catches a crash on a phone that barely felt the road", () => {
@@ -508,5 +514,49 @@ describe("detectDriveEvent", () => {
     expect(detectDriveEvent(crash()).kind).toBe("possibleImpact")
     const disturbed = crash().map((s) => (s.t === 10000 ? { ...s, accelG: 1 + 0.25 } : s))
     expect(detectDriveEvent(disturbed).kind).toBe("possibleImpact")
+  })
+
+  /* ---------------------------------------------------------------- */
+  /* What GPS has to say                                               */
+  /* ---------------------------------------------------------------- */
+
+  /** Handled in the hand, then tossed onto a seat or a bed, where it lies still. */
+  const tossed = (seed: number): DriveSample[] => {
+    const rng = noise(seed)
+    return [
+      ...trace(6, () => ({ accelG: 1 + 0.15 * rng(), rotationRps: 1, pressure: 1013 })),
+      { t: 6000, accelG: 1 + 5, rotationRps: 8, pressure: 1013 },
+      ...trace(9, () => ({ accelG: 1 + 0.01 * rng(), rotationRps: 0.02, pressure: 1013 }), 6020),
+    ]
+  }
+
+  it("ignores a phone tossed onto a seat once the car is parked", () => {
+    // In the hand it shakes like a car under way, it lands hard enough and
+    // tumbles fast enough, and then it lies still. Every test of the shape
+    // passed it, and only GPS can say the car was not moving.
+    expect(detectDriveEvent(tossed(11)).kind).toBe("none")
+    expect(detectDriveEvent(tossed(11), [{ t: -40_000, speedMps: 20 }]).kind).toBe("none")
+  })
+
+  it("ignores a jolt after the car slowed to a crawl, whatever it did before", () => {
+    expect(
+      detectDriveEvent(tossed(13), [
+        { t: -6000, speedMps: 20 },
+        { t: 4000, speedMps: 3 },
+      ]).kind,
+    ).toBe("none")
+  })
+
+  it("ignores a jolt in a car that drives on afterwards", () => {
+    const fixes = [
+      { t: 2000, speedMps: 20 },
+      { t: 11_000, speedMps: 14 },
+    ]
+    expect(detectDriveEvent(unlabelledCrash(17, ROAD_G), fixes).kind).toBe("none")
+  })
+
+  it("does not take a loose fix's speed for road speed", () => {
+    const loose = [{ t: 3000, speedMps: 22, accuracyMeters: 300 }]
+    expect(detectDriveEvent(unlabelledCrash(19, ROAD_G), loose).kind).toBe("none")
   })
 })

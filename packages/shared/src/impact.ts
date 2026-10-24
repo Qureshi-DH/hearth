@@ -10,9 +10,15 @@
  * shout about the many spikes that are not crashes: a phone sliding off a seat,
  * a pothole, a slammed door. So the shape of the whole incident has to fit:
  *
- *   1. the vehicle was travelling before it   (wasMoving)
- *   2. it is not travelling afterwards        (cameToRest)
+ *   1. GPS had the vehicle at road speed just before it   (atSpeed)
+ *   2. it is not travelling afterwards                    (cameToRest)
  *   3. and something other than the spike itself agrees that it was a collision
+ *
+ * The first is GPS or nothing. Vibration was once allowed to stand in for it,
+ * and a phone handled in the hand after a drive shakes like a car under way,
+ * so a phone tossed onto a seat or a bed once the car was parked spiked,
+ * tumbled, lay still and read as a crash. A crash nothing can place at speed
+ * is not reported, and that is the price.
  *
  * The first two are necessary, not corroborating. Both are read from the same
  * fact (whether the car is moving), so counting them separately is how a hard
@@ -45,6 +51,13 @@ export interface DriveSample {
   speedMps?: number | null
 }
 
+/** A GPS speed, from a fix, placed in time. Fixes can arrive after the samples they describe. */
+export interface SpeedReading {
+  t: number
+  speedMps: number
+  accuracyMeters?: number | null
+}
+
 export type DriveEvent =
   | { kind: "none" }
   | { kind: "harshBrake"; at: number; peakDeltaG: number }
@@ -58,6 +71,9 @@ export type DriveEvent =
       speedDropMps: number | null
       /** Signals agreeing beyond "the vehicle stopped". */
       corroborations: number
+      /** The GPS speed that placed the vehicle at road speed, and how long before the peak. */
+      speedBeforeMps: number
+      speedBeforeAgeMs: number
     }
 
 /**
@@ -112,6 +128,21 @@ export const IMPACT = {
   aftermathMs: 2500,
   /** Without a signal beyond the stop, the stop is counted twice. */
   requiredCorroborations: 1,
+  /**
+   * About 30 km/h. Slower than this a collision is a knock, and the jolts that
+   * look like one are a phone being dropped in a car park.
+   */
+  drivingSpeedMps: 8,
+  /** The GPS speed has to be this recent, measured back from the peak. */
+  drivingLookbackMs: 15_000,
+  /**
+   * A fix this fast after the peak is a vehicle that drove on, and a crashed
+   * one does not. Counted from a few seconds on, past the impact itself.
+   */
+  droveOnSpeedMps: 5,
+  droveOnAfterMs: 3000,
+  /** A speed from a fix looser than this is a guess, and a guess cannot vouch for anything. */
+  speedAccuracyMeters: 50,
 } as const
 
 /** Rotation is read from here to just past the peak, never the whole buffer. */
@@ -157,7 +188,10 @@ function jitterG(samples: DriveSample[]): number {
  * asking. That delay is not a cost: nobody should be alerted before we know
  * whether the car carried on driving.
  */
-export function detectDriveEvent(samples: DriveSample[]): DriveEvent {
+export function detectDriveEvent(
+  samples: DriveSample[],
+  readings: SpeedReading[] = [],
+): DriveEvent {
   if (samples.length < 3) return { kind: "none" }
 
   const ordered = [...samples].sort((a, b) => a.t - b.t)
@@ -180,6 +214,23 @@ export function detectDriveEvent(samples: DriveSample[]): DriveEvent {
       ? { kind: "harshBrake", at: peak.t, peakDeltaG }
       : { kind: "none" }
   }
+
+  // GPS has to have the vehicle at road speed just before, and nothing after
+  // may have it driving on. The latest speed counts, so a car that slowed to
+  // a crawl before the jolt is a car that had stopped, whatever it did earlier.
+  const known = [
+    ...ordered.flatMap((s) => (s.speedMps != null ? [{ t: s.t, speedMps: s.speedMps }] : [])),
+    ...readings.filter(
+      (r) => r.accuracyMeters == null || r.accuracyMeters <= IMPACT.speedAccuracyMeters,
+    ),
+  ].sort((a, b) => a.t - b.t)
+  const leadIn = known.filter((r) => r.t <= peak.t && peak.t - r.t <= IMPACT.drivingLookbackMs)
+  const atSpeed = leadIn[leadIn.length - 1]
+  if (!atSpeed || atSpeed.speedMps < IMPACT.drivingSpeedMps) return { kind: "none" }
+  const droveOn = known.some(
+    (r) => r.t - peak.t >= IMPACT.droveOnAfterMs && r.speedMps >= IMPACT.droveOnSpeedMps,
+  )
+  if (droveOn) return { kind: "none" }
 
   // The vibration of the vehicle before the impact, measured clear of the
   // impact itself, is the yardstick everything about the aftermath is read
@@ -215,10 +266,8 @@ export function detectDriveEvent(samples: DriveSample[]): DriveEvent {
 
   // A phone loose enough to spike at impactG is loose enough to tumble, and a
   // tumble spins several times faster than any car, so on a slow vehicle the
-  // rotation channel is the spike itself wearing a second hat. Where the speed
-  // at the impact is unknown this still counts: with GPS silent, refusing it
-  // would leave a barometer-less phone with no way to report a crash at all.
-  const couldHaveSpun = !atImpact || atImpact.speedMps! >= IMPACT.spinSpeedMps
+  // rotation channel is the spike itself wearing a second hat.
+  const couldHaveSpun = (atImpact?.speedMps ?? atSpeed.speedMps) >= IMPACT.spinSpeedMps
 
   const corroborations = [
     couldHaveSpun && rotation >= IMPACT.rotationRps,
@@ -235,6 +284,8 @@ export function detectDriveEvent(samples: DriveSample[]): DriveEvent {
     pressureJumpHpa,
     speedDropMps: speedDrop(before, window),
     corroborations,
+    speedBeforeMps: atSpeed.speedMps,
+    speedBeforeAgeMs: peak.t - atSpeed.t,
   }
 }
 

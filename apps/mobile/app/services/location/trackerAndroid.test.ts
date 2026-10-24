@@ -3,9 +3,12 @@ import type { LocationFixInput } from "@hearth/shared"
 import * as Location from "expo-location"
 
 import { useAuthStore } from "@/stores/auth"
+import { useSettingsStore } from "@/stores/settings"
 import { useTrackingStore } from "@/stores/tracking"
 
+import { startDriveSensors } from "./driveSensors"
 import { clearTrackerLog, readTrackerLog } from "./log"
+import { startMotion } from "./motion"
 import {
   answerWake,
   BACKGROUND_LOCATION_TASK,
@@ -17,6 +20,7 @@ import {
   keepTrackerAwake,
   processNativeQueue,
   reassertService,
+  refreshMotionWatch,
   RESTING_HEARTBEAT_MS,
   runHeadlessTask,
   serviceDiedUnexpectedly,
@@ -786,5 +790,40 @@ describe("a wake or a Live request the service answers itself", () => {
       forceStopped: true,
     })
     expect(log.find((entry) => entry.what === "power")?.detail).toMatchObject({ bucket: "rare" })
+  })
+})
+
+// The sensors that look for a crash sample hard, and in a parked phone's
+// hand every drop looks like one. They come on once the tracker agrees the
+// phone left, never on the classifier's word alone.
+describe("crash sensing", () => {
+  beforeEach(() => {
+    useSettingsStore.getState().setIncidentDetection(true)
+  })
+
+  afterEach(() => {
+    useSettingsStore.getState().setIncidentDetection(false)
+  })
+
+  it("starts once the phone is driving", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    ;(startDriveSensors as jest.Mock).mockClear()
+    fake.events = [{ type: "transition", activity: "automotive", at: Date.now() }]
+    await processNativeQueue()
+    expect(useTrackingStore.getState().mode).toBe("moving")
+    expect(startDriveSensors).toHaveBeenCalled()
+  })
+
+  it("stays off for a parked phone the classifier calls a car", async () => {
+    await enterStationary(HOME.lat, HOME.lon)
+    await refreshMotionWatch()
+    const onVerdict = (startMotion as jest.Mock).mock.calls.at(-1)?.[0] as
+      ((activity: string, confidence: number, source: string) => void) | undefined
+    expect(onVerdict).toBeDefined()
+    ;(startDriveSensors as jest.Mock).mockClear()
+    onVerdict!("automotive", 60, "sample")
+    await jest.advanceTimersByTimeAsync(5_000)
+    expect(useTrackingStore.getState().mode).toBe("stationary")
+    expect(startDriveSensors).not.toHaveBeenCalled()
   })
 })

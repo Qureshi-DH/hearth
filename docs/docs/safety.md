@@ -20,7 +20,7 @@ contact emergency services, and nothing in it is a certified crash sensor.
 This is the whole design, so it goes first.
 
 When the phone thinks it has been in a collision it does not alert anybody. It
-asks, and waits **30 seconds**. With Hearth on screen the question is a
+asks, and waits **60 seconds**. With Hearth on screen the question is a
 full-screen prompt. Otherwise, which after a crash is the usual case, it is a
 loud notification on the lock screen that says what time the alert will go,
 with an **I'm okay** button.
@@ -28,6 +28,10 @@ with an **I'm okay** button.
 - **"I'm okay"** dismisses it. Nothing is sent. Nobody is told anything.
 - **"Alert my circle now"** raises the SOS immediately.
 - **Doing nothing raises the SOS.**
+
+A crashed car does not drive on. If GPS has the car moving again at driving
+speed a few seconds after the jolt, before the alert has gone, the question is
+withdrawn and nobody is told.
 
 That last line is not a bug and it is not a convenience. Somebody hurt badly
 enough not to reach their phone is the exact case this feature exists for. A
@@ -48,9 +52,12 @@ about them.
 So the phone will only report a possible impact when the whole shape of the
 event fits:
 
-1. **The vehicle was moving beforehand.** Read from GPS speed when there is a
-   current fix, and otherwise from the vibration of a car under way, which a
-   parked car does not produce.
+1. **GPS had the vehicle at road speed just before it.** About 30 km/h or
+   more, from a fix in the 15 seconds before the jolt, and the latest such fix
+   counts, so a car that had slowed to a crawl had stopped. Vibration once stood
+   in when GPS had no current fix. A phone handled in the hand after a drive
+   shakes like a car under way, though, so a phone tossed onto a seat or a bed
+   once the car was parked could read as a crash. Now GPS decides.
 2. **There was a jolt far past anything the road produces.**
 3. **The vehicle then stopped, and stayed stopped for several seconds.** Not
    "the phone went still". A phone lying on the floor of a car that is still
@@ -59,6 +66,7 @@ event fits:
    car stopped, its vibration has to drop to half of what it was before the
    jolt or less. A smooth motorway shakes a car less than a stopped one is
    allowed to, so a phone dropped in the footwell there would otherwise pass.
+   And no fix after the jolt may have the car driving on.
 4. **At least one further signal agreed.** Either the phone was spun hard, or
    cabin pressure rose sharply in the second or two after the jolt, which is
    what an airbag inflating does to a closed car.
@@ -75,7 +83,13 @@ The corroborating signals also have to belong to the impact itself, not to the
 same drive. A roundabout eight seconds earlier is a spin, and a hill is a
 pressure change, and neither is allowed to vouch for a pothole.
 
-## The gap this leaves
+## The gaps this leaves
+
+**A collision GPS cannot place at road speed is not reported.** One below about
+30 km/h, or one in a tunnel or anywhere else GPS had no fix in the 15 seconds
+before, says nothing to the detector. The alternative was letting vibration
+vouch for the speed, and that is what alerted families over phones dropped in
+parked cars.
 
 **A collision with neither rotation nor a pressure rise, on a phone with no
 barometer, is not reported.**
@@ -129,9 +143,11 @@ The phone mirrors one question locally: does any circle I belong to have this
 on? If the answer is no, the sensors are never subscribed to.
 
 Crash detection only runs while the operating system's own motion classifier
-says you are in a vehicle. Parked or walking, none of it runs, which is both a
-battery decision and an honesty one: a violent spike while somebody is walking
-is a dropped phone, not a crash, and reading it as one would be guessing.
+says you are in a vehicle and the tracker agrees the phone has left where it
+was parked. Parked or walking, none of it runs, which is both a battery
+decision and an honesty one. A violent spike while somebody is walking is a
+dropped phone, not a crash, and a classifier that calls a parked phone a car is
+no reason to start listening for one.
 
 That classifier runs whenever location sharing does, because the location
 side needs it to let the GPS sleep. Turning on incident alerts for a circle

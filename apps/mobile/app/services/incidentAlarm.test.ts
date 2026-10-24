@@ -8,12 +8,14 @@ import { useIncidentStore } from "@/stores/incident"
 import { useSettingsStore } from "@/stores/settings"
 
 import {
+  INCIDENT_COUNTDOWN_MS,
   INCIDENT_NOTIFICATION_ID,
   INCIDENT_OK_ACTION,
   answerIncidentResponse,
   checkIncident,
   dismissIncident,
   escalateIncident,
+  noteIncidentFix,
   raiseIncident,
 } from "./incidentAlarm"
 
@@ -67,6 +69,8 @@ const impact = (at = Date.now()): Extract<DriveEvent, { kind: "possibleImpact" }
   pressureJumpHpa: null,
   speedDropMps: null,
   corroborations: 2,
+  speedBeforeMps: 20,
+  speedBeforeAgeMs: 2000,
 })
 
 /** Moves the wall clock without running a single timer, as a locked phone does. */
@@ -138,7 +142,7 @@ describe("raising an incident", () => {
     expect(request.content.categoryIdentifier).toBeDefined()
     expect(request.content.interruptionLevel).toBe("timeSensitive")
     expect(request.content.priority).toBe("max")
-    const deadline = new Date(START + 30_000).toLocaleTimeString(undefined, {
+    const deadline = new Date(START + INCIDENT_COUNTDOWN_MS).toLocaleTimeString(undefined, {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
@@ -166,7 +170,7 @@ describe("raising an incident", () => {
 describe("escalating on the wall clock", () => {
   it("sends the alert at the first moment the app runs after the countdown, with no timer", async () => {
     await raiseIncident(impact())
-    later(40_000)
+    later(INCIDENT_COUNTDOWN_MS + 10_000)
     await checkIncident()
     await settle()
 
@@ -182,7 +186,7 @@ describe("escalating on the wall clock", () => {
 
   it("reports once more once it has gone, so the upload reply puts the phone on Live", async () => {
     await raiseIncident(impact())
-    later(40_000)
+    later(INCIDENT_COUNTDOWN_MS + 10_000)
     await checkIncident()
     await settle()
 
@@ -204,7 +208,7 @@ describe("escalating on the wall clock", () => {
   it("keeps an alert that found no signal, and sends it when the connection is back", async () => {
     mockRaiseSos.mockRejectedValueOnce(new ApiError(0, "network_error", "offline"))
     await raiseIncident(impact())
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     await checkIncident()
     await settle()
 
@@ -234,7 +238,7 @@ describe("escalating on the wall clock", () => {
     // would be a POST a second into a firewall that blocks on a 4xx.
     mockRaiseSos.mockRejectedValueOnce(new ApiError(429, "rate_limited", "Slow down"))
     await raiseIncident(impact())
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     await checkIncident()
     await settle()
     for (let i = 0; i < 5; i += 1) {
@@ -253,7 +257,7 @@ describe("escalating on the wall clock", () => {
   it("puts its notice back after a restart, since a reboot clears notifications", async () => {
     mockRaiseSos.mockRejectedValueOnce(new ApiError(0, "network_error", "offline"))
     await raiseIncident(impact())
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     await checkIncident()
     await settle()
     mockSchedule.mockClear()
@@ -270,7 +274,7 @@ describe("escalating on the wall clock", () => {
   it("tries again on its own once enough time has passed", async () => {
     mockRaiseSos.mockRejectedValueOnce(new ApiError(503, "unavailable", "deploying"))
     await raiseIncident(impact())
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     await checkIncident()
     await settle()
     later(60_000)
@@ -284,7 +288,7 @@ describe("escalating on the wall clock", () => {
   it("survives a restart halfway, because the decision is in the store", async () => {
     mockRaiseSos.mockRejectedValueOnce(new ApiError(0, "network_error", "offline"))
     await raiseIncident(impact())
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     await checkIncident()
     await settle()
     const saved = useIncidentStore.getState().pending
@@ -327,7 +331,7 @@ describe("escalating on the wall clock", () => {
   it("never asks the server anything without a session", async () => {
     mockTokens = null
     await raiseIncident(impact())
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     await checkIncident({ online: true })
     await settle()
 
@@ -338,7 +342,7 @@ describe("escalating on the wall clock", () => {
   it("goes with the session, notification and all, since nothing could send it", async () => {
     mockRaiseSos.mockRejectedValueOnce(new ApiError(0, "network_error", "offline"))
     await raiseIncident(impact())
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     await checkIncident()
     await settle()
     mockDismiss.mockClear()
@@ -353,7 +357,7 @@ describe("escalating on the wall clock", () => {
   it("does not send one account's incident for the next one to sign in", async () => {
     await raiseIncident(impact())
     useAuthStore.setState({ user: { id: "someone-else" } as never })
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     await checkIncident()
     await settle()
 
@@ -366,7 +370,7 @@ describe("which circle it goes through", () => {
   it("picks a circle that turned incident alerts on, over the one on screen", async () => {
     queryClient.setQueryData(queryKeys.circles, [circle("c1", false), circle("c2", true)])
     await raiseIncident(impact())
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     await checkIncident()
     await settle()
 
@@ -377,7 +381,7 @@ describe("which circle it goes through", () => {
   it("asks the server for the circles when nothing has loaded them", async () => {
     mockCircles.mockResolvedValue([circle("c3", true)])
     await raiseIncident(impact())
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     await checkIncident()
     await settle()
 
@@ -388,7 +392,7 @@ describe("which circle it goes through", () => {
     const lookup = deferred<Circle[]>()
     mockCircles.mockReturnValue(lookup.promise)
     await raiseIncident(impact())
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     const sending = checkIncident()
     await settle()
 
@@ -403,7 +407,7 @@ describe("which circle it goes through", () => {
   it("gives up on a refusal rather than asking again into a firewall", async () => {
     mockRaiseSos.mockRejectedValue(new ApiError(403, "forbidden", "No."))
     await raiseIncident(impact())
-    later(31_000)
+    later(INCIDENT_COUNTDOWN_MS + 1_000)
     await checkIncident()
     await settle()
     later(5 * 60_000)
@@ -420,7 +424,7 @@ describe("answering", () => {
   it("cancels it from the notification's I'm okay, without the app", async () => {
     await raiseIncident(impact())
     const handled = await answerIncidentResponse(okFor())
-    later(40_000)
+    later(INCIDENT_COUNTDOWN_MS + 10_000)
     await checkIncident()
     await settle()
 
@@ -473,5 +477,50 @@ describe("answering", () => {
 
     expect(useIncidentStore.getState().pending).toBeNull()
     expect(mockDismiss).toHaveBeenCalledWith(INCIDENT_NOTIFICATION_ID)
+  })
+})
+
+// A crashed car does not drive on, and a phone dropped in the footwell of
+// one that does is the commonest jolt there is.
+describe("a car that drives on", () => {
+  const fix = (msAfterJolt: number, speedMps: number, accuracyMeters = 8) => ({
+    recordedAt: new Date(START + msAfterJolt).toISOString(),
+    lat: 51.45,
+    lon: -2.58,
+    speedMps,
+    accuracyMeters,
+  })
+
+  it("takes the question back before anybody is alerted", async () => {
+    await raiseIncident(impact(START))
+    noteIncidentFix(fix(12_000, 14))
+    await settle()
+    later(INCIDENT_COUNTDOWN_MS + 10_000)
+    await checkIncident()
+    await settle()
+
+    expect(useIncidentStore.getState().pending).toBeNull()
+    expect(mockDismiss).toHaveBeenCalledWith(INCIDENT_NOTIFICATION_ID)
+    expect(mockRaiseSos).not.toHaveBeenCalled()
+  })
+
+  it("is not read from the jolt itself, a crawl, or a fix too loose to trust", async () => {
+    await raiseIncident(impact(START))
+    noteIncidentFix(fix(1_000, 20))
+    noteIncidentFix(fix(12_000, 2))
+    noteIncidentFix(fix(12_000, 20, 400))
+    await settle()
+
+    expect(useIncidentStore.getState().pending).not.toBeNull()
+  })
+
+  it("does not call off an alert that has already gone", async () => {
+    await raiseIncident(impact(START))
+    later(INCIDENT_COUNTDOWN_MS + 10_000)
+    useIncidentStore.getState().update({ escalatedAt: Date.now(), failure: "network" })
+    noteIncidentFix(fix(INCIDENT_COUNTDOWN_MS + 20_000, 14))
+    await settle()
+
+    expect(useIncidentStore.getState().pending).not.toBeNull()
   })
 })

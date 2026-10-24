@@ -6,6 +6,18 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Fixed
+
+- Crash detection could raise an SOS over a phone dropped or tossed once the
+  car was parked. With no GPS speed to hand, a phone handled in the hand
+  shook like a car under way, so one that landed hard, tumbled and lay still
+  read as a crash. A possible crash now needs GPS to have had the car at about
+  30 km/h or more in the 15 seconds before the jolt, and nothing after it
+  driving on. A countdown already running is withdrawn when the car drives on,
+  the sensors start only once the tracker agrees the phone has left, and the
+  phone waits 60 seconds for an answer instead of 30. Every possible crash goes
+  in the tracker log with the numbers that decided it.
+
 ## [1.3.2] - 2026-10-22
 
 Android phones answer a wake and a Live request from the location service

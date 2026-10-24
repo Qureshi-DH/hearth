@@ -6,6 +6,7 @@ import {
   startDriveSensors,
   stopDriveSensors,
 } from "./driveSensors"
+import { noteDriveFix } from "./driveSpeeds"
 
 /** Held outside the factory so the test can drive the sensor by hand. */
 type Vector = { x: number; y: number; z: number }
@@ -47,9 +48,22 @@ const push = (g: number) => mockState.accel?.({ x: 0, y: 0, z: g })
 const spin = (rps: number) => mockState.gyro?.({ x: 0, y: 0, z: rps })
 const baro = (hPa: number) => mockState.baro?.({ pressure: hPa })
 
-/** Feeds `seconds` of samples, advancing the clock as it goes. */
-function drive(seconds: number, g: () => number) {
+/**
+ * Feeds `seconds` of samples, advancing the clock as it goes. A drive at
+ * speed also brings the GPS fix a second a real one does, which is what lets
+ * the detector place the car at road speed.
+ */
+function drive(seconds: number, g: () => number, speedMps?: number) {
   for (let elapsed = 0; elapsed < seconds * 1000; elapsed += STEP_MS) {
+    if (speedMps != null && elapsed % 1000 === 0) {
+      noteDriveFix({
+        recordedAt: new Date().toISOString(),
+        lat: 0,
+        lon: 0,
+        speedMps,
+        accuracyMeters: 8,
+      })
+    }
     push(g())
     jest.advanceTimersByTime(STEP_MS)
   }
@@ -115,7 +129,7 @@ describe("drive sensor lifecycle", () => {
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))
 
-    drive(6, road)
+    drive(6, road, 20)
     // The car yaws and the phone tumbles: the signal that says collision
     // rather than something heavy landing in the footwell.
     spin(7)
@@ -139,7 +153,7 @@ describe("drive sensor lifecycle", () => {
 
     // Several windows worth of driving, so the samples the verdict is read from
     // have been through the compaction the buffer does as it rolls.
-    drive(90, road)
+    drive(90, road, 20)
     spin(7)
     push(1 + 9.2)
     jest.advanceTimersByTime(STEP_MS)
@@ -172,7 +186,7 @@ describe("drive sensor lifecycle", () => {
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))
 
-    drive(6, road)
+    drive(6, road, 20)
     spin(7)
     push(1 + 9.2)
     jest.advanceTimersByTime(STEP_MS)
@@ -201,6 +215,13 @@ describe("drive sensor lifecycle", () => {
       }
     }
 
+    noteDriveFix({
+      recordedAt: new Date().toISOString(),
+      lat: 0,
+      lon: 0,
+      speedMps: 20,
+      accuracyMeters: 8,
+    })
     frozen(6, road)
     spin(7)
     push(1 + 9.2)
@@ -216,7 +237,7 @@ describe("drive sensor lifecycle", () => {
     await startDriveSensors((event) => events.push(event.kind))
 
     spin(0.3)
-    drive(10, road)
+    drive(10, road, 20)
     jest.advanceTimersByTime(IMPACT.aftermathMs + IMPACT.stillnessMs + 1000)
 
     expect(events).toEqual([])
@@ -228,13 +249,13 @@ describe("drive sensor lifecycle", () => {
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))
 
-    drive(6, road)
+    drive(6, road, 20)
     // First contact. Hard enough to start the verdict clock, and not the impact
     // that matters: the car carries on into a barrier a second and a half later.
     spin(2)
     push(1 + 3.5)
     jest.advanceTimersByTime(STEP_MS)
-    drive(1.5, road)
+    drive(1.5, road, 20)
     spin(7)
     push(1 + 9.2)
     jest.advanceTimersByTime(STEP_MS)
@@ -249,13 +270,13 @@ describe("drive sensor lifecycle", () => {
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))
 
-    drive(2, road)
+    drive(2, road, 20)
     // A phone thrown off the seat. Violent, but the car drives on, so the
     // verdict it schedules rightly finds nothing.
     spin(0.4)
     push(1 + 8)
     jest.advanceTimersByTime(STEP_MS)
-    drive(10, road)
+    drive(10, road, 20)
 
     // Ten seconds later, a real collision. Smaller at the sensor than the phone
     // that was thrown, because the phone was in free fall and the car was not.
@@ -273,7 +294,7 @@ describe("drive sensor lifecycle", () => {
     const events: string[] = []
     await startDriveSensors((event) => events.push(event.kind))
 
-    drive(6, road)
+    drive(6, road, 20)
     spin(7)
     push(1 + 9.2)
     jest.advanceTimersByTime(STEP_MS)
@@ -305,7 +326,7 @@ describe("drive sensor lifecycle", () => {
     // A frontal impact into something solid. Nothing spins, so the pressure the
     // airbag puts into the cabin is the only thing that can corroborate it.
     spin(0.4)
-    drive(6, road)
+    drive(6, road, 20)
     push(1 + 9.2)
     jest.advanceTimersByTime(STEP_MS)
     drive(0.9, parked)

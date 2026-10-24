@@ -13,7 +13,7 @@ import {
 
 import { ApiError, api, endpoints } from "@/services/api"
 import { tokenListeners } from "@/services/api/tokenListeners"
-import { checkIncident, raiseIncident } from "@/services/incidentAlarm"
+import { checkIncident, noteIncidentFix, raiseIncident } from "@/services/incidentAlarm"
 import { useAuthStore } from "@/stores/auth"
 import {
   startMotion,
@@ -22,6 +22,7 @@ import {
   type MotionSource,
 } from "@/services/location/motion"
 import { startDriveSensors, stopDriveSensors } from "@/services/location/driveSensors"
+import { noteDriveFix } from "@/services/location/driveSpeeds"
 import { useSettingsStore } from "@/stores/settings"
 import { tokenVault } from "@/stores/tokenVault"
 import { control, setControlHandler } from "@/services/location/control"
@@ -590,6 +591,12 @@ export async function ingest(
   )
   const newest = all[all.length - 1]!
   if (source === "background" || source === "significant") rememberFixes(all)
+  // Whenever they arrive. The crash check reads the speed either side of a
+  // jolt, and a crashed car does not drive on.
+  for (const fix of all) {
+    noteDriveFix(fix)
+    noteIncidentFix(fix)
+  }
   const live = watchedNow()
   if (sent) {
     // The native side sent these already, answering a wake or a watch. They
@@ -2487,15 +2494,10 @@ async function onMotion(
 
   // Impact sensing is only worth its battery inside a vehicle, and only there
   // can its signals be read honestly: a spike while walking is a dropped
-  // phone. A single "still" at the lights is not the end of the drive.
-  if (activity === "automotive" && useSettingsStore.getState().incidentDetection) {
-    void startDriveSensors((event) => {
-      // Harsh braking is a driving quality signal with nowhere to go yet, so
-      // only a possible impact is acted on.
-      if (event.kind !== "possibleImpact") return
-      void raiseIncident(event)
-    })
-  } else if (activity !== "unknown" && activity !== "still") {
+  // phone. A single "still" at the lights is not the end of the drive. It
+  // starts below, once the tracker agrees the phone has left, since a parked
+  // phone's stray "automotive" is not a drive.
+  if (activity !== "automotive" && activity !== "unknown" && activity !== "still") {
     stopDriveSensors()
   }
 
@@ -2517,6 +2519,14 @@ async function onMotion(
       await enterMoving()
     }
     await enterDriving(store.lastFix?.speedMps ?? null)
+    if (useSettingsStore.getState().incidentDetection) {
+      void startDriveSensors((event) => {
+        // Harsh braking is a driving quality signal with nowhere to go yet,
+        // so only a possible impact is acted on.
+        if (event.kind !== "possibleImpact") return
+        void raiseIncident(event)
+      })
+    }
     return
   }
 
