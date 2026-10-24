@@ -426,13 +426,14 @@ native Kotlin in `modules/hearth-motion/android`:
   service already in the foreground goes by a plain `startService`, which
   needs no exemption.
 - `NativeUploader` sends the service's fixes, a tier's as well as the ones
-  that answer a wake or a watch, from the service, with the session's upload key (`uploadKey`, which the server hands
-  an Android session with its tokens and the tracker passes down in
-  `syncUploader`). A fix waits in its own file until the server has it, then
-  goes on the queue marked `sent`, so `ingest` learns from it and sends nothing
-  again. One that cannot be sent, because the key was refused or the service
-  is going, goes on the queue unmarked and JavaScript sends it. The server's
-  answer comes back as an `uploaded` event and moves the watch.
+  that answer a wake or a watch, from the service, with the session's upload
+  key (`uploadKey`, which the server hands an Android session with its tokens
+  and the tracker passes down in `syncUploader`). A fix waits in its own file
+  until the server has it, then goes on the queue marked `sent`, so `ingest`
+  learns from it and sends nothing again. One that cannot be sent, because the
+  key was refused or the service is going, goes on the queue unmarked and
+  JavaScript sends it. The server's answer comes back as an `uploaded` event
+  and moves the watch.
 - `HearthDiagnostics` puts what the phone says about Hearth in the log, once
   per process: the last exits from `ApplicationExitInfo`, whether the app was
   force stopped (`ApplicationStartInfo`, Android 15 and later), the standby
