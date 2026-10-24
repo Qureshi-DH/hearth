@@ -6,6 +6,12 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-10-24
+
+Crash detection that no longer raises an SOS over a phone dropped or tossed in
+a parked car. The server changes only in its dependencies and there are no
+migrations, so the server and the phones can be updated in either order.
+
 ### Fixed
 
 - Crash detection could raise an SOS over a phone dropped or tossed once the
@@ -1687,7 +1693,8 @@ security audit and there are no store builds yet.
   trusting the token
 - Push payloads never carry coordinates
 
-[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/Qureshi-DH/hearth/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/Qureshi-DH/hearth/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Qureshi-DH/hearth/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Qureshi-DH/hearth/compare/v1.2.0...v1.3.0

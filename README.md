@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img alt="Version 1.3.2" src="https://img.shields.io/badge/version-1.3.2-F5643A"></a>
+  <a href="CHANGELOG.md"><img alt="Version 1.3.3" src="https://img.shields.io/badge/version-1.3.3-F5643A"></a>
   <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
   <a href="https://github.com/Qureshi-DH/hearth/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Qureshi-DH/hearth/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <img alt="Expo SDK 55" src="https://img.shields.io/badge/Expo-SDK%2055-000020?logo=expo">
