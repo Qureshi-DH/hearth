@@ -421,6 +421,7 @@ export async function registerWebsocket(app: FastifyInstance): Promise<void> {
               type: "control",
               command,
               ...(typeof payload.seconds === "number" ? { seconds: payload.seconds } : {}),
+              ...(payload.ping === true ? { ping: true } : {}),
               ...(typeof payload.ask === "string" ? { ask: payload.ask } : {}),
             })
             break

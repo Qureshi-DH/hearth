@@ -6,6 +6,21 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Changed
+
+- The interval a circle sets is now how often the server asks each phone
+  where it is: every 2, 5 or 10 minutes from the app, never more often than
+  every 2 minutes or less often than every 10, whatever a circle says. A
+  circle still set to the old half minute or minute moves to 5 minutes with
+  the migration, and an older app that sends half a minute has it raised to
+  2 rather than refused. A phone whose last fix had it on the move is asked
+  a little sooner, every 2 minutes unless `PING_MOVING_INTERVAL_SECONDS`
+  says otherwise.
+- A phone that goes on not answering is asked every half hour once an hour
+  of pings has gone by, and every three hours after a day, so a phone that
+  was only flat comes back. "Stopped reporting" still waits for the same
+  silence as before, and for two pings to go unanswered besides the newest.
+
 ## [1.3.3] - 2026-10-24
 
 Crash detection that no longer raises an SOS over a phone dropped or tossed in

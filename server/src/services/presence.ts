@@ -189,8 +189,9 @@ export function presenceIssues(
 
 /**
  * Whether the circle sees the member's position as out of date. A phone that
- * said it parked speaks on its heartbeat, not its interval. The admin portal
- * goes by the same rule wherever it says something only a stale phone earns.
+ * said it was still is given longer, since iOS answers its pings only when
+ * it lets it. The admin portal goes by the same rule wherever it says
+ * something only a stale phone earns.
  */
 export function presenceStale(
   recordedAt: Date | null,

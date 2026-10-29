@@ -193,7 +193,8 @@ export const QUICK_MESSAGE_KEYS = QUICK_MESSAGES.map((message) => message.key) a
 /** Most of these are overridable per circle or via env. */
 export const DEFAULTS = {
   historyRetentionDays: 30,
-  minUpdateIntervalSeconds: 30,
+  /** How often the server asks a phone where it is, outside Live. */
+  minUpdateIntervalSeconds: 300,
   distanceFilterMeters: 60,
   staleAfterSeconds: 15 * 60,
   /** How often a parked phone says it is still there. */

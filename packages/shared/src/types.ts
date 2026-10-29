@@ -776,6 +776,8 @@ export type WsServerMessage =
       type: "control"
       command: "ready" | "watch" | "wake"
       seconds?: number
+      /** A `wake` that is the server's scheduled ping rather than somebody asking. */
+      ping?: boolean
       ask?: string
     }
   | { type: "pong"; serverTime: string }

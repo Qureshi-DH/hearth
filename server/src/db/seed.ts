@@ -174,7 +174,7 @@ async function main() {
       createdBy: owner.id,
       settings: {
         historyRetentionDays: 30,
-        minUpdateIntervalSeconds: 30,
+        minUpdateIntervalSeconds: 300,
         distanceFilterMeters: 60,
         lowBatteryThreshold: 0.15,
         allowSharingPause: true,

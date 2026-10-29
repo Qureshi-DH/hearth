@@ -16,6 +16,7 @@ import { circleMembers, circles, locationPoints, sessions, trips, userPresence }
 import { AppError, badRequest, forbidden } from "../lib/errors"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { getPushDriver } from "../runtime"
+import { pingIntervalSeconds } from "../services/reporting"
 import { ingestPoints, markHeard } from "../services/locations"
 import {
   effectiveSharingState,
@@ -140,9 +141,8 @@ export const locationRoutes: FastifyPluginAsyncZod = async (app) => {
         .innerJoin(circles, eq(circles.id, circleMembers.circleId))
         .where(eq(circleMembers.userId, auth.userId))
 
-      const minInterval = policyRows.length
-        ? Math.min(...policyRows.map((row) => row.settings.minUpdateIntervalSeconds))
-        : DEFAULTS.minUpdateIntervalSeconds
+      // What the server pings on, which the app's own foreground check follows.
+      const minInterval = pingIntervalSeconds(policyRows.map((row) => row.settings))
       const distanceFilter = policyRows.length
         ? Math.min(...policyRows.map((row) => row.settings.distanceFilterMeters))
         : DEFAULTS.distanceFilterMeters

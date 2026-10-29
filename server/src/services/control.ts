@@ -41,7 +41,8 @@ export const CONTROL_ANSWER_GRACE_MS = 20 * 1000
  */
 export const CONTROL_ACK_MS = 3_000
 
-export type ControlCommand = { command: "watch"; seconds: number } | { command: "wake" }
+export type ControlCommand =
+  { command: "watch"; seconds: number } | { command: "wake"; ping?: boolean }
 
 export async function markControlSeen(db: Database, userId: string): Promise<void> {
   const now = new Date()

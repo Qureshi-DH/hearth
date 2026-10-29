@@ -27,6 +27,7 @@ import { userTopic } from "../lib/bus"
 import { toPublicUser } from "../lib/serialize"
 import { requireAuth, requireMembership } from "../plugins/auth"
 import { getBus } from "../runtime"
+import { PING_MAX_INTERVAL_MS, PING_MIN_INTERVAL_MS } from "../services/reporting"
 import { endWatches, watchesInvolving, watchesThrough } from "../services/watch"
 import { recordEvent } from "../services/feed"
 import { outingGroup } from "../services/notification-groups"
@@ -52,7 +53,19 @@ const defaultSettings = (): CircleSettingsJson => ({
 
 const settingsSchema = z.object({
   historyRetentionDays: z.number().int().min(0).max(3650).optional(),
-  minUpdateIntervalSeconds: z.number().int().min(10).max(3600).optional(),
+  // An app from before the ping still offers half a minute, or an hour, and
+  // a refusal is a 4xx a firewall in front of the server may answer by
+  // locking the phone out. It is taken and brought within what the ping runs
+  // on instead.
+  minUpdateIntervalSeconds: z
+    .number()
+    .int()
+    .min(10)
+    .max(3600)
+    .transform((seconds) =>
+      Math.min(PING_MAX_INTERVAL_MS / 1000, Math.max(seconds, PING_MIN_INTERVAL_MS / 1000)),
+    )
+    .optional(),
   distanceFilterMeters: z.number().int().min(0).max(5000).optional(),
   lowBatteryThreshold: z.number().min(0.01).max(0.9).optional(),
   allowSharingPause: z.boolean().optional(),

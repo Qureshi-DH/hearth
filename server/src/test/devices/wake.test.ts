@@ -134,16 +134,21 @@ describe("waking a quiet phone", () => {
     expect(await offlineEvents(user.user.id)).toBe(0)
   })
 
-  it("leaves a phone alone that reported five minutes ago", async () => {
+  it("leaves a phone alone that reported within its interval", async () => {
     setRuntime({ pushDriver: new ExpoLikeDriver() })
-    await phoneLastHeard(5 * 60)
+    await phoneLastHeard(4 * 60)
     const report = await tick()
     expect(report.phonesWoken).toBe(0)
   })
 
-  it("flags the phone offline only after two wakes went unanswered", async () => {
+  it("flags the phone offline only after two asks went unanswered, not counting the newest", async () => {
     setRuntime({ pushDriver: new ExpoLikeDriver() })
     const user = await phoneLastHeard(70 * 60)
+    const anIntervalOn = () =>
+      getDb().execute(
+        sql`update user_presence set wake_requested_at = now() - interval '6 minutes'
+            where user_id = ${user.user.id}::uuid`,
+      )
 
     // Quiet well past the hour, but never asked: the first sweep asks.
     const first = await tick()
@@ -154,20 +159,16 @@ describe("waking a quiet phone", () => {
     const second = await tick()
     expect(second.offlineFlagged).toBe(0)
 
-    // One lost push is one lost push. Ten minutes on it is asked again.
-    await getDb().execute(
-      sql`update user_presence set wake_requested_at = now() - interval '11 minutes'
-          where user_id = ${user.user.id}::uuid`,
-    )
+    // One lost push is one lost push. An interval on it is asked again, and
+    // the ask that just went out has had no time at all.
+    await anIntervalOn()
     const third = await tick()
     expect(third.phonesWoken).toBe(1)
     expect(third.offlineFlagged).toBe(0)
 
-    await getDb().execute(
-      sql`update user_presence set wake_requested_at = now() - interval '11 minutes'
-          where user_id = ${user.user.id}::uuid`,
-    )
+    await anIntervalOn()
     const fourth = await tick()
+    expect(fourth.phonesWoken).toBe(1)
     expect(fourth.offlineFlagged).toBe(1)
     expect(await offlineEvents(user.user.id)).toBe(1)
   })
@@ -358,13 +359,14 @@ describe("a parked phone", () => {
 })
 
 describe("how often a phone is asked", () => {
-  it("asks by what the phone was doing, not by what it runs", async () => {
+  it("asks every phone on the same beat, whatever it was doing or runs", async () => {
     setRuntime({ pushDriver: new ExpoLikeDriver() })
-    await phoneLastHeard(20 * 60, { platform: "android", activity: "driving" })
-    await phoneLastHeard(20 * 60, { platform: "ios", activity: "driving" })
-    await phoneLastHeard(20 * 60, { platform: "android", activity: "still" })
+    await phoneLastHeard(6 * 60, { platform: "android", activity: "driving" })
+    await phoneLastHeard(6 * 60, { platform: "ios", activity: "driving" })
+    await phoneLastHeard(6 * 60, { platform: "android", activity: "still" })
+    await phoneLastHeard(6 * 60, { platform: "ios", activity: "still" })
     const report = await tick()
-    expect(report.phonesWoken).toBe(2)
+    expect(report.phonesWoken).toBe(4)
   })
 })
 

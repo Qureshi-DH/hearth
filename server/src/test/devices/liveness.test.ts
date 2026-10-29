@@ -6,6 +6,7 @@ import { getConfig } from "../../env"
 import { runJobs } from "../../jobs/scheduler"
 import { getPushDriver, setRuntime } from "../../runtime"
 import type { DeliveryResult, DeliveryTarget, PushDriver, PushMessage } from "../../services/push"
+import { PING_BACKOFF_AFTER, PING_SLOW_AFTER } from "../../services/reporting"
 import { registerUser, startTestApp, type TestContext } from "../helpers"
 
 /**
@@ -104,7 +105,7 @@ async function presenceRow(userId: string) {
 async function quietFor(userId: string, minutes: number) {
   await getDb().execute(
     sql`update user_presence
-        set last_heard_at = now() - make_interval(mins => ${minutes})
+        set last_heard_at = now() - make_interval(secs => ${minutes * 60})
         where user_id = ${userId}::uuid`,
   )
 }
@@ -112,7 +113,22 @@ async function quietFor(userId: string, minutes: number) {
 async function ageLastWake(userId: string, minutes: number) {
   await getDb().execute(
     sql`update user_presence
-        set wake_requested_at = now() - make_interval(mins => ${minutes})
+        set wake_requested_at = now() - make_interval(secs => ${minutes * 60})
+        where user_id = ${userId}::uuid`,
+  )
+}
+
+async function setIntervals(userId: string, seconds: number) {
+  await getDb().execute(
+    sql`update circles set settings = settings || jsonb_build_object('minUpdateIntervalSeconds', ${seconds}::int)
+        where id in (select circle_id from circle_members where user_id = ${userId}::uuid)`,
+  )
+}
+
+async function setWakes(userId: string, count: number, minutesAgo: number) {
+  await getDb().execute(
+    sql`update user_presence
+        set wake_count = ${count}, wake_requested_at = now() - make_interval(mins => ${minutesAgo}::int)
         where user_id = ${userId}::uuid`,
   )
 }
@@ -328,7 +344,7 @@ describe("parked is judged from what the server knows", () => {
 })
 
 describe("a phone that can be woken is asked twice before it is called offline", () => {
-  it("wakes at ten minutes, again ten minutes later, and only then gives up", async () => {
+  it("asks, and asks again, and gives up only once two asks before the newest went unanswered", async () => {
     const driver = new ExpoLikeDriver()
     setRuntime({ pushDriver: driver })
     const user = await quietDriver(70)
@@ -340,49 +356,182 @@ describe("a phone that can be woken is asked twice before it is called offline",
     expect((await presenceRow(user.user.id)).wakeCount).toBe(1)
 
     // Moments later the phone still has time to answer, so neither a second
-    // wake nor a verdict.
+    // ask nor a verdict.
     const second = await tick()
     expect(second.phonesWoken).toBe(0)
     expect(second.offlineFlagged).toBe(0)
 
-    await ageLastWake(user.user.id, 11)
+    // An interval on, the second goes out. The first has had its time, but
+    // the second has had none.
+    await ageLastWake(user.user.id, 6)
     const third = await tick()
     expect(third.phonesWoken).toBe(1)
     expect(third.offlineFlagged).toBe(0)
     expect((await presenceRow(user.user.id)).wakeCount).toBe(2)
 
-    await ageLastWake(user.user.id, 11)
+    await ageLastWake(user.user.id, 6)
     const fourth = await tick()
+    expect(fourth.phonesWoken).toBe(1)
     expect(fourth.offlineFlagged).toBe(1)
-    expect(await offlineEvents(user.user.id)).toHaveLength(1)
-    expect(await wakeRows()).toHaveLength(2)
-  })
-
-  it("does not ask a phone that has only been quiet for five minutes", async () => {
-    setRuntime({ pushDriver: new ExpoLikeDriver() })
-    const user = await quietDriver(5)
-    await giveToken(user.user.id)
-    expect((await tick()).phonesWoken).toBe(0)
-  })
-
-  it("asks a parked phone every half hour, three times at most", async () => {
-    setRuntime({ pushDriver: new ExpoLikeDriver() })
-    const recent = await quietDriver(20, { ...HOME, speedMps: 0, activity: "still" })
-    await giveToken(recent.user.id)
-    expect((await tick()).phonesWoken).toBe(0)
-
-    const user = await quietDriver(35, { ...HOME, speedMps: 0, activity: "still" })
-    await giveToken(user.user.id)
-    expect((await tick()).phonesWoken).toBe(1)
-    expect((await tick()).phonesWoken).toBe(0)
-
-    await ageLastWake(user.user.id, 31)
-    expect((await tick()).phonesWoken).toBe(1)
-    await ageLastWake(user.user.id, 31)
-    expect((await tick()).phonesWoken).toBe(1)
-    await ageLastWake(user.user.id, 31)
-    expect((await tick()).phonesWoken).toBe(0)
     expect((await presenceRow(user.user.id)).wakeCount).toBe(3)
+    expect(await offlineEvents(user.user.id)).toHaveLength(1)
+    expect(await wakeRows()).toHaveLength(3)
+  })
+
+  it("does not ask a phone heard from within its interval", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await quietDriver(4, { ...HOME, speedMps: 0, activity: "still" })
+    await giveToken(user.user.id)
+    expect((await tick()).phonesWoken).toBe(0)
+  })
+
+  it("asks a parked phone on the same beat as one on the road", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const parked = await quietDriver(6, { ...HOME, speedMps: 0, activity: "still" })
+    await giveToken(parked.user.id)
+    const driving = await quietDriver(6)
+    await giveToken(driving.user.id, "ios")
+    expect((await tick()).phonesWoken).toBe(2)
+  })
+
+  it("asks a phone last seen on the move a little sooner, on the server's moving interval", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const parked = await quietDriver(3, { ...HOME, speedMps: 0, activity: "still" })
+    await giveToken(parked.user.id)
+    const driving = await quietDriver(3)
+    await giveToken(driving.user.id)
+    expect((await tick()).phonesWoken).toBe(1)
+    expect((await presenceRow(driving.user.id)).wakeCount).toBe(1)
+    expect((await presenceRow(parked.user.id)).wakeCount).toBe(0)
+  })
+
+  it("marks the scheduled ask as the ping, so a phone lying still may answer it without location", async () => {
+    const driver = new ExpoLikeDriver()
+    setRuntime({ pushDriver: driver })
+    const user = await quietDriver(6)
+    await giveToken(user.user.id)
+    await tick()
+    await tick()
+    const ping = driver.sent.find((message) => message.data?.type === "wake")
+    expect(ping?.data).toMatchObject({ type: "wake", ping: true })
+  })
+
+  it("asks every interval while the phone stays quiet", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await quietDriver(6, { ...HOME, speedMps: 0, activity: "still" })
+    await giveToken(user.user.id)
+    expect((await tick()).phonesWoken).toBe(1)
+    expect((await tick()).phonesWoken).toBe(0)
+    await ageLastWake(user.user.id, 4)
+    expect((await tick()).phonesWoken).toBe(0)
+    await ageLastWake(user.user.id, 5)
+    expect((await tick()).phonesWoken).toBe(1)
+    await ageLastWake(user.user.id, 5)
+    expect((await tick()).phonesWoken).toBe(1)
+    expect((await presenceRow(user.user.id)).wakeCount).toBe(3)
+  })
+
+  it("asks on the interval of the strictest circle the phone is in", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await quietDriver(3, { ...HOME, speedMps: 0, activity: "still" })
+    await giveToken(user.user.id)
+    await setIntervals(user.user.id, 600)
+    expect((await tick()).phonesWoken).toBe(0)
+
+    const second = await createCircle(user.headers)
+    await getDb().execute(
+      sql`update circles set settings = settings || '{"minUpdateIntervalSeconds": 120}'::jsonb
+          where id = ${second.id}::uuid`,
+    )
+    expect((await tick()).phonesWoken).toBe(1)
+  })
+
+  it("never asks more often than every two minutes, whatever a circle says", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const recent = await quietDriver(1.5)
+    await giveToken(recent.user.id)
+    await setIntervals(recent.user.id, 10)
+    expect((await tick()).phonesWoken).toBe(0)
+
+    const user = await quietDriver(2.5)
+    await giveToken(user.user.id)
+    await setIntervals(user.user.id, 10)
+    expect((await tick()).phonesWoken).toBe(1)
+
+    // And from the last ask, not only from the last word.
+    await ageLastWake(user.user.id, 1.5)
+    expect((await tick()).phonesWoken).toBe(0)
+    await ageLastWake(user.user.id, 2.5)
+    expect((await tick()).phonesWoken).toBe(1)
+  })
+
+  it("never waits longer than ten minutes, whatever a circle says", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await quietDriver(11)
+    await giveToken(user.user.id)
+    await setIntervals(user.user.id, 1800)
+    expect((await tick()).phonesWoken).toBe(1)
+  })
+
+  it("counts a circle with no interval, or one that is not a number, as the default", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const missing = await quietDriver(6)
+    await giveToken(missing.user.id)
+    await setIntervals(missing.user.id, 600)
+    const bare = await createCircle(missing.headers)
+    await getDb().execute(
+      sql`update circles set settings = settings - 'minUpdateIntervalSeconds' where id = ${bare.id}::uuid`,
+    )
+
+    const garbled = await quietDriver(6)
+    await giveToken(garbled.user.id)
+    await setIntervals(garbled.user.id, 600)
+    const odd = await createCircle(garbled.headers)
+    await getDb().execute(
+      sql`update circles set settings = settings || '{"minUpdateIntervalSeconds": "300.0"}'::jsonb
+          where id = ${odd.id}::uuid`,
+    )
+
+    expect((await tick()).phonesWoken).toBe(2)
+  })
+
+  it("asks nobody in no circle, whose fix nobody could see", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await quietDriver(30)
+    await giveToken(user.user.id)
+    await getDb().execute(sql`delete from circle_members where user_id = ${user.user.id}::uuid`)
+    expect((await tick()).phonesWoken).toBe(0)
+  })
+
+  it("asks no phone that said its owner switched sharing off", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await quietDriver(30)
+    await giveToken(user.user.id)
+    await getDb().execute(
+      sql`update user_presence
+          set health = jsonb_build_object('sharingEnabled', false, 'reportedAt', now())
+          where user_id = ${user.user.id}::uuid`,
+    )
+    expect((await tick()).phonesWoken).toBe(0)
+  })
+
+  it("slows to a walk after an hour of silence, and to every few hours after a day", async () => {
+    setRuntime({ pushDriver: new ExpoLikeDriver() })
+    const user = await quietDriver(70)
+    await giveToken(user.user.id)
+    await setWakes(user.user.id, PING_BACKOFF_AFTER - 1, 6)
+    expect((await tick()).phonesWoken).toBe(1)
+
+    await setWakes(user.user.id, PING_BACKOFF_AFTER, 10)
+    expect((await tick()).phonesWoken).toBe(0)
+    await setWakes(user.user.id, PING_BACKOFF_AFTER, 31)
+    expect((await tick()).phonesWoken).toBe(1)
+
+    // A phone that was only flat is still asked once it might be charged.
+    await setWakes(user.user.id, PING_SLOW_AFTER, 120)
+    expect((await tick()).phonesWoken).toBe(0)
+    await setWakes(user.user.id, PING_SLOW_AFTER, 181)
+    expect((await tick()).phonesWoken).toBe(1)
   })
 
   it("starts a fresh count once the phone speaks", async () => {

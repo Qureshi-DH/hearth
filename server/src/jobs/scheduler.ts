@@ -19,12 +19,10 @@ import { getPushDriver } from "../runtime"
 import { broadcastEvent, recordEvent } from "../services/feed"
 import { phoneGroup } from "../services/notification-groups"
 import {
-  heardAt,
-  parked,
+  inACircle,
+  pingDueAt,
+  sharingSwitchedOffSql,
   silentPastCutoff,
-  WAKE_GAPS_MOVING_MS,
-  WAKE_GAPS_PARKED_MS,
-  WAKE_GRACE_MS,
 } from "../services/reporting"
 import {
   effectiveSharingState,
@@ -147,9 +145,8 @@ const OUTAGE_WINDOW_HOURS = 6
 /**
  * How long offline alerts wait after the push provider could last not be
  * reached, or after the sweep last held them for an outage. Long enough for
- * every phone to get through once the server's own connection is back. A
- * parked phone reports a quarter of an hour apart, and its queue goes with
- * it.
+ * every phone to get through once the server's own connection is back. The
+ * sweep asks each one again within its interval, and its queue goes with it.
  */
 const PROVIDER_OUTAGE_HOLD_MS = 30 * 60 * 1000
 /**
@@ -185,15 +182,19 @@ async function outageHeldLately(db: Database): Promise<boolean> {
 
 /**
  * One lost push is one lost push: FCM defers a data message in Doze, and
- * iOS keeps only the newest undelivered one. Two, ten minutes apart, is a
- * phone that is not there.
+ * iOS keeps only the newest undelivered one. Two, an interval apart, is a
+ * phone that is not there. The newest ask is not one of them, since it may
+ * have gone out in this same tick and the phone not had a second for it.
  */
-const UNANSWERED_WAKES_FOR_OFFLINE = 2
+const UNANSWERED_WAKES_FOR_OFFLINE = 3
+
+/** PING_MOVING_INTERVAL_SECONDS's own default, for a caller with no config to hand. */
+const DEFAULT_MOVING_INTERVAL_MS = 2 * 60 * 1000
 
 /**
  * Whether the phone can be reached by a silent push at all. The provider has
- * to carry one and the phone has to have registered for it; a phone that has
- * not is judged on its silence alone, as it always was.
+ * to carry one and the phone has to have registered for it. A phone that has
+ * not reports only when its OS runs the app, and is judged on that.
  */
 const wakeable = sql`exists (
   select 1 from ${sessions}
@@ -204,52 +205,45 @@ const wakeable = sql`exists (
 )`
 
 /**
- * The phone's own heartbeat is the first line. This is the second. Neither
- * OS lets an app set a timer it can count on in the background, and both
- * wake an app for a data-only push, Android even from Doze, so a quiet phone
- * is pinged on a schedule that gives it time to answer each one. Every wake
- * is counted, and the count is what the offline sweep reads. Only the expo
- * provider can send one.
+ * The phones' heartbeat. A phone keeps no location request of its own
+ * between Live windows, which is what keeps the location indicator off and
+ * the battery whole, so the server asks each one for a fix on its circle's
+ * interval. Both OSes wake an app for a data-only push, Android even from
+ * Doze. Every ask is counted, the count is what the offline sweep reads, and
+ * any word from the phone starts it over. Only the expo provider can send one.
  */
-export async function wakeQuietPhones(db: Database, driver: PushDriver | null): Promise<number> {
+export async function wakeQuietPhones(
+  db: Database,
+  driver: PushDriver | null,
+  { movingIntervalMs = DEFAULT_MOVING_INTERVAL_MS }: { movingIntervalMs?: number } = {},
+): Promise<number> {
   const canPush = driver?.provider === "expo"
   const now = new Date()
+  const dueAt = pingDueAt(movingIntervalMs)
   const channelOpen = controlOpenSql(new Date(now.getTime() - CONTROL_FRESH_MS))
-  const shortestGap = Math.min(...WAKE_GAPS_MOVING_MS, ...WAKE_GAPS_PARKED_MS)
+  // Due first, so a server holding more quiet phones than the batch works
+  // through the ones whose ask is oldest overdue, and the phones in the slow
+  // tail of a week-long silence do not crowd out the ones due now.
   const candidates = await db
-    .select({
-      userId: userPresence.userId,
-      wakeCount: userPresence.wakeCount,
-      wakeRequestedAt: userPresence.wakeRequestedAt,
-      // As milliseconds, because a computed timestamp comes back from the
-      // driver as text rather than a Date.
-      heardAtMs: sql<number>`(extract(epoch from ${heardAt}) * 1000)::float8`,
-      parked: sql<boolean>`${parked}`,
-    })
+    .select({ userId: userPresence.userId, wakeCount: userPresence.wakeCount })
     .from(userPresence)
     .innerJoin(users, eq(users.id, userPresence.userId))
     .where(
       and(
         eq(users.isActive, true),
         isNotNull(userPresence.recordedAt),
+        inACircle,
+        sql`not ${sharingSwitchedOffSql}`,
         // Over the channel when it has one open, by push when it can be pushed.
         canPush ? or(wakeable, channelOpen) : channelOpen,
-        lt(userPresence.wakeCount, WAKE_GAPS_MOVING_MS.length),
-        sql`${heardAt} < ${new Date(now.getTime() - shortestGap).toISOString()}::timestamptz`,
+        sql`${dueAt} <= ${now.toISOString()}::timestamptz`,
       ),
     )
-    .orderBy(heardAt)
+    .orderBy(dueAt)
     .limit(200)
 
   let woken = 0
   for (const row of candidates) {
-    const gaps = row.parked ? WAKE_GAPS_PARKED_MS : WAKE_GAPS_MOVING_MS
-    const gap = gaps[row.wakeCount]
-    if (gap === undefined) continue
-    const sinceMs =
-      row.wakeCount === 0 ? row.heardAtMs : (row.wakeRequestedAt?.getTime() ?? row.heardAtMs)
-    if (now.getTime() - sinceMs < gap) continue
-
     await db.transaction(async (tx) => {
       // The count is the claim: two replicas ticking together both read the
       // same count and only one of them moves it.
@@ -259,13 +253,23 @@ export async function wakeQuietPhones(db: Database, driver: PushDriver | null): 
         .where(and(eq(userPresence.userId, row.userId), eq(userPresence.wakeCount, row.wakeCount)))
         .returning({ userId: userPresence.userId })
       if (claimed.length === 0) return
-      if (await sendControl(tx as unknown as Database, row.userId, { command: "wake" }, now)) {
+      // Marked as the ping, which a phone the motion sensor has seen lying
+      // still since its last fix answers with that fix, without location.
+      // An ask somebody made, a page opened, wants a fresh one.
+      const ask = { command: "wake", ping: true } as const
+      if (await sendControl(tx as unknown as Database, row.userId, ask, now)) {
         woken += 1
         return
       }
       if (!canPush) return
       await enqueuePush(tx as unknown as Database, [
-        { userId: row.userId, title: "", body: "", silent: true, data: { type: "wake" } },
+        {
+          userId: row.userId,
+          title: "",
+          body: "",
+          silent: true,
+          data: { type: "wake", ping: true },
+        },
       ])
       woken += 1
     })
@@ -313,18 +317,15 @@ async function flagOfflineDevices(
   log: FastifyBaseLogger,
   driver: PushDriver | null,
 ): Promise<number> {
-  const quietFor = silentPastCutoff(new Date())
-  // A phone that was never asked cannot have failed to answer. Where no wake
-  // can be sent the silence alone has to do, as it always did. Where one
-  // can, the verdict waits for two to go unanswered and the last of them to
-  // have had its time.
-  const graceCutoff = new Date(Date.now() - WAKE_GRACE_MS)
+  const now = new Date()
+  const quietFor = silentPastCutoff(now)
+  // A phone that was never asked cannot have failed to answer. Where no ask
+  // can be sent the silence alone has to do, as it always did, and such a
+  // phone reports only when its OS runs the app. Where one can, the verdict
+  // waits for the asks to go unanswered.
   const askedAndSilent = or(
     sql`not ${wakeable}`,
-    and(
-      gte(userPresence.wakeCount, UNANSWERED_WAKES_FOR_OFFLINE),
-      lt(userPresence.wakeRequestedAt, graceCutoff),
-    ),
+    gte(userPresence.wakeCount, UNANSWERED_WAKES_FOR_OFFLINE),
   )
 
   const counts = {
@@ -446,7 +447,6 @@ async function flagOfflineDevices(
 
   const told = await alreadyToldThisOutage(db, staleIds)
 
-  const now = new Date()
   let flagged = 0
 
   for (const row of stale) {
@@ -916,7 +916,9 @@ export async function runJobs(
   })
 
   await step("devices.wake", async () => {
-    report.phonesWoken = await wakeQuietPhones(db, getPushDriver())
+    report.phonesWoken = await wakeQuietPhones(db, getPushDriver(), {
+      movingIntervalMs: config.PING_MOVING_INTERVAL_SECONDS * 1000,
+    })
   })
 
   await step("devices.offline", async () => {

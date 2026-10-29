@@ -191,6 +191,12 @@ const schema = z.object({
   RATE_LIMIT_WINDOW: z.string().default("1 minute"),
 
   JOB_INTERVAL_SECONDS: z.coerce.number().int().min(10).default(60),
+  /**
+   * How often the server asks a phone where it is while its last fix said it
+   * was on the move. Never more often than every two minutes, and never less
+   * often than the circle's own interval for a phone at rest.
+   */
+  PING_MOVING_INTERVAL_SECONDS: z.coerce.number().int().min(120).max(600).default(120),
   ENABLE_JOBS: bool.default(true),
   ENABLE_SWAGGER: bool.default(true),
   /** The admin portal at the server's own address. Off leaves no sign-in page there. */
