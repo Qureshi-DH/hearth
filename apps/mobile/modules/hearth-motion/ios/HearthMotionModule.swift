@@ -135,6 +135,38 @@ public class HearthMotionModule: Module {
       self.activityTimer = timer
     }
 
+    // What the phone did between two moments, from the history Core Motion
+    // keeps for a week whether or not the app is running. A ping reads it to
+    // learn whether the phone has moved since its last fix, which costs no
+    // location at all.
+    AsyncFunction("queryActivityAsync") { (fromMs: Double, toMs: Double, promise: Promise) in
+      guard CMMotionActivityManager.isActivityAvailable(),
+        CMMotionActivityManager.authorizationStatus() == .authorized
+      else {
+        promise.resolve(nil)
+        return
+      }
+      let from = Date(timeIntervalSince1970: fromMs / 1000)
+      let to = Date(timeIntervalSince1970: toMs / 1000)
+      self.manager.queryActivityStarting(from: from, to: to, to: OperationQueue.main) { activities, error in
+        guard error == nil, let activities else {
+          promise.resolve(nil)
+          return
+        }
+        promise.resolve(
+          activities.map { activity -> [String: Any] in
+            [
+              "activity": Self.name(for: activity),
+              // Apart from the activity, since a car parked with the engine
+              // running reads as automotive and stationary at once.
+              "stationary": activity.stationary,
+              "confidence": Self.confidence(for: activity.confidence),
+              "t": activity.startDate.timeIntervalSince1970 * 1000,
+            ]
+          })
+      }
+    }
+
     AsyncFunction("stopUpdatesAsync") {
       guard self.running else { return }
       self.manager.stopActivityUpdates()

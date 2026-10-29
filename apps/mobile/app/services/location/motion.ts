@@ -3,6 +3,7 @@ import type {
   MotionActivity,
   MotionChangeEvent,
   MotionPermission,
+  MotionRecord,
   MotionSource,
   SensorBatchEvent,
   SensorSample,
@@ -115,6 +116,56 @@ export async function stopMotion(subscription: Subscription | null): Promise<voi
 }
 
 /**
+ * iOS only: what Core Motion recorded between two moments, which it keeps
+ * for a week whether or not the app was running. Null on Android, without
+ * the permission, or where the history cannot be read.
+ */
+export async function queryMotion(fromMs: number, toMs: number): Promise<MotionRecord[] | null> {
+  if (!native) return null
+  try {
+    return await native.queryActivityAsync(fromMs, toMs)
+  } catch {
+    return null
+  }
+}
+
+/** Core Motion's "medium" and above, as the module maps it. A "low" verdict is a guess. */
+const MOTION_SURE = 60
+
+const sure = (record: MotionRecord) =>
+  record.confidence >= MOTION_SURE && record.activity !== "unknown"
+
+/** Going somewhere: on foot, on a bike, or in a vehicle that is not standing. */
+const moving = (record: MotionRecord) =>
+  record.activity === "walking" ||
+  record.activity === "running" ||
+  record.activity === "cycling" ||
+  (record.activity === "automotive" && !record.stationary)
+
+/**
+ * Whether Core Motion's history has the phone lying still from `fromMs` on.
+ * The sure record in force at `fromMs` has to be a still one, and nothing
+ * sure after it may be going anywhere. A phone in a hand on a bed logs
+ * doubtful and unknown records as it is turned over, and those are not a
+ * departure. Nothing sure on record is no answer.
+ */
+export function stillThroughout(records: MotionRecord[], fromMs: number): boolean {
+  const confident = records.filter(sure).sort((a, b) => a.t - b.t)
+  const inForce = confident.filter((record) => record.t <= fromMs).pop()
+  if (!inForce || moving(inForce)) return false
+  return !confident.some((record) => record.t > fromMs && moving(record))
+}
+
+/** A vehicle under way now: the newest sure record is automotive and not standing. */
+export function inMovingVehicle(records: MotionRecord[]): boolean {
+  const newest = records
+    .filter(sure)
+    .sort((a, b) => a.t - b.t)
+    .pop()
+  return newest != null && newest.activity === "automotive" && !newest.stationary
+}
+
+/**
  * Raw sensor samples that keep arriving once the Activity pauses, which is
  * where expo-sensors gives up on Android. Null means the caller has to sample
  * for itself: an older install without the module, or a device with nothing to
@@ -148,4 +199,4 @@ export async function stopSensorBatches(subscription: Subscription | null): Prom
   }
 }
 
-export type { MotionActivity, MotionSource, SensorSample }
+export type { MotionActivity, MotionRecord, MotionSource, SensorSample }

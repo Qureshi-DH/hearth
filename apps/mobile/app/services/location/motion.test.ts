@@ -136,3 +136,52 @@ describe("a build without the module", () => {
     await expect(degraded.ensureMotionPermission()).resolves.toBe(false)
   })
 })
+
+describe("reading Core Motion's history", () => {
+  const { stillThroughout, inMovingVehicle } =
+    jest.requireActual<typeof import("./motion")>("./motion")
+  const at = 1_800_000_000_000
+  const record = (activity: string, minutes: number, stationary = false, confidence = 90) => ({
+    activity: activity as never,
+    stationary,
+    confidence,
+    t: at + minutes * 60_000,
+  })
+
+  it("calls a phone still that was still before the fix and stayed so", () => {
+    expect(stillThroughout([record("still", -20, true)], at)).toBe(true)
+    expect(stillThroughout([record("still", -20, true), record("still", 5, true)], at)).toBe(true)
+  })
+
+  it("does not once it walked", () => {
+    expect(stillThroughout([record("still", -20, true), record("walking", 3)], at)).toBe(false)
+  })
+
+  // A phone turned over in a hand on a bed logs these, and has gone nowhere.
+  it("takes no notice of doubtful or unknown records after the fix", () => {
+    const handled = [
+      record("still", -20, true),
+      record("walking", 3, false, 30),
+      record("unknown", 4),
+    ]
+    expect(stillThroughout(handled, at)).toBe(true)
+  })
+
+  it("reads a parked car with the engine running as still, and a moving one as not", () => {
+    expect(stillThroughout([record("automotive", -20, true)], at)).toBe(true)
+    expect(stillThroughout([record("automotive", -20, false)], at)).toBe(false)
+  })
+
+  it("takes nothing sure on record before the fix as no answer", () => {
+    expect(stillThroughout([], at)).toBe(false)
+    expect(stillThroughout([record("still", -20, true, 30)], at)).toBe(false)
+    expect(stillThroughout([record("still", 5, true)], at)).toBe(false)
+  })
+
+  it("finds a vehicle under way from the newest sure record", () => {
+    expect(inMovingVehicle([record("automotive", 1)])).toBe(true)
+    expect(inMovingVehicle([record("automotive", -5), record("walking", -1)])).toBe(false)
+    expect(inMovingVehicle([record("automotive", 1, true)])).toBe(false)
+    expect(inMovingVehicle([record("automotive", -5), record("walking", -1, false, 30)])).toBe(true)
+  })
+})

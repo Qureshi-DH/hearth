@@ -19,6 +19,15 @@ export interface MotionChangeEvent {
 
 export type MotionPermission = "granted" | "denied" | "undetermined"
 
+/** One stretch of Core Motion's history, from when it began. */
+export interface MotionRecord {
+  activity: MotionActivity
+  /** A car parked with the engine running reads automotive and stationary at once. */
+  stationary: boolean
+  confidence: number
+  t: number
+}
+
 /** iOS Background App Refresh, as UIApplication reports it. */
 export type BackgroundRefreshStatus = "available" | "denied" | "restricted" | "unknown"
 
@@ -57,6 +66,8 @@ declare class HearthMotionModule extends NativeModule<{
   requestPermissionAsync(): Promise<MotionPermission>
   startUpdatesAsync(): Promise<void>
   stopUpdatesAsync(): Promise<void>
+  /** iOS only, Android rejects. Core Motion's history between two moments; null without the permission. */
+  queryActivityAsync(fromMs: number, toMs: number): Promise<MotionRecord[] | null>
   /**
    * Sampling that is not tied to the Activity, which is the only kind that
    * keeps running once the screen goes off mid drive. False where the device
