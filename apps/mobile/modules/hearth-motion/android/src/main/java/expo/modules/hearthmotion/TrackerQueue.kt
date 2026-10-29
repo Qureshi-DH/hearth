@@ -8,12 +8,10 @@ import org.json.JSONObject
 
 /**
  * The fixes and events the native side takes on JavaScript's behalf, and
- * the poke that tells JavaScript to come and get them. A poke goes to the
- * module when JavaScript is up and listening; otherwise the tracking
- * service, if it is running, starts the headless task, since a process
- * with a foreground service may start a service and one without may not.
- * A queue nobody can be woken for waits for the next launch, which drains
- * it first thing.
+ * the poke that tells JavaScript to come and get them. A poke only reaches
+ * JavaScript that is already up. Nothing here starts it: what the queue
+ * holds is a record of what the native side already did, and it waits for
+ * the next launch, which drains it first thing.
  */
 internal object TrackerQueue {
   private const val DIR = "hearth-tracker"
@@ -21,10 +19,6 @@ internal object TrackerQueue {
   private fun fixes(context: Context) = LineStore(File(context.filesDir, "$DIR/fixes.jsonl"))
 
   private fun events(context: Context) = LineStore(File(context.filesDir, "$DIR/events.jsonl"))
-
-  fun fix(context: Context, location: Location) {
-    fixes(context).append(toJson(location).toString())
-  }
 
   /**
    * A fix in the queue's own shape, for the native uploader to hold until it
@@ -56,11 +50,11 @@ internal object TrackerQueue {
   fun clear(context: Context) {
     fixes(context).clear()
     events(context).clear()
+    TrackerPrefs(context).lastFix = null
   }
 
-  fun poke(context: Context) {
-    if (HearthEvents.emit("onNativeQueue", emptyMap())) return
-    if (HearthTrackingService.foreground) HearthHeadlessService.start(context, "queue")
+  fun poke() {
+    HearthEvents.emit("onNativeQueue", emptyMap())
   }
 
   /** The shape expo-location gives a fix, so the tracker reads both alike. */
@@ -105,8 +99,8 @@ internal object TrackerQueue {
 
 /**
  * Where the module hangs its event sender while JavaScript is listening.
- * Receivers and the service emit through here; nothing listening means
- * JavaScript is down, and the queue is the way to reach it.
+ * The service and the uploader emit through here. Nothing listening means
+ * JavaScript is down, and the queue keeps what it would have heard.
  */
 internal object HearthEvents {
   @Volatile

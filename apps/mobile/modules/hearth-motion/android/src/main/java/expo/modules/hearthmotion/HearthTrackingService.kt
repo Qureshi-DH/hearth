@@ -18,51 +18,53 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import org.json.JSONObject
 
 /**
- * The foreground service behind every moving tier and behind a parked phone
- * somebody is watching live, and the "Updating your location" line that
- * goes with it. It owns the location request, so the
- * fixes of a journey are taken and kept whether or not JavaScript is up,
- * and it is started natively by the receivers inside the moment Android
- * allows a start from the background: a geofence exit, an activity
- * transition, a high priority push, boot. JavaScript, when it comes,
- * swaps the request for the tier it decides on, and stops the service
- * when the phone parks with nobody watching, or the watch ends.
+ * The only place Hearth asks for the phone's location in the background,
+ * and only for as long as one of three things lasts. A ping is the server's
+ * heartbeat: one Wi-Fi grade fix, sent, and the service goes. Live is
+ * somebody watching: a GPS fix a second, each sent as it comes, for as long
+ * as the server's answers say they are looking. A drive is crash detection,
+ * where a circle asked for it: from the motion sensor saying the phone is in
+ * a vehicle until it says it is not, the GPS reads the speed the detector
+ * judges a jolt by, and those fixes stay on the phone. Otherwise nothing
+ * runs, so the location indicator and "Updating your location" are off.
  *
- * A wake and a watch are answered here when the server gave this session
- * an upload key. A wake is one good fix, sent, and the service goes once
- * the server has it. A watch is a fix a second, each sent as it comes, for
- * as long as the server's answers say somebody is looking. JavaScript is
- * told and learns from the fixes, but nothing waits for it.
- *
- * Brief is the same service up for one fix that JavaScript takes, for a
- * wake on a phone with no upload key or a walk being confirmed. It stops itself
- * after the fix's own deadline unless a tracking request has replaced it.
+ * Both are started by the push handler inside the moment Android allows a
+ * start from the background, and both are answered here with the session's
+ * upload key, never waiting on JavaScript. Brief is the same service up for
+ * one fix that JavaScript takes, for a session the server has not given a
+ * key yet. It stops itself after the fix's own deadline.
  */
 class HearthTrackingService : Service() {
   private val handler = Handler(Looper.getMainLooper())
-  private val briefStop = Runnable { if (request == null) stopSelfGracefully("brief") }
+  private val briefStop = Runnable { if (!busy()) stopSelfGracefully("brief") }
   private val watchCheck = Runnable { if (!window.active(SystemClock.elapsedRealtime())) endWatch("over") }
-  private val wakeDeadline = Runnable { answerWakeWithBest() }
+  private val pingDeadline = Runnable { answerPingWithBest() }
   private val idleCap = Runnable { stopNow(stopReason ?: "idle") }
   private var client: FusedLocationProviderClient? = null
   private var callback: LocationCallback? = null
-  private var request: ServiceRequest? = null
+  private var running: Request? = null
   private var inForeground = false
   /** The newest start, so a stop decided before it arrived does not take it down. */
   private var lastStartId = 0
 
-  /** The tier JavaScript asked for, which a watch sits on top of and goes back to. */
-  private var base: ServiceRequest? = null
   private val window = WatchWindow()
-  private var waking = false
-  private var wakeBest: Location? = null
+  private var driving = false
+  /** When the drive's GPS last had the car standing, so a parked car ends a drive the classifier forgot. */
+  private var driveStoodSince = 0L
+  private var pinging = false
+  private var pingBest: Location? = null
   /** Set when the service should go as soon as the uploader has sent what it holds. */
   private var stopReason: String? = null
+  private var destroyed = false
+
+  private enum class Request { PING, DRIVE, LIVE }
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -74,89 +76,38 @@ class HearthTrackingService : Service() {
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     lastStartId = startId
+    pendingStart = false
     // Foreground first, whatever the command and every time: Android wants
     // it after each foreground start, the person may have swiped the
     // notification, and a refusal is only known here.
     if (!ensureForeground()) return START_NOT_STICKY
     when (intent?.action) {
-      ACTION_STOP -> {
-        // A stop JavaScript asks for while the service answers a wake or a
-        // watch only ends its tier, and the answer goes on. A stop for
-        // signing out or sharing off ends everything.
-        val answering = window.active(SystemClock.elapsedRealtime()) || waking || stopReason != null
-        if (!intent.getBooleanExtra(EXTRA_FORCE, false) && answering) {
-          base = null
-          TrackerPrefs(this).serviceWanted = false
-          return START_NOT_STICKY
-        }
-        stopSelfGracefully("asked")
-        return START_NOT_STICKY
-      }
-      ACTION_STOP_BRIEF -> {
-        if (request == null) stopSelfGracefully("brief")
-        return START_NOT_STICKY
-      }
-      ACTION_BRIEF -> {
-        if (request == null) {
-          status = "brief"
-          handler.removeCallbacks(briefStop)
-          handler.postDelayed(briefStop, BRIEF_LIFETIME_MS)
-          bootJavaScript("brief")
-        }
-        return restartPolicy()
-      }
-      ACTION_WAKE -> {
-        wake()
-        return restartPolicy()
-      }
-      ACTION_WATCH -> {
-        watch(intent.getLongExtra(EXTRA_SECONDS, 0L))
-        return restartPolicy()
-      }
-      ACTION_UNWATCH -> {
-        if (window.until != 0L) endWatch("ended")
-        return restartPolicy()
-      }
-      ACTION_TRACK -> {
-        // A stop asked for while this start was still on its way: the
-        // stop could not be delivered to a service not yet running, so it
-        // is honoured here instead.
-        if (cancelPendingStart) {
-          cancelPendingStart = false
-          stopSelfGracefully("cancelled")
-          return START_NOT_STICKY
-        }
-        val next = ServiceRequest.fromIntent(intent) ?: TrackerPrefs(this).movingRequest
-        base = next
-        if (window.active(SystemClock.elapsedRealtime()) && next != LIVE) {
-          // Somebody is watching. The tier is kept for when they stop.
-          remember(next)
-          return START_STICKY
-        }
-        track(next, intent.getStringExtra(EXTRA_REASON) ?: "js")
-        return START_STICKY
-      }
-      else -> {
-        // A sticky restart after the OS killed the service mid journey.
-        val prefs = TrackerPrefs(this)
-        val wanted = prefs.serviceRequest?.takeIf { prefs.serviceWanted }
-        if (wanted == null) {
-          stopSelfGracefully("restart")
-          return START_NOT_STICKY
-        }
-        base = wanted
-        track(wanted, "restart")
-        return START_STICKY
-      }
+      ACTION_STOP -> stopSelfGracefully("asked")
+      ACTION_STOP_BRIEF -> if (!busy()) stopSelfGracefully("brief")
+      ACTION_BRIEF -> if (!busy()) brief()
+      ACTION_PING -> ping()
+      ACTION_WATCH -> watch(intent.getLongExtra(EXTRA_SECONDS, 0L))
+      ACTION_UNWATCH -> if (window.until != 0L) endWatch("ended")
+      ACTION_DRIVE -> drive()
+      ACTION_DRIVE_END -> if (driving) endDrive("motion")
+      ACTION_DRIVE_STILL -> stillDuringDrive()
+      // A restart Android made on its own. The server asks again when it
+      // wants a fix, so there is nothing to pick back up.
+      else -> stopSelfGracefully("restart")
     }
+    // A command that left nothing to do, an end for a watch already over or
+    // one that crossed the last stop, would otherwise leave the service in
+    // the foreground with nothing to take it down.
+    if (inForeground && !busy() && status != "brief") stopSelfGracefully("idle")
+    return START_NOT_STICKY
   }
 
-  /** Sticky only while JavaScript wants a tier. A wake or a watch alone is asked for again by the server. */
-  private fun restartPolicy(): Int = if (base != null) START_STICKY else START_NOT_STICKY
+  private fun busy(): Boolean =
+    pinging || driving || window.active(SystemClock.elapsedRealtime()) || stopReason != null
 
   private fun ensureForeground(): Boolean {
     return try {
-      val notification = buildNotification(this)
+      val notification = buildNotification(this, driving)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         ServiceCompat.startForeground(
           this,
@@ -181,98 +132,114 @@ class HearthTrackingService : Service() {
         this,
         JSONObject().put("type", "service").put("status", "refused").put("reason", "foreground").put("error", error.javaClass.simpleName),
       )
-      stopSelf()
+      // Not stopSelf(), which would take down a foreground start already on
+      // its way, and Android ends an app whose foreground start never came.
+      stopSelfResult(lastStartId)
       false
     }
   }
 
-  private fun track(next: ServiceRequest, reason: String) {
-    remember(next)
-    stopReason = null
+  private fun brief() {
+    status = "brief"
     handler.removeCallbacks(briefStop)
-    handler.removeCallbacks(idleCap)
-    if (next == request && callback != null) {
-      status = "running"
-      HearthHeadlessService.keepAwake(this)
-      return
-    }
-    if (!run(next)) return
-    status = "running"
-    TrackerQueue.event(this, JSONObject().put("type", "service").put("status", "started").put("reason", reason))
-    bootJavaScript(reason)
-    HearthHeadlessService.keepAwake(this)
-  }
-
-  private fun remember(next: ServiceRequest) {
-    val prefs = TrackerPrefs(this)
-    prefs.serviceRequest = next
-    prefs.serviceWanted = true
+    handler.postDelayed(briefStop, BRIEF_LIFETIME_MS)
+    // A process with a foreground service may start the headless task, and
+    // the fix is JavaScript's to take. Posted, so the foreground the system
+    // was just told about has settled first.
+    handler.postDelayed({ HearthHeadlessService.start(this, "brief") }, HEADLESS_START_DELAY_MS)
   }
 
   /** Swaps the location request. False when the permission has gone, and the service with it. */
-  private fun run(next: ServiceRequest): Boolean {
-    if (next == request && callback != null) return true
+  private fun run(next: Request): Boolean {
+    if (next == running && callback != null) return true
     val client = client ?: LocationServices.getFusedLocationProviderClient(this).also { client = it }
     callback?.let { client.removeLocationUpdates(it) }
     val listener =
       object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
           for (location in result.locations) onFix(location)
-          if (result.locations.isNotEmpty()) {
-            TrackerQueue.poke(this@HearthTrackingService)
-            HearthHeadlessService.keepAwake(this@HearthTrackingService)
-          }
         }
       }
     try {
-      client.requestLocationUpdates(next.toLocationRequest(), listener, Looper.getMainLooper())
+      client.requestLocationUpdates(request(next), listener, Looper.getMainLooper())
     } catch (error: SecurityException) {
-      // The location permission went while the service was wanted. There
-      // is nothing to run, and JavaScript reads the permission on its own.
+      // The location permission went. There is nothing to run, and
+      // JavaScript reads the permission on its own.
       Log.w(TAG, "Location request refused: ${error.message}")
       TrackerQueue.event(this, JSONObject().put("type", "service").put("status", "refused").put("reason", "permission"))
       stopSelfGracefully("permission")
       return false
     }
     callback = listener
-    request = next
+    running = next
     return true
   }
 
-  private fun onFix(location: Location) {
-    val now = SystemClock.elapsedRealtime()
-    if (window.active(now) && NativeUploader.ready(this)) {
-      NativeUploader.send(this, location, "background")
-      if (waking) finishWake()
-      return
+  private fun request(next: Request): LocationRequest =
+    when (next) {
+      // Wi-Fi and cell, never the GPS: a ping is where the phone is, to the
+      // street, every few minutes all day, and the GPS is what costs.
+      Request.PING ->
+        LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, PING_INTERVAL_MS)
+          .setMinUpdateIntervalMillis(PING_INTERVAL_MS)
+          .build()
+      // The detector reads the speed in the fifteen seconds before a jolt,
+      // and a GPS speed is the one that can be believed.
+      Request.DRIVE ->
+        LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, DRIVE_INTERVAL_MS)
+          .setMinUpdateIntervalMillis(DRIVE_INTERVAL_MS / 2)
+          .build()
+      Request.LIVE ->
+        LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LIVE_INTERVAL_MS)
+          .setMinUpdateIntervalMillis(LIVE_INTERVAL_MS)
+          .setMaxUpdateDelayMillis(LIVE_INTERVAL_MS)
+          .build()
     }
-    if (waking) {
-      if (goodEnough(location)) {
-        sendWake(location)
+
+  private fun onFix(location: Location) {
+    if (window.active(SystemClock.elapsedRealtime())) {
+      // The key was refused mid watch. Nothing sent from here would reach the
+      // server, and no reply would come back to end the watch.
+      if (!NativeUploader.ready(this)) {
+        endWatch("refused")
         return
       }
-      if (fresh(location) && better(location, wakeBest)) wakeBest = location
+      NativeUploader.send(this, location, "background")
+      // A ping that lands inside a watch is answered by the watch's next fix.
+      if (pinging) finishPing()
+      // The detector reads its speed from here too, whether or not the
+      // upload gets through.
+      if (driving) feedDetector(location)
+      return
     }
-    // Only fixes a tier asked for are JavaScript's to judge. The wake's
-    // own request is not one, and its near misses would read as a phone
-    // wandering about its stop. A tier's fix is sent from here as well:
-    // One UI holds back JavaScript's timers in the background, and a
-    // journey waited for the screen to come on.
-    if (base == null) return
-    if (NativeUploader.ready(this)) NativeUploader.send(this, location, "background")
-    else TrackerQueue.fix(this, location)
+    if (driving) {
+      // A ping during the drive is answered with the drive's own fix, which
+      // is the freshest the phone has.
+      feedDetector(location)
+      if (pinging) sendPing(location)
+      return
+    }
+    if (!pinging) return
+    if (goodEnough(location)) {
+      sendPing(location)
+      return
+    }
+    if (fresh(location) && better(location, pingBest)) pingBest = location
   }
 
-  /** One good fix, sent from here. A phone already reporting sends its next one. */
-  private fun wake() {
+  /** For the detector, on the phone, and never uploaded. */
+  private fun feedDetector(location: Location) {
+    TrackerQueue.appendFix(this, TrackerQueue.fixJson(location).put("local", true))
+    TrackerQueue.poke()
+    HearthHeadlessService.keepAwake(this)
+    noteDriveSpeed(location)
+  }
+
+  /** One fix, sent from here. A phone already on Live sends its next one. */
+  private fun ping() {
     if (!NativeUploader.ready(this)) {
-      // With no key to send with, JavaScript takes the fix, as before.
-      if (request == null) {
-        status = "brief"
-        handler.removeCallbacks(briefStop)
-        handler.postDelayed(briefStop, BRIEF_LIFETIME_MS)
-        bootJavaScript("brief")
-      }
+      // With no key to send with, JavaScript takes the fix.
+      if (!busy()) brief()
       return
     }
     TrackerQueue.event(this, JSONObject().put("type", "wake").put("native", true))
@@ -280,96 +247,157 @@ class HearthTrackingService : Service() {
     stopReason = null
     handler.removeCallbacks(idleCap)
     handler.removeCallbacks(briefStop)
-    resumeTier()
-    waking = true
-    wakeBest = null
-    handler.removeCallbacks(wakeDeadline)
-    handler.postDelayed(wakeDeadline, WAKE_FIX_MS)
-    if (request == null) {
-      if (!run(WAKE)) return
-      status = "brief"
+    pinging = true
+    pingBest = null
+    handler.removeCallbacks(pingDeadline)
+    handler.postDelayed(pingDeadline, PING_FIX_MS)
+    // The drive's GPS is already running, and its next fix is the answer.
+    if (driving) return
+    if (!run(Request.PING)) return
+    status = "running"
+  }
+
+  /** From the motion sensor's word that the phone is in a vehicle, until it says otherwise. */
+  private fun drive() {
+    // Sharing or crash alerts may have gone off while this start was on its way.
+    val prefs = TrackerPrefs(this)
+    if (!prefs.enabled || prefs.mode == "off" || !prefs.crashDetection) {
+      if (driving) endDrive("not wanted")
+      return
+    }
+    handler.removeCallbacks(stillInDrive)
+    if (!driving) {
+      driving = true
+      driveStoodSince = 0L
+      TrackerQueue.event(this, JSONObject().put("type", "drive"))
+      TrackerQueue.poke()
+      // The detector runs in JavaScript, which a phone in a pocket does not
+      // have running. This one task stays open for the drive.
+      HearthHeadlessService.keepAwake(this)
+    }
+    stopReason = null
+    handler.removeCallbacks(idleCap)
+    handler.removeCallbacks(briefStop)
+    refreshNotification()
+    if (window.active(SystemClock.elapsedRealtime())) return
+    if (!run(Request.DRIVE)) return
+    status = "running"
+  }
+
+  /**
+   * The classifier says still as readily at a red light as in a car park.
+   * A still that holds for a few minutes, with the GPS seeing no speed in
+   * them, ends the drive.
+   */
+  private fun stillDuringDrive() {
+    if (!driving) return
+    handler.removeCallbacks(stillInDrive)
+    handler.postDelayed(stillInDrive, DRIVE_STILL_MS)
+  }
+
+  private val stillInDrive = Runnable { if (driving) endDrive("still") }
+
+  private fun endDrive(reason: String) {
+    handler.removeCallbacks(stillInDrive)
+    driving = false
+    driveStoodSince = 0L
+    TrackerQueue.event(this, JSONObject().put("type", "drive over").put("reason", reason))
+    TrackerQueue.poke()
+    refreshNotification()
+    when {
+      window.active(SystemClock.elapsedRealtime()) -> Unit
+      pinging -> run(Request.PING)
+      else -> stopWhenSent("drive over")
     }
   }
 
-  private fun sendWake(location: Location) {
-    NativeUploader.send(this, location, "nudge")
-    // The tier's own stream keeps the fix too, so a moving phone's
-    // journey is judged from it.
-    finishWake()
+  /**
+   * The classifier can be slow to say a car has parked, or miss it, and a
+   * drive left running would be the GPS all evening. Ten minutes of the GPS
+   * having the phone standing ends it.
+   */
+  private fun noteDriveSpeed(location: Location) {
+    // A fix with no speed says nothing either way.
+    if (!location.hasSpeed()) return
+    val now = SystemClock.elapsedRealtime()
+    if (location.speed >= DRIVE_STANDING_MPS) {
+      driveStoodSince = 0L
+      handler.removeCallbacks(stillInDrive)
+      return
+    }
+    if (driveStoodSince == 0L) driveStoodSince = now
+    if (now - driveStoodSince >= DRIVE_STANDING_MS) endDrive("standing")
   }
 
-  private fun answerWakeWithBest() {
-    if (!waking) return
-    val best = wakeBest
+  private fun sendPing(location: Location) {
+    val prefs = TrackerPrefs(this)
+    val previous = prefs.lastFix?.let { runCatching { UploadWire.fix(it) }.getOrNull() }
+    NativeUploader.send(this, location, "nudge")
+    // A drive that ended on standing, or one Android would not start, while
+    // the classifier still has the phone in a vehicle: a ping that finds it
+    // moving brings crash detection back. No new transition would.
+    if (!driving && prefs.crashDetection && prefs.activity == "automotive" &&
+      UploadWire.movedLikeAVehicle(UploadWire.fix(TrackerQueue.fixJson(location)), previous)
+    ) {
+      drive()
+    }
+    finishPing()
+  }
+
+  private fun answerPingWithBest() {
+    if (!pinging) return
+    val best = pingBest
     if (best != null) {
-      sendWake(best)
+      sendPing(best)
       return
     }
     // Nothing came. The last fix the system holds is better than silence
-    // if it is recent, and the server's next wake tries again otherwise.
+    // if it is recent, and the server asks again otherwise.
     val client = client ?: LocationServices.getFusedLocationProviderClient(this).also { client = it }
     try {
       client.lastLocation.addOnCompleteListener { task ->
+        // The ping may have been answered meanwhile, or the service gone.
+        if (!pinging || destroyed) return@addOnCompleteListener
         val last = if (task.isSuccessful) task.result?.takeIf { ageMs(it) < LAST_KNOWN_MAX_AGE_MS } else null
-        if (last != null && waking) {
-          sendWake(last)
+        if (last != null) {
+          sendPing(last)
         } else {
           TrackerQueue.event(this, JSONObject().put("type", "wake").put("native", true).put("fix", false))
-          finishWake()
+          finishPing()
         }
       }
     } catch (error: SecurityException) {
-      finishWake()
+      finishPing()
     }
   }
 
-  private fun finishWake() {
-    waking = false
-    wakeBest = null
-    handler.removeCallbacks(wakeDeadline)
-    if (base == null && !window.active(SystemClock.elapsedRealtime())) stopWhenSent("wake")
+  private fun finishPing() {
+    pinging = false
+    pingBest = null
+    handler.removeCallbacks(pingDeadline)
+    if (!window.active(SystemClock.elapsedRealtime()) && !driving) stopWhenSent("wake")
   }
 
   /** A fix a second, sent as it comes, until the server's answers say nobody is looking. */
   private fun watch(seconds: Long) {
     if (!NativeUploader.ready(this)) {
-      // JavaScript upgrades the brief service to the live request, as before.
-      if (request == null) {
-        status = "brief"
-        handler.removeCallbacks(briefStop)
-        handler.postDelayed(briefStop, BRIEF_LIFETIME_MS)
-        bootJavaScript("brief")
-      }
+      // No key, so no Live from here. JavaScript sends the one fix it can.
+      if (!busy()) brief()
       return
     }
     if (seconds <= 0) {
       if (window.until != 0L) endWatch("ended")
       return
     }
-    resumeTier()
     val change = window.open(SystemClock.elapsedRealtime(), minOf(seconds, MAX_WATCH_SECONDS))
     goLive(change == WatchWindow.Change.OPENED, "push")
-  }
-
-  /**
-   * A push is one of the moments Android allows a start, so a phone on the
-   * move whose service was refused or killed gets its tier back with the
-   * answer, without waiting for JavaScript to notice.
-   */
-  private fun resumeTier() {
-    if (request != null || base != null) return
-    val prefs = TrackerPrefs(this)
-    if (!prefs.enabled || prefs.mode != "moving") return
-    val tier = prefs.serviceRequest ?: prefs.movingRequest
-    base = tier
-    track(tier, "push")
   }
 
   private fun goLive(announce: Boolean, reason: String) {
     stopReason = null
     handler.removeCallbacks(idleCap)
     handler.removeCallbacks(briefStop)
-    if (!run(LIVE)) return
+    if (!run(Request.LIVE)) return
     status = "running"
     handler.removeCallbacks(watchCheck)
     handler.postDelayed(watchCheck, (window.until - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 1_000)
@@ -378,36 +406,40 @@ class HearthTrackingService : Service() {
         this,
         JSONObject().put("type", "watch").put("until", System.currentTimeMillis() + (window.until - SystemClock.elapsedRealtime())).put("reason", reason),
       )
-      bootJavaScript("watch")
+      TrackerQueue.poke()
     }
-    HearthHeadlessService.keepAwake(this)
   }
 
   private fun endWatch(reason: String) {
     window.close()
     handler.removeCallbacks(watchCheck)
     TrackerQueue.event(this, JSONObject().put("type", "watch over").put("reason", reason))
-    TrackerQueue.poke(this)
-    val tier = base
+    TrackerQueue.poke()
     when {
-      tier != null -> track(tier, "watch over")
-      waking -> run(WAKE)
+      driving -> run(Request.DRIVE)
+      pinging -> run(Request.PING)
       else -> stopWhenSent("watch over")
     }
   }
 
   /** Goes once the server has what the uploader holds, or after a cap so a dead network cannot keep it. */
+  private fun refreshNotification() {
+    if (!inForeground) return
+    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    runCatching { manager.notify(NOTIFICATION_ID, buildNotification(this, driving)) }
+  }
+
   private fun stopWhenSent(reason: String) {
     stopReason = reason
     handler.removeCallbacks(idleCap)
+    // The fix waits in the uploader. Location is not needed for it.
+    callback?.let { client?.removeLocationUpdates(it) }
+    callback = null
+    running = null
     if (NativeUploader.idle(this)) {
       stopNow(reason)
       return
     }
-    // The fix waits in the uploader. Location is not needed for it.
-    callback?.let { client?.removeLocationUpdates(it) }
-    callback = null
-    request = null
     handler.postDelayed(idleCap, SEND_CAP_MS)
   }
 
@@ -439,62 +471,64 @@ class HearthTrackingService : Service() {
       }
     }
 
-  /**
-   * JavaScript is woken once the service is up, not before: a process
-   * with a foreground service may start the headless task, and the poke
-   * for the queue does the same for every fix after. Posted rather than
-   * done here, so the foreground the system was just told about has
-   * settled before the process leans on it.
-   */
-  private fun bootJavaScript(reason: String) {
-    if (HearthEvents.emit("onNativeQueue", emptyMap())) return
-    handler.postDelayed({ HearthHeadlessService.start(this, reason) }, HEADLESS_START_DELAY_MS)
-  }
-
   private fun stopSelfGracefully(reason: String) {
     handler.removeCallbacks(briefStop)
     handler.removeCallbacks(watchCheck)
-    handler.removeCallbacks(wakeDeadline)
+    handler.removeCallbacks(pingDeadline)
     handler.removeCallbacks(idleCap)
     callback?.let { client?.removeLocationUpdates(it) }
     callback = null
-    val wasTracking = request != null || base != null
-    request = null
-    base = null
+    val wasLive = window.until != 0L || driving
+    // JavaScript holds a drive of its own, and only this ends it.
+    if (driving) {
+      TrackerQueue.event(this, JSONObject().put("type", "drive over").put("reason", reason))
+      TrackerQueue.poke()
+    }
+    handler.removeCallbacks(stillInDrive)
+    running = null
     window.close()
-    waking = false
+    driving = false
+    pinging = false
     stopReason = null
-    val prefs = TrackerPrefs(this)
-    prefs.serviceWanted = false
-    if (wasTracking) {
+    if (wasLive) {
       TrackerQueue.event(this, JSONObject().put("type", "service").put("status", "stopped").put("reason", reason))
+    }
+    // A push may have started the service again while this stop was being
+    // decided. Then the service stays, in the foreground, for that start to
+    // use: one that came by a plain start needs no new allowance from
+    // Android only because the foreground was never let go.
+    if (!stopSelfResult(lastStartId)) {
+      // The start on its way decides what the service does next, and a
+      // leftover "brief" must not hold it up.
+      status = "none"
+      return
     }
     ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     inForeground = false
     foreground = false
     status = "none"
-    // A push may have started the service again while this stop was being
-    // decided. Then the service stays for that start, which puts it back in
-    // the foreground, rather than Android ending the service under it.
-    stopSelfResult(lastStartId)
   }
 
   override fun onDestroy() {
+    destroyed = true
+    if (driving) {
+      driving = false
+      TrackerQueue.event(this, JSONObject().put("type", "drive over").put("reason", "destroyed"))
+      TrackerQueue.poke()
+    }
     handler.removeCallbacksAndMessages(null)
     callback?.let { client?.removeLocationUpdates(it) }
     callback = null
-    request = null
+    running = null
     inForeground = false
     foreground = false
     if (NativeUploader.listener === uploads) NativeUploader.listener = null
-    // Killed under a journey: serviceWanted stays, and the sticky restart
-    // picks the request back up.
     status = "none"
     super.onDestroy()
   }
 
   private fun goodEnough(location: Location): Boolean =
-    fresh(location) && location.hasAccuracy() && location.accuracy <= WAKE_GOOD_ACCURACY_METERS
+    fresh(location) && location.hasAccuracy() && location.accuracy <= PING_GOOD_ACCURACY_METERS
 
   private fun fresh(location: Location): Boolean = ageMs(location) < FRESH_FIX_MS
 
@@ -506,29 +540,37 @@ class HearthTrackingService : Service() {
 
   companion object {
     private const val TAG = "HearthTracking"
-    private const val ACTION_TRACK = "expo.modules.hearthmotion.TRACK"
+    // The ping keeps the action name the wake had, so a push handled by
+    // an older service on the way through an update still means the same.
+    private const val ACTION_PING = "expo.modules.hearthmotion.WAKE"
     private const val ACTION_BRIEF = "expo.modules.hearthmotion.BRIEF"
-    private const val ACTION_WAKE = "expo.modules.hearthmotion.WAKE"
     private const val ACTION_WATCH = "expo.modules.hearthmotion.WATCH"
     private const val ACTION_UNWATCH = "expo.modules.hearthmotion.UNWATCH"
     private const val ACTION_STOP = "expo.modules.hearthmotion.STOP"
     private const val ACTION_STOP_BRIEF = "expo.modules.hearthmotion.STOP_BRIEF"
-    private const val EXTRA_REASON = "reason"
+    private const val ACTION_DRIVE = "expo.modules.hearthmotion.DRIVE"
+    private const val ACTION_DRIVE_END = "expo.modules.hearthmotion.DRIVE_END"
+    private const val ACTION_DRIVE_STILL = "expo.modules.hearthmotion.DRIVE_STILL"
     private const val EXTRA_SECONDS = "seconds"
-    private const val EXTRA_FORCE = "force"
     const val CHANNEL_ID = "hearth-wake"
     private const val NOTIFICATION_ID = 7421
     /** The fix's own deadline, so a brief service never outlives it. */
     private const val BRIEF_LIFETIME_MS = 30_000L
     private const val HEADLESS_START_DELAY_MS = 300L
 
-    /** What Live runs, a fix a second wherever the phone is. The tracker's own figure. */
-    private val LIVE = ServiceRequest("high", 1_000L, 0f)
-    /** A wake asks for the best the phone can do, and takes the first fix that is good enough. */
-    private val WAKE = ServiceRequest("high", 1_000L, 0f)
-    private const val WAKE_GOOD_ACCURACY_METERS = 50f
-    /** How long a wake waits for a good fix before it sends the best one it has. */
-    private const val WAKE_FIX_MS = 20_000L
+    /** What Live runs, a fix a second wherever the phone is. */
+    private const val LIVE_INTERVAL_MS = 1_000L
+    /** Often enough that a jolt always has a GPS speed in the detector's fifteen seconds before it. */
+    private const val DRIVE_INTERVAL_MS = 5_000L
+    private const val DRIVE_STANDING_MPS = 2f
+    private const val DRIVE_STANDING_MS = 10 * 60 * 1000L
+    /** Still for this long, with no speed seen in it, is a car that has parked. */
+    private const val DRIVE_STILL_MS = 3 * 60 * 1000L
+    private const val PING_INTERVAL_MS = 1_000L
+    /** A street's worth, which is what a ping is for and what Wi-Fi gives indoors. */
+    private const val PING_GOOD_ACCURACY_METERS = 100f
+    /** How long a ping waits for a good fix before it sends the best one it has. */
+    private const val PING_FIX_MS = 15_000L
     /** Play Services may hand over the last fix it had first, and that is not now. */
     private const val FRESH_FIX_MS = 60_000L
     private const val LAST_KNOWN_MAX_AGE_MS = 2 * 60 * 1000L
@@ -537,7 +579,7 @@ class HearthTrackingService : Service() {
     /** The server's own longest window, so a push cannot ask for an hour. */
     private const val MAX_WATCH_SECONDS = 10 * 60L
 
-    /** "none", "brief", "starting", "running" or "refused", as JavaScript reads it. */
+    /** "none", "brief", "running" or "refused", as JavaScript reads it. */
     @Volatile
     var status: String = "none"
       private set
@@ -547,36 +589,13 @@ class HearthTrackingService : Service() {
     var foreground: Boolean = false
       private set
 
-    @Volatile
-    private var cancelPendingStart = false
-
-    /**
-     * Runs the service with this request, or swaps the request on a
-     * running one. The answer is what the start came to: Android 12 and
-     * later throw at the start call itself when a background app is
-     * outside its allowed moments, and that is "refused".
-     */
-    internal fun start(context: Context, request: ServiceRequest, reason: String): String {
-      val intent =
-        request.putInto(Intent(context, HearthTrackingService::class.java).setAction(ACTION_TRACK))
-          .putExtra(EXTRA_REASON, reason)
-      cancelPendingStart = false
-      return if (deliver(context, intent, reason)) {
-        if (status != "running") status = "starting"
-        status
-      } else {
-        status = "refused"
-        "refused"
-      }
-    }
-
     /** The service up for one fix JavaScript takes. True when Android accepted the start. */
     fun brief(context: Context): Boolean =
       deliver(context, Intent(context, HearthTrackingService::class.java).setAction(ACTION_BRIEF), "brief")
 
-    /** One good fix, sent from here when the server gave a key. False when Android refused the start. */
-    fun wake(context: Context, reason: String): Boolean =
-      deliver(context, Intent(context, HearthTrackingService::class.java).setAction(ACTION_WAKE), reason)
+    /** One fix, sent from here when the server gave a key. False when Android refused the start. */
+    fun ping(context: Context, reason: String): Boolean =
+      deliver(context, Intent(context, HearthTrackingService::class.java).setAction(ACTION_PING), reason)
 
     /** Live for this long, or until the server's answers say nobody is looking. */
     fun watch(context: Context, seconds: Long, reason: String): Boolean =
@@ -586,21 +605,40 @@ class HearthTrackingService : Service() {
         reason,
       )
 
+    /** The motion sensor has the phone in a vehicle, and a circle wants crash alerts. */
+    fun drive(context: Context): Boolean =
+      deliver(context, Intent(context, HearthTrackingService::class.java).setAction(ACTION_DRIVE), "drive")
+
+    fun endDrive(context: Context) {
+      if (!running(context)) return
+      send(context, ACTION_DRIVE_END)
+    }
+
+    /** Still, by the classifier's word, during a drive. */
+    fun stillDuringDrive(context: Context) {
+      if (!running(context)) return
+      send(context, ACTION_DRIVE_STILL)
+    }
+
+    /**
+     * Whether a command has a service to reach: one in the foreground, or a
+     * start on its way, which the command then follows into the queue.
+     */
+    private fun running(context: Context): Boolean =
+      foreground || pendingStart || !(status == "none" || status == "refused")
+
     fun unwatch(context: Context) {
-      if (status == "none" || status == "refused") return
+      if (!running(context)) return
       send(context, ACTION_UNWATCH)
     }
 
-    fun stop(context: Context, force: Boolean = false) {
-      if (status == "none" || status == "refused") return
-      if (status == "starting") {
-        cancelPendingStart = true
-        return
-      }
-      send(context, ACTION_STOP, force)
+    /** Sharing off or signed out. Whatever the service is doing ends. */
+    fun stop(context: Context) {
+      if (!running(context)) return
+      send(context, ACTION_STOP)
     }
 
-    /** Takes a brief service down; a tracking one stays. */
+    /** Takes a brief service down; a ping or Live stays. */
     fun stopBrief(context: Context) {
       if (status != "brief") return
       send(context, ACTION_STOP_BRIEF)
@@ -613,6 +651,10 @@ class HearthTrackingService : Service() {
      * background only at a few moments, and a refusal is put in the log
      * rather than lost to logcat.
      */
+    /** Set from a foreground start until the service has it, so a stop sent between is not dropped. */
+    @Volatile
+    private var pendingStart = false
+
     private fun deliver(context: Context, intent: Intent, reason: String): Boolean {
       if (foreground) {
         try {
@@ -624,9 +666,11 @@ class HearthTrackingService : Service() {
         }
       }
       return try {
+        pendingStart = true
         ContextCompat.startForegroundService(context, intent)
         true
       } catch (error: Exception) {
+        pendingStart = false
         Log.w(TAG, "Start refused ($reason): ${error.message}")
         TrackerQueue.event(
           context,
@@ -636,8 +680,8 @@ class HearthTrackingService : Service() {
       }
     }
 
-    private fun send(context: Context, action: String, force: Boolean = false) {
-      val intent = Intent(context, HearthTrackingService::class.java).setAction(action).putExtra(EXTRA_FORCE, force)
+    private fun send(context: Context, action: String) {
+      val intent = Intent(context, HearthTrackingService::class.java).setAction(action)
       try {
         // A running foreground service makes the app foreground, so a
         // plain start reaches it; one not running has nothing to stop.
@@ -650,13 +694,14 @@ class HearthTrackingService : Service() {
       }
     }
 
-    private fun buildNotification(context: Context): Notification {
+    private fun buildNotification(context: Context, driving: Boolean): Notification {
       val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager.getNotificationChannel(CHANNEL_ID) == null) {
         // The lowest importance: no sound, no status bar icon on most
         // launchers, collapsed in the silent part of the shade.
         val channel = NotificationChannel(CHANNEL_ID, "Location updates", NotificationManager.IMPORTANCE_MIN)
-        channel.description = "Shown while Hearth updates your location on a journey, or while someone watches it live."
+        channel.description =
+          "Shown for the seconds Hearth takes your location, while someone watches it live, and on a drive while crash detection is on."
         channel.setShowBadge(false)
         manager.createNotificationChannel(channel)
       }
@@ -666,7 +711,7 @@ class HearthTrackingService : Service() {
         else @Suppress("DEPRECATION") Notification.Builder(context)
       return builder
         .setContentTitle("Hearth")
-        .setContentText("Updating your location")
+        .setContentText(if (driving) "Crash detection is on for this drive" else "Updating your location")
         .setSmallIcon(icon)
         // Not ongoing: from Android 13 the person may swipe it away, and
         // the service runs on without it.

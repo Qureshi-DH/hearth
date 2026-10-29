@@ -16,11 +16,11 @@ import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 
 /**
- * Sends the fixes that answer a wake or a Live request, from here, with the
+ * Sends the fixes that answer a ping or a Live request, from here, with the
  * session's upload key. Android runs no JavaScript timer for an app in the
  * background, and fetch hands every response over on one, so an answer
  * that waited on JavaScript reached the server when somebody next opened
- * the app.
+ * the app. Starting JavaScript for every ping would cost more than the fix.
  *
  * A fix waits in its own file until the server has it. One the server took
  * goes into the tracker's queue marked as sent, so JavaScript still learns
@@ -48,13 +48,17 @@ internal object NativeUploader {
 
   @Volatile var listener: Listener? = null
 
+  /** The newest answer the server gave, for a push handler that sent with no service to listen. */
+  @Volatile var lastReply: UploadWire.Reply? = null
+    private set
+
   @Volatile private var sending = false
   @Volatile private var scheduled = false
   private var failures = 0
 
   private fun outbox(context: Context) = LineStore(File(context.filesDir, "hearth-tracker/outbox.jsonl"))
 
-  /** Whether a wake or a Live request can be answered from here. */
+  /** Whether a ping or a Live request can be answered from here. */
   fun ready(context: Context): Boolean {
     val prefs = TrackerPrefs(context)
     return prefs.enabled && prefs.mode != "off" && prefs.uploadUrl != null && prefs.uploadKey != null
@@ -71,6 +75,8 @@ internal object NativeUploader {
     val prefs = TrackerPrefs(context)
     prefs.uploadUrl = null
     prefs.uploadKey = null
+    // Where the last account was is nothing to label the next one's fixes by.
+    prefs.lastFix = null
     handOver(context)
   }
 
@@ -78,11 +84,33 @@ internal object NativeUploader {
 
   fun send(context: Context, location: Location, source: String) {
     val app = context.applicationContext
+    val prefs = TrackerPrefs(app)
     val fix = TrackerQueue.fixJson(location)
+    val read = UploadWire.fix(fix)
+    val previous = prefs.lastFix?.let { runCatching { UploadWire.fix(it) }.getOrNull() }
     val (battery, charging) = battery(app)
-    val point = UploadWire.point(UploadWire.fix(fix), source, activity(TrackerPrefs(app)), battery, charging)
+    val activity = UploadWire.activity(read, previous, Departure.serverActivity(prefs.activity))
+    val point = UploadWire.point(read, source, activity, battery, charging)
+    // Signed out or sharing off on the way here: nothing to label the next
+    // account's fixes by.
+    if (ready(app)) prefs.lastFix = fix
     outbox(app).append(JSONObject().put("fix", fix).put("point", point).toString())
     schedule(app, 0)
+  }
+
+  /**
+   * The last fix again, dated now, for a ping to a phone the motion sensor
+   * has had lying still since it was taken. The fix kept as the last one is
+   * the real one, so the hour a repeat may stand in for is counted from it.
+   */
+  fun sendStill(context: Context, last: JSONObject) {
+    val app = context.applicationContext
+    val fix = JSONObject(last.toString()).put("timestamp", System.currentTimeMillis()).put("repeated", true)
+    // The speed and heading were the moment the fix was taken, not now.
+    fix.optJSONObject("coords")?.put("speed", JSONObject.NULL)?.put("heading", JSONObject.NULL)
+    val (battery, charging) = battery(app)
+    val point = UploadWire.point(UploadWire.fix(fix), "nudge", "still", battery, charging)
+    outbox(app).append(JSONObject().put("fix", fix).put("point", point).toString())
   }
 
   /**
@@ -105,7 +133,7 @@ internal object NativeUploader {
     for (line in entries) {
       runCatching { TrackerQueue.appendFix(context, JSONObject(line).getJSONObject("fix")) }
     }
-    TrackerQueue.poke(context)
+    TrackerQueue.poke()
   }
 
   private fun schedule(context: Context, delayMs: Long) {
@@ -152,7 +180,10 @@ internal object NativeUploader {
           failures = 0
           for (entry in batch) TrackerQueue.appendFix(context, entry.getJSONObject("fix").put("sent", true))
           val reply = UploadWire.reply(answer.text)
+          lastReply = reply
           TrackerQueue.event(context, uploaded(batch.size, answer.text))
+          // An open app shows its own dot from what the service sent.
+          TrackerQueue.poke()
           if (reply != null) listener?.onReply(reply, sentAt)
         }
         answer.code == 401 || answer.code == 403 -> {
@@ -164,7 +195,7 @@ internal object NativeUploader {
           for (entry in batch + waiting) TrackerQueue.appendFix(context, entry.getJSONObject("fix"))
           handOver(context)
           TrackerQueue.event(context, JSONObject().put("type", "upload").put("status", "refused").put("code", answer.code))
-          TrackerQueue.poke(context)
+          TrackerQueue.poke()
           return
         }
         answer.code == 0 || answer.code == 408 || answer.code == 429 || answer.code >= 500 -> {
@@ -185,7 +216,7 @@ internal object NativeUploader {
           // same way, and its log says why.
           for (entry in batch) TrackerQueue.appendFix(context, entry.getJSONObject("fix"))
           TrackerQueue.event(context, JSONObject().put("type", "upload").put("status", "rejected").put("code", answer.code))
-          TrackerQueue.poke(context)
+          TrackerQueue.poke()
         }
       }
     }
@@ -229,9 +260,6 @@ internal object NativeUploader {
       connection.disconnect()
     }
   }
-
-  private fun activity(prefs: TrackerPrefs): String =
-    prefs.activity.takeIf { it != "unknown" } ?: if (prefs.mode == "stationary") "still" else "unknown"
 
   private fun battery(context: Context): Pair<Double?, Boolean?> {
     val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return null to null

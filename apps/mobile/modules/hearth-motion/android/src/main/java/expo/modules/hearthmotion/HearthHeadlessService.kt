@@ -9,11 +9,12 @@ import com.facebook.react.bridge.Arguments
 import com.facebook.react.jstasks.HeadlessJsTaskConfig
 
 /**
- * Runs the JavaScript tracker's headless task, which drains the native
- * queue, in a process the OS woke with no screen. Only ever started while
- * the tracking service holds the foreground: a plain service start from
- * a background app is refused, and the tracking service is what makes
- * this app foreground.
+ * Runs the JavaScript tracker's headless task in a process the OS woke with
+ * no screen: for the one fix a session without an upload key takes there,
+ * and for the length of a drive, where crash detection reads the sensors.
+ * Only ever started while the tracking service holds the foreground: a
+ * plain service start from a background app is refused, and the tracking
+ * service is what makes this app foreground.
  */
 class HearthHeadlessService : HeadlessJsTaskService() {
   override fun getTaskConfig(intent: Intent?): HeadlessJsTaskConfig {
@@ -33,12 +34,11 @@ class HearthHeadlessService : HeadlessJsTaskService() {
 
     /**
      * React Native runs no JavaScript timer while the app is in the
-     * background and no headless task is open, and fetch hands every
-     * response over on one. So for as long as the tracking service runs,
-     * one task stays open, and JavaScript holds it until the phone parks.
+     * background and no headless task is open. For as long as a drive runs,
+     * one task stays open, and JavaScript holds it until the drive is over.
      */
     private const val AWAKE = "awake"
-    /** A task the timeout ended is opened again by the next fix. */
+    /** A task the timeout ended is opened again by the drive's next fix. */
     private const val AWAKE_TIMEOUT_MS = 2 * 60 * 60 * 1000L
     /** Let go of early, it is not asked for again on the very next fix. */
     private const val AWAKE_COOLDOWN_MS = 60_000L
@@ -54,7 +54,7 @@ class HearthHeadlessService : HeadlessJsTaskService() {
       if (!start(context, AWAKE)) awakeSince = 0L
     }
 
-    /** JavaScript let go of the task, the phone having parked with nobody watching. */
+    /** JavaScript let go of the task, the drive being over. */
     fun released() {
       awakeSince = 0L
       releasedAt = SystemClock.elapsedRealtime()
@@ -66,8 +66,8 @@ class HearthHeadlessService : HeadlessJsTaskService() {
         context.startService(intent)
         true
       } catch (error: Exception) {
-        // Background, with no foreground service to lean on. The queue
-        // keeps what it has for the next launch.
+        // Background, with no foreground service to lean on. The server
+        // asks again.
         Log.w(TAG, "Headless start refused ($reason): ${error.message}")
         false
       }

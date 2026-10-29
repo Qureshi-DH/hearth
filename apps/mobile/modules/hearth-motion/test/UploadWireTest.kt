@@ -103,8 +103,52 @@ private fun aWakeAnsweredDuringAWatchGoesLive() {
   }
 }
 
+private fun at(minutes: Double, lat: Double, accuracy: Double?, speed: Double? = null) =
+  UploadWire.Fix((minutes * 60_000).toLong(), lat, 73.0479, accuracy, null, null, speed, null)
+
+private fun aPingIsLabelledFromWhatItShows() {
+  val home = 33.6844
+  // About 111 m a thousandth of a degree north.
+  check(UploadWire.activity(at(5.0, home, 6.0, 14.0), null) == "driving") { "GPS road speed" }
+  check(UploadWire.activity(at(5.0, home, 6.0, 0.0), null) == "still") { "GPS standing still" }
+  check(UploadWire.activity(at(5.0, home, 65.0, 0.0), null) == "unknown") { "a Wi-Fi zero is no speed" }
+  check(UploadWire.activity(at(5.0, home, 40.0), at(0.0, home + 0.0005, 30.0)) == "still") {
+    "inside the two error circles and a little"
+  }
+  check(UploadWire.activity(at(5.0, home + 0.03, 40.0), at(0.0, home, 30.0)) == "driving") {
+    "3 km in five minutes"
+  }
+  check(UploadWire.activity(at(5.0, home + 0.004, 40.0), at(0.0, home, 30.0)) == "unknown") {
+    "a walk's worth, which could be anything"
+  }
+  check(UploadWire.activity(at(0.5, home, 40.0), at(0.0, home, 30.0)) == "unknown") {
+    "too close in time to say"
+  }
+  check(UploadWire.activity(at(90.0, home, 40.0), at(0.0, home, 30.0)) == "unknown") {
+    "too far apart to say"
+  }
+  check(UploadWire.activity(at(5.0, home, 40.0), null) == "unknown") { "nothing to compare with" }
+  check(UploadWire.activity(at(5.0, home + 0.03, 40.0), at(0.0, home, 30.0), "walking") == "walking") {
+    "the motion sensor's word comes before what the distance suggests"
+  }
+  check(UploadWire.activity(at(5.0, home, 6.0, 15.0), null, "still") == "driving") {
+    "road speed the GPS measured beats a still said a minute ago"
+  }
+  check(UploadWire.movedLikeAVehicle(at(5.0, home, 6.0, 15.0), null)) { "GPS road speed" }
+  check(UploadWire.movedLikeAVehicle(at(5.0, home + 0.03, 40.0), at(0.0, home, 30.0))) { "3 km in five minutes" }
+  check(!UploadWire.movedLikeAVehicle(at(5.0, home + 0.0005, 40.0), at(0.0, home, 30.0))) { "standing" }
+  // Cell estimates a kilometre and more wide.
+  check(UploadWire.activity(at(5.0, home + 0.0135, 1500.0), at(0.0, home, 1500.0)) == "unknown") {
+    "1.5 km inside two cell circles is not proof of standing still"
+  }
+  check(UploadWire.activity(at(5.0, home + 0.018, 500.0), at(0.0, home, 30.0)) == "unknown") {
+    "2 km off on a 500 m estimate is not proof of a drive"
+  }
+}
+
 fun main() {
   aPointIsWhatTheServerTakes()
+  aPingIsLabelledFromWhatItShows()
   aSpeedNobodyMeasuredIsNotAStop()
   theAnswerIsRead()
   aWatchFollowsTheServer()

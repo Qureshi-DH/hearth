@@ -99,8 +99,9 @@ private const val MAX_PENDING_SAMPLES = 2_000
 
 /**
  * Google Play Services already runs this classifier for the system, so asking
- * it what the phone is doing costs far less than waking the GPS to work it out
- * from position changes.
+ * it what the phone is doing costs no location at all. The module is also
+ * JavaScript's way into the tracking service, the uploader and the queue,
+ * and the phone's power switches, which nothing in expo reads.
  *
  * The module also samples the raw sensors crash detection reads. It does that
  * itself rather than through expo-sensors, which drops its SensorManager
@@ -108,8 +109,7 @@ private const val MAX_PENDING_SAMPLES = 2_000
  * or a map app on top all pause it, which is the state a phone is in for the
  * whole of a drive, so the detector only ever ran while somebody was watching
  * it. Registering from the application context here means the samples keep
- * coming for as long as the process does, which the location foreground
- * service already guarantees while the car is moving.
+ * coming for as long as the process does.
  *
  * The bodies below are plain methods rather than long lambdas. An AsyncFunction
  * lambda infers its return type from its last expression, which makes an early
@@ -160,14 +160,10 @@ class HearthMotionModule : Module() {
 
     AsyncFunction("openVendorPowerManagerAsync") { openVendorPowerManager() }
 
-    // The tracking transport. The receivers and the service do their work
-    // without this module; these are JavaScript's way of steering them.
+    // The tracking transport. The push handler and the service do their
+    // work without this module; these are JavaScript's way of steering them.
 
-    AsyncFunction("startServiceAsync") { request: Map<String, Any?> ->
-      HearthTrackingService.start(context, ServiceRequest.fromMap(request), "js")
-    }
-
-    AsyncFunction("stopServiceAsync") { force: Boolean? -> HearthTrackingService.stop(context, force == true) }
+    AsyncFunction("stopServiceAsync") { HearthTrackingService.stop(context) }
 
     AsyncFunction("watchAsync") { seconds: Double -> HearthTrackingService.watch(context, seconds.toLong(), "js") }
 
@@ -192,14 +188,6 @@ class HearthMotionModule : Module() {
 
     AsyncFunction("getServiceStatusAsync") { HearthTrackingService.status }
 
-    AsyncFunction("armFenceAsync") { lat: Double, lon: Double, radius: Double ->
-      Fences.arm(context, TrackerPrefs.Fence(lat, lon, radius.toFloat()), await = true)
-    }
-
-    AsyncFunction("disarmFenceAsync") { Fences.disarm(context) }
-
-    AsyncFunction("isFenceArmedAsync") { Fences.armed(context) }
-
     AsyncFunction("setTrackerStateAsync") { state: Map<String, Any?> -> setTrackerState(state) }
 
     AsyncFunction("drainFixesAsync") { TrackerQueue.drainFixes(context) }
@@ -213,10 +201,9 @@ class HearthMotionModule : Module() {
     OnStopObserving { stopObservingPower() }
 
     // The tracker listens for the queue from the moment it loads until the
-    // process ends, so this is "JavaScript is up": the receivers and the
-    // service reach it directly, and the queue holds what they saw before.
-    // Named, because the hooks fire per event, and the classifier's
-    // listener comes and goes with tracking.
+    // process ends, so this is "JavaScript is up": the service reaches it
+    // directly, and the queue holds what it did before. Named, because the
+    // hooks fire per event.
     OnStartObserving("onNativeQueue") { HearthEvents.sink = { name, body -> sendEvent(name, body) } }
 
     OnStopObserving("onNativeQueue") { HearthEvents.sink = null }
@@ -234,22 +221,26 @@ class HearthMotionModule : Module() {
     AsyncFunction("stopSensorsAsync") { stopSensors() }
 
     OnDestroy {
-      // The classifier's requests outlive the module on purpose: they
-      // are aimed at the manifest receiver, and a departure has to wake
-      // a process that has no module.
+      // The classifier's transitions outlive the module on purpose: they are
+      // aimed at the manifest receiver, which the push handler and a drive
+      // read without this module.
       stopSensors()
       stopObservingPower()
       HearthEvents.sink = null
     }
   }
 
-  @Suppress("UNCHECKED_CAST")
   private fun setTrackerState(state: Map<String, Any?>) {
     val prefs = TrackerPrefs(context)
     prefs.enabled = state["enabled"] as? Boolean ?: false
     prefs.mode = state["mode"] as? String ?: "off"
-    (state["activity"] as? String)?.let { prefs.activity = it }
-    (state["movingRequest"] as? Map<String, Any?>)?.let { prefs.movingRequest = ServiceRequest.fromMap(it) }
+    val wasCrashDetection = prefs.crashDetection
+    prefs.crashDetection = state["crashDetection"] as? Boolean ?: false
+    // A drive under way when the last circle turned crash alerts off, or
+    // sharing went off, has nothing left to run for.
+    if (wasCrashDetection && (!prefs.crashDetection || !prefs.enabled)) HearthTrackingService.endDrive(context)
+    // Here as well as at the update, which a phone that was off misses.
+    LegacyRequests.forget(context)
   }
 
   private fun backgroundRestricted(): Boolean {

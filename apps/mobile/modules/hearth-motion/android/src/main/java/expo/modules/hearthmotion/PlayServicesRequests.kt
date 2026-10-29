@@ -4,17 +4,11 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.os.Looper
 import android.util.Log
 import com.google.android.gms.location.ActivityRecognition
 import com.google.android.gms.location.ActivityTransition
 import com.google.android.gms.location.ActivityTransitionRequest
 import com.google.android.gms.location.DetectedActivity
-import com.google.android.gms.location.Geofence
-import com.google.android.gms.location.GeofencingRequest
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.tasks.Tasks
-import java.util.concurrent.TimeUnit
 
 /**
  * Play Services fills the intent it fires with the result, so every one of
@@ -29,26 +23,20 @@ private fun broadcast(context: Context, requestCode: Int, receiver: Class<*>): P
 }
 
 /**
- * The classifier's two requests, aimed at the manifest receiver: the
- * sampled verdict on a schedule, and the transitions Play Services
- * debounces, which are the ones that wake a dead process and are the
- * moment Android lets it start the service.
+ * The classifier's transitions, aimed at the manifest receiver. Play
+ * Services debounces them, so they say a phone is still, on foot or in a
+ * vehicle once it is, and they cost no location at all. They are the only
+ * request: builds before 1.3.4 also asked for a verdict every half minute,
+ * which started the process all day for a phone lying in a drawer.
  */
 internal object MotionUpdates {
   private const val TAG = "HearthMotion"
-  private const val SAMPLE_REQUEST_CODE = 8021
   private const val TRANSITION_REQUEST_CODE = 8022
-  private const val DETECTION_INTERVAL_MS = 30_000L
 
-  /** True when both requests took. A missing permission is the usual reason they do not. */
+  /** True when the request took. A missing permission is the usual reason it does not. */
   fun register(context: Context): Boolean {
     val client = ActivityRecognition.getClient(context)
-    forgetLegacyRequests(context, client)
     return try {
-      client.requestActivityUpdates(
-        DETECTION_INTERVAL_MS,
-        broadcast(context, SAMPLE_REQUEST_CODE, HearthTransitionReceiver::class.java),
-      )
       val entering =
         listOf(
           DetectedActivity.IN_VEHICLE,
@@ -74,101 +62,13 @@ internal object MotionUpdates {
     }
   }
 
-  /**
-   * Builds that came before aimed these requests at a receiver registered
-   * at runtime, with an implicit intent. Play Services still holds them
-   * after an update, firing at a receiver that no longer exists, so they
-   * are taken back the first time the new ones are made.
-   */
-  private fun forgetLegacyRequests(context: Context, client: com.google.android.gms.location.ActivityRecognitionClient) {
-    val flags =
-      PendingIntent.FLAG_NO_CREATE or
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
-    val legacy =
-      listOf(
-        SAMPLE_REQUEST_CODE to "expo.modules.hearthmotion.ACTIVITY",
-        TRANSITION_REQUEST_CODE to "expo.modules.hearthmotion.TRANSITION",
-      )
-    for ((code, action) in legacy) {
-      val intent = Intent(action).setPackage(context.packageName)
-      val pending = PendingIntent.getBroadcast(context, code, intent, flags) ?: continue
-      runCatching { client.removeActivityUpdates(pending) }
-      runCatching { client.removeActivityTransitionUpdates(pending) }
-      pending.cancel()
-    }
-  }
-
   fun unregister(context: Context) {
     val client = ActivityRecognition.getClient(context)
-    val samples = broadcast(context, SAMPLE_REQUEST_CODE, HearthTransitionReceiver::class.java)
     val transitions = broadcast(context, TRANSITION_REQUEST_CODE, HearthTransitionReceiver::class.java)
-    runCatching { client.removeActivityUpdates(samples) }
     runCatching { client.removeActivityTransitionUpdates(transitions) }
-    samples.cancel()
     transitions.cancel()
-    TrackerPrefs(context).motionWanted = false
-  }
-}
-
-/**
- * The fence around the parking spot, kept by Play Services and fired at
- * the manifest receiver, which is how a parked phone whose process is
- * long gone still hears that it left.
- */
-internal object Fences {
-  private const val TAG = "HearthFence"
-  private const val REQUEST_CODE = 8023
-  const val STATIONARY_ID = "stationary"
-  private const val AWAIT_SECONDS = 10L
-
-  /**
-   * Arms the fence and records it. Waits for Play Services' answer when
-   * asked to, which a module call can afford and a receiver cannot.
-   */
-  fun arm(context: Context, fence: TrackerPrefs.Fence, await: Boolean): Boolean {
-    val geofence =
-      Geofence.Builder()
-        .setRequestId(STATIONARY_ID)
-        .setCircularRegion(fence.lat, fence.lon, fence.radius)
-        .setExpirationDuration(Geofence.NEVER_EXPIRE)
-        .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_EXIT)
-        .build()
-    val request =
-      GeofencingRequest.Builder()
-        .setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_EXIT)
-        .addGeofence(geofence)
-        .build()
     val prefs = TrackerPrefs(context)
-    return try {
-      val task =
-        LocationServices.getGeofencingClient(context)
-          .addGeofences(request, broadcast(context, REQUEST_CODE, HearthFenceReceiver::class.java))
-      // Tasks.await refuses the main thread outright, and a refusal here
-      // would read as a fence that could not be set.
-      if (await && Looper.myLooper() != Looper.getMainLooper()) {
-        Tasks.await(task, AWAIT_SECONDS, TimeUnit.SECONDS)
-      }
-      prefs.fence = fence
-      true
-    } catch (error: Exception) {
-      Log.w(TAG, "Fence refused: ${error.message}")
-      prefs.fence = null
-      false
-    }
-  }
-
-  fun disarm(context: Context) {
-    TrackerPrefs(context).fence = null
-    runCatching {
-      LocationServices.getGeofencingClient(context).removeGeofences(listOf(STATIONARY_ID))
-    }
-  }
-
-  /** What the app last armed, which Play Services may since have dropped without a word. */
-  fun armed(context: Context): Boolean = TrackerPrefs(context).fence != null
-
-  /** Play Services said it dropped the fence, so the record of it goes too. */
-  fun forget(context: Context) {
-    TrackerPrefs(context).fence = null
+    prefs.motionWanted = false
+    prefs.forgetActivity()
   }
 }

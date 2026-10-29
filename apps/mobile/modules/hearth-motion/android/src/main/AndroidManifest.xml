@@ -19,12 +19,9 @@
         <action android:name="com.google.firebase.MESSAGING_EVENT" />
       </intent-filter>
     </service>
-    <!-- Play Services fires explicit intents at these, which starts the process when it has to. -->
+    <!-- Play Services fires an explicit intent at this, which starts the process when it has to. -->
     <receiver
       android:name="expo.modules.hearthmotion.HearthTransitionReceiver"
-      android:exported="false" />
-    <receiver
-      android:name="expo.modules.hearthmotion.HearthFenceReceiver"
       android:exported="false" />
     <receiver
       android:name="expo.modules.hearthmotion.HearthBootReceiver"

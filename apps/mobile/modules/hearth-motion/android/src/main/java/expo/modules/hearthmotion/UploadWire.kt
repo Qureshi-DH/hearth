@@ -29,6 +29,14 @@ internal object UploadWire {
 
   /** Below this a fix is GPS class, and a zero speed on it is a real stop. The tracker's own figure. */
   private const val GPS_CLASS_ACCURACY_METERS = 30.0
+  /** The tracker's own figures for the labels in [activity]. */
+  private const val DRIVING_SPEED_MPS = 6.0
+  private const val STILL_SPEED_MPS = 0.5
+  private const val STILL_SLACK_METERS = 50.0
+  /** Looser than this, two fixes in the same place prove nothing about staying put. */
+  private const val STILL_MAX_ACCURACY_METERS = 100.0
+  private const val LABEL_MIN_GAP_MS = 60_000L
+  private const val LABEL_MAX_GAP_MS = 60 * 60_000L
 
   fun fix(json: JSONObject): Fix {
     val coords = json.getJSONObject("coords")
@@ -73,6 +81,64 @@ internal object UploadWire {
     } catch (error: Exception) {
       null
     }
+
+  /**
+   * What a fix says the phone is doing: the motion sensor's word when it has
+   * one, and otherwise what the fix shows. A speed
+   * the GPS measured says it outright. Otherwise the fix before it does, when
+   * the two are far enough apart in time to mean anything: no further apart
+   * than their error circles is a phone that stayed put, and road speed
+   * between them is a drive. Anything else is not known. A cell estimate a
+   * kilometre wide can hide a drive inside its error circle, so "still" is
+   * only said of fixes sharp enough to show it, and a drive is measured on
+   * what the circles cannot explain. The same rule as pingActivity in
+   * tracker.ts.
+   */
+  fun activity(fix: Fix, previous: Fix?, classifier: String = "unknown"): String {
+    val speed = measuredSpeed(fix.speed, fix.accuracy)
+    // Road speed the GPS measured is a drive, whatever the classifier said a
+    // minute ago. Otherwise the motion sensor knows, where it has said.
+    if (speed != null && speed >= DRIVING_SPEED_MPS) return "driving"
+    if (classifier != "unknown") return classifier
+    if (speed != null) {
+      return when {
+        speed >= DRIVING_SPEED_MPS -> "driving"
+        speed < STILL_SPEED_MPS -> "still"
+        else -> "unknown"
+      }
+    }
+    if (previous == null) return "unknown"
+    val gap = fix.time - previous.time
+    if (gap < LABEL_MIN_GAP_MS || gap > LABEL_MAX_GAP_MS) return "unknown"
+    val moved = metersBetween(previous, fix)
+    val error = (fix.accuracy ?: 0.0) + (previous.accuracy ?: 0.0)
+    val sharp =
+      (fix.accuracy ?: Double.MAX_VALUE) <= STILL_MAX_ACCURACY_METERS &&
+        (previous.accuracy ?: Double.MAX_VALUE) <= STILL_MAX_ACCURACY_METERS
+    if (sharp && moved <= error + STILL_SLACK_METERS) return "still"
+    return if ((moved - error) / (gap / 1000.0) >= DRIVING_SPEED_MPS) "driving" else "unknown"
+  }
+
+  /** Moving like a car: road speed measured, or well clear of the fix before at road pace. */
+  fun movedLikeAVehicle(fix: Fix, previous: Fix?): Boolean {
+    val speed = measuredSpeed(fix.speed, fix.accuracy)
+    if (speed != null) return speed >= DRIVING_SPEED_MPS
+    if (previous == null) return false
+    val gap = fix.time - previous.time
+    if (gap <= 0) return false
+    val error = (fix.accuracy ?: 0.0) + (previous.accuracy ?: 0.0)
+    return (metersBetween(previous, fix) - error) / (gap / 1000.0) >= DRIVING_SPEED_MPS
+  }
+
+  private fun metersBetween(a: Fix, b: Fix): Double {
+    val earth = 6_371_000.0
+    val dLat = Math.toRadians(b.lat - a.lat)
+    val dLon = Math.toRadians(b.lon - a.lon)
+    val h =
+      Math.sin(dLat / 2).let { it * it } +
+        Math.cos(Math.toRadians(a.lat)) * Math.cos(Math.toRadians(b.lat)) * Math.sin(dLon / 2).let { it * it }
+    return 2 * earth * Math.asin(Math.sqrt(h))
+  }
 
   /**
    * Android hands over 0 for a speed it never measured, and a Wi-Fi or cell
