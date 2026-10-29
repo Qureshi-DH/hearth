@@ -68,6 +68,11 @@ when it is opened.
   the phone that raised it on Live for as long as it stayed open.
 - Location showed as in use all day on a phone lying on a bed, which the old
   tiers took for a phone about to leave.
+- The app stopped on its first screen with "undefined is not a function", in
+  1.3.3 as well. A dependency update had moved the navigation stack's
+  native-stack package on its own to a release that needs a newer navigation
+  core. The navigation packages are back on the versions 1.3.2 ran with, and
+  are only updated together from now on.
 
 ## [1.3.3] - 2026-10-24
 

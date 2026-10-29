@@ -10,6 +10,10 @@ updates:
         dependency-type: development
       expo:
         patterns: ["expo", "expo-*", "@expo/*", "react-native*"]
+      # Released as a set. #20 moved native-stack alone to a release that
+      # needs a newer @react-navigation/native, and the app crashed on launch.
+      react-navigation:
+        patterns: ["@react-navigation/*"]
     ignore:
       # An Expo SDK pins React, React Native and the test and lint tooling that
       # go with it. They move together at an SDK upgrade, by hand with
