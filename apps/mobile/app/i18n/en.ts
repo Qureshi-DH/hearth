@@ -96,7 +96,7 @@ const en = {
     intro:
       "A few system permissions make the difference between a map that works and one that goes quiet the moment you lock your phone.",
     subtitle: android
-      ? 'Hearth collects location data to enable family location sharing, arrival alerts and crash detection even when the app is closed or not in use. Choose "Allow all the time" when Android offers it. You stay in control and can pause sharing any time.'
+      ? 'Hearth collects location data to enable family location sharing, arrival alerts, Live location and crash detection even when the app is closed or not in use. Choose "Allow all the time" when Android offers it. You stay in control and can pause sharing any time.'
       : 'For your family to see you when the app is closed, Hearth needs "Always" location access. You stay in control and can pause sharing any time.',
     locationTitle: android ? "Location, all the time" : "Location, always",
     locationAlwaysBody: "Your family can see you even when the app is closed.",
@@ -109,7 +109,7 @@ const en = {
     notificationsTitle: "Notifications",
     notificationsBody: "Arrivals, low battery, and most importantly SOS alerts from your circle.",
     notificationsNoPushBody:
-      "Your server has no push service, so Hearth can only ring for an SOS or a possible crash while it is open or still connected in the background. An iPhone stays connected while it shares its location, an Android phone only while it is on the move. Everything else waits until you open the app.",
+      "Your server has no push service, so it cannot ask this phone where it is while Hearth is closed, and nobody can watch it on Live then. The phone reports when it runs its own background check, every quarter of an hour or so on Android and less often on an iPhone, and while Hearth is open. An SOS or a possible crash rings only while the app is open.",
     dndTitle: "Let SOS through Do Not Disturb",
     dndBody:
       "Optional. Do Not Disturb silences Hearth like any other app. With this access an SOS or a possible-crash alert from your circle still gets through. Hearth uses it for those two alerts and nothing else. Find Hearth in the list and allow it.",
@@ -121,7 +121,7 @@ const en = {
       "Android pauses background apps to save power. Exempt Hearth so location keeps flowing when the screen is off.",
     refreshTitle: "Background App Refresh",
     refreshBody:
-      "Keep it on for Hearth (Settings → General → Background App Refresh). It is what lets the server wake the app for a fix when the phone has been quiet, and lets the offline queue upload.",
+      "Keep it on for Hearth (Settings → General → Background App Refresh). It is what lets the server wake the app for each location check and for Live, and lets the offline queue upload.",
     notRequested:
       "Hearth uploads your location to the server your family runs. Street names come from your phone's maps service, which is sent each spot it names, and can be turned off under You. There is no Hearth account, no analytics and no ad network in this app. It never asks for your contacts, microphone, Bluetooth or advertising ID, and a profile picture goes through the system picker so it only ever sees the one image you choose.",
     allow: "Allow",
@@ -135,13 +135,13 @@ const en = {
     openSettings: "Open Settings",
     sensorsTitle: "Crash detection",
     sensorsBody:
-      "Reads the accelerometer while you drive, with no permission needed. If it thinks you have crashed it asks, and alerts your circle if you do not answer.",
+      "Reads the accelerometer and the GPS while you drive, with no permission of its own. Your location is not shared any more often for it. If it thinks you have crashed it asks, and alerts your circle if you do not answer.",
     wifiTitle: "Wi-Fi scanning",
     wifiBody:
       "Leaving Wi-Fi on, even when not connected, makes location noticeably more accurate and costs less battery than GPS alone.",
     motionTitle: "Motion & Fitness",
     motionBody:
-      "Your phone already knows when you have stopped and when you are in a car. Hearth reads that so the GPS can rest between journeys and crash detection knows a drive has started. Without it the GPS has to stay awake to work it out.",
+      "Your phone already knows when you are still, on foot or in a car. Hearth reads that so it knows whether you have moved without switching your location on, and so crash detection knows a drive has started.",
     whyTitle: android ? 'Why "Allow all the time"?' : 'Why "Always"?',
     stateDone: "On",
     stateTodo: "Needed",
@@ -158,7 +158,7 @@ const en = {
       "Battery Saver stops apps from using location in the background. Your position will not update until it is off, or Hearth is exempted from it.",
     lowPowerTitle: "Low Power Mode is on",
     lowPowerBody:
-      "Low Power Mode switches off Background App Refresh, so iOS cannot wake Hearth when you move. Your family sees where you were, not where you are.",
+      "Low Power Mode holds back the background checks Hearth answers, so iOS reports your position less often. Your family sees where you were, not where you are.",
     openBatterySettings: "Open battery settings",
   },
   keepAlive: {
@@ -434,7 +434,7 @@ const en = {
     customRange: "Anything from {{min}} to {{max}}.",
     customInvalid: "Enter a whole number between {{min}} and {{max}}.",
     customDays: "Days of history to keep",
-    customInterval: "Seconds between updates",
+    customInterval: "Minutes between location checks",
     customBattery: "Battery percentage to alert at",
     customSpeed: "Speed to alert above, in {{unit}}",
     alertsHint: "What this family gets told about, and when. These apply to everyone here.",
@@ -463,10 +463,12 @@ const en = {
     incidentHint:
       "Tells the circle when a phone stops hard and does not move again. A prompt to check on someone, not proof.",
     lowBattery: "Low battery alert at",
-    updateInterval: "Update frequency",
-    intervalFast: "Frequent (30 s)",
-    intervalNormal: "Normal (1 min)",
-    intervalSaver: "Battery saver (5 min)",
+    updateInterval: "Location checks",
+    updateIntervalHint:
+      "How often Hearth asks each phone where it is. Nothing tracks in between, moving or not. Live shows a phone second by second while you watch.",
+    intervalFast: "Every 2 min",
+    intervalNormal: "Every 5 min",
+    intervalSaver: "Battery saver (10 min)",
     intervalSeconds: "{{count}} s",
     intervalMinutes: "{{count}} min",
     danger: "Danger zone",
@@ -478,7 +480,7 @@ const en = {
   sharing: {
     title: "Location sharing",
     precise: "Precise",
-    preciseBody: "Your exact position, updated continuously.",
+    preciseBody: "Your exact position, checked every few minutes and live while someone watches.",
     approximate: "Approximate",
     approximateBody: "Only the general area (about 750 m). Trails and speed are hidden.",
     paused: "Paused",

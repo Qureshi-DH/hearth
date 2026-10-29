@@ -26,9 +26,9 @@ const INTERVAL_OPTIONS: Array<{
   seconds: number
   tx: "circle:intervalFast" | "circle:intervalNormal" | "circle:intervalSaver"
 }> = [
-  { seconds: 30, tx: "circle:intervalFast" },
-  { seconds: 60, tx: "circle:intervalNormal" },
-  { seconds: 300, tx: "circle:intervalSaver" },
+  { seconds: 120, tx: "circle:intervalFast" },
+  { seconds: 300, tx: "circle:intervalNormal" },
+  { seconds: 600, tx: "circle:intervalSaver" },
 ]
 const BATTERY_OPTIONS = [0.1, 0.15, 0.2, 0.3]
 /**
@@ -69,7 +69,9 @@ function customBounds(
       min: 0,
       max: ceilingDays ?? MAX_RETENTION_DAYS,
     },
-    interval: { title: translate("circle:customInterval"), min: 10, max: 3600 },
+    // In minutes, from the server's floor. Past ten, a phone on the move
+    // would read as out of date on the map between one ping and the next.
+    interval: { title: translate("circle:customInterval"), min: 2, max: 10 },
     battery: { title: translate("circle:customBattery"), min: 1, max: 90 },
     speed: {
       title: translate("circle:customSpeed", { unit: speedUnit(units) }),
@@ -203,7 +205,7 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
     key === "retention"
       ? retention
       : key === "interval"
-        ? circle.settings.minUpdateIntervalSeconds
+        ? Math.round(circle.settings.minUpdateIntervalSeconds / 60)
         : key === "battery"
           ? Math.round(circle.settings.lowBatteryThreshold * 100)
           : speedAlert
@@ -216,11 +218,7 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
       return
     }
     if (key === "retention") patchSettings({ historyRetentionDays: value })
-    else if (key === "interval")
-      patchSettings({
-        minUpdateIntervalSeconds: value,
-        distanceFilterMeters: value >= 300 ? 150 : value >= 60 ? 80 : 40,
-      })
+    else if (key === "interval") patchSettings({ minUpdateIntervalSeconds: value * 60 })
     else if (key === "battery") patchSettings({ lowBatteryThreshold: value / 100 })
     else patchSettings({ speedAlertKmh: speedToKmh(value, units) })
   }
@@ -294,13 +292,18 @@ export const CircleSettingsScreen: FC<AppStackScreenProps<"CircleSettings">> = (
         INTERVAL_OPTIONS.map((option) => option.seconds),
         circle.settings.minUpdateIntervalSeconds,
         intervalLabel,
-        (seconds) =>
-          patchSettings({
-            minUpdateIntervalSeconds: seconds,
-            distanceFilterMeters: seconds >= 300 ? 150 : seconds >= 60 ? 80 : 40,
-          }),
+        (seconds) => patchSettings({ minUpdateIntervalSeconds: seconds }),
         "interval",
       )}
+      <Text
+        size="xxs"
+        tx="circle:updateIntervalHint"
+        style={{
+          color: theme.colors.textFaint,
+          paddingHorizontal: theme.spacing.md,
+          paddingTop: 6,
+        }}
+      />
 
       <SectionHeader tx="circle:historyRetention" />
       {chips(

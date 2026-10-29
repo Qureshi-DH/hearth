@@ -31,7 +31,7 @@ describe("the background location choice", () => {
     expect(strings.permissions.subtitle).toContain('"Allow all the time"')
     // The prominent disclosure Play reviewers look for before the system prompt.
     expect(strings.permissions.subtitle).toContain(
-      "Hearth collects location data to enable family location sharing, arrival alerts and crash detection even when the app is closed or not in use.",
+      "Hearth collects location data to enable family location sharing, arrival alerts, Live location and crash detection even when the app is closed or not in use.",
     )
   })
 
