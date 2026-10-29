@@ -81,7 +81,6 @@ export async function reportHealth({ background = false }: { background?: boolea
     ...(android ? { backgroundRestricted: snapshot.backgroundRestricted } : {}),
     lowPowerMode: snapshot.lowPowerMode,
     ...(snapshot.manufacturer ? { manufacturer: snapshot.manufacturer } : {}),
-    ...(android ? { serviceStopped: snapshot.serviceStopped } : {}),
     // The session keeps what the phone signed in with, and an update since
     // would never reach it otherwise.
     ...(Application.nativeApplicationVersion

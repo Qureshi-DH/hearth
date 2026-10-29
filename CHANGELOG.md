@@ -6,6 +6,15 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+Phones no longer track all day. The server pings each phone on its
+circle's interval, five minutes unless a circle says otherwise, and a phone
+the motion sensor has had lying still since its last fix answers with that
+fix and never turns location on. One that has moved takes one Wi-Fi grade
+fix. Live is the only time a phone reports second by second, and moving
+switches on no tracking. Update the server first. It brings two migrations
+and is what sends the pings, and a phone on an older server reports only
+when it is opened.
+
 ### Changed
 
 - The interval a circle sets is now how often the server asks each phone
@@ -16,18 +25,49 @@ Notable changes to Hearth. The format is loosely
   2 rather than refused. A phone whose last fix had it on the move is asked
   a little sooner, every 2 minutes unless `PING_MOVING_INTERVAL_SECONDS`
   says otherwise.
+- The motion sensor decides whether a ping needs location at all. On
+  Android the classifier's transitions are written down as they come, at no
+  cost in location, and the push handler answers a still phone's ping
+  without starting the location service. On iPhone the ping reads Core
+  Motion's history since the last fix. A phone still for an hour takes one
+  real fix, so a departure the sensor missed costs at most that.
+- Opening a member's page or sending a nudge always asks the phone for a
+  fresh fix.
 - A phone that goes on not answering is asked every half hour once an hour
   of pings has gone by, and every three hours after a day, so a phone that
   was only flat comes back. "Stopped reporting" still waits for the same
   silence as before, and for two pings to go unanswered besides the newest.
+- On Android the ping is answered by the location service from the push
+  itself, without starting the app's JavaScript, and the "Updating your
+  location" notification is there only for the seconds a fix takes. On
+  iPhone the silent push wakes the app. iOS decides how many of those it
+  delivers, so an iPhone may answer fewer pings than it is sent, and one
+  that was swiped away answers none until it is opened.
+- Crash detection runs only on a drive, from the motion sensor saying the
+  phone is in a vehicle until it says otherwise, and only where a circle has
+  crash alerts on. The GPS reads the speed it needs for the drive, and those
+  fixes stay on the phone. On Android the notification says crash detection
+  is on for the drive. On iPhone a drive is found by the next ping.
+- The app registers for silent pushes even when alerts were declined, since
+  the ping needs no alert permission.
 - An open SOS keeps the phone that raised it on Live for half an hour from
   when it was raised or last pressed again, not for as long as it stays open.
+
+### Removed
+
+- The moving, driving and parked tiers, the fence around the parking spot,
+  the iPhone's all-day location session, and every request that woke the
+  phone because it moved. The classifier's half-minute verdicts on Android
+  are gone too, its transitions say the same at a fraction of the wakes. The
+  update takes back the requests older builds left with the OS.
 
 ### Fixed
 
 - A phone could sit at a fix a second for days, uploading every one. An SOS
   that nobody resolved, which is what a false crash alarm leaves behind, held
   the phone that raised it on Live for as long as it stayed open.
+- Location showed as in use all day on a phone lying on a bed, which the old
+  tiers took for a phone about to leave.
 
 ## [1.3.3] - 2026-10-24
 

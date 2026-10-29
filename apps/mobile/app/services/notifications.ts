@@ -10,12 +10,7 @@ import { endpoints } from "@/services/api"
 import { answerIncidentResponse } from "@/services/incidentAlarm"
 import { phoneClock } from "@/services/phoneClock"
 import { logTracker } from "@/services/location/log"
-import {
-  BACKGROUND_LOCATION_TASK,
-  enterWatched,
-  answerWake,
-  reassertService,
-} from "@/services/location/tracker"
+import { BACKGROUND_LOCATION_TASK, enterWatched, answerWake } from "@/services/location/tracker"
 
 export type PushSetupResult =
   | { kind: "registered"; provider: "expo" }
@@ -107,7 +102,6 @@ export async function setupPush(serverInfo: ServerInfo): Promise<PushSetupResult
   if (status !== "granted") {
     status = (await Notifications.requestPermissionsAsync()).status
   }
-  if (status !== "granted") return { kind: "denied" }
 
   const projectId =
     (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas?.projectId ??
@@ -120,8 +114,16 @@ export async function setupPush(serverInfo: ServerInfo): Promise<PushSetupResult
     }
   }
 
-  const token = await Notifications.getExpoPushTokenAsync({ projectId })
-  await endpoints.push.register({ provider: "expo", token: token.data, ...phoneClock() })
+  // Registered whatever the person said about alerts. The server's ping is a
+  // silent push, which neither iOS nor Android needs that permission for,
+  // and a phone with no token is never asked where it is.
+  try {
+    const token = await Notifications.getExpoPushTokenAsync({ projectId })
+    await endpoints.push.register({ provider: "expo", token: token.data, ...phoneClock() })
+  } catch (error) {
+    if (status === "granted") throw error
+  }
+  if (status !== "granted") return { kind: "denied" }
   return { kind: "registered", provider: "expo" }
 }
 
@@ -178,9 +180,11 @@ const WATCH_TYPE = "watch"
 
 // Runs for a data-only push with the app in the background or not running
 // at all. The server sends one when it wants a fix and the phone's control
-// channel is closed: a phone gone quiet, the map or a member's page opened,
-// or Live. The answer is a fix, or the live tier for a watch. Defined at
-// module scope: the OS can hand this over before any React code has mounted.
+// channel is closed: the ping, the map or a member's page opened, or Live.
+// The answer is a fix, or Live for a watch. On Android the push handler in
+// modules/hearth-motion answers both itself where it can, and only a session
+// without an upload key gets here. Defined at module scope: the OS can hand
+// this over before any React code has mounted.
 TaskManager.defineTask(NOTIFICATION_WAKE_TASK, async ({ data, error }) => {
   if (error) return
   // Android also runs this for a button on a notification, and the incident's
@@ -193,13 +197,18 @@ TaskManager.defineTask(NOTIFICATION_WAKE_TASK, async ({ data, error }) => {
     return
   }
   if (!type || !WAKE_TYPES.has(type)) return
-  // A high priority push is one of the moments Android lets the location
-  // service start from the background. A phone whose journey began at a
-  // moment Android refused has been on throttled fixes since, and this is
-  // where the service comes back. The service first, while the moment lasts.
-  await reassertService({ exempt: true })
-  await answerWake()
+  await answerWake({ ping: isPing(data) })
 })
+
+/**
+ * The server's scheduled ask, which a phone lying still answers without
+ * location. Anything somebody asked for is not one.
+ */
+function isPing(payload: unknown): boolean {
+  const data = (payload as { data?: Record<string, unknown> } | undefined)?.data
+  const raw = data?.ping ?? parseNested(data)?.ping
+  return raw === true || raw === "true"
+}
 
 function watchSeconds(payload: unknown): number {
   const data = (payload as { data?: Record<string, unknown> } | undefined)?.data
@@ -227,14 +236,14 @@ export function attachNotificationListeners(
   onOpen: (target: NotificationTarget) => void,
 ): () => void {
   const received = Notifications.addNotificationReceivedListener((notification) => {
-    // The app is open, so the fix is the heartbeat's kind: no service needed
-    // and nothing to bring back. A watch still goes live, since the family
-    // member watching is not the one holding this phone.
+    // The app is open, so the fix is the heartbeat's kind. A watch still
+    // goes live, since the family member watching is not the one holding
+    // this phone.
     const data = notification.request.content.data as
       (NotificationTarget & { seconds?: number }) | undefined
     if (!data?.type) return
     if (data.type === WATCH_TYPE) void enterWatched(watchSeconds({ data }), { push: true })
-    else if (WAKE_TYPES.has(data.type)) void answerWake()
+    else if (WAKE_TYPES.has(data.type)) void answerWake({ ping: isPing({ data }) })
   })
 
   const open = async (response: Notifications.NotificationResponse | null) => {

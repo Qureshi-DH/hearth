@@ -22,6 +22,14 @@ jest.mock("expo-notifications", () => ({
     return { remove: jest.fn() }
   },
   getLastNotificationResponseAsync: async () => null,
+  getPermissionsAsync: async () => ({ status: mockAlerts }),
+  requestPermissionsAsync: async () => ({ status: mockAlerts }),
+  getExpoPushTokenAsync: async () => ({ data: "ExponentPushToken[phone]" }),
+}))
+let mockAlerts: "granted" | "denied" = "granted"
+jest.mock("expo-constants", () => ({
+  __esModule: true,
+  default: { expoConfig: { extra: { eas: { projectId: "hearth" } } } },
 }))
 let mockResponseListener: ((response: unknown) => void) | null = null
 const mockAnswer = jest.fn(async (payload: unknown) => {
@@ -57,11 +65,9 @@ jest.mock("@/services/api", () => ({
 jest.mock("@/services/phoneClock", () => ({
   phoneClock: () => ({ timeZone: "Asia/Karachi", clock: "24h" }),
 }))
-const mockReassert = jest.fn(async () => {})
 const mockWatched = jest.fn(async (_seconds: number) => {})
 jest.mock("@/services/location/tracker", () => ({
   BACKGROUND_LOCATION_TASK: "hearth-background-location",
-  reassertService: () => mockReassert(),
   // The tracker decides whether the service already answered. Either way the wake is answered.
   answerWake: (...args: unknown[]) => mockReportNow(...args),
   enterWatched: (seconds: number) => mockWatched(seconds),
@@ -118,6 +124,22 @@ describe("registering for notifications", () => {
       clock: "24h",
     })
   })
+
+  // The ping is a silent push, and a phone with no token is never asked
+  // where it is. Saying no to alerts is not saying no to that.
+  it("hands the server a token even when alerts were declined", async () => {
+    mockRegister.mockClear()
+    mockAlerts = "denied"
+    try {
+      const result = await setupPush({ pushProvider: "expo" } as never)
+      expect(result).toEqual({ kind: "denied" })
+      expect(mockRegister).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: "expo", token: "ExponentPushToken[phone]" }),
+      )
+    } finally {
+      mockAlerts = "granted"
+    }
+  })
 })
 
 describe("the wake task", () => {
@@ -125,7 +147,6 @@ describe("the wake task", () => {
 
   beforeEach(() => {
     mockReportNow.mockClear()
-    mockReassert.mockClear()
     mockWatched.mockClear()
   })
 
@@ -149,12 +170,6 @@ describe("the wake task", () => {
     await task()({ data: { data: { type: "wake" } }, error: null })
     await task()({ data: { data: { dataString: '{"type":"nudge_requested"}' } }, error: null })
     expect(mockReportNow).toHaveBeenCalledTimes(2)
-    // The service first, while the push still makes the start allowed, and
-    // the fix after it.
-    expect(mockReassert).toHaveBeenCalledTimes(2)
-    expect(mockReassert.mock.invocationCallOrder[0]).toBeLessThan(
-      mockReportNow.mock.invocationCallOrder[0]!,
-    )
   })
 
   it("puts the phone on live updates for a watch, for the window the server names", async () => {
@@ -173,7 +188,6 @@ describe("the wake task", () => {
     await task()({ data: { data: { type: "arrive" } }, error: null })
     await task()({ data: { data: { type: "wake" } }, error: { message: "no" } })
     expect(mockReportNow).not.toHaveBeenCalled()
-    expect(mockReassert).not.toHaveBeenCalled()
   })
 
   // The server flags a location request content-available for an iPhone, so

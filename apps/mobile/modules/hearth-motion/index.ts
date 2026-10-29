@@ -64,6 +64,7 @@ declare class HearthMotionModule extends NativeModule<{
   isAvailableAsync(): Promise<boolean>
   getPermissionAsync(): Promise<MotionPermission>
   requestPermissionAsync(): Promise<MotionPermission>
+  /** Android: the classifier's transitions, to the manifest receiver. iOS: live updates while the app runs. */
   startUpdatesAsync(): Promise<void>
   stopUpdatesAsync(): Promise<void>
   /** iOS only, Android rejects. Core Motion's history between two moments; null without the permission. */
@@ -108,23 +109,17 @@ declare class HearthMotionModule extends NativeModule<{
   openVendorPowerManagerAsync(): Promise<string | null>
 
   // The tracking transport, Android only. iOS rejects every one of these:
-  // its tracker runs on expo-location, which Core Location relaunches.
+  // its tracker runs on expo-location and silent pushes.
 
-  /**
-   * Runs the tracking service with this request, or swaps the request on a
-   * running one. "refused" is Android declining a start from the
-   * background outside its allowed moments.
-   */
-  startServiceAsync(request: ServiceRequest): Promise<ServiceStatus>
-  /** Forced, for signing out or sharing off, it ends a watch too. Otherwise a watch outlives the tier. */
-  stopServiceAsync(force: boolean): Promise<void>
+  /** Sharing off or signed out. Whatever the service is doing ends. */
+  stopServiceAsync(): Promise<void>
   /** Live for this long, answered natively. False when Android refused the start. */
   watchAsync(seconds: number): Promise<boolean>
   endWatchAsync(): Promise<void>
-  /** The upload address and the session's key, so wakes and Live are answered without JavaScript. */
+  /** The upload address and the session's key, so pings and Live are answered without JavaScript. */
   setUploaderAsync(url: string, key: string): Promise<void>
   clearUploaderAsync(): Promise<void>
-  /** Whether a wake or a watch is answered natively, so JavaScript need not take its own fix. */
+  /** Whether a ping or a watch is answered natively, so JavaScript need not take its own fix. */
   answersNativelyAsync(): Promise<boolean>
   /** Back on the first screen, as Home does it. The activity stays, and so does the process. */
   moveTaskToBackAsync(): Promise<boolean>
@@ -133,16 +128,12 @@ declare class HearthMotionModule extends NativeModule<{
    * location", then gone on its own. True when Android accepted the start.
    */
   startBriefAsync(): Promise<boolean>
-  /** Takes the brief service down with the fix it carried; a tracking service stays. */
+  /** Takes the brief service down with the fix it carried; a ping or Live stays. */
   stopBriefAsync(): Promise<void>
-  /** JavaScript no longer needs the headless task that holds its timers awake. */
+  /** JavaScript no longer needs the headless task a drive holds open for it. */
   releaseAwakeAsync(): Promise<void>
   getServiceStatusAsync(): Promise<ServiceStatus>
-  /** The fence around the parking spot, armed with Play Services. True when it took. */
-  armFenceAsync(lat: number, lon: number, radius: number): Promise<boolean>
-  disarmFenceAsync(): Promise<void>
-  isFenceArmedAsync(): Promise<boolean>
-  /** What the receivers need to know to act alone: whether sharing is on, the tier, the request to run. */
+  /** What the push handler and the receivers need to act alone: whether sharing and crash alerts are on. */
   setTrackerStateAsync(state: TrackerState): Promise<void>
   /** The fixes the service buffered, oldest first, and no longer held once read. */
   drainFixesAsync(): Promise<NativeFix[]>
@@ -152,20 +143,13 @@ declare class HearthMotionModule extends NativeModule<{
   clearQueueAsync(): Promise<void>
 }
 
-export type ServiceStatus = "none" | "brief" | "starting" | "running" | "refused"
-
-export interface ServiceRequest {
-  priority: "high" | "balanced" | "low"
-  intervalMs: number
-  distanceMeters: number
-}
+export type ServiceStatus = "none" | "brief" | "running" | "refused"
 
 export interface TrackerState {
   enabled: boolean
-  mode: "off" | "moving" | "stationary"
-  movingRequest?: ServiceRequest
-  /** What a fix sent natively is labelled, the tracker's own verdict. */
-  activity?: string
+  mode: "off" | "on"
+  /** Whether a circle asked for crash alerts, which is what a drive runs for. */
+  crashDetection?: boolean
 }
 
 /** The shape expo-location gives a fix, so the tracker reads both alike. */
@@ -174,6 +158,10 @@ export interface NativeFix {
   mocked?: boolean
   /** The native uploader sent it, so it is learned from and not sent again. */
   sent?: boolean
+  /** A drive's fix, for crash detection on the phone, never uploaded. */
+  local?: boolean
+  /** The last fix sent again for a still phone's ping, which is no new reading. */
+  repeated?: boolean
   coords: {
     latitude: number
     longitude: number
@@ -187,9 +175,8 @@ export interface NativeFix {
 
 export type NativeEvent =
   | { type: "transition"; activity: MotionActivity; at: number }
-  | { type: "fence"; id: string; transition: "enter" | "exit"; at: number }
-  /** Play Services dropped the fences, with its GeofenceStatusCodes reason. */
-  | { type: "fence_lost"; code: number; at: number }
+  | { type: "drive"; at: number }
+  | { type: "drive over"; reason: string; at: number }
   | {
       type: "service"
       status: "started" | "refused" | "stopped"
@@ -197,7 +184,8 @@ export type NativeEvent =
       error?: string
       at: number
     }
-  | { type: "boot"; at: number }
+  /** `reboot` for a phone switched off and on, not one updated. */
+  | { type: "boot"; reboot?: boolean; at: number }
   /** A wake or a watch as it arrived, and whether FCM still called it urgent. */
   | {
       type: "push"
@@ -229,7 +217,16 @@ export type NativeEvent =
       at: number
     }
   | { type: "upload"; status: "failed" | "refused" | "rejected"; code: number; at: number }
-  | { type: "wake"; native: boolean; fix?: boolean; service?: boolean; sent?: boolean; at: number }
+  | {
+      type: "wake"
+      native: boolean
+      fix?: boolean
+      service?: boolean
+      sent?: boolean
+      /** Answered with the last fix, the motion sensor having had the phone still since. */
+      still?: boolean
+      at: number
+    }
   | { type: "watch"; until: number; reason: string; at: number }
   | { type: "watch over"; reason: string; at: number }
 

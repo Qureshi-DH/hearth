@@ -20,7 +20,6 @@ let mockSnapshot = {
   backgroundRestricted: false,
   lowPowerMode: false,
   manufacturer: "apple",
-  serviceStopped: false,
 }
 /** The listener health.ts installs, so a test can play the OS. */
 let mockPowerListener: (() => void) | null = null
@@ -70,7 +69,6 @@ describe("reportHealth", () => {
       backgroundRestricted: false,
       lowPowerMode: false,
       manufacturer: "apple",
-      serviceStopped: false,
     }
   })
 
@@ -104,7 +102,7 @@ describe("reportHealth", () => {
     )
   })
 
-  it("names the vendor, the restriction, Battery Saver and a dead service on Android", async () => {
+  it("names the vendor, the restriction and Battery Saver on Android", async () => {
     Platform.OS = "android"
     mockSnapshot = {
       ...mockSnapshot,
@@ -113,7 +111,6 @@ describe("reportHealth", () => {
       backgroundRestricted: true,
       lowPowerMode: true,
       manufacturer: "xiaomi",
-      serviceStopped: true,
     }
     await reportHealth()
     expect(mockHealth).toHaveBeenCalledWith({
@@ -126,7 +123,6 @@ describe("reportHealth", () => {
       backgroundRestricted: true,
       lowPowerMode: true,
       manufacturer: "xiaomi",
-      serviceStopped: true,
       appVersion: "1.3.0",
       osVersion: "17.2",
     })

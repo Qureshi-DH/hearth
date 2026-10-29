@@ -73,10 +73,6 @@ jest.mock("expo-intent-launcher", () => ({
   },
   startActivityAsync: jest.fn(async () => ({ resultCode: 0 })),
 }))
-let mockServiceStopped = false
-jest.mock("@/services/location/tracker", () => ({
-  serviceDiedUnexpectedly: () => mockServiceStopped,
-}))
 jest.mock("@/services/location/motion", () => ({
   backgroundRefreshStatus: jest.fn(async () => "available"),
 }))
@@ -89,7 +85,6 @@ function onPlatform(name: "android" | "ios") {
 beforeEach(() => {
   jest.clearAllMocks()
   mockManufacturer = "Xiaomi"
-  mockServiceStopped = false
   native.getBackgroundRestrictedAsync.mockResolvedValue(false)
   native.isPowerSaveModeAsync.mockResolvedValue(false)
   native.isLowPowerModeAsync.mockResolvedValue(false)
@@ -137,18 +132,16 @@ describe("vendorFor", () => {
 })
 
 describe("getPermissionSnapshot", () => {
-  it("carries the vendor, the background restriction, Battery Saver and the service on Android", async () => {
+  it("carries the vendor, the background restriction and Battery Saver on Android", async () => {
     onPlatform("android")
     native.getBackgroundRestrictedAsync.mockResolvedValue(true)
     native.isPowerSaveModeAsync.mockResolvedValue(true)
-    mockServiceStopped = true
 
     const snapshot = await getPermissionSnapshot()
 
     expect(snapshot.manufacturer).toBe("xiaomi")
     expect(snapshot.backgroundRestricted).toBe(true)
     expect(snapshot.lowPowerMode).toBe(true)
-    expect(snapshot.serviceStopped).toBe(true)
     expect(native.isLowPowerModeAsync).not.toHaveBeenCalled()
   })
 
@@ -163,7 +156,7 @@ describe("getPermissionSnapshot", () => {
     expect(snapshot.manufacturer).toBe("apple")
     expect(snapshot.lowPowerMode).toBe(true)
     expect(snapshot.backgroundRestricted).toBe(false)
-    expect(snapshot.serviceStopped).toBe(false)
+    expect(snapshot.backgroundRefresh).toBe("available")
     expect(native.getBackgroundRestrictedAsync).not.toHaveBeenCalled()
   })
 

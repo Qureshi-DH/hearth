@@ -30,12 +30,9 @@ import { useNavigationPersistence } from "./navigators/navigationUtilities"
 // be defined at module scope before the app finishes launching.
 import {
   refreshLocationStatus,
-  reassertService,
   resumeIfEnabled,
   setHealthReporter,
-  startBackgroundClock,
   startForegroundHeartbeat,
-  stopBackgroundClock,
   stopForegroundHeartbeat,
 } from "./services/location/tracker"
 import { reportHealth } from "./services/health"
@@ -121,20 +118,14 @@ export function App() {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         void refreshLocationStatus().then(() => reportHealth())
-        // The app open is a moment Android allows the location service to
-        // start, and a journey that began while it was refused is waiting.
-        void reassertService({ exempt: true })
-        stopBackgroundClock()
         startForegroundHeartbeat()
       } else {
         stopForegroundHeartbeat()
-        startBackgroundClock()
       }
     })
     return () => {
       subscription.remove()
       stopForegroundHeartbeat()
-      stopBackgroundClock()
     }
   }, [])
 
@@ -151,9 +142,7 @@ export function App() {
       if (!cancelled) setIsSessionHydrated(true)
       if (useAuthStore.getState().status === "signed_in") {
         // After, not alongside: a launch fix already on its way is one the
-        // heartbeat must see before it decides whether to ask for its own. And
-        // it starts whatever the permission, because "While Using" never gets
-        // startTracking here and the heartbeat is all such a phone has.
+        // heartbeat must see before it decides whether to ask for its own.
         void resumeIfEnabled().finally(() => {
           startForegroundHeartbeat()
           void reportHealth()

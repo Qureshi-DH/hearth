@@ -30,7 +30,7 @@ describe("a session ending", () => {
     useAuthStore.getState().setServer("https://hearth.test", null as never)
     useAuthStore.getState().signedIn({ id: "u1" } as never)
     useTrackingStore.getState().setEnabled(true)
-    useTrackingStore.getState().setMode("stationary")
+    useTrackingStore.getState().setMode("on")
   })
 
   it("stops the tracker, signs out, and says so on the shade when the app is not open", async () => {

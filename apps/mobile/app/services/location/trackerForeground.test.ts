@@ -56,16 +56,6 @@ jest.mock("expo-location", () => ({
   })),
 }))
 
-jest.mock("./motion", () => ({
-  startMotion: jest.fn(async () => ({ remove: jest.fn() })),
-  stopMotion: jest.fn(async () => {}),
-}))
-
-jest.mock("./driveSensors", () => ({
-  startDriveSensors: jest.fn(async () => true),
-  stopDriveSensors: jest.fn(),
-}))
-
 const getPosition = Location.getCurrentPositionAsync as unknown as jest.Mock
 const INTERVAL_MS = 30_000
 
@@ -106,7 +96,7 @@ beforeEach(() => {
   useTrackingStore.getState().setPermission("always")
   useTrackingStore.getState().setServicesEnabled(true)
   useTrackingStore.getState().setPolicy({ minUpdateIntervalSeconds: 30, distanceFilterMeters: 40 })
-  useTrackingStore.getState().setMode("moving")
+  useTrackingStore.getState().setMode("on")
   jest.clearAllMocks()
 })
 
@@ -117,8 +107,9 @@ afterEach(() => {
 
 describe("the foreground heartbeat", () => {
   it("takes a cheap fix when the last one is older than the circle's interval", async () => {
-    // Two minutes parked with the app open. The OS holds back every fix inside
-    // the distance filter, so without this the row reads stale for good.
+    // Two minutes since the last fix with the app open, against a half
+    // minute interval. The server's own ping would bring the service up
+    // for it on Android, which a phone in use does not need.
     seedLastFix(2 * 60_000)
 
     startForegroundHeartbeat()
@@ -128,7 +119,7 @@ describe("the foreground heartbeat", () => {
     expect(getPosition).toHaveBeenCalledWith({ accuracy: Location.Accuracy.Balanced })
     const { queue } = useTrackingStore.getState()
     expect(queue).toHaveLength(1)
-    expect(queue[0]?.source).toBe("heartbeat")
+    expect(queue[0]?.source).toBe("nudge")
   })
 
   it("leaves a fresh fix alone", async () => {
@@ -175,24 +166,26 @@ describe("the foreground heartbeat", () => {
     expect(getPosition).toHaveBeenCalledTimes(1)
   })
 
-  it("reports from a parked phone without waking it up", async () => {
-    // Stationary means the foreground service is off and a fence is armed.
-    // Bringing either back for a phone that has not moved is the cost that
-    // mode exists to avoid, and it would also reset the stillness clock.
-    const anchor = { lat: 51.4545, lon: -2.5879, since: new Date().toISOString() }
-    useTrackingStore.getState().setMode("stationary")
-    useTrackingStore.getState().setStillAnchor(anchor)
+  it("takes its one fix and starts nothing that keeps running", async () => {
     seedLastFix(2 * 60_000)
 
     startForegroundHeartbeat()
     await settle()
 
     expect(getPosition).toHaveBeenCalledTimes(1)
-    expect(useTrackingStore.getState().queue[0]?.source).toBe("heartbeat")
+    expect(useTrackingStore.getState().queue[0]?.source).toBe("nudge")
     expect(Location.startLocationUpdatesAsync).not.toHaveBeenCalled()
     expect(Location.startGeofencingAsync).not.toHaveBeenCalled()
-    expect(useTrackingStore.getState().mode).toBe("stationary")
-    expect(useTrackingStore.getState().stillAnchor).toEqual(anchor)
+  })
+
+  it("leaves the asking to the stream while somebody watches Live", async () => {
+    seedLastFix(2 * 60_000)
+    useTrackingStore.getState().setWatchedUntil(new Date(Date.now() + 5 * 60_000).toISOString())
+
+    startForegroundHeartbeat()
+    await settle()
+
+    expect(getPosition).not.toHaveBeenCalled()
   })
 
   it("stops with the heartbeat", async () => {
@@ -300,7 +293,7 @@ describe("the foreground heartbeat", () => {
     await settle()
 
     expect(getPosition).toHaveBeenCalledTimes(1)
-    expect(getPosition).toHaveBeenCalledWith({ accuracy: Location.Accuracy.High })
+    expect(getPosition).toHaveBeenCalledWith({ accuracy: Location.Accuracy.Balanced })
   })
 })
 

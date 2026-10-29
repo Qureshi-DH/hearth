@@ -7,13 +7,7 @@ import { useTrackingStore } from "@/stores/tracking"
 import { storage } from "@/utils/storage"
 
 import { clearTrackerLog, logTracker, readTrackerLog } from "./log"
-import {
-  BACKGROUND_SYNC_TASK,
-  enterStationary,
-  ingest,
-  RESTING_HEARTBEAT_MS,
-  stopTracking,
-} from "./tracker"
+import { BACKGROUND_SYNC_TASK, stopTracking } from "./tracker"
 
 /**
  * MMKV outlives the process, and half of what is under test here is what a
@@ -101,16 +95,6 @@ jest.mock("expo-location", () => ({
   })),
 }))
 
-jest.mock("./motion", () => ({
-  startMotion: jest.fn(async () => ({ remove: jest.fn() })),
-  stopMotion: jest.fn(async () => {}),
-}))
-
-jest.mock("./driveSensors", () => ({
-  startDriveSensors: jest.fn(async () => true),
-  stopDriveSensors: jest.fn(),
-}))
-
 const shared = globalThis as unknown as TestDisk
 const getPosition = Location.getCurrentPositionAsync as unknown as jest.Mock
 const unregisterTask = BackgroundTask.unregisterTaskAsync as unknown as jest.Mock
@@ -133,9 +117,9 @@ const syncTask = syncTaskOf(
 )
 
 /**
- * A relaunch. A parked phone runs no foreground service, so Android reclaims
- * the process and the next sync wake starts a runtime whose only memory of the
- * last one is the disk.
+ * A relaunch. Nothing runs between pings, so the OS reclaims the process and
+ * the next wake starts a runtime whose only memory of the last one is the
+ * disk.
  */
 function relaunch(): { store: typeof useTrackingStore; task: TaskBody } {
   const launched: { store: typeof useTrackingStore; task: TaskBody }[] = []
@@ -195,146 +179,97 @@ describe("a signed-out phone", () => {
   })
 })
 
-describe("the parked heartbeat", () => {
-  it("throttles the drift check across a relaunch", async () => {
-    useTrackingStore.getState().setMode("stationary")
+describe("the sync task, for pings that never came", () => {
+  const seedLastFix = (ageMs: number) => {
+    const last: LocationFixInput = {
+      ...fix(0),
+      recordedAt: new Date(Date.now() - ageMs).toISOString(),
+    }
+    useTrackingStore.getState().enqueue([last])
+    useTrackingStore.getState().dequeue([last])
+  }
+
+  beforeEach(() => {
+    useTrackingStore.getState().setMode("on")
     useTrackingStore
       .getState()
-      .setStillAnchor({ lat: 51.4545, lon: -2.5879, since: new Date().toISOString() })
-
-    await syncTask({ data: null, error: null })
-    expect(getPosition).toHaveBeenCalledTimes(1)
-
-    // The throttle is persisted, so a fresh runtime does not read it as zero
-    // and run the check on every wake instead of hourly.
-    const restarted = relaunch()
-    expect(restarted.store.getState().lastDriftCheckAt).not.toBeNull()
-    expect(restarted.store.getState().mode).toBe("stationary")
-    getPosition.mockClear()
-
-    await restarted.task({ data: null, error: null })
-
-    expect(getPosition).not.toHaveBeenCalled()
+      .setPolicy({ minUpdateIntervalSeconds: 300, distanceFilterMeters: 60 })
   })
 
-  it("asks for the cheap fix the drift check next to it asks for", async () => {
-    // No anchor, so neither the drift check nor the stillness pass runs and the
-    // staleness heartbeat is the only thing left that can acquire a position.
-    useTrackingStore.getState().setMode("stationary")
-    expect(useTrackingStore.getState().lastFix).toBeNull()
+  it("asks for a cheap fix once two intervals have gone by without one", async () => {
+    seedLastFix(11 * 60_000)
 
     await syncTask({ data: null, error: null })
 
     expect(getPosition).toHaveBeenCalledTimes(1)
     expect(getPosition).toHaveBeenCalledWith({ accuracy: Location.Accuracy.Balanced })
   })
+
+  it("asks on a phone that has never reported", async () => {
+    expect(useTrackingStore.getState().lastFix).toBeNull()
+
+    await syncTask({ data: null, error: null })
+
+    expect(getPosition).toHaveBeenCalledTimes(1)
+  })
+
+  it("leaves a phone the pings are reaching alone", async () => {
+    seedLastFix(6 * 60_000)
+
+    await syncTask({ data: null, error: null })
+
+    expect(getPosition).not.toHaveBeenCalled()
+  })
+
+  it("starts no location session of its own", async () => {
+    seedLastFix(11 * 60_000)
+
+    await syncTask({ data: null, error: null })
+
+    expect(Location.startLocationUpdatesAsync).not.toHaveBeenCalled()
+  })
 })
 
-describe("the resting watch", () => {
-  // Android's. A parked iPhone runs a cell-only session instead, see trackerWake.
-  const { Platform } = require("react-native") as { Platform: { OS: string } }
-  const os = Platform.OS
-  beforeAll(() => {
-    Platform.OS = "android"
-  })
-  afterAll(() => {
-    Platform.OS = os
-  })
-  const HOME = { lat: 51.4545, lon: -2.5879 }
-  const sample = (lat: number, lon: number, at: number): Location.LocationObject => ({
-    timestamp: at,
-    coords: {
-      latitude: lat,
-      longitude: lon,
-      altitude: 0,
-      accuracy: 40,
-      altitudeAccuracy: 5,
-      heading: -1,
-      speed: 0,
-    },
-  })
-  const start = Location.startLocationUpdatesAsync as unknown as jest.Mock
+describe("the update to the ping", () => {
+  it("turns a moving or parked phone on, and drops what the tiers kept", () => {
+    shared.__hearthDisk.clear()
+    shared.__hearthDisk.set(
+      "hearth.tracking.v1",
+      JSON.stringify({
+        state: {
+          enabled: true,
+          mode: "stationary",
+          stillAnchor: { lat: 51.4545, lon: -2.5879, since: "2026-10-30T08:00:00.000Z" },
+          driving: { distance: 100, slowSince: null },
+          lastVerdict: "still",
+          serviceStoppedAt: "2026-10-30T08:00:00.000Z",
+          policy: { minUpdateIntervalSeconds: 30, distanceFilterMeters: 40 },
+          onboardedPermissions: true,
+        },
+        version: 2,
+      }),
+    )
 
-  beforeEach(() => {
-    start.mockClear()
-    ;(Location.stopLocationUpdatesAsync as unknown as jest.Mock).mockClear()
-    useTrackingStore.getState().reset()
-    useTrackingStore.setState({ enabled: true, mode: "moving" })
-  })
-
-  // Stopping the service left the next word to the OS task schedulers, and
-  // both of them let a parked phone sit for hours.
-  it("steps the request down rather than stopping it when the phone parks", async () => {
-    await enterStationary(HOME.lat, HOME.lon)
-    expect(Location.stopLocationUpdatesAsync).not.toHaveBeenCalled()
-    expect(start).toHaveBeenCalledTimes(1)
-    const [, options] = start.mock.calls[0] as [string, Location.LocationTaskOptions]
-    expect(options.accuracy).toBe(Location.Accuracy.Balanced)
-    expect(options.timeInterval).toBe(RESTING_HEARTBEAT_MS)
-    expect(options.pausesUpdatesAutomatically).toBe(false)
-    // No service while parked, so no notification stays in the shade. The
-    // family accepts one that shows for the second a wake's fix takes.
-    expect(options.foregroundService).toBeUndefined()
-    expect(useTrackingStore.getState().mode).toBe("stationary")
+    const upgraded = relaunch().store.getState() as unknown as Record<string, unknown>
+    expect(upgraded.mode).toBe("on")
+    expect(upgraded.enabled).toBe(true)
+    expect(upgraded.onboardedPermissions).toBe(true)
+    expect(upgraded.stillAnchor).toBeUndefined()
+    expect(upgraded.driving).toBeUndefined()
+    expect(upgraded.serviceStoppedAt).toBeUndefined()
+    // The old moving interval would read as a ping every half minute until
+    // the server's next reply put it right.
+    expect(upgraded.policy).toEqual({ minUpdateIntervalSeconds: 300, distanceFilterMeters: 60 })
   })
 
-  it("shows one plain notification while moving, and never colours it", async () => {
-    await enterStationary(HOME.lat, HOME.lon)
-    start.mockClear()
-    await ingest([sample(HOME.lat + 0.005, HOME.lon, Date.now())], "background")
-    const [, options] = start.mock.calls[0] as [string, Location.LocationTaskOptions]
-    expect(options.foregroundService).toMatchObject({
-      notificationTitle: "Hearth",
-      notificationBody: "Updating your location",
-    })
-    expect(options.foregroundService?.notificationColor).toBeUndefined()
-  })
+  it("leaves a phone that was off, off", () => {
+    shared.__hearthDisk.clear()
+    shared.__hearthDisk.set(
+      "hearth.tracking.v1",
+      JSON.stringify({ state: { enabled: true, mode: "off" }, version: 2 }),
+    )
 
-  it("passes one fix per heartbeat while the phone stays put, and drops the rest", async () => {
-    await enterStationary(HOME.lat, HOME.lon)
-    // The arrival fix has just said "here", so the first resting fix worth
-    // keeping is a heartbeat later.
-    const t0 = Date.now() + RESTING_HEARTBEAT_MS
-    await ingest([sample(HOME.lat, HOME.lon, t0)], "background")
-    expect(useTrackingStore.getState().lastFix?.recordedAt).toBe(new Date(t0).toISOString())
-
-    // Two minutes later, still here: iOS chatter, not news.
-    await ingest([sample(HOME.lat + 0.0001, HOME.lon, t0 + 2 * 60_000)], "background")
-    expect(useTrackingStore.getState().lastFix?.recordedAt).toBe(new Date(t0).toISOString())
-
-    // A quarter hour later it is the heartbeat.
-    const t1 = t0 + RESTING_HEARTBEAT_MS
-    await ingest([sample(HOME.lat, HOME.lon, t1)], "background")
-    expect(useTrackingStore.getState().lastFix?.recordedAt).toBe(new Date(t1).toISOString())
-    expect(useTrackingStore.getState().mode).toBe("stationary")
-  })
-
-  it("sends the heartbeat from where the phone parked, not from a wandering estimate", async () => {
-    await enterStationary(HOME.lat, HOME.lon)
-    const t0 = Date.now() + RESTING_HEARTBEAT_MS
-    const wandering = sample(HOME.lat + 90 / 111_195, HOME.lon, t0)
-    await ingest([{ ...wandering, coords: { ...wandering.coords, accuracy: 150 } }], "background")
-    expect(useTrackingStore.getState().lastFix).toMatchObject({
-      lat: HOME.lat,
-      lon: HOME.lon,
-      accuracyMeters: 20,
-      recordedAt: new Date(t0).toISOString(),
-      activity: "still",
-    })
-    expect(useTrackingStore.getState().mode).toBe("stationary")
-  })
-
-  it("brings the full service back when a resting fix shows the phone has left", async () => {
-    await enterStationary(HOME.lat, HOME.lon)
-    start.mockClear()
-    // Half a kilometre away, well outside any stationary radius.
-    await ingest([sample(HOME.lat + 0.005, HOME.lon, Date.now())], "background")
-    expect(useTrackingStore.getState().mode).toBe("moving")
-    expect(start).toHaveBeenCalled()
-    const [, options] = start.mock.calls[0] as [string, Location.LocationTaskOptions]
-    expect(options.timeInterval).not.toBe(RESTING_HEARTBEAT_MS)
-    const sources = useTrackingStore.getState().queue.map((fix) => fix.source)
-    expect(sources).toContain("background")
+    expect(relaunch().store.getState().mode).toBe("off")
   })
 })
 
@@ -352,10 +287,8 @@ describe("the persisted queue", () => {
 
     shared.__hearthWrites.length = 0
     useTrackingStore.getState().setError("offline")
-    useTrackingStore
-      .getState()
-      .setStillAnchor({ lat: 51.4, lon: -2.5, since: "2026-01-01T00:00:00.000Z" })
-    useTrackingStore.getState().setMode("moving")
+    useTrackingStore.getState().setWatchedUntil("2026-01-01T00:10:00.000Z")
+    useTrackingStore.getState().setMode("on")
     useTrackingStore.getState().recordUpload(0)
 
     expect(bytesWritten()).toBeLessThan(4_000)
@@ -453,7 +386,7 @@ describe("the persisted queue", () => {
 
 describe("the tracker log", () => {
   const bytesWritten = () => shared.__hearthWrites.reduce((total, write) => total + write.bytes, 0)
-  const line = { got: 1, kept: 1, mode: "moving", acc: 12, speed: 13.4 }
+  const line = { got: 1, kept: 1, acc: 12, speed: 13.4 }
 
   // Live logs a line a second, and each one rewrote all thousand before it.
   it("writes a new line without rewriting the ones before it", () => {

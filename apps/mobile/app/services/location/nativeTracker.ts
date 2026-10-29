@@ -4,27 +4,25 @@ import type * as Location from "expo-location"
 import type {
   NativeEvent,
   NativeFix,
-  ServiceRequest,
   ServiceStatus,
   TrackerState,
 } from "../../../modules/hearth-motion"
 
-export type { NativeEvent, ServiceRequest, ServiceStatus }
+export type { NativeEvent, ServiceStatus }
 export type NativeTrackerState = TrackerState
 
 /**
- * The Android transport, in modules/hearth-motion. Everything that has to
- * survive this process being killed lives there: the receivers the OS wakes
- * on a geofence exit or an activity transition, the foreground service they
- * start inside the moment Android allows it, the location request that
- * service owns, and a queue of the fixes and events it saw while this side
- * was down. This side is the policy: it drains the queue, decides the tier,
- * and tells native what to run.
+ * The Android transport, in modules/hearth-motion. The push handler there
+ * answers the server's pings and Live asks with a foreground service it
+ * starts inside the moment Android allows it, and sends the fixes itself
+ * with the session's upload key. The classifier's receiver there writes down
+ * whether the phone is moving, and starts a drive for crash detection. This
+ * side tells it whether sharing and crash alerts are on and which key to
+ * send with, and reads back what it did from its queue.
  */
 
 type NativeModule = {
-  startServiceAsync(request: ServiceRequest): Promise<ServiceStatus>
-  stopServiceAsync(force: boolean): Promise<void>
+  stopServiceAsync(): Promise<void>
   watchAsync(seconds: number): Promise<boolean>
   endWatchAsync(): Promise<void>
   setUploaderAsync(url: string, key: string): Promise<void>
@@ -35,9 +33,6 @@ type NativeModule = {
   stopBriefAsync(): Promise<void>
   releaseAwakeAsync(): Promise<void>
   getServiceStatusAsync(): Promise<ServiceStatus>
-  armFenceAsync(lat: number, lon: number, radius: number): Promise<boolean>
-  disarmFenceAsync(): Promise<void>
-  isFenceArmedAsync(): Promise<boolean>
   setTrackerStateAsync(state: NativeTrackerState): Promise<void>
   drainFixesAsync(): Promise<NativeFix[]>
   drainEventsAsync(): Promise<NativeEvent[]>
@@ -62,13 +57,13 @@ function required(): NativeModule {
   return native
 }
 
-export function startService(request: ServiceRequest): Promise<ServiceStatus> {
-  return required().startServiceAsync(request)
-}
-
-/** Forced for signing out or sharing off. Unforced, a watch the service holds outlives the tier. */
-export function stopService(force = false): Promise<void> {
-  return required().stopServiceAsync(force)
+/** Sharing off or signed out. A ping or Live the service is answering ends. */
+export async function stopService(): Promise<void> {
+  try {
+    await required().stopServiceAsync()
+  } catch {
+    // Nothing running to stop.
+  }
 }
 
 /** True when Android accepted the start. */
@@ -124,9 +119,9 @@ export async function moveTaskToBack(): Promise<boolean> {
 
 /**
  * The brief service: foreground for one fix and its "Updating your
- * location", then gone, the way a messaging app checks for messages. A push
- * starts it natively inside the message handler; a wake that came another
- * way starts it here.
+ * location", then gone. A push starts it natively inside the message
+ * handler for a session with no upload key; an ask that came another way
+ * starts it here.
  */
 export async function startBrief(): Promise<boolean> {
   try {
@@ -144,7 +139,7 @@ export async function stopBrief(): Promise<void> {
   }
 }
 
-/** The headless task the tracking service holds open for this side is no longer wanted. */
+/** The headless task a drive holds open for this side is no longer wanted. */
 export async function releaseAwake(): Promise<void> {
   try {
     await required().releaseAwakeAsync()
@@ -155,18 +150,6 @@ export async function releaseAwake(): Promise<void> {
 
 export function serviceStatus(): Promise<ServiceStatus> {
   return required().getServiceStatusAsync()
-}
-
-export function armFence(lat: number, lon: number, radius: number): Promise<boolean> {
-  return required().armFenceAsync(lat, lon, radius)
-}
-
-export function disarmFence(): Promise<void> {
-  return required().disarmFenceAsync()
-}
-
-export function fenceArmed(): Promise<boolean> {
-  return required().isFenceArmedAsync()
 }
 
 export function setTrackerState(state: NativeTrackerState): Promise<void> {

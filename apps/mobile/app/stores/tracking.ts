@@ -1,4 +1,4 @@
-import type { ActivityType, LocationFixInput } from "@hearth/shared"
+import { DEFAULTS, type LocationFixInput } from "@hearth/shared"
 import { create } from "zustand"
 import { createJSONStorage, persist } from "zustand/middleware"
 
@@ -11,38 +11,12 @@ import type { MotionActivity } from "../../modules/hearth-motion"
 export type PermissionLevel = "unknown" | "denied" | "foreground" | "always"
 
 /**
- * "moving" is continuous updates in whatever tier the phone is in. "stationary"
- * steps the request down to the resting one and waits on a geofence around
- * the spot the phone stopped. On Android the foreground service runs only
- * while moving or watched. A parked phone has none, because a service that
- * stays is a notification that stays. A wake brings it up for one fix, and a
- * watch for as long as somebody looks.
+ * On, the phone answers the server's pings and goes Live while somebody
+ * watches, and the motion sensor says whether it is moving, which costs no
+ * location. A drive, where a circle wants crash alerts, is the one thing
+ * that runs between the two.
  */
-export type TrackingMode = "off" | "moving" | "stationary"
-
-/**
- * Where the phone settled, and when it got there. Once parked it carries the
- * accuracy of the fix that said "arrived", which the parked heartbeat
- * repeats from here.
- */
-export interface StillAnchor {
-  lat: number
-  lon: number
-  since: string
-  accuracyMeters?: number | null
-}
-
-/** Where a parked phone was last placed well, which can be a walk from its anchor. */
-export interface RestingFix {
-  lat: number
-  lon: number
-  accuracyMeters: number | null
-}
-
-export interface DriveState {
-  distance: number
-  slowSince: number | null
-}
+export type TrackingMode = "off" | "on"
 
 export interface TrackingPolicy {
   minUpdateIntervalSeconds: number
@@ -62,45 +36,26 @@ interface TrackingState {
   onboardedPermissions: boolean
   policy: TrackingPolicy
   mode: TrackingMode
-  /** Survives a process kill. */
-  stillAnchor: StillAnchor | null
-  /**
-   * The quarter hour report goes from here, not from the anchor. The anchor
-   * is where the phone stopped, and a stop circle is wide enough for the
-   * walk from the car to the door.
-   */
-  restingFix: RestingFix | null
-  /**
-   * Outlives the process for the same reason the anchor does: the OS may
-   * still reclaim a parked phone's process between sync wakes, and anything
-   * held in module scope is back to zero on every one of them.
-   */
-  lastDriftCheckAt: string | null
   /**
    * Until when somebody has this phone's owner's page open and the phone is
-   * on live updates for them. Outlives the process for the reason the anchor
-   * does.
+   * on live updates for them. Outlives the process, which iOS may end and
+   * relaunch inside the window.
    */
   watchedUntil: string | null
   /**
-   * The drive as the tracker sees it, the classifier's last word and the
-   * start of its still streak. Persisted rather than held in module scope,
-   * because a process the OS cold-starts for a background event throws its
-   * React host away after every task.
+   * The motion sensor's last word and when it began. Persisted, because the
+   * process that answers a ping is often one the OS started for it.
    */
-  driving: DriveState | null
   lastVerdict: MotionActivity | null
+  lastVerdictAt: number | null
   /**
-   * The tracker's activity verdicts and when each began, kept on disk so a
-   * process started to drain the native queue labels what it drains by the
-   * verdict of the moment it was recorded, not of the moment it restarted.
+   * When the newest fix that came from the OS was taken. A ping to a phone
+   * still since then is answered with that fix again, and this is what the
+   * hour a repeat may stand in for is counted from.
    */
-  activityHistory: Array<{ from: number; activity: ActivityType }>
-  motionStillSince: number | null
-  /** When the Android foreground service was last found down without the app stopping it. */
-  serviceStoppedAt: string | null
-  /** When Android last refused to start the service, so deliveries do not retry it in a loop. */
-  serviceRefusedAt: string | null
+  lastRealFixAt: string | null
+  /** When the drive crash detection runs for began, or null outside one. */
+  driveSince: string | null
   /**
    * When the server refused this account's fixes outright, as it does for a
    * deactivated account. Nothing uploads or starts again on its own until a
@@ -123,16 +78,10 @@ interface TrackingState {
   setOnboardedPermissions(value: boolean): void
   setPolicy(policy: TrackingPolicy): void
   setMode(mode: TrackingMode): void
-  setStillAnchor(anchor: StillAnchor | null): void
-  setRestingFix(fix: RestingFix | null): void
-  markDriftChecked(): void
   setWatchedUntil(until: string | null): void
-  setDriving(driving: DriveState | null): void
-  setLastVerdict(verdict: MotionActivity | null): void
-  setActivityHistory(history: Array<{ from: number; activity: ActivityType }>): void
-  setMotionStillSince(since: number | null): void
-  setServiceStoppedAt(at: string | null): void
-  setServiceRefusedAt(at: string | null): void
+  setLastVerdict(verdict: MotionActivity | null, at?: number | null): void
+  setLastRealFixAt(at: string | null): void
+  setDriveSince(at: string | null): void
   setUploadsRefusedAt(at: string | null): void
   enqueue(fixes: LocationFixInput[]): void
   /** Fixes the native side sent itself. The newest becomes the last fix, and nothing is queued. */
@@ -306,6 +255,18 @@ function clearQueue() {
 
 const restored = hydrateQueue()
 
+/** What builds before the ping kept here. */
+const RETIRED_KEYS = [
+  "stillAnchor",
+  "restingFix",
+  "lastDriftCheckAt",
+  "driving",
+  "activityHistory",
+  "motionStillSince",
+  "serviceStoppedAt",
+  "serviceRefusedAt",
+]
+
 export const useTrackingStore = create<TrackingState>()(
   persist(
     (set, get) => ({
@@ -315,18 +276,16 @@ export const useTrackingStore = create<TrackingState>()(
       preciseLocation: true,
       backgroundActive: false,
       onboardedPermissions: false,
-      policy: { minUpdateIntervalSeconds: 30, distanceFilterMeters: 60 },
+      policy: {
+        minUpdateIntervalSeconds: DEFAULTS.minUpdateIntervalSeconds,
+        distanceFilterMeters: DEFAULTS.distanceFilterMeters,
+      },
       mode: "off",
-      stillAnchor: null,
-      restingFix: null,
-      lastDriftCheckAt: null,
       watchedUntil: null,
-      driving: null,
       lastVerdict: null,
-      activityHistory: [],
-      motionStillSince: null,
-      serviceStoppedAt: null,
-      serviceRefusedAt: null,
+      lastVerdictAt: null,
+      lastRealFixAt: null,
+      driveSince: null,
       uploadsRefusedAt: null,
       lastFix: restored.lastFix,
       lastUploadAt: null,
@@ -342,16 +301,16 @@ export const useTrackingStore = create<TrackingState>()(
       setOnboardedPermissions: (onboardedPermissions) => set({ onboardedPermissions }),
       setPolicy: (policy) => set({ policy }),
       setMode: (mode) => set({ mode }),
-      setStillAnchor: (stillAnchor) => set({ stillAnchor }),
-      setRestingFix: (restingFix) => set({ restingFix }),
-      markDriftChecked: () => set({ lastDriftCheckAt: new Date().toISOString() }),
       setWatchedUntil: (watchedUntil) => set({ watchedUntil }),
-      setDriving: (driving) => set({ driving }),
-      setLastVerdict: (lastVerdict) => set({ lastVerdict }),
-      setActivityHistory: (activityHistory) => set({ activityHistory }),
-      setMotionStillSince: (motionStillSince) => set({ motionStillSince }),
-      setServiceStoppedAt: (serviceStoppedAt) => set({ serviceStoppedAt }),
-      setServiceRefusedAt: (serviceRefusedAt) => set({ serviceRefusedAt }),
+      // A verdict repeating the one in force does not move when it began.
+      setLastVerdict: (lastVerdict, at = Date.now()) =>
+        set((state) =>
+          lastVerdict === state.lastVerdict && state.lastVerdictAt != null
+            ? {}
+            : { lastVerdict, lastVerdictAt: lastVerdict == null ? null : at },
+        ),
+      setLastRealFixAt: (lastRealFixAt) => set({ lastRealFixAt }),
+      setDriveSince: (driveSince) => set({ driveSince }),
       setUploadsRefusedAt: (uploadsRefusedAt) => set({ uploadsRefusedAt }),
       enqueue: (fixes) => {
         const lastFix = fixes[fixes.length - 1] ?? get().lastFix
@@ -380,15 +339,11 @@ export const useTrackingStore = create<TrackingState>()(
         set({
           backgroundActive: false,
           mode: "off",
-          stillAnchor: null,
-          lastDriftCheckAt: null,
           watchedUntil: null,
-          driving: null,
           lastVerdict: null,
-          activityHistory: [],
-          motionStillSince: null,
-          serviceStoppedAt: null,
-          serviceRefusedAt: null,
+          lastVerdictAt: null,
+          lastRealFixAt: null,
+          driveSince: null,
           uploadsRefusedAt: null,
           lastFix: null,
           lastUploadAt: null,
@@ -400,7 +355,7 @@ export const useTrackingStore = create<TrackingState>()(
     }),
     {
       name: "hearth.tracking.v1",
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => mmkvStorage),
       partialize: (state) => ({
         enabled: state.enabled,
@@ -409,35 +364,47 @@ export const useTrackingStore = create<TrackingState>()(
         onboardedPermissions: state.onboardedPermissions,
         policy: state.policy,
         mode: state.mode,
-        stillAnchor: state.stillAnchor,
-        restingFix: state.restingFix,
-        lastDriftCheckAt: state.lastDriftCheckAt,
         watchedUntil: state.watchedUntil,
-        driving: state.driving,
         lastVerdict: state.lastVerdict,
-        activityHistory: state.activityHistory,
-        motionStillSince: state.motionStillSince,
-        serviceStoppedAt: state.serviceStoppedAt,
-        serviceRefusedAt: state.serviceRefusedAt,
+        lastVerdictAt: state.lastVerdictAt,
+        lastRealFixAt: state.lastRealFixAt,
+        driveSince: state.driveSince,
         uploadsRefusedAt: state.uploadsRefusedAt,
         lastUploadAt: state.lastUploadAt,
       }),
+      // v3 is the ping: the tiers and the parking spot are gone, and a phone
+      // that was moving or parked is on. The classifier's last word stays,
+      // dated from now since nothing older is known. The interval the server
+      // sends with its next reply replaces the old one.
+      //
       // v2 put the motion permission on the setup checklist. The checklist only
       // opens itself once per install, so a phone that finished it before the
-      // row existed would run GPS-only until somebody found the screen by hand.
-      // Both older shapes get walked through it again.
+      // row existed is walked through it again.
       //
       // v0 carried the queue and lastFix in this blob. Dropping them here
       // instead would hand the merge a stale queue that overwrites the one just
       // read from the new keys, and lose whatever was waiting to upload.
       migrate: (persisted, version) => {
-        const state = (persisted ?? {}) as Partial<TrackingState>
-        if (version >= 2) return state as TrackingState
-        const reonboarded = { ...state, onboardedPermissions: false }
-        if (version >= 1) return reonboarded as TrackingState
-        const { queue, lastFix, ...rest } = reonboarded
-        const carried = queue?.length ? pushFixes(queue, lastFix ?? null) : restored.queue
-        return { ...rest, queue: carried, lastFix: lastFix ?? restored.lastFix } as TrackingState
+        let state = (persisted ?? {}) as Record<string, unknown>
+        if (version < 1) {
+          const { queue, lastFix, ...rest } = state as {
+            queue?: LocationFixInput[]
+            lastFix?: LocationFixInput | null
+          }
+          const carried = queue?.length ? pushFixes(queue, lastFix ?? null) : restored.queue
+          state = { ...rest, queue: carried, lastFix: lastFix ?? restored.lastFix }
+        }
+        if (version < 2) state = { ...state, onboardedPermissions: false }
+        if (version < 3) {
+          const { mode, policy: _policy, ...rest } = state
+          for (const key of RETIRED_KEYS) delete rest[key]
+          state = {
+            ...rest,
+            mode: mode === "moving" || mode === "stationary" ? "on" : "off",
+            lastVerdictAt: rest.lastVerdict ? Date.now() : null,
+          }
+        }
+        return state as unknown as TrackingState
       },
     },
   ),
