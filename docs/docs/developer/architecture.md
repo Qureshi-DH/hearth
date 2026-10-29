@@ -106,7 +106,7 @@ and keeps the ingest path free of per-circle fan-out.
    boundary flapping, and fixes worse than 250 m accuracy are ignored. A
    network estimate worse than 100 m can still bring somebody into a place,
    but takes them out of one only from more than twice its error away,
-   because a parked Android phone answered from the cell network can sit a
+   because a phone that answers its pings from the cell network can sit a
    street away for hours.
    Approximate and paused circles learn nothing. An arrival at "Home" is
    precise information. When sharing with a circle becomes precise again,
@@ -153,8 +153,8 @@ decides what _this viewer_ may see of _that member_:
 - viewer looking at themselves → always exact
 
 `stale` is a fix older than 15 minutes, or 35 for a phone whose last fix said
-`still`, since a parked phone reports on a quarter hour heartbeat and a line
-on the beat itself faded healthy phones in and out.
+`still`, since an iPhone sitting still may answer only a few pings an hour and
+a shorter line faded healthy phones in and out.
 
 Because the projection is per viewer, the bus carries the unprojected row and
 the websocket layer projects it on each socket. Only a socket whose projection
@@ -191,8 +191,8 @@ entry behind it still reaches everyone in the circle.
 The phone's tracker opens a second socket to `/api/v1/ws` and sends
 `{type:"control"}`, which makes that socket its control channel. Every answered
 heartbeat refreshes `user_presence.control_seen_at`. When the server wants
-something from a phone, it calls `sendControl()` first: the sweep's wake, the
-fresh fix asked for when someone opens the map or a member's page, and Live's
+something from a phone, it calls `sendControl()` first: the ping, the fresh
+fix asked for when someone opens the map or a member's page, and Live's
 watch. That publishes a `control` frame on the user's bus topic, and whichever
 replica holds the socket passes it on. Each frame carries an `ask` id, and the
 phone answers `{type:"control", ack}` the moment it lands. Live's watch and a
@@ -204,9 +204,10 @@ fall back to a silent push, which needs the `expo` provider. A `watch` with no
 seconds left ends the window, which is how a phone hears that the last viewer
 left.
 
-An iPhone keeps the channel open whenever sharing is on, because its parked
-location session keeps the app alive. An Android phone holds it only while
-moving, so a parked Android phone is reached by silent push alone.
+A phone holds the channel only while somebody has the app open, and an
+iPhone also for the length of a Live window, whose location session keeps the
+app alive. Any other phone is reached by silent push alone, so on a server
+with no `expo` provider a phone with Hearth closed can't be asked anything.
 
 ### Push (`services/push.ts`)
 
@@ -305,22 +306,50 @@ running is skipped.
    first call that leaves some unanswered or fails, and tickets over a day old
    are deleted in 5 000-row batches.
 3. Lapse expired pauses, restoring whatever mode each member had before.
-4. Wake quiet phones, on a schedule measured from when the phone was last
-   heard, `greatest(recorded_at, last_heard_at)`. A phone last seen moving is
-   asked at 10, 20 and 40 minutes, a parked one every half hour up to three
-   times, and `wake_count` resets when the phone uploads anything at all. Each
-   ask goes down the control channel when one is open, and otherwise as a
-   silent push if the provider is `expo`.
-5. Flag offline devices, over 1 h silent, 12 h for a parked phone, or for a
-   parked phone on an account signed in only on Android phones, the three
-   parked wakes plus the grace, 100 minutes (`silentPastCutoff` in
+4. Ping every phone (`wakeQuietPhones`). A phone keeps no location request
+   of its own between Live windows, so this is its heartbeat. Each phone is
+   asked for one fix on the interval of the strictest circle it is in
+   (`pingIntervalMs` in `services/reporting.ts`). A circle with no interval
+   set, or one that is not a number, counts as the 300 s default, and the
+   result is held between two minutes (`PING_MIN_INTERVAL_MS`) and ten
+   (`PING_MAX_INTERVAL_MS`) whatever a circle says. Past ten, a phone on the
+   move would cross the 15 minute stale line between one ask and the next.
+   The upload reply's `policy` carries the same clamped interval
+   (`pingIntervalSeconds`). A phone in no circle is not asked, since nobody
+   could see its fix, and nor is one whose health report says sharing is
+   switched off and that has sent no fix since. A phone whose last fix said
+   it was walking, running, cycling or driving is asked a little sooner, on
+   `PING_MOVING_INTERVAL_SECONDS` (120 by default, from 120 to 600, and never
+   later than its circle's interval). The first ask is measured from when the
+   phone was last heard, `greatest(recorded_at, last_heard_at)`, and each one
+   after from the ask before (`pingDueAt`), most overdue first.
+   `wake_count` counts the asks and resets when the phone uploads anything at
+   all. After 12 unanswered asks a phone is asked every 30 minutes, and after
+   60 every three hours, for as long as it stays signed in, so a phone that
+   was only flat comes back. Each ask goes down the control channel when one
+   is open, and otherwise as a silent push if the provider is `expo`, marked
+   `ping: true` either way, so the phone can answer the schedule with its last
+   fix when its motion classifier has had it still. An ask
+   goes on the first tick after it falls due, so with the default tick of a
+   minute a five minute interval comes out at five to six. The circle route
+   takes an interval from 10 s to 3600 s and stores it clamped to 120 to 600,
+   so an app from before the ping offering half a minute or an hour is not
+   refused with a 4xx. Migration `0015_ping_interval` moved stored intervals
+   under 120 s, or that were not a number, to 300, and those over 600 to 600.
+5. Flag offline devices, over 1 h silent, 12 h for a parked phone, or 100
+   minutes for a parked phone on an account signed in only on Android phones,
+   since Android answers a ping even from Doze (`silentPastCutoff` in
    `services/reporting.ts`). Parked
    means the last fix said "still", or the member is inside a named place, or
    the last fix measured under 1 m/s with an accuracy of 250 m or better. A
-   phone the server can push is only called offline once two wakes have gone
-   unanswered. Each circle hears it once per outage, with the reason when the
-   phone's own health report gave one, or that the battery likely ran out when
-   the last fix was on 5% or less and not charging. A circle the member paused,
+   phone the server can push is only called offline once three asks have gone
+   unanswered, which is two not counting the newest, since that one may have
+   gone out in the same tick. A phone that can't be pushed at all, with no
+   token or on a provider other than `expo`, is judged on its silence alone,
+   as before. Each circle hears it once per
+   outage, with the reason when the phone's own health report gave one, or
+   that the battery likely ran out when the last fix was on 5% or less and
+   not charging. A circle the member paused,
    or one that allows pausing when the member switched sharing off on the
    phone, hears nothing. The step is withheld entirely when the push provider
    could not be reached in the last 30 minutes, when a server with fewer than
@@ -359,9 +388,10 @@ updating a circle stores a longer retention as the ceiling.
 
 Breadcrumbs newer than the per-user watermark and older than the idle gap
 (5 min) are split wherever the gap between fixes exceeds 5 min, or wherever
-the phone stayed inside 100 m for longer than that. Heartbeat fixes are
-skipped, since a parked phone sends them on a timer and they would keep a
-finished drive from closing. So are network estimates worse than 100 m: one
+the phone stayed inside 100 m for longer than that. Fixes with source
+`heartbeat` are skipped. Only an app from before 1.3.4 sends them, from a
+parked phone with the app open, and they would keep a finished drive from
+closing. So are network estimates worse than 100 m: one
 of them between two fixes at home is otherwise a trip there and back. A gap
 is not a split when the fix after it shows the phone travelled through it. A segment with ≥3 points,
 ≥2 min, ≥250 m of path and real displacement (150 m from where it started)
@@ -376,73 +406,93 @@ anywhere else sends one push, "Aisha stopped 4.2 km from Home", up to 30
 minutes after it ended.
 
 A journey between two named places is a trip whatever its length, because
-the feed has already announced "left" and "arrived" for it. The tracker
-cannot see a move shorter than its fence around the parking spot, so such a
-journey often reaches the server as one fix at the origin, a silence, and a
-fix inside the destination: that silence, up to 45 minutes, is read as the
-journey, and the trip starts at the last fix at the origin.
+the feed has already announced "left" and "arrived" for it. Outside Live the
+phone reports only at each ping, so such a journey often reaches the server as
+one fix at the origin, a silence, and a fix inside the destination: that
+silence, up to 45 minutes, is read as the journey, and the trip starts at the
+last fix at the origin. Any other drive outside Live is a few fixes minutes
+apart, and a short one may not make a trip at all.
 
 ## Mobile app
 
 Ignite conventions with a few deliberate substitutions:
 
-| Concern             | Choice                                                                               | Why                                                                                                                                                                                                                             |
-| ------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Server state        | TanStack Query                                                                       | cache is written directly by the websocket                                                                                                                                                                                      |
-| Client state        | zustand + MMKV                                                                       | synchronous hydration, no flash of empty UI                                                                                                                                                                                     |
-| Secrets             | expo-secure-store (`stores/tokenVault.ts`)                                           | refresh tokens never touch MMKV                                                                                                                                                                                                 |
-| Map                 | MapLibre RN + OpenFreeMap style                                                      | no Google key, swappable to self-hosted tiles                                                                                                                                                                                   |
-| Background location | expo-location + expo-task-manager, and a native service on Android                   | `startLocationUpdatesAsync` on iOS and for a parked Android phone. A moving or watched Android phone runs `HearthTrackingService` from `modules/hearth-motion`, which a manifest receiver can start before the JavaScript is up |
-| Periodic sync       | expo-background-task                                                                 | flushes the offline queue when the OS allows                                                                                                                                                                                    |
-| Motion class        | `modules/hearth-motion`, over Core Motion / Play Services                            | on whenever tracking is, so the GPS can sleep without polling                                                                                                                                                                   |
-| Crash sensing       | `modules/hearth-motion` (expo-sensors as fallback) + `packages/shared/src/impact.ts` | native batched sampling that keeps going with the screen off, and a verdict testable against recorded traces, off the device                                                                                                    |
+| Concern             | Choice                                                                               | Why                                                                                                                                                                                                                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server state        | TanStack Query                                                                       | cache is written directly by the websocket                                                                                                                                                                                                                                                                                              |
+| Client state        | zustand + MMKV                                                                       | synchronous hydration, no flash of empty UI                                                                                                                                                                                                                                                                                             |
+| Secrets             | expo-secure-store (`stores/tokenVault.ts`)                                           | refresh tokens never touch MMKV                                                                                                                                                                                                                                                                                                         |
+| Map                 | MapLibre RN + OpenFreeMap style                                                      | no Google key, swappable to self-hosted tiles                                                                                                                                                                                                                                                                                           |
+| Background location | silent push, then expo-location on iOS and a native service on Android               | the server's ping wakes the app on iOS for its last fix again or one `getCurrentPositionAsync`, and Live and a drive run `startLocationUpdatesAsync` for their length. On Android the push handler in `modules/hearth-motion` answers both, with `HearthTrackingService` or with the last fix, and uploads natively, with no JavaScript |
+| Periodic sync       | expo-background-task                                                                 | flushes the offline queue when the OS allows, and takes a fix when the pings have stopped arriving                                                                                                                                                                                                                                      |
+| Motion class        | `modules/hearth-motion`, over Core Motion / Play Services activity transitions       | costs no location, so a still phone answers a ping with no fix of its own, and a drive can start crash detection                                                                                                                                                                                                                        |
+| Crash sensing       | `modules/hearth-motion` (expo-sensors as fallback) + `packages/shared/src/impact.ts` | runs on a drive where a circle wants crash alerts. Native batched sampling that keeps going with the screen off, and a verdict testable against recorded traces, off the device                                                                                                                                                         |
 
 ### Location pipeline on the phone (`services/location/tracker.ts`)
 
-OS fix → `toFix()` (adds battery) → `thin()` (drops near-duplicates) →
-`useTrackingStore.enqueue()` (MMKV-persisted queue, capped at 2000) →
-`flush()` (single-flight, oldest first, 200 per batch). Network failures keep
-the queue. A 4xx validation error drops the poison batch, and the next batch
-waits on the retry ladder, since a firewall in front of the server may lock
-the phone out for a 4xx. A 403 from Hearth itself stops sharing until the
-next sign-in. The server's response carries the tracking policy (interval /
-distance), which is applied live.
+OS fix → `toFix()` (adds battery and the activity label) → `thin()` (drops
+near-duplicates on Live) → `useTrackingStore.enqueue()` (MMKV-persisted queue,
+capped at 2000) → `flush()` (single-flight, oldest first, 200 per batch).
+Network failures keep the queue. A 4xx validation error drops the poison
+batch, and the next batch waits on the retry ladder, since a firewall in front
+of the server may lock the phone out for a 4xx. A 403 from Hearth itself stops
+sharing until the next sign-in. The server's response carries the tracking
+policy, and the phone keeps its interval for the foreground heartbeat and the
+sync task.
 
-`reportNow(source)` takes an immediate high-accuracy fix for check-ins, SOS
-(once before the alert is sent, and every 20 s on the SOS screen of a phone
-that is not on Live), and a _nudge_ arriving over the websocket. While its
-owner has an SOS open the phone is on Live. Every upload reply names a two
-minute `watchedUntil` (`liveUntil` in `services/sos.ts`), and the raise sends
-a watch down the control channel.
+The phone takes its location when somebody asks. The first ask is the ping,
+the server's on the circle's interval (background jobs, step 4). The motion
+classifier, Play Services' activity transitions on Android and Core Motion's
+history on iOS, costs no location and says whether the phone has moved since
+its last real fix. A phone it has had still, for under an hour, answers with
+that fix again, stamped now and labelled `still`, and turns no location on.
+One that moved answers with one `Balanced` fix, Wi-Fi and cell with no GPS. On
+Android the push handler in `modules/hearth-motion` answers it natively, with
+the last fix or a foreground service up for the seconds the fix takes, and the
+session's upload key, and JavaScript is not started. On iOS the silent push
+wakes the app for it. A foreground heartbeat answers the same way on the same
+interval while the app is open, and the background sync task takes a fix when
+the last one is over two intervals old. An ask somebody made, a page opened
+or a nudge, always takes a fresh fix. Each fix is labelled with the
+classifier's verdict, or failing that from a measured speed or the fix before
+it. Moving turns on no tracking, and nothing runs between asks, so the
+location indicator stays off at home. The cost is that an iPhone answers only
+the pings iOS delivers, that places and trips can be up to one interval
+behind, that a departure the classifier missed waits up to an hour for the
+next real fix, and that a drive outside Live is a fix every couple of minutes.
 
-The tracker is a two-state machine with a live tier on top. Moving means
-continuous updates and, on Android, the foreground-service notification that
-comes with them. Once the phone has held still for a few minutes it goes
-stationary: the GPS goes off, the service and its notification go with it,
-and an exit geofence around the stopping point is what brings it back.
-Android keeps a Wi-Fi grade request the OS answers a few times an hour. An
-iPhone keeps a cell-only session, which keeps the app alive to report once a
-quarter of an hour and to hold the control channel open. That report is sent
-from where the phone parked unless a fix sharp enough to mean it shows it
-has left. A phone allowed only approximate location parks without the
-geofence, which neither OS arms for it. The server's asks
-are a parked phone's other heartbeat: the wake after half an hour of quiet,
-the map or a member's page being opened, and Live. Live, offered for anyone
-the viewer sees precisely, is the live tier, full accuracy and a fix a
-second, for as long as the page is open and at most ten minutes past its last hold.
-Each viewer holds the window on their own. It ends within seconds of the last
-one leaving, through the next upload reply and the control channel, and when
-the member turns that circle to approximate or pauses it. A hold on a window
-already live only moves its end. While live, a stuck upload gets 4 s before it
-goes again on a fresh request, and a failed one waits 2, 5, then 10 s with
-every fix kept, rather than trying again on every fix. A parked phone goes
-live too and stays parked. On Android that
-brings the location service and its notification up for the window, and both go
-when it ends. Its resting request keeps running under the service, and if
-Android refuses the service the phone answers with one fix. The OS motion
-classifier, which runs whenever tracking does, makes the moving and
-stationary switch happen sooner in both directions, and a phone that refused
-the permission falls back to working stops out from position.
+The one exception is a drive, where a circle wants crash alerts. On Android
+the classifier's in-vehicle transition starts the service on the GPS every
+five seconds, with a headless task held open for the detector. On iOS a ping
+that finds Core Motion had the phone in a moving vehicle in the last three
+minutes starts a `High` accuracy session and Core Motion's live updates. The
+drive's fixes stay on the phone for the detector, and a ping during it is
+answered with the drive's latest fix. It ends when the classifier has the
+phone out of the vehicle, after ten minutes standing, or when crash alerts or
+sharing go off.
+
+The second ask is Live, offered for anyone the viewer sees precisely. It runs at
+full accuracy and a fix a second, for as long as the page is open and at most
+ten minutes past its last hold. Each viewer holds the window on their own. It ends
+within seconds of the last one leaving, through the next upload reply and the
+control channel, and when the member turns that circle to approximate or
+pauses it. A hold on a window already live only moves its end. While live, a
+stuck upload gets 4 s before it goes again on a fresh request, and a failed
+one waits 2, 5, then 10 s with every fix kept, rather than trying again on
+every fix. On Android the watch push brings the service and its notification
+up for the window, the service follows the server's `watchedUntil` in each
+upload reply, and both go when it ends. If Android refuses the service the
+phone answers with one fix. On iOS a location session with no distance filter
+runs for the window only.
+
+`reportNow(source)` takes an immediate fix, at high accuracy for a check-in
+and the highest for an SOS (once before the alert is sent, and every 20 s on
+the SOS screen of a phone that is not on Live), and at `Balanced` for a
+_nudge_ arriving over the websocket. While its owner has an SOS open the
+phone is on Live for half an hour from when the alert was raised or last
+pressed again (`SOS_LIVE_FOR_MS`, `sos_alerts.live_from`). Every upload reply
+in that time names a two minute `watchedUntil` (`liveUntil` in
+`services/sos.ts`), and the raise sends a watch down the control channel.
 
 ### Realtime on the phone (`services/realtime.ts`)
 
@@ -457,8 +507,8 @@ after a reconnect or a return to the front. The map and the Live page say
 they're reconnecting once the socket has been down for 5 s. A nudge goes to
 its own store and makes the phone report at once.
 Screens just render query data. The control channel
-(`services/location/control.ts`) is a separate socket the tracker holds in the
-background, as described above.
+(`services/location/control.ts`) is a separate socket the tracker holds while
+the app is open, and on an iPhone during Live, as described above.
 
 ## Admin portal (`apps/admin`)
 
@@ -512,7 +562,7 @@ plain SVG and CSS, so the page still loads nothing from anywhere else.
   time while no token issued after the spent one has been used. That is a
   phone whose renewal answer was lost. A thief shows once the phone has used
   the token that replaced the stolen one.
-- Upload keys: an Android session's native tracker answers wakes and Live with
+- Upload keys: an Android session's native tracker answers pings and Live with
   `hk1.<session id>.<HMAC>` (`services/uploadKey.ts`), keyed from the JWT
   secret. It opens `POST /locations/batch` and no other route, carries no
   admin rights, has its own rate-limit bucket, and is worth nothing once the

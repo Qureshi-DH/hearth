@@ -10,13 +10,13 @@ your options are, and which one to pick.
 
 ## In short
 
-| Provider (`PUSH_PROVIDER`) | Works on                                     | Needs a third party?               | Effort | Privacy                           | Reliability on a sleeping phone                                                            |
-| -------------------------- | -------------------------------------------- | ---------------------------------- | ------ | --------------------------------- | ------------------------------------------------------------------------------------------ |
-| `none` (default)           | iOS, Android                                 | No                                 | Zero   | Best                              | Poor. An SOS or a crash alert rings only on a phone still connected, and nothing else does |
-| `ntfy`                     | iOS, Android, through the ntfy app           | No, you host ntfy too              | Low    | Best                              | Good for alerts. Never wakes the Hearth app, see below                                     |
-| `expo`                     | iOS, Android, in a build made with your keys | Yes, Expo's relay then APNs or FCM | High   | Titles and bodies transit Expo    | Excellent                                                                                  |
-| `webpush`                  | No Hearth client uses it yet                 | Browser vendor's push service      | Medium | Good                              | Not used by the app                                                                        |
-| Direct APNs + FCM          | Not implemented                              | Yes, Apple and Google accounts     | High   | Payload transits Apple and Google | Would match `expo`                                                                         |
+| Provider (`PUSH_PROVIDER`) | Works on                                     | Needs a third party?               | Effort | Privacy                           | Reliability on a sleeping phone                                                                                         |
+| -------------------------- | -------------------------------------------- | ---------------------------------- | ------ | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `none` (default)           | iOS, Android                                 | No                                 | Zero   | Best                              | Poor. No pings, so a closed app reports only from its background task, and an SOS rings only on a phone still connected |
+| `ntfy`                     | iOS, Android, through the ntfy app           | No, you host ntfy too              | Low    | Best                              | Good for alerts. No pings, so the same reporting as `none`, see below                                                   |
+| `expo`                     | iOS, Android, in a build made with your keys | Yes, Expo's relay then APNs or FCM | High   | Titles and bodies transit Expo    | Excellent on Android. An iPhone answers the pings iOS lets through                                                      |
+| `webpush`                  | No Hearth client uses it yet                 | Browser vendor's push service      | Medium | Good                              | Not used by the app                                                                                                     |
+| Direct APNs + FCM          | Not implemented                              | Yes, Apple and Google accounts     | High   | Payload transits Apple and Google | Would match `expo`                                                                                                      |
 
 Start with `none`, which needs no configuration at all. Move to `ntfy` when you
 want alerts on a locked phone without handing anything to a third party. Use
@@ -24,24 +24,27 @@ want alerts on a locked phone without handing anything to a third party. Use
 don't mind Expo relaying the notification text. It's the only option that
 gives you the whole app.
 
-Only `expo` wakes the Hearth app itself. When the server wants a fresh fix from
-a phone, it first tries the phone's own connection to the server. An iPhone
-keeps that line open whenever it's sharing, because its parked location session
-keeps the app alive. An Android phone keeps it only while it's moving. An ask
-that goes down that line needs no push. When the line is closed, which on a
-parked Android phone is always, the fallback is a silent push, and that has to
-arrive through FCM or APNs in the app's own process. With `ntfy` the alerts are
-shown by the ntfy app, so the family still hears about arrivals and SOS, but a
-phone whose line is closed waits for its own next report rather than being
-woken.
+Only `expo` wakes the Hearth app itself, and since 1.3.4 a phone's reporting
+rests on that. A phone reports its location only when the server pings it, every
+five minutes by default, or while somebody watches it on Live. The server
+first tries the phone's own connection to it, which the app holds only while
+it is open, and on an iPhone during Live. When that line is closed, which for a
+phone in a pocket is nearly always, the ping is a silent push, and that has to
+arrive through FCM or APNs in the app's own process. With `ntfy` or `none`
+there is nothing to carry it. A phone with Hearth closed then reports only
+from its own background check, which the operating system runs about every
+quarter of an hour on Android, later in Doze, and less often on an iPhone, and
+nobody can watch it on Live until it is opened. With `ntfy` the alerts are
+still shown by the ntfy app, so the family hears about arrivals and SOS, but
+only as often as those reports come in.
 
 ## What the app needs from Expo
 
 The iOS and Android apps are built and tested and waiting on App Store and Play
 Store review.
 
-Alerts on a locked phone, and the silent wakes that bring a parked Android phone
-back to reporting, both ride on Expo push. A push reaches the app only through
+Alerts on a locked phone, and the silent pings every phone answers with its
+location, both ride on Expo push. A push reaches the app only through
 the Expo project, Firebase project and Apple push key it was built with, and
 every push to that build goes out under those accounts, whichever server sends
 it. That is why a store build cannot ship with personal keys that any server on
@@ -95,7 +98,7 @@ When the server can't reach the push provider at all, it holds back its "phone
 offline" alerts until half an hour after the last failure. A home server whose
 own internet connection is down hears from no phone and reaches no provider,
 and without the hold it would tell the family every phone had died as soon as
-the connection came back. A wake that never reached the provider doesn't count
+the connection came back. A ping that never reached the provider doesn't count
 as asking the phone. Once the server has held its alerts for an outage, it
 keeps holding them for half an hour after it last did, through a restart, so
 the other phones can get back through after the first.
@@ -132,11 +135,14 @@ A journey between two named places is at most two notifications.
   fix outside the place, or a minute with no fix back inside, so a Wi-Fi fix
   that jumps down the street doesn't send "left Home" and then "arrived at
   Home". A phone that says it hasn't moved needs that second fix, however
-  long it takes. If the phone's next word after leaving is already from somewhere
-  named, as a parked phone's often is, only the arrival is sent.
+  long it takes. If the phone's next word after leaving is already from
+  somewhere named, as it often is when the next ping finds her there, only the
+  arrival is sent.
 - **Arrived.** "Amina arrived at School, 4.2 km from Home in 14 min", with the
   distance and time worked out from the fixes since she left. It goes as soon
-  as the server sees the crossing, usually within a second. A phone doing
+  as the server sees the crossing, usually within a second of the fix. Outside
+  Live that fix is the first ping after the crossing, so it can be up to one
+  interval late, five minutes at the default. A phone doing
   18 km/h or more might be in a car driving past, so that arrival waits up to
   a minute, and is never sent if the next fix is out the far side.
 - **Trip.** A trip that ends at a named place goes to the activity feed only.
@@ -232,18 +238,23 @@ Set nothing. The app still holds a websocket to your server while it's in the
 foreground, so the map, the activity feed and an active SOS update in real
 time. It also polls presence every minute in case that socket is dead.
 
-What you lose is alerts while the phone is locked, with one exception. An SOS,
-or a possible crash from the server's check, that reaches a phone over its own
+You also lose the ping, and with it most reporting. Without a silent push the
+server cannot ask a phone where it is while Hearth is closed, and nobody can
+watch it on Live then. The phone reports from its own background check, about
+every quarter of an hour on Android and less often on an iPhone, and while
+Hearth is open.
+
+And you lose alerts while the phone is locked, with one exception. An SOS, or
+a possible crash from the server's check, that reaches a phone over its own
 connection to the server makes the app ring for it, on the SOS channel, once
-per SOS. That connection is open while Hearth is on screen, on an iPhone
-whenever it shares its location, and on an Android phone while it's on the
-move. A parked Android phone, or one where Hearth isn't running, hears nothing
-until the app is opened. Arrivals, low battery and the rest never ring this
-way. The setup checklist says the same on a server like this.
+per SOS. That connection is open only while Hearth is, so any other phone hears
+nothing until the app is opened. Arrivals, low battery and the rest never ring
+this way. The setup checklist says the same on a server like this.
 
 The server still records every alert in the activity feed, so nothing is
 missed, only heard about later. For a household that mostly opens the app to
-_check_ where people are, that's often fine.
+_check_ where people are, expect each person's dot to be as old as their
+phone's last background report.
 
 ## Option 2: `ntfy` (self-hosted alerts)
 
@@ -275,19 +286,19 @@ part if you are sharing an ntfy instance with something else.
 
 **ntfy is not a full replacement for Expo.** It carries the alerts, but it
 cannot wake Hearth itself. Only a push through FCM or APNs to the app's own
-process can do that, and a notification the ntfy app shows never reaches it. On
-a parked Android phone that means:
+process can do that, and a notification the ntfy app shows never reaches it.
+Since 1.3.4 that matters a lot, because the server's ping is such a push. With
+Hearth closed, that means:
 
-- Live and a refresh wait for the phone's next report, up to a quarter of an
-  hour, or until it moves.
-- A phone that has gone quiet is not woken before its family is told it stopped
-  reporting.
+- The phone reports only from its own background check, about every quarter
+  of an hour on Android and less often on an iPhone.
+- Live and a refresh wait for that next report.
+- A phone that has gone quiet is not asked again before its family is told it
+  stopped reporting.
 - "Ask for location" shows its words in ntfy, but no fresh fix is taken.
 
-Tracking itself carries on. The geofence, the activity transitions, the location
-service on a journey and the quarter-hourly report all run without push. iPhones
-feel this less, because their parked location session keeps the app's own line
-to the server open, and asks go down that instead.
+With Hearth open everything works as it does with `expo`, since the app's own
+line to the server carries the asks.
 
 For alerts, Android is the good case. The ntfy app keeps one battery-friendly
 connection and shows them at once. iPhones are weaker, because iOS won't let the
@@ -361,14 +372,31 @@ then, `ntfy` is the way to keep Expo out, with the limits under Option 2.
 
 ## Silent pushes and asks
 
-The server asks a phone for a fresh fix when somebody opens the map, when
-somebody opens that member's page, when somebody opens Live, and when a phone
-has gone quiet. Each ask goes down the phone's own line to the server if it's
-open. Otherwise, and only with `expo`, it becomes a silent push with
-`data.type` of `wake`, or `watch` for Live. Nothing is shown or heard. The app
-takes the fix in the background, on Android even from Doze. iOS decides for
-itself when to hand a background push to an app and may hold one back, which is
-why the open line matters more on an iPhone.
+The server asks every phone for a fix on its circle's interval, which is the
+ping, and again when somebody opens the map, opens that member's page or opens
+Live. Each ask goes down the phone's own line to the server if it's open.
+Otherwise, and only with `expo`, it becomes a silent push with `data.type` of
+`wake`, or `watch` for Live. The scheduled ping's `wake` carries `ping: true`.
+Nothing is shown or heard. The app answers in the background, on Android even
+from Doze, where the push handler answers without starting the app's
+JavaScript. A phone the motion sensor has had lying still since its last fix
+answers a ping with that fix again and turns no location on. One that moved,
+or any phone asked by somebody opening a page, takes a fresh fix. iOS decides for itself when to hand
+a background push to an app and holds some back, so an iPhone answers fewer
+pings than it is sent. An iPhone where Hearth was swiped away in the app
+switcher gets none until it is opened. The ping goes every interval, five
+minutes by default and never under two or over ten whatever a circle says,
+and every two minutes by default to a phone whose last fix had it on the move
+(`PING_MOVING_INTERVAL_SECONDS`). A
+phone that stops answering is asked every half hour once twelve have gone
+unanswered, and every three hours once sixty have, for as long as it stays
+signed in, so a phone that was only flat comes back. A phone in no circle is
+not asked, nor one that said sharing is switched off and has sent no fix
+since.
+
+The app registers its push token even when the person turns notifications
+down. A silent push needs no alert permission on iOS or Android, so a phone
+that declined alerts is still pinged, and only the visible alerts are lost.
 
 A silent push that can't be delivered in time is dropped rather than arriving
 late, a watch or a wake after five minutes. A late one would turn on the
@@ -383,9 +411,9 @@ seconds. Live pushes again only once the phone has said nothing for 20 seconds
 and the last push went 90 seconds ago, and no more than three times in its
 ten-minute window.
 
-With `ntfy` or `none`, only the phone's own line carries an ask. That reaches
-any iPhone that's sharing and any Android phone that's moving. A parked Android
-phone waits for its next report.
+With `ntfy` or `none`, only the phone's own line carries an ask, and that is
+open only while Hearth is. Every other phone waits for its next report from the
+background task.
 
 ## Ask for location and quick messages
 
@@ -403,10 +431,11 @@ sharing. A bare ask to them is not sent, and the sender is told they paused.
 This one is a visible notification, not a silent push, and that changes what
 it can do. With the app open, the phone shows the message and takes a fresh
 fix at once, whatever the provider. With `expo` the push also reaches the app
-in the background. Android hands every Expo push to the app, and on an iPhone
-the request is marked content-available, which asks iOS to run the app for it
-as it does for a silent wake. Either way the phone takes a fix as well as
-showing the message. iOS decides for itself when to run an app for a push, so
+in the background. Android hands every Expo push to the app, where the
+native push handler takes the fix and then passes the notification on to be
+shown. On an iPhone the request is marked content-available, which asks iOS
+to run the app for it as it does for a silent wake. Either way the phone takes
+a fix as well as showing the message. iOS decides for itself when to run an app for a push, so
 an iPhone may still hold it back. Through `ntfy` the app doesn't run, so the
 alert alone doesn't produce a fix. A bare ask to somebody sharing precisely
 therefore also asks the phone for a fix the way opening the member's page
@@ -423,7 +452,9 @@ there to find.
 
 If you build the app with your own Expo, Firebase and Apple keys, use `expo`. It
 is one environment variable on the server and it is the only option that gives
-you the whole app. If you care about privacy above all, or have no such keys,
-run `ntfy` alongside the server for alerts and accept the limits under Option 2.
-That's one extra container and one extra app on each phone. Either way, start
-with `none`, get everyone on the map, and add push once the basics are solid.
+you the whole app, including phones that report with Hearth closed. If you care
+about privacy above all, or have no such keys, run `ntfy` alongside the server
+for alerts and accept the limits under Option 2. That's one extra container and
+one extra app on each phone. Either way, `none` is a fine way to get everyone
+signed in and on the map, but expect phones to fall behind on it once Hearth is
+closed, until push is set up.

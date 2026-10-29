@@ -10,10 +10,10 @@ value.
 ## Near term
 
 Measured against the family safety apps Hearth sets out to be a self-hosted version
-of, these are the gaps that remain after 1.0. The tracker's tiers, places
-with arrival and departure alerts, check-ins, SOS, crash detection, low
-battery alerts, trips, history, and the member statuses other apps show
-("location permission off", "at Home since") are all there.
+of, these are the gaps that remain after 1.0. The ping and Live, places with
+arrival and departure alerts, check-ins, SOS, crash detection, low battery
+alerts, trips, history, and the member statuses other apps show ("location
+permission off", "at Home since") are all there.
 
 - A Hearth organisation for push. The app relies on Expo push, and every push to
   a build goes out under the Expo project, Firebase project and Apple push key
@@ -55,10 +55,14 @@ battery alerts, trips, history, and the member statuses other apps show
   the countryside.
 - Shared ETA, or "on my way". A check-in variant that publishes a destination
   and live ETA until arrival.
-- Battery work beyond the moving and stationary split and the OS motion
-  classifier, which are what pay for themselves today. A measured comparison
-  of the classifier against the GPS-only fallback would say how much a refused
-  permission actually costs.
+- A measured battery comparison of the ping against the continuous tracking it
+  replaced in 1.3.4, on both platforms, and a figure for how many pings iOS
+  actually delivers to an iPhone over a day.
+- A better picture of a drive between pings. Outside Live a drive is a point
+  every couple of minutes, which is enough for arrivals and too little for
+  trips and the hard-stop check.
+- Crash detection from the first minute of a drive on an iPhone, which today
+  starts only once a ping finds the drive under way.
 - Circle-level place sharing, meaning you copy a place into another circle.
 - End-to-end encrypted history, with client-side keys and the server holding
   only ciphertext, for people who don't trust their own server host. Presence

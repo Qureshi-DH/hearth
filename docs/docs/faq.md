@@ -104,17 +104,18 @@ The details worth knowing:
   after a failed request is the reason.
 - The server ignores duplicates by device and timestamp, so a retried upload is
   safe.
-- A parked phone in the background is in stationary mode and takes one cheap
-  fix a quarter of an hour, so the queue barely grows while nothing is
-  happening. With the app open it takes one at the circle's interval, to keep
-  your own row fresh.
+- Outside Live a phone takes a fix only when your server pings it, so while
+  the server is down hardly any are taken and the queue barely grows. With the
+  app open it takes one at the circle's interval, to keep your own row fresh.
 
 The background sync task also flushes the queue whenever the OS grants it time,
-and takes a fresh fix if the last one is over 15 minutes old.
+and takes a fresh fix if the last one is more than two intervals old, ten
+minutes at the default.
 
 While the server is down nobody can see anybody, and after 15 minutes without a
-fix everyone shows as stale, or after 35 for a phone that said it had parked,
-since a parked phone only reports every quarter of an hour. The job that
+fix everyone shows as stale, or after 35 for a phone whose last fix said it was
+still, since an iPhone sitting still may answer only a few pings an hour. The
+job that
 alerts on a phone going quiet holds its alerts back when the outage looks like
 the server's own. That is when it couldn't reach the push provider in the last
 half hour, when a family-sized server has two or more phones and not one of
@@ -129,61 +130,74 @@ goes out.
 
 ## How much battery does it use?
 
-The honest answer is that it depends on how much the phone moves, because the
-GPS is what costs, and nobody has published a measured comparison yet.
+Nobody has published a measured number yet, so the honest answer is a
+description of what the phone does.
 
-What the code does to keep it down is worth understanding, because it is most of
-the answer. The tracker has two states. **Moving** means continuous OS location
-updates, and on Android that is a foreground service with a notification. It
-stays out of the status bar and sits in the silent part of the shade, and
-Android 13 and later let you swipe it away. Once the phone has stayed inside a
-90 metre circle for five minutes it switches to **stationary**: the GPS goes
-off, the service and its notification go with it, and an exit geofence is
-armed around where it stopped, 150 metres on Android and 200 on iOS. On
-Android a Wi-Fi grade request stays, which the OS answers a few times an hour.
-An iPhone keeps a cell-only location session, which costs almost nothing and
-keeps the app alive to report once a quarter of an hour. That 90 metres is one
-and a half times the distance filter and never less than 60, so a circle that
-asks for coarser updates waits out a wider stop. Leaving the geofence puts it
-back into moving. A phone allowed only approximate location gets no geofence,
-because neither Android nor iOS arms one for it, so it parks without one and
-leaves on the classifier's word or on a fix far enough away to say so. The
-member's page then says precise location is off. So a phone sitting in a house
-overnight is costing you a few cheap fixes an hour, not a GPS. A parked iPhone
-is expected to be quiet, because iOS holds back the silent pushes that would
-wake it, so the server only calls it offline after twelve hours of silence. A
-parked Android phone reports every quarter of an hour and answers those pushes,
-so it is called offline once it has let three of them go, about 100 minutes
-after it was last heard. A phone last seen
-moving is reported after an hour, and the server asks it for a fix before
-that. A phone that has told the server why it cannot report, a permission short
-of Always, which Android calls Allow all the time, or Location Services off, is
-shown as that under its name instead.
-One that went quiet on 5% battery or less is shown, and reported, as having
-most likely run out.
+Since 1.3.4 a phone takes its location when somebody asks, and not otherwise.
+Your server pings each phone on the interval of the strictest circle it is in,
+every five minutes out of the box, and every two while its last fix had it on
+the move. The phone's motion sensor, which costs no location, says whether it
+has moved since its last fix. A phone lying still answers with that fix again
+and never turns location on, and one that moved answers with one Wi-Fi grade
+fix, which on Android leaves the GPS off. Somebody opening Live on you puts
+your phone on the GPS at a fix a second for as long as they watch. Moving
+never switches on tracking, so between asks the location indicator stays off.
+On Android a ping that needs a fix puts "Updating your location" in the silent
+part of the shade for the few seconds it takes, and Android holds that
+notification back for about ten seconds, so it often never appears. Live keeps
+it up for as long as somebody watches. Earlier versions tracked continuously
+and kept the indicator on all day.
+
+The one time the GPS runs by itself is a drive, and only where a circle you are
+in has crash alerts on. Crash detection needs the GPS speed either side of a
+jolt, so for the drive the location indicator shows, and on Android the
+notification says "Crash detection is on for this drive". Those fixes stay on
+the phone and are never uploaded. It never runs at home.
+
+What you give up is detail. Between pings the family sees where you were at
+the last one, so an arrival or a departure can be up to one interval late,
+and a drive is a point every couple of minutes rather than a line along the
+road. A still phone takes a real fix at least once an hour, so a departure the
+motion sensor missed shows up within the hour.
+Speed alerts and the server's hard-stop check need Live's fix a second to see
+much. An iPhone answers a ping only when iOS hands the silent push to the
+app, and iOS decides how many of those an app gets, so expect an iPhone to
+report less often than the interval says. One where Hearth was swiped away in
+the app switcher reports nothing until somebody opens it. Live is the answer
+when you want to follow somebody right now.
+
+The pings ride on Expo push. On a server without it, a phone with Hearth closed
+reports only when the OS gets round to running the app's background task, see
+[why push is the awkward part](#why-are-push-notifications-the-awkward-part).
+
+A phone whose last fix said it was still, or that is at a named place, is
+expected to be quiet, so the server calls it offline only after twelve hours of
+silence. An account signed in only on Android phones gets about 100 minutes,
+since Android answers a ping even from Doze. A phone last seen moving is
+reported after an hour. Where the server can push, it also waits until three
+pings have gone unanswered. A phone that has told the server why it cannot
+report, a permission short of Always, which Android calls Allow all the time,
+or Location Services off, is shown as that under its name instead. One that
+went quiet on 5% battery or less is shown, and reported, as having most likely
+run out.
+
 Opening the map asks anyone quiet for a couple of minutes for a fresh fix, and
 opening somebody's page asks their phone for one too. Live, offered for anyone
-you see precisely, moving or parked, has their phone send a fix a second for as
-long as you watch. It stops within seconds of the last person watching leaving
-the page or putting Hearth in the background, and when they turn your circle to
-approximate or pause it. On Android the location service's notification shows
-for that time, parked or not.
+you see precisely, moving or parked, stops within seconds of the last person
+watching leaving the page or putting Hearth in the background, and when they
+turn your circle to approximate or pause it. An SOS keeps the phone that raised
+it on Live for half an hour, and pressing SOS again while the alert is open
+starts the half hour over.
 
-Three other things affect it:
+Your circles decide the rest. The interval is the strictest of every circle you
+are in. A circle admin can choose every 2 minutes, every 5, or 10 as a battery
+saver, or anything from 2 to 10, and one circle asking for every 2 minutes
+makes every phone in it answer every 2. The server never goes past 10, since a
+phone on the move would read as out of date on the map between pings. Without
+the motion permission, Motion & Fitness on iOS or physical activity on Android,
+every ping takes a Wi-Fi fix and crash detection cannot run.
 
-- **Your circles.** The update policy is the strictest of every circle you are
-  in, defaulting to one fix per 30 seconds or 60 metres. One circle asking for
-  fast updates makes every phone in it report fast.
-- **The motion permission.** Motion and Fitness on iOS, or physical activity
-  on Android, asked for during setup. With it granted the OS classifier calls a
-  stop sooner than the position watch can and ends one the instant you move,
-  which saves GPS. Refused, the phone works it out from position and spends
-  more battery doing so. The server receives the same fixes either way.
-- **Crash detection**, which samples the accelerometer hard. It runs only when
-  a circle you are in has incident alerts on, and only while the OS says you are
-  in a vehicle.
-
-The single biggest cause of background location dying on Android is the battery
+The single biggest reason pings stop getting through on Android is the battery
 optimiser, which is why the app asks for an exemption during setup.
 
 ## I'm signed in on a phone and a tablet. Which one is on the map?
@@ -191,16 +205,17 @@ optimiser, which is why the app asks for an exemption during setup.
 You're one dot, and it follows whichever device last had something to say,
 with one exception. A device that is lying still doesn't take the dot from
 another of yours that is still reporting, so a tablet left at home doesn't
-pull you back there every quarter of an hour while you're out with your
-phone. Once a device is on the move it takes the dot at once. Under _You_,
-_Signed-in devices_ marks the one your circles are seeing with _On the map_.
+pull you back there at every ping while you're out with your phone. Once a
+device is on the move it takes the dot at once. Under _You_, _Signed-in
+devices_ marks the one your circles are seeing with _On the map_.
 
 ## My family member's phone keeps going quiet on Android
 
-Almost always the phone closed Hearth to save battery, and the family is
-looking at the last position it sent before that. Android does this to any
-app that runs in the background, and several makers ship a power manager of
-their own that does it sooner and without asking. Xiaomi, Redmi and POCO,
+Almost always the phone is keeping Hearth from running in the background to
+save battery, so the server's pings stop getting through, and the family is
+looking at the last position it sent. Android does this to any app that runs
+in the background, and several makers ship a power manager of their own that
+does it sooner and without asking. Xiaomi, Redmi and POCO,
 Huawei and Honor, OPPO, realme and OnePlus, vivo and iQOO, Samsung, Infinix,
 Tecno and itel, and ASUS all need settings changed by hand. Pixels and most
 Motorola phones do not.
@@ -237,11 +252,10 @@ themselves back after a system update. When a phone goes quiet again, the
 first thing to do is open the same page and check.
 
 The phone reports its own state to the server, so a member whose phone has
-said that Battery Saver is on, that background use is Restricted, or that the
-location service was stopped is shown as that under their name rather than as
-offline. A phone that was closed outright cannot report anything until
-somebody opens Hearth on it again, and that is the one case nothing on the
-server can help with.
+said that Battery Saver is on, or that background use is Restricted, is shown
+as that under their name rather than as offline. A phone that was closed
+outright cannot report anything until somebody opens Hearth on it again, and
+that is the one case nothing on the server can help with.
 
 ## Does any location data leave my server?
 
@@ -283,14 +297,20 @@ Hearth's answer is to make push optional. The default, `PUSH_PROVIDER=none`,
 needs no configuration: the app holds a websocket while it is open, so the map
 and feed update live, it polls presence every 60 seconds as a fallback in case
 that socket is dead, and an active SOS shows as a banner on the circle's map.
-What you lose is alerts while the phone is locked. The exception is an SOS or a
-possible crash, which the app rings for itself when it hears one over its own
-connection to the server. An iPhone keeps that connection while it shares its
-location, and an Android phone while it's on the move.
+What you lose is alerts while the phone is locked, and most of the reporting
+from a phone with Hearth closed. The server pings phones for their location
+through the same push, so without it the server cannot ask a phone where it is
+while Hearth is closed, and nobody can watch it on Live then. The phone reports
+from its own background check, about every quarter of an hour on Android and
+less often on an iPhone, and while Hearth is open. The exception for alerts is
+an SOS or a possible crash, which the app rings for itself when it hears one
+over its own connection to the server. That connection is held only while
+Hearth is open.
 
 When you want more, `ntfy` is the fully self-hosted route. It carries alerts
-only and never wakes the Hearth app. `expo` is the zero-infrastructure one and
-the only provider that can wake the app, but it only fully works in a build you
+only and never wakes the Hearth app, so phones report as they would with no
+push at all. `expo` is the zero-infrastructure one and the only provider that
+can wake the app, but it only fully works in a build you
 make yourself with your own Expo project, Firebase project and Apple developer
 account. The store builds can't carry personal push keys. A Hearth organisation
 that would let them push for any server is on the [roadmap](roadmap.md) and
@@ -331,9 +351,11 @@ then. The choices are in km/h or mph, whichever the admin's phone uses, and
 the server keeps them in km/h. After that the circle is told when somebody's phone stays over the speed
 for at least 15 seconds of the drive. One fast reading never counts, and
 neither do two in a row on Live, which sends a fix a second. That's how a GPS
-glitch reading 130 km/h for a moment on a town road stays quiet. A phone that
-reports once a minute on the motorway still counts, because two fixes a minute
-apart over the limit cover a minute of driving.
+glitch reading 130 km/h for a moment on a town road stays quiet. It needs a
+speed the phone measured, though, and outside Live the phone answers a ping
+every couple of minutes with a Wi-Fi fix that rarely carries one. The
+exception is a drive with crash alerts on, where the ping gets the drive's GPS
+fix. Otherwise a speed alert comes from a drive somebody is watching on Live.
 
 The speed quoted is the fastest that two neighbouring fixes agree on, and never
 faster than the ground between two sharp fixes allows. The trip card uses the

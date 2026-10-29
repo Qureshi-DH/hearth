@@ -99,10 +99,10 @@ way in.
 
 SOS is the one exception. Raising an SOS switches the sender to precise sharing
 in every circle they are in, paused and approximate ones included, and notifies
-everyone in them regardless of mutes. While it is open their phone reports a
-fix a second. The sender resolves it everywhere at once, or an admin in their
-own circle, and sharing stays precise after that until the sender sets it back
-themselves.
+everyone in them regardless of mutes. For half an hour from when they raised
+it, or last pressed SOS again, their phone reports a fix a second. The sender
+resolves it everywhere at once, or an admin in their own circle, and sharing
+stays precise after that until the sender sets it back themselves.
 
 A quick message wakes only the person it names, but the circle's activity feed
 records it with both names and the line itself. It is a short word said in front
@@ -115,7 +115,9 @@ eventId?, placeId?, userId?, alertId?, fromUserId?}`), plus the time an arrival
 happened. Coordinates are never included. The app fetches them from your server
 when the notification is tapped. With `PUSH_PROVIDER=expo` they pass through
 Expo and then Apple or Google, and the phone registers with Expo's push service
-for its token. On Android, a build that includes Firebase, which Expo push
+for its token. It registers even when you turn notifications down, because the
+server asks the phone where it is by silent push, which needs no alert
+permission. On Android, a build that includes Firebase, which Expo push
 needs, registers the phone with Google's Firebase Cloud Messaging when it
 starts, whichever provider your server uses. That carries identifiers for the
 app and the phone, never a position. With `ntfy` the content stays on your own
@@ -178,12 +180,12 @@ local network access, which iOS asks about only when the server is on your home
 network.
 
 Motion and activity is the only other one. It is on the setup checklist for
-every phone that can classify motion, because it is what lets the GPS sleep
-while you are still and what tells crash detection that a drive has started.
-The app only ever asks from that checklist, with the reason on screen first.
-You can refuse it. The app then works the stop out from position, which costs
-more battery, and crash detection cannot run on that phone because nothing
-tells it a drive has started.
+every phone that can classify motion, because it is what tells the phone
+whether you have moved since its last fix without turning location on, and
+what tells crash detection that a drive has started. The app only ever asks
+from that checklist, with the reason on screen first. You can refuse it. The
+phone then takes a Wi-Fi fix for every check your server makes, and crash
+detection cannot run on it because nothing tells it a drive has started.
 
 On Android the checklist also offers Do Not Disturb access, as an optional
 step. It lets an SOS or a possible-crash alert through Do Not Disturb and
@@ -196,7 +198,8 @@ identifier. Crash detection needs no permission of its own beyond that one. The
 accelerometer and gyroscope need no permission on either platform at the rates
 it samples them, and on iPhone the barometer is covered by the motion
 permission. So it is listed on the setup checklist instead, where you can at
-least see that it is running. See
+least see that it is running. On a drive it also reads the GPS, and those
+fixes stay on the phone and are never uploaded. See
 [the mobile app page](developer/mobile.md#permissions) for the full table and the
 reason for each.
 

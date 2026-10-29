@@ -10,7 +10,8 @@ immediately.
 
 **Crash detection** is not deliberate, and it is the one worth reading
 carefully. The phone watches for a collision while you are driving, asks if you
-are all right, and if nobody answers it raises an SOS on your behalf.
+are all right, and if nobody answers it raises an SOS on your behalf. It runs
+only on a drive, and only where a circle you are in has turned crash alerts on.
 
 Read the [limits](#limits) before you rely on any of this. Hearth does not
 contact emergency services, and nothing in it is a certified crash sensor.
@@ -105,17 +106,23 @@ tumbles, and most phones have a barometer. Uncommon is not never. This is a
 detector that would rather miss than cry wolf, and you should hold it to that
 description rather than to a better one.
 
-## It asks for no permission
+## It asks for no permission of its own
 
 Crash detection reads the accelerometer, the gyroscope and the barometer. At the
 rates Hearth samples them, neither iOS nor Android treats the first two as
 protected sensors. On iPhone the barometer falls under Motion and Fitness, which
 the vehicle detection below already needs. So no permission dialog appears for
-any of it.
+any of it beyond that one.
 
 Running something like that unannounced would be the wrong thing to do, so the
-app's permissions screen lists it anyway as an entry that is explicitly not a
-permission, saying what it reads and what it will do.
+app's permissions screen lists it anyway, while a circle has crash alerts on,
+as an entry that is explicitly not a permission, saying what it reads and what
+it will do.
+
+It also reads the GPS for the length of the drive, since a speed the GPS
+measured is the only one the detector believes. Those fixes stay on the phone.
+None of them is uploaded, so the family sees you no more often for it. The
+location indicator shows while the drive lasts, and never at home.
 
 **Nothing leaves the phone unless an incident escalates.** The sensor stream is
 held in a rolling window in memory on the device. The verdict is reached on the
@@ -142,20 +149,36 @@ new ones. Only admins can change it, over `PATCH /circles/:circleId`.
 The phone mirrors one question locally: does any circle I belong to have this
 on? If the answer is no, the sensors are never subscribed to.
 
-Crash detection only runs while the operating system's own motion classifier
-says you are in a vehicle and the tracker agrees the phone has left where it
-was parked. Parked or walking, none of it runs, which is both a battery
+Crash detection only runs on a drive, which the operating system's own motion
+classifier marks. Parked or walking, none of it runs, which is both a battery
 decision and an honesty one. A violent spike while somebody is walking is a
 dropped phone, not a crash, and a classifier that calls a parked phone a car is
 no reason to start listening for one.
 
-That classifier runs whenever location sharing does, because the location
-side needs it to let the GPS sleep. Turning on incident alerts for a circle
-does not have to start anything. It is asked for on the setup checklist as
-Motion and Fitness on iOS, or activity recognition on Android. That is the
-only permission anywhere in this feature. It is there for the vehicle
-detection, and on iPhone it also covers the barometer. A phone that refused it
-never knows a drive has started, so crash detection cannot run there.
+That classifier is asked for on the setup checklist as Motion and Fitness on
+iOS, or physical activity on Android. Hearth needs it anyway, since it is what
+lets a phone lying still answer the server without turning its location on.
+It is the only permission anywhere in this feature, and on iPhone it also
+covers the barometer. A phone that refused it never knows a drive has
+started, so crash detection cannot run there.
+
+On Android a drive begins the moment the classifier says you are in a
+vehicle. The phone runs the GPS every five seconds and shows "Crash detection
+is on for this drive" in the silent part of the shade. The drive ends when the
+classifier says you are on foot, or still for three minutes with the GPS seeing
+no speed in them, which a red light is not. It also ends after ten minutes of
+the GPS having you standing, or when crash alerts or sharing are turned off. A
+long standstill can end it while the classifier still says vehicle, and the
+next ping that finds the car moving again starts it again.
+
+An iPhone has no way to be woken for a drive. The drive begins at the first
+ping from your server that finds iOS has the phone in a moving vehicle now, so
+crash detection starts up to an interval into the
+drive, and a short trip between two pings is never seen. From then the GPS
+runs and iOS's own motion updates are read. The drive ends once iOS has had
+you out of the vehicle for three minutes, at once when it is sure you are on
+foot, after ten minutes standing, or when crash alerts or sharing are turned
+off.
 
 ## What happens when it escalates
 
@@ -172,12 +195,13 @@ From there it is an ordinary SOS, described below.
 **Nothing waits on a timer.** A locked phone does not run the app's timers, and
 a phone is very likely to be locked after a crash. So the countdown is a time on
 the wall clock, and the decision is taken at the next moment the app runs at
-all. That is a location fix arriving, an upload, the operating system's periodic
-background task, the notification's button, or the app coming to the front. On
-a drive the location service is delivering fixes, so in practice that is within
-seconds of the deadline. The detector's own verdict works the same way. It is
-reached by the next batch of sensor samples past its deadline, which the native
-sampler keeps delivering with the screen off.
+all. That is an upload, the operating system's periodic background task, the
+notification's button, or the app coming to the front. The drive's own GPS
+fixes stay on the phone and are not one of those moments, so with the screen
+off the decision usually comes with the next ping's upload, which on a drive
+is every couple of minutes. The detector's own verdict works differently. It
+is reached by the next batch of sensor samples past its deadline, which the
+native sampler keeps delivering with the screen off.
 
 **"I'm okay" on the lock screen.** On Android the button answers without
 opening the app. On an iPhone it opens Hearth and answers there, because iOS
@@ -240,7 +264,8 @@ old setting back. Set it again yourself once you're safe.
 
 Pressing again while an alert is open raises nothing new. The server answers
 with the alert that is already open, so a press that seemed to fail on a weak
-signal can be repeated without alerting anybody twice.
+signal can be repeated without alerting anybody twice. The press does start
+the alert's half hour on Live over again, as below.
 
 **Who is told.** Every other member of those circles, once each, at the highest
 priority the transport allows, as "🚨 SOS from _name_" with your note as the
@@ -259,11 +284,9 @@ before it could be delivered is never sent late.
 A closed app only hears about an SOS if the server has a push provider set up.
 With `PUSH_PROVIDER=none`, the default, the server can only tell a phone over
 its own connection to it, and the app rings for the alert itself when one
-arrives that way. That covers a phone with Hearth open, an iPhone that is
-sharing its location, which keeps its connection while it does, and an Android
-phone that is on the move. It rings once per SOS, even one open in two
-circles you share, on the same SOS channel, and never for your own. A parked
-Android phone, or one where Hearth was closed, hears nothing until Hearth is
+arrives that way. That connection is held only while Hearth is open. It
+rings once per SOS, even one open in two circles you share, on the same SOS
+channel, and never for your own. Any other phone hears nothing until Hearth is
 opened, and then the alert shows as the red banner described below. The same
 goes for a server set to push through a transport this phone can't receive,
 such as a build with no push project in it.
@@ -292,18 +315,26 @@ changed the SOS channel's own settings by hand, Android keeps your choice, and
 the switch to look for, usually called "Override Do Not Disturb", is on that
 channel in Hearth's notification settings.
 
-**While it is open.** Your phone is on Live, a fix a second, each one uploaded
-as it comes, wherever the app is. The server holds it there by naming a two
-minute window in the reply to every upload, and asks the phone at once over its
-control channel when one is open. A family member's own Live watch is left as
-it was. Turn a circle back down to approximate or paused, or leave it, and that
-circle no longer holds the phone on Live. Once no circle with an open alert sees
-you precisely, the phone steps down.
+**While it is open.** For half an hour from when you raised the alert, or last
+pressed SOS again, your phone is on Live, a fix a second, each one uploaded as
+it comes, wherever the app is. The server
+holds it there by naming a two minute window in the reply to every upload, and
+asks the phone at once over its control channel when one is open. A family
+member's own Live watch is left as it was. Turn a circle back down to
+approximate or paused, or leave it, and that circle no longer holds the phone
+on Live. Once no circle with an open alert sees you precisely, the phone steps
+down. After the half hour the phone goes back to answering the ping. The
+family can still open Live on it as on anybody, and pressing SOS again puts it
+back on Live for another half hour. Before 1.3.4 an alert nobody
+resolved, which is what a false crash alarm tended to leave behind, held the
+phone at a fix a second for days.
 
 A phone whose tracker can't run in the background, because it only has
 location permission while the app is in use, gets a fix every 20 seconds from
-the SOS screen instead, and only while that screen is open. With _Share my
-location_ switched off no fix leaves the phone, not even the alert's own. The
+the SOS screen instead, and only while that screen is open. Once the half
+hour is up, the SOS screen does the same for any phone that is not on Live.
+With _Share my location_ switched off no fix leaves the phone, not even the
+alert's own. The
 alert still goes out, the SOS screen says so, and your circles see where you
 were last.
 
@@ -350,19 +381,19 @@ It looks for four things together.
   radius count, so a place drawn round a whole town doesn't hide a stop on the
   bypass through it.
 
-The phone has to send the stop for any of this to work. A phone in a car
-holds back the fixes of a car that isn't going anywhere, and the app sends
-the first fix off road speed straight away for this check. An app from 1.2.0
-or earlier holds that fix back too, so the server's first word after a crash
-is the park fix five minutes later, and this check rarely fires for it. The
+The phone has to send the stop within seconds of the cruising speed for any
+of this to work, and since 1.3.4 a phone does that only on Live. Outside Live
+it answers a ping every couple of minutes, and the GPS fixes crash detection
+takes on a drive stay on the phone, so the check has nothing close enough
+together to read. In practice it covers a drive somebody is watching. The
 detector on the phone itself doesn't depend on any of this.
 
 When all four hold, the circle is told "Check on _name_. They stopped suddenly
 after driving at _N_ km/h and have not moved since."
 
-Understand what that is. Fixes 30 seconds apart cannot tell a collision from
-parking hard. It is a prompt to check on somebody, not a claim that anything
-happened, and the wording in the app says so. It fires at most once an hour per
+Understand what that is. Even a fix a second cannot tell a collision from
+braking hard and parking. It is a prompt to check on somebody, not a claim
+that anything happened, and the wording in the app says so. It fires at most once an hour per
 person, it never becomes an SOS on its own, and it does not ask the person
 anything first. It is sent on the same notification channel as an SOS, goes
 ahead of other notifications the same way, and is retried through a push
@@ -372,9 +403,9 @@ reaches circles that person shares precisely with, since telling a circle they
 stopped hard somewhere is precise information about somebody who may have
 chosen to be approximate.
 
-The on-phone detector described above is the accurate one. This is the fallback
-that works when the phone cannot sample for itself, and it runs whether or not
-the on-phone detector does.
+The on-phone detector described above is the accurate one. This is the
+fallback that works when somebody is watching on Live, and it runs whether or
+not the on-phone detector does.
 
 On a server with no push provider, a phone that hears this check over its own
 connection rings for it the way it rings for an SOS, as [SOS](#sos) describes.
@@ -400,10 +431,13 @@ job. Hearth is not, and no amount of care in the detector changes that.
 Hearth, automatic or manual. An SOS notifies the people in your circle and does
 nothing else. If somebody needs an ambulance, a person has to call for one.
 
-**It only runs in a moving vehicle.** A crash on a bicycle or on foot, or one in
-the first moments of a drive before the OS classifier has caught up, is not
-seen. Neither is anything at all while the circle setting is off, which is the
-default state.
+**It only runs in a moving vehicle.** A crash on a bicycle or on foot, or one
+in the first moments of a drive before the OS classifier has caught up, is not
+seen. On an iPhone it starts only once a ping from your server finds the
+drive, so up to an interval into it, and a short trip between two pings is
+not seen at all. A phone that refused Motion and Fitness, or physical
+activity, never runs it. Neither is anything at all seen while the circle
+setting is off, which is the default state.
 
 **Escalation needs a working phone and a working connection.** A phone that is
 destroyed, out of battery, or has no route to your server sends nothing. With

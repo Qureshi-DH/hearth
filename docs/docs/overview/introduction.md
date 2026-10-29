@@ -28,9 +28,15 @@ broker or account in between.
 
 ## What it does for a family
 
-- **A live map.** Each member's position, battery, whether they are walking or
-  driving, and how long ago the fix arrived. Updates arrive over a websocket
-  while the app is open. Alerts reach a closed app by push, if you set push up.
+- **A live map.** Each member's position, battery, whether they are still,
+  walking or driving, and how long ago the fix arrived. Your server asks each
+  phone where it is every five minutes by default, and every two while it is
+  on the move. The phone's motion sensor says whether it has moved, so a phone
+  lying still answers without turning its location on. A phone somebody is
+  watching on Live reports every second. Nothing tracks in between, so the
+  location indicator stays off at home. Updates arrive over a websocket while
+  the app is open. The asks and the alerts reach a closed app by push, if you
+  set push up.
 - **Places.** Draw a circle around home, school or work and everyone is told
   when somebody leaves and when they arrive, "arrived at School, 4.2 km from
   Home in 14 min", in two notifications at most. Leaving needs about 40 metres
@@ -41,16 +47,19 @@ broker or account in between.
   snaps you to a 750 metre grid and hides your trail, your trips and which place
   you are at. Paused shares nothing. Everyone can see which mode you picked.
 - **SOS.** Hold for three seconds and every circle you're in gets a
-  high-priority alert with your position, live until you say you're safe. SOS
-  overrides a paused state, because an emergency is not the moment to respect
-  ghost mode.
+  high-priority alert with your position, live for half an hour from the last
+  time you pressed it. SOS overrides a paused state, because an emergency is
+  not the moment to respect ghost mode.
 - **Check-ins, nudges and quick messages.** One tap to say you are fine, a way
   to ask a phone for a fresh fix, and a one-tap word to one person, "On my way"
   or "Please slow down", which plays on their map for a moment, arrives as a
   notification, and is recorded in the activity feed.
-- **Driving alerts, off until you turn them on.** A speed threshold, a hard-stop
-  heuristic that only ever suggests going to check on someone, and crash
-  detection that asks you first and raises an SOS if you do not answer.
+- **Driving alerts, off until you turn them on.** A speed threshold, a
+  hard-stop heuristic that only ever suggests going to check on someone, and
+  crash detection that asks you first and raises an SOS if you do not answer.
+  Crash detection runs the GPS for the length of a drive, keeps those fixes on
+  the phone, and on an iPhone starts at the first check that finds the drive.
+  The hard-stop heuristic needs the fix a second of Live to see much.
 - **Trips, history and export.** Journeys are worked out on the server from
   breadcrumbs. History is kept for as long as each circle asks for, 30 days out
   of the box, under a server-wide ceiling that starts at 90. Export everything

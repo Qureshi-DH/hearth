@@ -14,11 +14,16 @@ smallest VPS you can rent is plenty for a family.
   path on a domain you already use, e.g. `lab.example.com/hearth`
 - Ports 80/443 reachable, for the reverse proxy
 
-Location updates are small, a few hundred bytes every 30 to 60 seconds per
-phone, so bandwidth won't be what runs out. Disk might. Measured over 200,000
-rows, a stored fix costs about 340 bytes with indexes. At one fix a minute that
-comes to roughly 14 MB per phone at the default 30 day retention, or 170 MB for
-every year of history you keep.
+Location updates are small, a few hundred bytes every five minutes per phone
+at the default ping interval, so bandwidth won't be what runs out. Disk might,
+slowly. Measured over 200,000 rows, a stored fix costs about 340 bytes with
+indexes. At one fix every five minutes that comes to roughly 3 MB per phone at
+the default 30 day retention, or 36 MB for every year of history you keep. A
+phone whose last fix had it on the move is asked every two minutes instead,
+which `PING_MOVING_INTERVAL_SECONDS` sets (120 by default, from 120 to 600), so
+a day spent travelling stores a little more. Live adds a fix a second while
+somebody watches, about 1.2 MB for every hour of watching. The GPS fixes crash
+detection takes on a drive stay on the phone.
 
 ## 1. Configure
 
@@ -326,9 +331,11 @@ screen in the app works either way.
 ### Push notifications
 
 Read [push notifications](push-notifications.md) first. Full push, including
-the silent pushes that wake a quiet phone, needs `expo` and an app you build
-yourself with your own Expo, Firebase and Apple accounts. Without those, ntfy is
-the self-hosted way to get alerts, and it never wakes the Hearth app itself.
+the silent pings that ask every phone where it is, needs `expo` and an app you
+build yourself with your own Expo, Firebase and Apple accounts. Without those,
+ntfy is the self-hosted way to get alerts, and it never wakes the Hearth app
+itself, so a phone with Hearth closed reports only when the OS runs the app's
+background task.
 
 For ntfy, take the `docker-compose.ntfy.yml` overlay from the repository, set
 `PUSH_PROVIDER=ntfy` and `NTFY_BASE_URL=https://ntfy.example.com` in `.env`,

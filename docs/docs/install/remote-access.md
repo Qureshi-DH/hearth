@@ -12,7 +12,7 @@ Most self-hosted guides rank a VPN as the best option, because most self-hosted
 apps are things you open deliberately. You are at a coffee shop, you want a
 photo, you connect and fetch it.
 
-Hearth is not used that way. Phones upload location continuously, in the
+Hearth is not used that way. Phones upload location every few minutes, in the
 background, mostly while nobody is looking at the screen. That inverts the usual
 advice:
 
@@ -132,11 +132,11 @@ counted against.
 
 **Long-lived connections need a generous timeout.** Phones hold a websocket
 open. The app's on-screen socket sends something every 25 seconds, or every 5
-while Live is open, but the line
-a phone keeps open for the server's asks, like Live and a fresh fix, hears only
-the server's ping, every two minutes. A proxy that closes idle connections
-sooner than that keeps cutting it, and those asks fall back to a silent push,
-which only `expo` can send. Allow five minutes or more.
+while Live is open, but the line the app keeps open for the server's asks, like
+Live and a fresh fix, hears only the server's keepalive, every two minutes. That
+line is open while the app is, and on an iPhone during Live. A proxy that
+closes idle connections sooner than that keeps cutting it, and those asks fall
+back to a silent push, which only `expo` can send. Allow five minutes or more.
 
 ## Checking it works
 
@@ -173,7 +173,8 @@ Work down this list.
 4. **Is everything stale at once, but the app works when you open it?** That is
    usually the websocket being closed by a proxy timeout, or upgrade headers
    being stripped.
-5. **Does it recover the moment you open the app?** Then location is being
-   collected but not uploaded in the background. Look at battery optimisation on
-   Android and Background App Refresh on iOS, both covered in the app's
-   Permissions screen.
+5. **Does it recover the moment you open the app?** Then the phone isn't
+   answering the server's pings in the background. Check that the server's push
+   provider is `expo`, since nothing else can carry a ping, then look at battery
+   optimisation on Android and Background App Refresh on iOS, both covered in
+   the app's Permissions screen.

@@ -84,19 +84,19 @@ Hearth asks for exactly what background family tracking needs. A checklist
 (_Set up Hearth_) shows up on first sign-in and can be revisited from
 _You → Tracking status_.
 
-| Permission                     | iOS                                                                           | Android                                                     | Why                                                                              | Requested                                                                       |
-| ------------------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Location, foreground           | `NSLocationWhenInUseUsageDescription`                                         | `ACCESS_FINE_LOCATION` (+ coarse)                           | Show you on the map                                                              | Onboarding, step 1                                                              |
-| Location, **Always**           | `NSLocationAlwaysAndWhenInUseUsageDescription`, `UIBackgroundModes: location` | `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE_LOCATION` | Updates while the app is closed, plus arrive/leave alerts                        | Onboarding, step 1 (second prompt)                                              |
-| Precise location               | `NSLocationDefaultAccuracyReduced = false`, full vs reduced detected          | fine vs coarse detected                                     | Places and trips need GPS accuracy                                               | Detected, checklist links to Settings                                           |
-| Notifications                  | runtime, `UIBackgroundModes: remote-notification` for the silent wake         | `POST_NOTIFICATIONS`                                        | Arrivals, battery, **SOS**. Local SOS banners need it even with no push provider | Onboarding, step 2                                                              |
-| Battery optimisation exemption | n/a                                                                           | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`                      | Doze and vendor power managers are the #1 reason background location dies        | Onboarding (Android), opens the system dialog                                   |
-| Do Not Disturb access          | n/a                                                                           | `ACCESS_NOTIFICATION_POLICY`                                | Lets the SOS channel through Do Not Disturb. Optional                            | Checklist (Android), optional, opens the system list                            |
-| Background refresh / tasks     | `UIBackgroundModes: fetch, processing`, `BGTaskSchedulerPermittedIdentifiers` | `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`                       | Flush the offline queue when the OS allows                                       | Declared, checklist explains the iOS toggle                                     |
-| Camera                         | `NSCameraUsageDescription`                                                    | `CAMERA` (via plugin)                                       | Scan an invite QR                                                                | Only when you tap _Scan_                                                        |
-| Local network                  | `NSLocalNetworkUsageDescription`, `NSBonjourServices`                         | n/a                                                         | Self-hosted servers on your LAN                                                  | Prompted by iOS on first LAN connection                                         |
-| Motion and activity            | `NSMotionUsageDescription`                                                    | `ACTIVITY_RECOGNITION` (+ the Play Services variant)        | Let the OS say when you are driving or still, so the GPS can sleep               | Onboarding, right after location. Hidden on a phone that cannot classify motion |
-| Photo library                  | `NSPhotoLibraryUsageDescription` (picker plugin)                              | system picker, no permission                                | Choose one profile picture                                                       | Only when you tap your avatar                                                   |
+| Permission                     | iOS                                                                           | Android                                                     | Why                                                                                                                         | Requested                                                                      |
+| ------------------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Location, foreground           | `NSLocationWhenInUseUsageDescription`                                         | `ACCESS_FINE_LOCATION` (+ coarse)                           | Show you on the map                                                                                                         | Onboarding, step 1                                                             |
+| Location, **Always**           | `NSLocationAlwaysAndWhenInUseUsageDescription`, `UIBackgroundModes: location` | `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE_LOCATION` | Answer the server's pings and Live while the app is closed                                                                  | Onboarding, step 1 (second prompt)                                             |
+| Precise location               | `NSLocationDefaultAccuracyReduced = false`, full vs reduced detected          | fine vs coarse detected                                     | Places and trips need GPS accuracy                                                                                          | Detected, checklist links to Settings                                          |
+| Notifications                  | runtime, `UIBackgroundModes: remote-notification` for the silent ping         | `POST_NOTIFICATIONS`                                        | Arrivals, battery, **SOS**. Local SOS banners need it even with no push provider                                            | Onboarding, step 2                                                             |
+| Battery optimisation exemption | n/a                                                                           | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`                      | Doze and vendor power managers are the #1 reason background location dies                                                   | Onboarding (Android), opens the system dialog                                  |
+| Do Not Disturb access          | n/a                                                                           | `ACCESS_NOTIFICATION_POLICY`                                | Lets the SOS channel through Do Not Disturb. Optional                                                                       | Checklist (Android), optional, opens the system list                           |
+| Background refresh / tasks     | `UIBackgroundModes: fetch, processing`, `BGTaskSchedulerPermittedIdentifiers` | `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`                       | The fallback fix and the queue flush, when the OS allows                                                                    | Declared, checklist explains the iOS toggle                                    |
+| Motion and activity            | `NSMotionUsageDescription`                                                    | `ACTIVITY_RECOGNITION` (+ the Play Services variant)        | Say whether the phone has moved since its last fix without turning location on, and when a drive starts for crash detection | Checklist, right after location. Hidden on a phone that cannot classify motion |
+| Camera                         | `NSCameraUsageDescription`                                                    | `CAMERA` (via plugin)                                       | Scan an invite QR                                                                                                           | Only when you tap _Scan_                                                       |
+| Local network                  | `NSLocalNetworkUsageDescription`, `NSBonjourServices`                         | n/a                                                         | Self-hosted servers on your LAN                                                                                             | Prompted by iOS on first LAN connection                                        |
+| Photo library                  | `NSPhotoLibraryUsageDescription` (picker plugin)                              | system picker, no permission                                | Choose one profile picture                                                                                                  | Only when you tap your avatar                                                  |
 
 Android calls the background choice _Allow all the time_ and the foreground
 one _Allow only while using the app_, so on Android the checklist uses those
@@ -106,29 +106,32 @@ collects location data even when the app is closed or not in use. The strings
 are chosen by platform when `i18n/en.ts` loads, and a member's issue line,
 which may describe a phone on the other platform, is worded to fit both.
 
-The motion classifier runs whenever tracking does. Core Motion and Play
-Services have already classified the movement for the system, so asking them
-costs far less than watching the phone's own position, which is what the GPS
-fallback does. The checklist asks once, from its own Allow button, and nothing
-the tracker runs in the background ever raises the dialog: Android answers a
-request made from a process with no Activity as denied without showing
-anything, and the module then reports denied for good. A phone that refuses,
-or one that cannot classify motion at all, works stops out from position
-instead. The server receives the same fixes either way.
+The motion classifier is what lets a ping go unanswered by the GPS. Core
+Motion and Play Services have already worked out what the phone is doing for
+the system, so asking them costs no location at all. A phone they have had
+lying still since its last fix answers a ping with that fix again, and a drive
+they spot is where crash detection starts. The checklist asks once, from its
+own Allow button, and nothing the tracker runs in the background ever raises
+the dialog: Android answers a request made from a process with no Activity as
+denied without showing anything, and the module then reports denied for good.
+A phone that refuses, or one that cannot classify motion at all, still
+reports. It takes a Wi-Fi fix for every ping, and crash detection cannot run
+on it.
 
 The accelerometer and gyroscope need no permission on either platform at the
 rates Hearth samples them, and on iPhone the barometer comes under Motion and
-Fitness, which the motion classifier already asks for. That is what makes crash
+Fitness, which the classifier already asks for. That is what makes crash
 detection possible without asking for anything new. It appears on the setup
-checklist for exactly that reason: unannounced, it would be a sensor nobody
-agreed to.
+checklist for exactly that reason, while a circle has crash alerts on:
+unannounced, it would be a sensor nobody agreed to.
 
 Commercial trackers ask for a pile of things Hearth deliberately doesn't. No
 contacts, because invites are codes and QR. No microphone. No Bluetooth, because
 there is no hardware tag to talk to. No advertising identifier, and no tracking
 of any kind. The photo library is reached through the system picker, which hands
 back the one file you chose rather than access to the album. Motion is there to
-let the GPS sleep, never to collect a fitness feed.
+keep the GPS off and to know a drive has begun, never to collect a fitness
+feed.
 
 ### The keep-alive checklist
 
@@ -157,8 +160,9 @@ Play allows a family safety app to do, and only then falls back to the intent
 launcher and the settings list.
 
 Battery Saver on Android and Low Power Mode on iOS get a row of their own for
-as long as they are on. Both stop background location, and both flip without
-the app being opened. The checklist re-reads everything on focus and on every
+as long as they are on. Battery Saver stops background location, Low Power Mode
+holds back the background pushes Hearth answers, and both flip without the app
+being opened. The checklist re-reads everything on focus and on every
 return to the foreground, because these settings revert after system updates
 on several of those makes.
 
@@ -224,440 +228,421 @@ HEARTH_APP_LINK_HOST=hearth.yourfamily.com npx expo prebuild --platform android
 
 ## How background location works
 
-All of this lives in `app/services/location/tracker.ts`.
+All of this lives in `app/services/location/tracker.ts`, and on Android in the
+native module under `modules/hearth-motion/android`.
+
+The phone takes its location when somebody asks, and not otherwise. The
+server pings it on its circle's interval, five minutes out of the box, and a
+little sooner while its last fix had it on the move. The motion classifier,
+which costs no location, says whether the phone has moved since its last fix.
+One lying still answers with that fix again and never turns location on, and
+one that moved answers with one Wi-Fi grade fix. Opening a member's page asks
+for a fresh fix, and Live puts the phone on a GPS fix a second for as long as
+somebody watches. Moving never switches on continuous tracking. The one
+exception is a drive, where a circle wants crash alerts: the GPS runs for the
+detector, and those fixes stay on the phone (see
+[crash detection](#crash-detection)). Otherwise there is no location session
+between asks, so the location indicator stays off at home, and an Android
+phone has no service and no notification up. Builds before 1.3.4 tracked
+continuously instead, on a walking tier, a GPS driving tier and a parked tier
+with a geofence round the parking spot, and the indicator was on all day.
 
 1. `TaskManager.defineTask(BACKGROUND_LOCATION_TASK)` at module scope (imported
-   from `app.tsx` as a side effect) so the OS can wake the JS runtime. The
-   module writes a `boot` line to the diagnostics log saying whether the
-   process is headless, and re-attaches the motion classifier if sharing is
-   on, because a process the OS cold-starts for a fix runs this before any
-   React code and used to run the whole journey without a classifier.
-2. The OS request for whatever tier the tracker is in, see below.
-   `currentOptions()` is the one place it is derived from what the tracker
-   believes, so a re-registration from a wake or a watch cannot disagree
-   with the tier. On iOS every tier is `Location.startLocationUpdatesAsync`
-   with those options. On Android the moving, driving and live tiers are
-   the native tracking service in `modules/hearth-motion`, handed the same
-   options as a request (`applyAndroid`, `services/location/nativeTracker.ts`).
-   The parked tier is expo's resting request with no service. A wake brings
-   the service up for the length of one fix, and a watch runs it at the live
-   request on top of the resting one until the window ends.
-3. Each delivery → `toFix()` (adds battery and the tracker's own `activity`)
-   → `thin()` (drops near-duplicates, and on Android applies the circle's
-   distance filter to what is uploaded) → MMKV-persisted queue → `flush()`
-   (single-flight upload, oldest first). The flush runs on every delivery
-   whether or not it kept a fix, so an upload that failed earlier is not
-   left waiting for the next kept fix, which on a parked phone is a quarter
-   hour away. A retry already waiting keeps its timer, so a firewall that
-   locked the address out isn't met with a request for every fix.
-4. While the app is in the foreground, a heartbeat asks for one `Balanced` fix
-   at the circle's interval whenever the last fix is older than that, tagged
-   `source: "heartbeat"`. It reads the moving/stationary mode and never
-   changes it, swallows a failed acquisition rather than showing it as an
-   error, and trip detection and the possible-incident check both ignore its
-   fixes. A fix still being acquired counts as fresh only until its deadline,
-   so a native request that never settles cannot hold the heartbeat off for
-   the rest of the process, which is what "not reporting while online" was.
-5. `expo-background-task` registers `com.binary.rewind.hearth.sync` to flush
-   the queue, re-arm the fence and take a fix if the last one is stale, when
-   the OS grants time, which is never while the app is open. Its fixes are
-   bounded at fifteen seconds, since iOS gives the task about thirty. On
-   Android it adds the fence again on every pass while parked, because Play
-   Services drops fences without the app's own record of one knowing, and
-   a pass that finds the record gone also looks for a departure.
-   `patches/expo-background-task@55.0.22.patch` makes it an app refresh task
-   on iOS (`BGAppRefreshTaskRequest`) rather than a processing task, which
-   iOS tends to hold for a phone that is idle and charging.
-6. The server's response carries the current policy. If it changed, updates
-   restart with the new intervals, throttled to once a minute.
+   from `app.tsx` as a side effect), so the OS can hand over a delivery before
+   any React code has mounted. Only iOS runs a session, for Live and for a
+   drive. A delivery outside both, or any delivery on Android, comes from a
+   session an older build left running or a stop that never landed, and it
+   stops the session.
+   The module also writes a `boot` line to the diagnostics log saying whether
+   the process is headless, and drains whatever the Android side queued while
+   JavaScript was down.
+2. The ping. On iOS the silent push reaches the expo-notifications background
+   task (`NOTIFICATION_WAKE_TASK` in `services/notifications.ts`), and
+   `answerWake()` answers it (`wakeFix`): with the last fix again when Core
+   Motion's history has had the phone still since, and otherwise with one
+   `Balanced` fix. On Android the push handler in the native module answers it
+   without starting JavaScript, see
+   [the Android transport](#the-android-transport). An ask
+   that comes down the control channel, which only happens while the app is
+   open, is answered from JavaScript on both platforms, under the brief
+   service on Android.
+3. Each fix → `toFix()` (adds battery and the `activity` label below) → the
+   MMKV-persisted queue → `flush()` (single-flight upload, oldest first). On
+   Live, `thin()` drops the near-duplicates a fresh iOS session hands over in
+   bursts, so the stream is a fix a second rather than three. A retry already
+   waiting keeps its timer, so a firewall that locked the address out isn't
+   met with a request for every fix.
+4. While the app is in the foreground, a heartbeat answers itself whenever the
+   last fix is older than the interval, by the ping's rule: the last fix again
+   for a phone the classifier has had still, one `Balanced` fix otherwise. It
+   is the ping from the app's side, on the same interval, so a phone in use
+   reports no more often than one in a pocket, and it needs no Android service
+   for one fix. Its
+   fixes go up as `source: "nudge"`, like the server's ping, and are read
+   like one. `heartbeat`, which the server keeps out of trips and the
+   possible-incident check, is what apps before 1.3.4 sent from a parked
+   phone with the app open. It swallows a failed acquisition rather than
+   showing it as an error. A fix still being acquired
+   counts as fresh only until its deadline, so a native request that never
+   settles cannot hold the heartbeat off for the rest of the process. It runs
+   as a chain of timers, so a circle that changes its interval applies at the
+   next tick.
+5. `expo-background-task` registers `com.binary.rewind.hearth.sync` as the
+   fallback for pings that never arrive. iOS holds silent pushes back when it
+   decides an app has had enough, and FCM can sit on one in deep Doze. The OS
+   runs the task when it chooses, a quarter of an hour apart at the very
+   soonest and never while the app is open. It flushes the queue, re-reads the
+   permission and the Location switch, and takes a fix only when the last one
+   is older than two intervals, so a phone the pings are reaching does nothing
+   there. `patches/expo-background-task@55.0.22.patch` makes it an app refresh
+   task on iOS (`BGAppRefreshTaskRequest`) rather than a processing task,
+   which iOS tends to hold for a phone that is idle and charging.
+6. Every upload reply carries the policy, and the tracker keeps its interval
+   for the heartbeat and the sync task. When the phone is asked is up to the
+   server.
 
-Turning off _Share my location_ in the app stops the OS updates entirely. No
-fixes are captured or queued. The phone tells the server it did, and the map
-shows its owner a banner saying so with a button to turn it back on.
+Turning off _Share my location_ in the app stops all of it. The phone answers
+no ping, goes Live for nobody, and captures and queues no fix. It tells the
+server it switched off, and the server stops pinging it until it says sharing
+is back on or sends a fix. On Android a ping already on its way is dropped by
+the push handler without starting anything. The map shows the phone's owner a
+banner saying sharing is off, with a button to turn it back on.
 
 The switch stays on through things that stop the tracker without the person
-asking, such as a session that ended, a change of server, a permission dropped below
-Always or Location Services switched off. `refreshLocationStatus()` runs every
-time the app comes to the front and after every sign-in. It stops the tracker
-when the permission or the switch rules it out, and starts it again once
-the phone is signed in, the switch is on, the permission is Always and
+asking, such as a session that ended, a change of server, a permission dropped
+below Always or Location Services switched off. `refreshLocationStatus()` runs
+every time the app comes to the front and after every sign-in. It stops the
+tracker when the permission or the switch rules it out, and starts it again
+once the phone is signed in, the switch is on, the permission is Always and
 Location Services are on. It never starts a tracker whose switch is off, and
 never one the server refused, see Uploads below. `startTracking()` runs one
-start at a time, so the app coming back and a sign-in in the same moment
-start it once.
+start at a time, so the app coming back and a sign-in in the same moment start
+it once.
 
-### The tiers
+An app updated from an older build takes back what that build left with the
+OS, once. `forgetLegacy()` stops the expo location request it kept running
+between asks and the geofence it armed round the parking spot
+(`hearth-stationary-geofence`). The OS holds both for the app across an update,
+and expo restores them at boot. On Android, `LegacyRequests` removes the
+half-minute classifier verdicts and the geofence older builds left with Play
+Services, at the update itself (`MY_PACKAGE_REPLACED`) or at the first start
+after it. The transitions stay, since `MotionUpdates` asks for them again
+under the same request code. The tracking store moves to version 3, where the
+mode is `on` or `off`, the parking spot, the old drive state, the activity
+history and the service-death stamps are gone, and the classifier's last
+verdict, the last real fix and the drive under way are kept.
 
-The tracker is in one of three modes, `moving`, `stationary` or `off`. Inside
-`moving` it may also be on the driving tier, and in any mode it goes live
-while somebody is watching.
+### The ping
 
-**Moving** is the walking tier. On Android it asks for `Balanced` accuracy on
-the circle's interval with no OS distance filter, so a still phone keeps
-delivering fixes the stop can be judged from, and `thin` applies the circle's
-distance filter to what is uploaded. On iOS it asks for `High` accuracy with
-the circle's distance filter at the OS: iOS 16.4 and later suspend a low
-accuracy session that has a distance filter once significant-change
-monitoring is also on, and expo-location always adds that, so a `Balanced`
-moving iPhone sat silent until relaunched.
+The server decides when a phone reports. Its job tick asks each phone for one
+fix once its interval has passed since it was last heard, down the control
+channel when one is open and otherwise by silent push (`wakeQuietPhones`, see
+background jobs under [architecture](architecture.md)). Both carry `ping:
+true`, which is how the phone tells the server's schedule from somebody asking.
+A phone in no circle is not asked, since nobody could see its fix, and nor is
+one that said sharing is switched off and has sent no fix since. The interval
+is the strictest circle's, five minutes by default, and the server holds it
+between two and ten minutes whatever a circle says. Past ten, a phone on the
+move would read as stale on the map between one ping and the next. A phone
+whose last fix said it was walking, running, cycling or driving is asked a
+little sooner, on the server's `PING_MOVING_INTERVAL_SECONDS` (120 by default,
+from 120 to 600, and never later than its circle's interval). Circle settings
+offer every 2 minutes, every 5, a 10 minute battery saver, or anything from 2
+to 10. A phone that stops answering is asked every half hour once twelve asks
+have gone unanswered, and every three hours once sixty have, for as long as it
+stays signed in, so a phone that was only flat comes back. Any upload starts
+the count over.
 
-**Driving** is the one state the GPS runs for its own sake. Speed and heading
-only come from GPS, and without this tier a driver's dot sat off the road and
-their speed read as noise. It starts when the classifier says automotive, or
-from speed alone on a phone without the permission, and asks for `High`
-accuracy every ten seconds with a distance gate that follows the speed in
-fifty metre steps. The step is always the one below nine tenths of what the
-car covers in ten seconds, so a steady drive keeps every fix. Rounded to the
-nearest step, the gate came out wider than ten seconds of travel at 50, 70
-and 100 km/h, the OS dropped every other fix, and the trail cut the corners.
-The first fix after one at road speed that has come off it goes up whatever
-the gate says (`thin`). The server's possible-incident check calls a stop
-sudden only from a fix that stands still straight after road speed, and the
-gate held a standing car's fixes back for five minutes. An ordinary stop sends
-its slowing down instead, which is what tells the two apart.
-It ends when the classifier says otherwise, after three
-minutes of crawling, or when the phone parks. The drive, the classifier's last
-verdict and the start of its still streak are persisted in the tracking
-store rather than held in module scope: a process the OS cold-starts for a
-background event throws its React host away after every task, so each
-delivery used to begin a new drive, upload `unknown`, and lose the guard that
-keeps a queue of traffic from parking the phone.
+The app registers its push token even when the person declines notifications.
+The ping is a silent push, which neither iOS nor Android needs alert
+permission for, so a phone that turned alerts down is still pinged.
 
-Android reports a speed of 0 for a fix it never measured, where iOS reports
--1, and a Wi-Fi or cell fix never measures one. `toFix` reads a zero on a fix
-looser than GPS class (30 m) as unmeasured, so the derived speed runs, the
-6 m/s rule can start a drive without the classifier, and a run of network
-fixes under a flyover no longer ends one. A zero on a GPS fix is a real stop.
+How the phone answers depends on the motion classifier. A phone it has had
+lying still since its last real fix, while that fix is under an hour old,
+answers with that fix again, stamped now and labelled `still`, and location is
+never turned on. On Android that happens in the push handler without even
+starting the service (`Departure.stillSinceLastFix`,
+`NativeUploader.sendStill`), and the classifier's still transition has to have
+come before that fix. On an iPhone Core Motion's history since that fix has to
+show nothing but still, said with at least medium confidence (`queryMotion`
+and `stillThroughout` in `services/location/motion.ts`). Once the real fix is
+an hour old the next ping takes a new one, so a departure the classifier
+missed costs the family an hour at most.
 
-**Parked** (`stationary`) is quiet but never silent. Once the phone has stayed
-for five minutes inside a circle of 60 m, or 1.5 times the policy's distance
-filter where that is wider, the request steps down and an exit geofence is
-armed around where it stopped. A phone allowed only approximate location,
-Android's "Approximate" or iOS with Precise Location off, gets no fence,
-because neither OS arms one for it. It parks without one, and the resting
-request and the classifier are what notice it leave. Waiting for a fence
-that never came, it kept the full tier and ran the service all day. Before
-it steps down, while the moving registration still holds the process and,
-on Android, the service, the
-tracker takes one arrival fix, stamps it `still` whatever its own verdict,
-and waits for the upload. If the OS does not answer within thirty seconds a
-fix is made up from the parking spot, dated now, so the word `still` always
-leaves. The last fix of every journey is taken while the phone is still called
-moving, so without this the server never heard the stop and applied its hour
-rule to a phone sitting at home.
+A phone that moved, or one without the motion permission, answers with one
+`Balanced` fix, Wi-Fi and cell grade, since a street's worth is what a ping is
+for and the GPS is what costs. On Android that priority leaves the GPS off.
+iOS chooses its own sources for a fix to a hundred metres. An ask somebody
+made, opening a member's page, a nudge or the map's refresh, is a `wake`
+without `ping` and always takes a fresh fix. A check-in asks for `High` and an
+SOS for `Highest`, because there a person is asking.
 
-On Android the parked request is `Balanced` with one fix wanted a quarter
-hour and no foreground service, so nothing stays in the shade. On iOS it is a
-cell-only session (`Accuracy.Lowest`) with no distance filter, because a low
-accuracy session with one is the shape iOS 16.4 and later suspend once
-significant-change monitoring is on, and expo-location always adds that. It
-costs almost nothing, it keeps the process alive so the tracker's own timer
-can send a `still` fix every quarter hour, and a departure is seen by the
-session's own fixes rather than at the fence's leisure. On both platforms a
-parked phone's quarter hour fix is the newest one when it is 100 m or
-better, and otherwise the last fix that was, which the tracker keeps as
-`restingFix` from the park fix on. Sent as it came, a cell-only session's
-estimate put a member at home hundreds of metres down the road. Sent from
-the anchor instead, it put a phone carried in from the car outside Home on
-every report, and the next real fix put it back. The 200 m fence stays as a
-third signal. Whether a parked iPhone stays resident with this shape has not yet been confirmed on a
-device: the tracker log's `heartbeat` lines over a parked hour are the
-check.
-A parked iPhone used to run no session at all and was suspended within
-seconds: the arrival fix went with it, there was no heartbeat, and the fence,
-which iOS reports minutes late and not at all with Background App Refresh
-off, was the only way back.
+Each fix is labelled with the classifier's verdict where it has one, `still`,
+`walking`, `running`, `cycling`, or `driving` for in a vehicle. On Android that
+is the last transition (`Departure.serverActivity`), and on an iPhone the
+newest of Core Motion's records the ping read (`classifierActivity` in
+`tracker.ts`). With no verdict, `pingActivity` in `tracker.ts` and
+`UploadWire.activity` on the Android side work it out from the fix. A speed the
+GPS measured decides outright. 6 m/s or more is driving, under 0.5 is still,
+and anything between is unknown. A Wi-Fi or cell fix measures no speed. Android
+reports 0 for one where iOS reports -1, so a zero on a fix looser than GPS
+class (30 m) is read as unmeasured (`measuredSpeed`), or every network fix
+would be a car that had stopped. Without a measured speed the fix before it
+decides, if the two are between a minute and an hour apart. When both are sharp
+to 100 m, two fixes no further apart than their error circles plus 50 m are
+still. Driving is road speed over the distance the two error circles can't
+explain, so a kilometre-wide cell estimate never reads as standing still or as
+a drive. Anything else is unknown, since walking is the classifier's to say.
 
-**Live** is the tier for as long as somebody has the member's page open, or
-the member has an SOS open, see Watching below. Both reach the phone the same
-way, as a `watchedUntil` on the upload reply and a `watch` down the control
-channel, so the SOS screen only reports by itself on a phone that is not on
-Live.
+What that costs, said plainly:
+
+- An iPhone answers a ping only when iOS hands the silent push to the app, and
+  iOS decides how many of those an app gets. Expect it to answer fewer pings
+  than it is sent, and fewer still in Low Power Mode or with Background App
+  Refresh off. An iPhone where Hearth was swiped away in the app switcher
+  answers none until somebody opens it.
+- An arrival or a departure can be up to one interval late, plus the minute
+  the job tick may add, because the fix that crosses a place's edge is the
+  next ping. A departure the classifier missed waits for the next real fix,
+  an hour at most after the last.
+- Trips, speed and the hard-stop check are coarse outside Live. A drive
+  between pings is a fix every two minutes or so, Wi-Fi grade unless crash
+  detection is running, so its trail is dashed between them, and a short one
+  may leave too few fixes to make a trip unless it runs between two named
+  places. A speed alert needs a measured speed, which a ping carries only on
+  a drive with crash detection on, when the drive's GPS fix answers it. The
+  server's hard-stop check needs Live-rate fixes.
+- On an iPhone crash detection starts only once a ping finds the drive, so up
+  to an interval into it, see [crash detection](#crash-detection).
+
+### Live
+
+Live is the other occasion. It runs for as long as somebody has the member's
+page open, see Watching below, and for half an hour from when the member raised
+an SOS or last pressed it again. On Android the native service runs a `High`
+accuracy request at a fix a second and sends every fix itself. On iOS a
+location session runs for the window and no longer (`liveOptions()`), at `High`
+accuracy with no distance filter and `pausesUpdatesAutomatically` off. It
+starts from the watch push, a `watch` down the control channel or an upload
+reply that names a window, and stops when the window ends or the server's reply
+says nobody is watching.
 
 ### The Android transport
 
-Android hands out continuous location only to a foreground service, and
-without one the phone is an ordinary background app: a few fixes an hour,
-none in Doze, no network until a maintenance window, a process reclaimed
-within minutes on most OEM builds, and a service start refused later except
-at a handful of moments. The family will not have a notification that stays,
-so the service runs while the phone is on the move (moving, driving, live)
-and goes with the stop. A parked phone runs expo's cheap resting request
-with no service, and a wake brings the service up for the length of one fix
-and drops it with the fix, which is the second-long "Updating your location"
-a messaging app shows when it checks for messages. A watch keeps the service
-up at the live request for as long as the window lasts, with the resting
-request still running under it. The
-notification is one plain line on a channel the service creates at minimum
-importance (`hearth-wake`, "Location updates"), not ongoing, so from Android
-13 the person can swipe it away and the service runs on without it. The app's
-own channels, `default`, `alerts` and `sos`, come from `setupChannels()` in
+Android hands out location in the background only to a foreground service,
+and an app may start one from the background only at a few moments, a high
+priority push among them. Without a service the phone is an ordinary
+background app: a few fixes an hour, none in Doze, and a process reclaimed
+within minutes on most OEM builds. So the service runs for the seconds a ping
+takes, for a Live window, or for a drive with crash detection on, and is gone
+otherwise. Its notification, "Updating your location", or "Crash detection is
+on for this drive" on a drive, is one plain line on a channel the service
+creates
+at minimum importance (`hearth-wake`, "Location updates"), not ongoing, so
+from Android 13 the person can swipe it away and the service runs on without
+it. Android 12 and later hold a new service's notification back for about ten
+seconds, so a ping is often over before it appears. The app's own channels,
+`default`, `alerts` and `sos`, come from `setupChannels()` in
 `services/notifications.ts`. `setupPush()` sends the phone's time zone and
 clock (`services/phoneClock.ts`) with its registration on every launch, since
 the server reads quiet hours and the time on late news on them.
 
-Everything that has to survive the JavaScript process being killed is
-native Kotlin in `modules/hearth-motion/android`:
+Everything that answers the server is native Kotlin in
+`modules/hearth-motion/android`, so JavaScript need not start for a ping:
 
-- `HearthTransitionReceiver` and `HearthFenceReceiver` are declared in the
-  manifest and are the targets of the activity transition request and the
-  geofence around the parking spot (`PlayServicesRequests.kt`). Play
-  Services starts the process to deliver to them, so a departure wakes a
-  phone whose process is long gone. A geofence exit or an activity
-  transition is a moment Android lets a background app start a foreground
-  service, and the receivers start it right there, inside that moment,
-  from what the tracker last told them (`Departure.kt`, `TrackerPrefs`).
-  A vehicle transition or a fence exit on a parked phone brings the
-  tracking service up with the moving request. On foot is confirmed first
-  under the brief service, at most every two minutes. A transition on a
-  moving phone whose service has gone brings it back. When Play Services
-  sends the fence receiver an error, most often because Location was
-  switched off and it removed every fence, the receiver forgets the fence
-  and queues a `fence_lost` event, and the sync task adds the fence back.
-- `HearthTrackingService` is the foreground service and owns the location
-  request through a `LocationCallback`, so the fixes of a journey are
-  taken whether or not JavaScript is up. Each fix is appended to a native
-  queue (`TrackerQueue`, one JSON document per line under `filesDir`), as
-  is every event the receivers take. It is sticky: killed under a journey,
-  it restarts with the request it persisted. `startForegroundService`
-  throws at the call on Android 12 and later when the start is not
-  allowed, and that is the `refused` the module answers with. The refusal
-  goes on the queue too, so the tracker log shows it. A command for a
-  service already in the foreground goes by a plain `startService`, which
-  needs no exemption.
-- `NativeUploader` sends the service's fixes, a tier's as well as the ones
-  that answer a wake or a watch, from the service, with the session's upload
-  key (`uploadKey`, which the server hands an Android session with its tokens
-  and the tracker passes down in `syncUploader`). A fix waits in its own file
-  until the server has it, then goes on the queue marked `sent`, so `ingest`
-  learns from it and sends nothing again. One that cannot be sent, because the
-  key was refused or the service is going, goes on the queue unmarked and
-  JavaScript sends it. The server's answer comes back as an `uploaded` event
-  and moves the watch.
+- `HearthTransitionReceiver` is declared in the manifest and is the target of
+  the classifier's activity transitions (`MotionUpdates` in
+  `PlayServicesRequests.kt`): entering still, walking, running, on a bicycle
+  or in a vehicle. Play Services debounces them and starts the process to
+  deliver one, and they cost no location. The receiver writes what the phone
+  is doing to `TrackerPrefs` and the queue, and starts nothing, except that a
+  vehicle, where a circle wants crash alerts, starts a drive, and still or on
+  foot ends one (`Departure.kt`). Builds before 1.3.4 also asked for a verdict
+  every half minute, which started the process all day for a phone in a
+  drawer.
+- `HearthMessagingService` sits in front of expo-notifications' own service
+  (the manifest gives it the higher priority) and answers a `wake`, `watch` or
+  `nudge_requested` push inside the message handler, the one moment a
+  background app may start a service. With sharing off or signed out it takes
+  no fix. With an upload key it starts `HearthTrackingService` with the ask. A
+  `wake` or a `watch` goes no further, so JavaScript is not started for every
+  ping. A `wake` marked `ping` to a phone the classifier has had still since
+  its last fix, with no service running, is answered on the spot with that
+  fix again, without location and without the service. A
+  `nudge_requested` is a notification the person should see, so it goes on to
+  expo-notifications as well and is shown. Without a key, from a server
+  older than 1.3.2, it starts the brief service and passes the push on to
+  expo-notifications, and JavaScript takes the fix. A push FCM delivered at
+  normal rather than high priority can't start a service unless Hearth is
+  exempt from battery optimisation, so the start isn't tried. There, and
+  wherever Android refuses the start, the handler takes one `Balanced` fix on
+  its own thread, within five seconds, and sends it before the handler's time
+  is up.
+- `HearthTrackingService` is the foreground service. For a ping it runs a
+  `Balanced` request and sends the first fresh fix within 100 m, or the best
+  one inside fifteen seconds, or failing both the system's last fix if that is
+  under two minutes old. The service stops once the server has the fix, and
+  waits 45 seconds at most for the upload. For a watch it runs a `High`
+  accuracy request at a fix a second, sends each fix as it comes, and follows
+  the window the server names in each upload reply (`WatchWindow` in
+  `UploadWire.kt`), ten minutes at most per ask. A ping that lands inside a
+  watch is answered by the watch's next fix. For a drive it runs a `High`
+  accuracy request every five seconds, puts each fix on the queue marked local
+  for the detector and uploads none of them, and opens the headless task that
+  keeps the JavaScript detector running. A ping during a drive is answered
+  with the drive's next fix. The drive ends on an on-foot transition, on a
+  still one that holds three minutes with no speed seen in them, after ten
+  minutes of its GPS having the phone under 2 m/s, or when crash alerts or
+  sharing go off (`setTrackerState`). A ping that finds the phone moving like
+  a car while the classifier still says vehicle starts the drive again, which
+  covers a long standstill, a start Android refused and a service an OEM
+  killed. The service is not sticky. A
+  restart Android makes on its own stops at once, since the server asks again
+  when it wants a fix. `startForegroundService` throws at the call on Android
+  12 and later when the start is not allowed, and the refusal goes on the
+  queue, so the tracker log shows it. A command for a service already in the
+  foreground goes by a plain `startService`, which needs no exemption.
+- `NativeUploader` sends the service's fixes with the session's upload key
+  (`uploadKey`, which the server hands an Android session with its tokens and
+  the tracker passes down in `syncUploader`). It labels each one with the
+  classifier's verdict, or failing that against the last fix it sent. A fix
+  waits in its own file until the server has it, then
+  goes on the queue marked `sent`, so `ingest` learns from it and sends nothing
+  again. One that cannot be sent, because the key was refused or the service
+  is going, goes on the queue unmarked and JavaScript sends it. The server's
+  answer comes back as an `uploaded` event and moves the watch.
+- `TrackerQueue` keeps those fixes and events as one JSON document per line
+  under `filesDir`. A poke reaches JavaScript only when it is already up and
+  listening (`onNativeQueue`). Nothing in the queue starts it, since the queue
+  is a record of what the native side already did, and the next launch drains
+  it first thing.
+- `HearthHeadlessService` runs the JavaScript tracker's headless task
+  (`HearthTracker`, registered in `index.tsx`) under the brief service, which
+  only a session without an upload key uses, and for a drive. The task drains
+  the queue (`processNativeQueue`), fixes first through `ingest`, then events.
+  For a drive the service opens one task, `awake`, which `keepTrackerAwake`
+  holds until the drive is over. React Native runs no JavaScript timer in the
+  background without an open task, and the detector is JavaScript.
+- `HearthBootReceiver` asks for the classifier's transitions again after a
+  reboot, which drops every request Play Services held. At the update itself,
+  the first moment the new build runs, it also calls
+  `LegacyRequests.forget()`. `setTrackerState` calls that too, for a phone that
+  was off at the update, and it does its work once.
 - `HearthDiagnostics` puts what the phone says about Hearth in the log, once
   per process: the last exits from `ApplicationExitInfo`, whether the app was
   force stopped (`ApplicationStartInfo`, Android 15 and later), the standby
   bucket, the battery exemption and background restriction, and for every
-  wake or watch push its priority against the one it was sent with. A
+  ping or watch push its priority against the one it was sent with. A
   `normal` against `high` is FCM having demoted the push, which no longer
   lets the service start from the background.
-- `HearthHeadlessService` runs the JavaScript tracker's headless task
-  (`HearthTracker`, registered in `index.tsx`) once the service holds the
-  foreground, which is what lets the process start another service. The
-  task drains the queue (`processNativeQueue`): fixes first, through
-  `ingest` like any delivery, then events, through the same handlers as
-  the live ones (`onMotion` for a transition, `onFenceExit` for the
-  fence). While JavaScript is up and listening the service and the
-  receivers poke it directly (`onNativeQueue`) and it drains the same way.
-  For as long as the service tracks, it also holds one task open, `awake`,
-  which `keepTrackerAwake` keeps until the phone parks with nobody
-  watching. React Native runs no JavaScript timer in the background without
-  an open task, and fetch hands every response over on one, so without it
-  a moving phone with its screen off uploaded nothing until a push or the
-  sync task came by.
-- `HearthBootReceiver` puts the requests back after a reboot or an update,
-  which drop everything Play Services held, and restarts the service for
-  a phone that was on the move. expo-task-manager restores the resting
-  request on its own.
-- `HearthMessagingService` sits in front of expo-notifications' own and
-  answers a wake or a watch push inside the message handler, the one other
-  moment a background app may start a service. With an upload key it starts
-  the service with the ask itself. A wake takes the first fix within 50 m, or
-  the best one in twenty seconds, sends it, and the service goes once the
-  server has it. A watch runs a fix a second, each sent as it comes, until the
-  server's answers to those uploads say nobody is looking. Nothing waits for
-  JavaScript, which React Native runs no timer for in the background. Where
-  Android refuses the start, most often because FCM demoted the push, the
-  handler takes one fix without the service and sends it from its own
-  thread. Without a key, from a server older than 1.3.2, the brief service
-  comes up and JavaScript takes the fix, as before. It does the same for a
-  `nudge_requested` push, but only when Firebase hands that message to the
-  app, which for a visible push means the app is in the foreground.
 
-While Android refuses the service, a moving phone keeps expo's request
-running on the tier's options with no service of its own. Android holds a
-background app to a few fixes an hour, and each one is a chance to judge the
-journey until the service can start. Without it a refused phone had no
-request at all.
+The battery optimisation exemption still matters. An exempt app may start its
+service from a push FCM demoted, and keeps its network in Doze. FCM may demote
+an app's high priority pushes when they don't lead to a notification the
+person sees, and a ping's notification often never shows, so the `push` lines
+in the log are worth reading on a phone that goes quiet. The checklist asks for
+the exemption directly (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, allowed
+for family safety apps) and, on the vendors that kill background apps, walks
+the person through the vendor's own settings.
 
-`reassertService` answers a refusal for a moving phone at every allowed
-moment: an activity transition, a fence exit, a wake or watch push and the
-app opening at once, and a delivery or the sync task once per ten minutes,
-since re-registering hands back the fix the OS already had and that is
-another delivery. A parked phone wants no service and is left alone unless
-somebody is watching it, when its live service is answered the same way. A
-brief service found under a moving phone is upgraded in place. A status of
-`none` while a tier wants the service means it went down without the app
-asking, an OEM battery manager most often. The tracker brings it back,
-remembers the moment for a day, and `serviceDiedUnexpectedly()` is what the
-health report sends as `serviceStopped`.
-
-The battery optimisation exemption still matters: an exempt app may start
-its service from the background at any moment and keeps its network in
-Doze, so the resting request and the upload work on a parked phone that is
-not being woken. The checklist asks for it directly
-(`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, allowed for family safety
-apps) and, on the vendors that kill background apps, walks the person
-through the vendor's own settings.
-
-The rules the receivers act on and the queue's store have plain checks in
-`modules/hearth-motion/test/DepartureTest.kt`, and the upload's wire format and
-the watch window in `UploadWireTest.kt`, run the way each file says.
+The upload's wire format, the watch window and the ping's labels have plain
+checks in `modules/hearth-motion/test/UploadWireTest.kt`, and what a
+transition starts and when a ping may repeat the last fix in
+`DepartureTest.kt`, each run the way the file says.
 
 `patches/whatwg-fetch@3.6.20.patch` settles every `fetch` as a microtask rather
 than on a zero delay timer. React Native's networking events need no timer, but
 the polyfill resolved each answer on one, and One UI holds an app's timers back
 in the background, so a request the server had already answered never finished.
 
-`patches/expo-location@55.1.14.patch` remains for iOS (the one-shot
-manager's `allowsBackgroundLocationUpdates`) and for the resting request's
-service state on Android, which the tracker no longer reads. Expo ships its
-modules to Android as prebuilt AARs, so `apps/mobile/package.json` lists
-expo-location and expo-notifications under
+`patches/expo-location@55.1.14.patch` remains for iOS (the one-shot manager's
+`allowsBackgroundLocationUpdates`) and for a service state on Android that the
+tracker no longer reads. Expo ships its modules to Android as prebuilt AARs,
+so `apps/mobile/package.json` lists expo-location and expo-notifications under
 `expo.autolinking.android.buildFromSource`. Every patch in `patches/` is
-applied by `scripts/apply-patches.mjs` from the root `postinstall`, not by pnpm's
-`patchedDependencies`: with `node-linker=hoisted`, which Metro needs, pnpm
-applies a patch again on every install, and `expo prebuild` runs one, which
-left the Kotlin declared twice. The script applies each patch once and
+applied by `scripts/apply-patches.mjs` from the root `postinstall`, not by
+pnpm's `patchedDependencies`: with `node-linker=hoisted`, which Metro needs,
+pnpm applies a patch again on every install, and `expo prebuild` runs one,
+which left the Kotlin declared twice. The script applies each patch once and
 leaves one already in place alone.
 
 ### One-shot fixes
 
-Every one-shot fix (`reportNow`, the heartbeat, the background clock, the sync
-task, the fence check, the classifier's confirmation) has a deadline inside
-`acquireFix`, thirty seconds, or fifteen for the sync task. Android's
-`getCurrentPositionAsync` has no timeout of its own, and a request a background
-app makes can hang for the life of the process. When the fresh fix is late,
-the fix the OS already has stands in where that is still useful: a wake, a
-nudge, the app opening, the clock. It doesn't stand in for a fence check,
-where a stale fix inside the circle would re-park a phone that has just left,
-or for the park fix. That one is made up instead: from the phone's newest real
-fix, with that fix's accuracy, if it is under two minutes old, and otherwise
-from the anchor. A stale anchor dated now once put a phone 174 m from where it
-was sitting.
+Every one-shot fix JavaScript takes, a ping answered there, a check-in, an
+SOS, the heartbeat and the sync task, has a twenty second deadline inside
+`acquireFix`. Android's `getCurrentPositionAsync` has no timeout of its own,
+and a request a background app makes can hang for the life of the process.
+iOS gives a silent push about thirty seconds. When the fresh fix is late, the
+fix the OS already has stands in if it is under two minutes old, since a ping
+wants to know the phone is alive more than it wants a new estimate. The
+heartbeat takes no stand-in.
 
-Fixes that arrive in a batch, as the Android native queue hands them over, are
-labelled with the activity the tracker had when each one was recorded, not
-when the batch was read. A drive's last minutes, drained after "walking" had
-ended it, once went up as a walk at 80 km/h. The timeline of verdicts is kept
-in the tracking store for an hour, so it survives the restart that drains a
-queue.
-
-A fresh request the OS answers from its cache, with a fix over a minute
-old, is asked once more inside the same deadline. An iPhone opened after
-hours away was handed the fix iOS still held from where the phone had
-been. Uploaded with its own timestamp, the server never moved presence
-back to it, and the row kept saying "two hours ago, at home". A second
-cached answer is all the OS has and is taken as it is. Every `report done`
-line in the diagnostics log carries the fix's age in seconds.
+A fresh request the OS answers from its cache, with a fix over a minute old,
+is asked once more inside the same deadline. An iPhone opened after hours away
+was handed the fix iOS still held from where the phone had been. Uploaded with
+its own timestamp, the server never moved presence back to it, and the row
+kept saying "two hours ago, at home". A second cached answer is all the OS has
+and is taken as it is. Every `report done` line in the diagnostics log carries
+the fix's age in seconds and the label it got.
 
 On iOS, expo-location's one-shot manager had `allowsBackgroundLocationUpdates`
 off, which Apple documents as a manager Core Location need not keep the app
 running to serve. The patch sets it when the app is authorised Always and
-declares the location background mode, so wakes, park fixes and watch answers
-are served in the background.
-
-### Calling the stop
-
-The classifier is the normal path: it calls a stop after ninety seconds of
-the phone reading still, three minutes inside a detected drive, and ends one
-the instant you start moving. A phone on a journey is not parked by the
-classifier alone: while it has travelled more than 400 m in the last ten
-minutes or done 3 m/s in the last three, a still verdict at the lights needs
-the position to agree, which means no fix clear of the anchor for the same
-five minutes the location path parks on. The anchor is kept through a drive
-for exactly this, though a drive is never parked from the location path.
-
-The position watch is the fallback, for a phone that refused the permission
-or cannot classify motion. On iOS a phone that has not crossed the distance
-filter delivers no fix to judge, so the tracker's background clock, a React
-Native timer that `RCTTiming` keeps as an `NSTimer` while the session keeps
-the app alive, asks for one fix once no update has come for five minutes and
-judges the stop from it. For any of this the session must never pause:
-`pausesUpdatesAutomatically` is off in every tier, since a paused manager
-suspends the app with it and a suspended app calls no stop and arms no fence.
-
-A parked phone does not leave on the classifier's word alone unless the word
-is a sure "automotive" (a transition, or a sample at 75% or better that is
-not just the verdict the phone parked on). Core Motion keeps calling a car
-idling in a car park automotive, and every such sample brought the GPS back.
-Handled in bed, a phone reads as walking at fifty or sixty percent, and
-taking that alone brought the full tier back to a phone going nowhere. On
-foot the verdict is confirmed by one Balanced fix, at most every two minutes,
-and one more about three minutes later if the first could not confirm it,
-since half a minute out of the door a walker is still inside the fence and
-its error. The second look is a timer, so it lands while the process is
-about, which is always on a parked iPhone and on Android only while Android
-keeps the process. Otherwise the fence is the judge.
-
-Only a fix clear of the anchor by more than its own error, and no looser
-than 100 m, ends a stop. A 200 m Wi-Fi estimate 400 m off once cleared the
-fence by its own error and un-parked a phone lying in bed. A looser fix that
-clears the fence is a reason to take one Balanced fix and judge that
-instead. A phone with only approximate location never gets a sharper fix,
-so for it the old rule stands. A fence
-exit on Android brings the full tier up first, inside the allowed moment, and
-then checks the exit against one bounded fix: a sharp fix clearly inside the
-circle is a false exit and the phone parks again at once.
-
-Deferred delivery is off in every tier. It looked like the OS batching for
-battery and is not: both of expo's consumers hold the fixes in the process,
-and the ones held were the last of every journey, the fixes that say where
-the phone stopped.
+declares the location background mode, so pings and nudges are served in the
+background.
 
 ### Uploads
 
 A failed upload (network, 5xx, 429) keeps the queue and retries on its own
 after thirty seconds, then a minute, then two, while the process lives. After
-that it waits for the next delivery, which flushes whether or not it kept a
-fix. An upload that gets through starts the ladder over. On Live the ladder is
-two, five and ten seconds, and the ten repeats, since the next delivery is a
-second away and waiting for it is no back-off at all. Every fix stays queued
-meanwhile. A live upload gets four seconds rather than thirty, and one that
-runs out goes again at once on a fresh request with the same fixes in the
-same order, because one stuck on a dead connection froze the viewer's map for
-as long as it waited. A second timeout in a row is a slow network rather than
-a stuck request, and the ladder takes over with the full time. A 4xx that is not
-an auth problem drops that batch so one bad fix cannot wedge the pipeline,
-and the next batch waits on the same ladder rather than going at once, since
-a firewall in front of the server can lock the phone out for a 4xx. A 403
-from Hearth itself ends sharing. The tracker stops, says why on the You
-screen, and uploads nothing more until the next sign-in or the person turns
-sharing back on. A deactivated account answers that, though deactivating
-through the admin routes also revokes the sessions, and the phone then signs
-itself out on the 401 that follows.
+that it waits for the next fix, which outside Live is the next ping. An upload
+that gets through starts the ladder over. On Live the ladder is two, five and
+ten seconds, and the ten repeats, since the next fix is a second away and
+waiting for it is no back-off at all. Every fix stays queued meanwhile. A live
+upload gets four seconds rather than thirty, and one that runs out goes again
+at once on a fresh request with the same fixes in the same order, because one
+stuck on a dead connection froze the viewer's map for as long as it waited. A
+second timeout in a row is a slow network rather than a stuck request, and the
+ladder takes over with the full time. A 4xx that is not an auth problem drops
+that batch so one bad fix cannot wedge the pipeline, and the next batch waits
+on the same ladder rather than going at once, since a firewall in front of the
+server can lock the phone out for a 4xx. A 403 from Hearth itself ends sharing.
+The tracker stops, says why on the You screen, and uploads nothing more until
+the next sign-in or the person turns sharing back on. A deactivated account
+answers that, though deactivating through the admin routes also revokes the
+sessions, and the phone then signs itself out on the 401 that follows.
 
 ### What the phone says about itself
 
-`services/health.ts` sends `PATCH /me/health` with the checklist's reading
-of the phone. That covers the location permission level, whether location is precise,
-Location Services, motion access, Background App Refresh on iOS, battery
-optimisation and the Restricted background setting on Android, Low Power
-Mode or Battery Saver on either, the manufacturer in lowercase, on Android
-whether the location service died without the tracker asking, and whether
-_Share my location_ is on. It goes when the app comes to the front, after a
-sign-in, after the checklist or the Sharing switch changes anything, and the
-moment Low Power Mode or Battery Saver flips, which the native module reports
-as an `onPowerStateChange` event. The tracker sends it from the background
-too, when it finds the service dead, a fence Play Services dropped, or a
-changed permission or Location switch, which the sync task and a parked
-iPhone's quarter hour timer read for it. Those sends go at most once in ten
-minutes, so a switch flapping in a car park cannot spam the server, and they
-read the switches without acting on them, since a tracker stopped in the
-background would stay off once Location came back. Otherwise it goes again
-only when something changes, the account changes, or a day has passed. The
-server keeps it on `user_presence.health`, projects it as `issues` on
-presence, and the rows put the first issue under the member's name once the
-phone is stale. Sharing switched off is named at once, whatever the
-staleness, and the member page shows a pill while precise location is off.
-A stale phone whose last reading was 5% or less, off the charger, reads
-"Battery likely ran out" instead (`batteryRanOut` in `packages/shared`). The
-server leaves what a flat battery explains out of its `issues`, power saving,
-battery optimisation and a restricted or stopped service, so an app that
-predates the line says the phone went quiet rather than blaming power saving.
-A switch somebody turned off is still named first.
-The offline sweep reads it too, so a quiet phone that has said why it cannot
-report is reported as that, not as offline.
+`services/health.ts` sends `PATCH /me/health` with the checklist's reading of
+the phone. That covers the location permission level, whether location is
+precise, Location Services, motion access, Background App Refresh on iOS,
+battery optimisation and the Restricted background setting on Android, Low
+Power Mode
+or Battery Saver on either, the manufacturer in lowercase, and whether _Share
+my location_ is on. It goes when the app comes to the front, after a sign-in,
+after the checklist or the Sharing switch changes anything, and the moment Low
+Power Mode or Battery Saver flips, which the native module reports as an
+`onPowerStateChange` event. The tracker sends it from the background too, when
+the sync task or a failed location delivery finds the permission or the
+Location switch changed. Those sends go at most once in ten minutes, so a
+switch flapping in a car park cannot spam the server, and they read the
+switches without acting on them, since a tracker stopped in the background
+would stay off once Location came back. Otherwise it goes again only when
+something changes, the account changes, or a day has passed. The server keeps
+it on `user_presence.health`, projects it as `issues` on presence, and the
+rows put the first issue under the member's name once the phone is stale.
+Sharing switched off is named at once, whatever the staleness, and the member
+page shows a pill while precise location is off. A stale phone whose last
+reading was 5% or less, off the charger, reads "Battery likely ran out"
+instead (`batteryRanOut` in `packages/shared`). The server leaves what a flat
+battery explains out of its `issues`, power saving, battery optimisation and a
+restricted or stopped service, so an app that predates the line says the phone
+went quiet rather than blaming power saving. A switch somebody turned off is
+still named first. The offline sweep reads it too, so a quiet phone that has
+said why it cannot report is reported as that, not as offline. A stopped
+service is no longer sent, though the server still reads it from an older
+app.
 
 Sharing switched off on the phone is a pause of every circle that allows
 one. Those circles see "Sharing paused" and no position, and hear no offline
@@ -667,77 +652,76 @@ sharing", and its offline alert says that is why. A fix newer than the
 report reads as sharing back on, in case the report that said so has not
 landed.
 
-Every fix carries `activity` from the tracker's own tiers, `still` while
-parked and on the arrival fix, `driving` on the GPS tier, the classifier's
-word while walking, so the server knows a still phone is meant to be quiet
-and calls it offline only after twelve hours rather than one. An account
-signed in only on Android phones gets about 100 minutes instead, the three
-wakes of a parked phone and the time to answer the last, since Android
-answers a wake even from Doze.
+Every fix carries the `activity` label from the ping, and the server reads
+`still` as a phone meant to be quiet and one on the move as a phone to ask a
+little sooner. A phone whose last fix said `still`, or
+that is inside a named place, is called offline only after twelve hours of
+silence rather than one, since an iPhone that has not moved may answer few
+pings. An account signed in only on Android phones gets about 100 minutes
+instead, since Android answers a ping even from Doze. Where the server can
+push, the verdict also waits for three unanswered asks, which is two not
+counting the newest, since that one may have gone out in the same tick. A
+phone the server can't ping at all, with no push token or on a provider other
+than `expo`, is judged on its silence alone.
 
 ### Diagnostics
 
-`services/location/log.ts` keeps the last thousand things the tracker did,
-on the phone, in chunks of a hundred so a line costs one short write. While
+`services/location/log.ts` keeps the last thousand things the tracker did, on
+the phone, in chunks of a hundred so a line costs one short write. While
 somebody watches Live the deliveries and uploads are counted rather than
-logged, and go in as one `live` line every half minute and one when the
-window ends, so a window cannot wash the night's evidence out of the log.
-Otherwise it records `boot` with whether the process was headless, tier changes and
-why, `fixes` delivered and kept, `report` / `report done` / `report failed`
-for every one-shot fix with its source, accuracy and elapsed time, `flush` /
-`flush failed` with sizes and status, `service` with the Android service's
-status after every registration, `reassert` before and after, `sync` for
-each run of the sync task, `watched` and `watch adopted` when an upload
-reply starts or moves a window, `wake`, fence exits and whether they were
-false, `fence lost`, `walk checked again`, `refused`, `resumed`, the
-classifier's verdicts, and `heartbeat skipped` with the reason. A shared log opens with a header from
-`headerForTrackerLog()` with the mode, when the anchor was set, queue length,
+logged, and go in as one `live` line every half minute and one when the window
+ends, so a window cannot wash the night's evidence out of the log. Otherwise
+it records `boot` with whether the process was headless, `on` and `off`,
+`push` for every push the app hears, `report` / `report done` /
+`report failed` for every one-shot fix with its source, accuracy, age and
+elapsed time, `fixes` delivered and kept, `flush` / `flush failed` with sizes
+and status, `sync` for each run of the sync task and whether the phone was
+overdue, `watched`, `watch adopted` and `watch over`, `wake`, `still` for a
+ping answered with the last fix, `motion` for each verdict the classifier
+gave, `drive` and `drive over` with why, `awake` while a drive holds the
+headless task, `refused`, `resumed`, `heartbeat skipped` with the reason, and
+`legacy fence stopped` once after an update. From the Android queue it adds
+`native wake` for a ping answered there, whether it was answered still and
+whether it found a fix, `native service` for a service
+Android refused or stopped, each push's priority against the one it was sent
+with, the last exits and the power state. A shared log opens with a header
+from `headerForTrackerLog()` with the mode, the ping interval, queue length,
 whether the server is refusing uploads, last error, permission, whether
-location is precise, service status, the watch window and the platform. The log
-holds no coordinates, so it can be pasted into an issue without saying where
-the phone parks. When a family
-member says "the notification stayed" or "it went quiet at home", this is the
-page to ask for. A stop that was called and a park fix that never left used to
-look identical.
+location is precise, service status, the watch window and the platform. The
+log holds no coordinates, so it can be pasted into an issue without saying
+where anybody lives. When a family member says "it went quiet at home", this
+is the page to ask for. From the server, a ping that never arrived and one
+that arrived and found no fix look the same, and the log tells them apart.
 
 ### The control channel
 
-The tracker keeps its own websocket to the server whenever its process is
-alive with a location session: on iOS in every tier, since the parked
-session keeps the app alive, and on Android while the phone is on the move,
-since the service is up then anyway. A parked Android phone holds nothing
-open. It sends `{ type: "control" }` on open and nothing more of its own (the
-server pings it every two minutes and the socket layer answers), reconnects
+The tracker keeps its own websocket to the server while somebody has the app
+open, and on an iPhone for the length of a Live window, whose session keeps
+the process alive (`syncControl` in `tracker.ts`). Between those it holds
+nothing open, and an ask reaches the phone by silent push. It sends
+`{ type: "control" }` on open and nothing more of its own (the server sends a
+websocket ping every two minutes and the socket layer answers), reconnects
 with backoff, and rotates its token itself when the server refuses it
-(`services/location/control.ts`). An ask from the family
-(a page opened, Live, the map opened, the sweep's wake) comes down it and is
-answered within a second. A `wake` takes one fix, a `watch` goes live, and a
-`watch` with no seconds left ends the window. Each ask carries an id, and the
-channel sends `{ type: "control", ack }` back before it does anything else,
-because the server pushes instead when no answer comes within three seconds. The UI's
-socket in `services/realtime.ts` is a different thing: it lives with the
-screen and closes when the app goes to the background, which is exactly when
-this one matters. An ask for a parked Android phone goes by a silent, high
-priority Expo push, and `HearthMessagingService` in the motion module, which
-sits in front of expo-notifications' own service, starts the tracking service
-with the ask inside the message handler: "Updating your location" for as long
-as the answer takes, gone with it. That is the moment Android allows a service
-to start from the background, and the notification it posts is what keeps the
-app's pushes at high priority. The service takes the fix and sends it itself,
-and the JavaScript task that follows only learns what it sent (`answerWake` in
-`tracker.ts`). On a server that hands out no upload key the JavaScript task
-takes the fix under a brief service instead (`wakeFix`, `startBrief` in
-`services/location/nativeTracker.ts`), or, for a watch, upgrades that service in
-place to the live request.
+(`services/location/control.ts`). An ask (a page opened, Live, the map opened,
+the location ping) comes down it and is answered within a second. A
+`wake` takes one fix, a `watch` goes live, and a `watch` with no seconds left
+ends the window. Each ask carries an id, and the channel sends
+`{ type: "control", ack }` back before it does anything else, because the
+server pushes instead when no answer comes within three seconds. The UI's
+socket in `services/realtime.ts` is a different thing. It lives with the
+screen, and the server sends asks only to a socket that declared itself the
+control channel.
+
+An ask for a phone with no channel open goes by a silent Expo push, high
+priority on Android and at Apple's background priority on iOS. On Android
+`HearthMessagingService` answers it natively, as above. On a server that hands
+out no upload key, the JavaScript task takes the fix under a brief service
+instead (`wakeFix`, `startBrief` in `services/location/nativeTracker.ts`). On
+iOS the expo-notifications task answers it (`answerWake` in `tracker.ts`).
 
 Opening a member's page calls `POST /circles/:id/members/:userId/refresh`
 for one fix now, the way opening the map calls
-`POST /circles/:id/locations/refresh` for everyone quiet. The tracker also
-keeps the circles' places (`stores/places.ts`, filled by every places query
-and refreshed by the tracker itself once a day) and uploads the fix that
-crosses into or out of one at once, whatever the distance gate says, so an
-arrival is announced on the crossing fix rather than on the park fix minutes
-later.
+`POST /circles/:id/locations/refresh` for everyone quiet.
 
 ### Watching
 
@@ -753,27 +737,24 @@ most. That catches a phone whose live service Android stopped mid window.
 The reply says which (`pushed`), when the phone was last heard and what it
 said stands in its way. Every upload reply also carries `watchedUntil`, so a
 phone that is already reporting picks the watch up on its next batch whether
-or not the push arrived. Either way the phone puts `watchedUntil` in its
-store and `currentOptions()` returns the live tier whatever the phone was
-doing, at `High` accuracy with a fix a second and every one uploaded. A parked Android
-phone is no exception. The watch push starts the service live, the service
-sends every fix itself and follows the window the server names in each answer,
-and the window's end takes it down. JavaScript hands the service its tier as
-well (`applyNativeWatch`), so a moving phone goes back to it after the watch,
-and a stop for the tier leaves the watch running. Only a viewer leaving is
-passed on to the service, since the tracker's own timer can run ahead of an
-answer it has not drained yet. The resting
-request runs under it the whole time, so a service Android kills inside the
-window, or one a reboot takes, leaves the phone reporting as it was. Where
-Android refuses the service anyway, the phone answers with one fix, and the
-window stays held so the next upload reply doesn't ask again. iOS has no time
-interval, so the live session has no distance filter either, which is the only
-session shape that delivers to a phone standing still. `ingest` thins the
-stream at the live tier's own pace rather than the circle's. The phone also
-answers with one fix straight away. A hold on a window already live only moves
-its end, with no fresh fix and no re-registration, though a hold that came by
-push still brings back a live service Android stopped, since a push is a
-moment Android allows the start.
+or not the push arrived.
+
+On Android the watch push starts the service live, inside the message
+handler. The service sends every fix itself, follows the window the server
+names in each answer, and goes when the window ends. JavaScript, when it is
+up, holds the same window in its store (`enterWatched`) and passes on only a
+viewer leaving, since its own timer can run ahead of an answer it has not
+drained yet. Nothing runs under the service, so one Android kills inside the
+window leaves the phone quiet until the server's next push. Where Android
+refuses the service, the push handler answers with one fix and the server
+asks again the same way. On iOS the watch push wakes the app, and
+`enterWatched` starts the Live session for the window. iOS takes no time
+interval, so the session has no distance filter either, which is the only
+shape that delivers to a phone standing still, and `ingest` thins the stream
+to a fix a second. A hold on a window already live only moves its end, with
+no fresh fix and no new session, though a hold that came by push still brings
+back a live service Android stopped, since a push is a moment Android allows
+the start.
 
 The page lets go with `DELETE` on the same path when it loses focus or the
 app goes to the background. Inactive, under Control Centre or a call, it goes
@@ -782,9 +763,10 @@ phone hears it at once. An upload reply with no window, or a shorter one,
 ends or shortens what it holds, and so does a `watch` with no seconds left
 down the channel. A reply to an upload sent before the latest ask can't end
 it, since the ask is newer news. Otherwise the window ends by a timer and by
-the first fix past it, whichever comes first, and the request steps back to
-the tier it was in. The page sends neither the release nor a trail fill to a
-server whose watch reply has no `supports`.
+the first fix past it, whichever comes first, and the session or the service
+stops until the next ping, or goes back to a drive that was under way. The
+page sends neither the release nor a trail fill
+to a server whose watch reply has no `supports`.
 
 The Live page calls the phone live on any fix from the last thirty seconds,
 counting one from up to thirty seconds before the ask, since the one fix an
@@ -828,18 +810,50 @@ last few, a Wi-Fi grade fix in a stream of GPS ones, is left out of the line
 (`liveTrailToDraw` in `utils/trail.ts`), and so is a step under five metres.
 A trip draws its own trail, and only where the phone reported it: a silence
 between two fixes is dashed (`splitTrail`), because the road between them is
-a guess. The profile map draws no trail.
+a guess. Outside Live that is most of a drive. The profile map draws no trail.
 
 Opening the map calls `POST /circles/:id/locations/refresh`, which sends one
 `wake` to each member quiet for a couple of minutes. Each wake goes down the
 phone's control channel when it has one open, and otherwise by silent push,
 at most once every ten minutes per phone. Only `PUSH_PROVIDER=expo` can send
 that push. The map route skips members who have paused, and the member route
-asks only a member sharing precisely. The server's own wake, after ten
-minutes of quiet from a moving phone or half an hour from a parked one, is a
-second line behind the phone's heartbeats, not the heartbeat itself.
+asks only a member sharing precisely. These asks come on top of the server's
+own ping, which is the phone's heartbeat.
 
 ### Crash detection
+
+Crash detection runs only on a drive, and only while a circle the person is
+in has _Possible-incident alerts_ on, which the app mirrors into device
+storage (`incidentDetection` in `stores/settings.ts`) because the detector runs
+where the query cache may be cold. A drive is the one time Hearth runs the GPS
+for itself. The detector reads the speed in the fifteen seconds before a jolt,
+and a GPS speed is the one that can be believed. The drive's fixes stay on the
+phone, feeding the detector (`noteDriveFix` in `driveSpeeds.ts`) and the
+incident check, and are never uploaded. A ping during a drive is answered with
+the drive's latest fix, so the family sees the car where the GPS has it. The
+location indicator shows for the drive, and never at home.
+
+On Android a drive begins from the classifier's in-vehicle transition, inside
+the moment Android allows the start: the receiver starts `HearthTrackingService`
+in drive mode, with a fix every five seconds and the notification "Crash
+detection is on for this drive", and the service opens the headless task the
+detector runs in. It ends on an on-foot transition, on a still one that holds
+three minutes with no speed seen in them, after ten minutes of the GPS having
+the phone standing, or when crash alerts or sharing go off. A ping that finds
+the phone moving like a car while the classifier still says vehicle starts it
+again. A reboot forgets what the classifier said, and any drive.
+
+iOS has no way to start an app for a drive. A ping, or the heartbeat with the
+app open, whose look at the last twenty minutes of Core Motion's history finds
+the newest sure record a vehicle under way starts one (`considerDrive`,
+`inMovingVehicle` in `motion.ts`): a `High` accuracy location session with no
+distance filter,
+which is also what keeps the app awake for the sensors, and Core Motion's live
+updates (`startMotionWatch`). It ends once Core Motion has had the phone out of
+the vehicle for three minutes, at once when it is sure the phone is on foot,
+after ten minutes standing, or when crash alerts or sharing go off. So on an
+iPhone crash detection starts only once a ping finds the drive, up to an
+interval into it, and a drive that ends before the next ping is never seen.
 
 `apps/mobile/modules/hearth-motion`, a local Expo native module written in
 Kotlin and Swift, does the sampling. The accelerometer runs fast enough to catch
@@ -851,9 +865,9 @@ On Android the module registers its `SensorManager` listener from the
 application context. expo-sensors drops its listener the moment the Activity
 pauses, and a screen going off or a map app on top is the state a phone is in
 for most of a drive, so the detector used to run only while somebody was
-watching it. Registering from the application context keeps samples arriving for
-as long as the process lives, which the location foreground service already
-guarantees while the phone is moving.
+watching it. Registering from the application context keeps samples arriving
+for as long as the process lives, which the drive's service and its headless
+task keep it doing.
 
 `app/services/location/driveSensors.ts` receives those batches, assembles the
 rolling window, and calls `detectDriveEvent()` in
@@ -862,13 +876,6 @@ sensors can and cannot claim is written down. expo-sensors is the fallback only,
 for an install built without the module. It is also the path the
 `ACCEL_INTERVAL_MS`, `GYRO_INTERVAL_MS` and `BARO_INTERVAL_MS` constants in
 `driveSensors.ts` belong to, since the native sampler sets its own rates.
-
-One switch gates it, and it samples only between the two ends of a drive. The
-circle has to have _Possible-incident alerts_ on, which the app mirrors into
-device storage because the detector runs from a background task where the query
-cache may be cold. The OS classifier, which runs whenever tracking does, is what
-says you are in a vehicle, because sampling this hard is only worth its battery
-while you are driving.
 
 A verdict does not alert anybody. It goes into a persisted store and the app
 asks the person, with a countdown. Answering dismisses it. Silence escalates to
@@ -881,11 +888,12 @@ What happens next lives in `app/services/incidentAlarm.ts`, not in the prompt.
 crash is usually locked, where JavaScript timers stand still. So nothing waits
 on a timer. `checkIncident()` reads the store and the wall clock and does what
 the incident needs at that moment. It puts the countdown notification up while
-the app is not in front, decides once the 30 seconds are past and the incident
-is under five minutes old, retries an alert that found no signal, or drops one
-an hour old. It is called from the tracker's `flush()`, which every delivery,
-retry and sync pass goes through, with `online: true` from an upload that got
-through, and from the prompt's tick and its AppState listener. The verdict in
+the app is not in front, decides once the 60 second countdown is past and the
+incident is under five minutes old, retries an alert that found no signal, or
+drops one an hour old. It is called from the tracker's `flush()`, which every
+delivery, retry and sync pass goes through, with `online: true` from an upload
+that got through, and from the prompt's tick and its AppState listener. The
+verdict in
 `driveSensors.ts` follows the same rule. It is armed with a timer for the
 foreground, and any sample past its deadline judges too, since native batches
 keep arriving with the screen off.
@@ -914,9 +922,11 @@ hears a background action. Whatever ends the incident dismisses the
 notification.
 
 The server runs its own, unrelated check on the breadcrumbs it receives, and it
-needs no sensors and no settings on the phone. Fixes half a minute apart cannot
-tell a collision from parking hard, so all it claims is that somebody stopped
-suddenly after driving fast, and it posts that to the circle as a prompt.
+needs no sensors and no settings on the phone. It needs fixes close together,
+and a drive's own fixes never reach it, so in practice it only sees a phone on
+Live, and even a fix a second cannot tell a collision from braking hard. All
+it claims is that somebody stopped suddenly after driving fast, and it posts
+that to the circle as a prompt.
 
 ## Realtime
 
@@ -966,8 +976,9 @@ app/
   i18n/         en.ts. v1 is English only, and a locale is a file typed as `Translations`
   utils/        activity, geocode, trail, format, storage (MMKV) and the rest
 modules/        hearth-motion: the Expo native module behind the motion classifier,
-                the batched sensor samples and, on Android, the tracking service,
-                its receivers and the native queue
+                the batched sensor samples, the power switches and, on Android, the
+                push handler, the tracking service, its receivers, the uploader and
+                the native queue
 ```
 
 ## Design notes

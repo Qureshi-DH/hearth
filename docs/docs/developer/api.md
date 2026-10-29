@@ -46,7 +46,8 @@ hands. The exception is the device the session belongs to, inside one access
 token's lifetime or at any time while no token issued after the spent one has
 been used: a phone on the road whose refresh reached the server but whose
 answer was lost to the network still holds the spent token, and presents it
-again at its next upload, which on a parked phone can be hours later. That is
+again at its next upload, which on an iPhone iOS has been holding pings back
+from can be hours later. That is
 a retry, and it is answered with a fresh pair. The pair nobody received is spent by it. The grace is
 counted from the rotation the phone missed, not from each retry, and a spent
 token is answered this way once. A spent token from any other device, or
@@ -56,7 +57,7 @@ the refresh so the server can tell these apart.
 
 An Android session also gets an `uploadKey` with its tokens, the same one at
 every refresh. The phone's native tracker sends it as its bearer token to
-`POST /locations/batch`, and nothing else takes it, so a wake or a Live
+`POST /locations/batch`, and nothing else takes it, so a ping or a Live
 request is answered without the app's JavaScript renewing an access token.
 It is signed for the session and ends with it.
 
@@ -224,7 +225,7 @@ Response:
   "rejected": 0,
   "placeEvents": 1,
   "serverTime": "2026-09-06T10:15:03.412Z",
-  "policy": { "minUpdateIntervalSeconds": 30, "distanceFilterMeters": 60 },
+  "policy": { "minUpdateIntervalSeconds": 300, "distanceFilterMeters": 60 },
   "watchedUntil": null
 }
 ```
@@ -232,28 +233,38 @@ Response:
 Points are deduplicated on `(user, device, recordedAt)`, so retrying a failed
 upload is safe. The one re-report that is taken is a stop: a fix that arrives
 with the same timestamp as one already stored and `activity: "still"` has
-its activity and source adopted, because the park fix is taken in the same
-tick as the fix that settled the phone and shares its timestamp. Implausible
+its activity and source adopted. Apps before 1.3.4 relied on it, because their
+park fix shared its timestamp with the fix that settled the phone. Implausible
 points (future, >7 days old, out of range) get counted in `rejected` without
 failing the whole batch. `policy` is the strictest setting across the
-caller's circles, and the device is expected to apply it. `watchedUntil` is
+caller's circles. Its interval is the one the server pings on, a circle with
+none or with something other than a number counting as the 300 s default,
+and held between 120 and 600 s (`pingIntervalSeconds` in
+`services/reporting.ts`). The phone runs its foreground heartbeat on it.
+`watchedUntil` is
 set while somebody has the member's page open, see [watching](#watching-a-member),
 and while the member has an SOS open, see [raising an SOS](#raising-an-sos).
 It is `null`, or sooner than the window the phone holds, once the viewers who
-held it have gone, and the phone steps down then.
+held it have gone, and the phone leaves Live then.
 
 Every authenticated upload, whatever it carried, records that the phone was
-heard (`user_presence.last_heard_at`). The offline sweep, the wake schedule
+heard (`user_presence.last_heard_at`). The offline sweep, the ping schedule
 and the refresh route measure silence from the later of the last fix and the
 last upload, so a phone draining old fixes, or retrying a batch, is a phone
 that is alive.
 
 `source` is one of `LOCATION_SOURCES` in `packages/shared` and defaults to
-`background`. `heartbeat` marks a fix the app takes on a timer while it is open
-and the phone is parked: presence, places, the speed alert and the battery
-alert treat it as any other fix. Trip detection ignores it, and so does the
-possible-incident check, because a parked phone reporting on a timer says
-nothing about how it came to a stop.
+`background`. The app sends `nudge` for a fix that answers a ping or a nudge
+and for its own foreground ping while it is open, including the last fix sent
+again, dated now and labelled `still`, for a phone the motion classifier has
+had lying still. It sends `significant` for one its background task took, and
+`background` for Live. A drive's own fixes for crash detection are never
+uploaded. `heartbeat` marks a fix an
+app before 1.3.4 took on a timer while it was open and the phone was parked:
+presence, places, the speed alert and the battery alert treat it as any other
+fix. Trip detection ignores it, and so does the possible-incident check,
+because a phone reporting on a timer says nothing about how it came to a
+stop.
 
 ## Presence
 
@@ -278,7 +289,7 @@ hold the window. The member's phone is asked to report at full accuracy, a fix
 a second, for `DEFAULTS.watchWindowSeconds`. The ask goes over its control
 channel when one is open and the phone acknowledges it within 3 s (see the
 websocket section), by a silent push otherwise, and by its next upload reply
-either way. A parked phone goes live too. Each viewer holds a window of their
+either way, whatever the phone was doing. Each viewer holds a window of their
 own, and the phone's is the latest of them. The reply is a `WatchResponse`.
 
 ```json
@@ -306,7 +317,8 @@ again rather than left until the window ends.
 `activity` what the phone last called itself, and `issues` what the phone
 itself reported stands between it and reporting, or between it and reporting
 well, such as precise location or motion access being off (`PRESENCE_ISSUES`
-in the shared package). A member sharing approximately or paused cannot be watched,
+in the shared package). `service_stopped` comes only from an app older than
+1.3.4. A member sharing approximately or paused cannot be watched,
 and nor can somebody who has left the circle, so `watching` is false and every
 other field is empty. `supports` says the server takes the two calls below,
 and an older server leaves it out.
@@ -374,19 +386,24 @@ each of them.
 
 The reply is a `RaiseSosResponse`, which is the path circle's `SosAlert` with
 `notifiedMembers` added and `alerts`, one `SosAlert` per circle it is open in.
-It is `201` when something new was raised and `200` when everything was
-already open. A press on an open alert writes nothing and pushes nothing, so a
-client retries freely after a lost reply. The route takes 60 requests per
-account per ten minutes, and a sixth fresh alert inside ten minutes, raised
-after five that were resolved, is answered `429`.
+It is `201` when something new was raised and `200` when everything was already
+open. A press on an open alert raises nothing and pushes nothing, so a client
+retries freely after a lost reply. It does restart the alert's half hour on
+Live (`sos_alerts.live_from`), since it is the person asking again. The route
+takes 60 requests per account per ten minutes, and a sixth fresh alert inside
+ten minutes, raised after five that were resolved, is answered `429`.
 
-While an alert is open the sender's phone is on Live. Every upload reply names
-`watchedUntil` two minutes ahead, and the raise sends a `watch` down the
-phone's control channel when one is open. The window never shortens or moves
-the one a viewer's [watch](#watching-a-member) holds. Once the alert is
-resolved the next upload reply names no window, unless somebody is watching,
-and the phone falls back to its own cadence then, or within two minutes if its
-uploads stop getting through.
+While an alert is open the sender's phone is on Live, for half an hour from
+when it was raised or last pressed again (`SOS_LIVE_FOR_MS` in
+`services/sos.ts`). Every upload reply in that time names `watchedUntil` two
+minutes ahead, never past the half hour, and the raise sends a `watch` down
+the phone's control channel when one is open. The window never shortens or
+moves the one a viewer's [watch](#watching-a-member) holds. Once the alert is
+resolved or the half hour is up, the next upload reply names no window,
+unless somebody is watching, and the phone goes back to answering the ping,
+or does so within two minutes if its uploads stop getting through. An alert
+nobody resolved, as a false crash alarm tended to leave behind, used to hold
+the phone at a fix a second for days.
 
 `POST /sos/:alertId/resolve` from the person who raised it closes their alert
 in every circle, each with its own `sos_resolved` entry, and everyone in those
@@ -429,8 +446,11 @@ belongs to, and `{ type: "control" }`, which the phone's tracker sends to
 declare the socket its control channel. The server answers
 `{ type: "control", command: "ready" }` and from then on delivers `watch` (go
 live for `seconds`, or end the window when there are none left) and `wake`
-(one fix now) down that socket and no other, the moment a viewer or the sweep
-asks. Each carries an `ask`, which the phone answers with
+(one fix now) down that socket and no other, the moment a viewer asks or the
+phone's ping falls due. The scheduled ping's `wake` carries `ping: true`, as
+its silent push does, and the phone may answer it with its last fix when the
+motion classifier has had it still since. A `wake` without it is somebody
+asking, and always gets a fresh fix. Each carries an `ask`, which the phone answers with
 `{ type: "control", ack: <ask> }` at once. An older server reads an ack as the
 declaration again, which changes nothing.
 The server pings on-screen sockets every 30 s and a declared control socket
