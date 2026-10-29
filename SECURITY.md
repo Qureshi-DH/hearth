@@ -76,13 +76,22 @@ refresh their session rather than sign in again.
 **Your own actions count toward your unread badge.** The badge counts exactly what
 the feed shows, and the feed shows your own check-ins and arrivals.
 
-**Sensor sampling on Android depends on the foreground service.** Crash detection
-samples at 50 Hz through a native module registered against the application
-context, verified running with the app backgrounded. Android restricts continuous
-sensors for genuinely idle apps, so the guarantee in practice is the location
-foreground service the tracker holds while a journey is under way.
+**Crash detection only covers a drive the phone has noticed.** It samples at
+50 Hz through a native module registered against the application context.
+Android restricts continuous sensors for genuinely idle apps, so the guarantee
+in practice is the drive's foreground service, which the motion classifier's
+in-vehicle transition starts. An iPhone has no way to be woken for a drive, so
+there the drive, and the detector with it, begins only when a ping from the
+server finds iOS has had the phone in a moving vehicle, up to an interval in.
 
 **iOS motion sampling has not been verified on hardware.** The module compiles,
 links and installs in a real Xcode build, and the app launches. A simulator has no
 accelerometer, gyroscope or barometer, so the sampling itself has only been
 measured on Android.
+
+**An iPhone answers only the pings iOS delivers.** The server asks every phone
+for its location by silent push, and iOS decides how many of those an app gets.
+An iPhone can go longer between reports than its circle's interval, and one
+where Hearth was swiped away in the app switcher reports nothing until it is
+opened. The offline alert waits twelve hours for an iPhone whose last fix said
+it was still, for that reason.

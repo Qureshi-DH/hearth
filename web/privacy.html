@@ -644,8 +644,9 @@
             sharing
           </td>
           <td>
-            To list your signed-in devices, deliver notifications to them, help the operator spot a
-            sign-in that isn't yours, and show your circle why a phone has gone quiet.
+            To list your signed-in devices, deliver notifications to them, ask them where they are,
+            help the operator spot a sign-in that isn't yours, and show your circle why a phone has
+            gone quiet.
           </td>
         </tr>
         <tr>
@@ -667,12 +668,14 @@
       <p>
         While sharing is on, Hearth collects your location even when the app is closed or not in
         use. That is what lets your family see you without you opening the app, and what makes
-        arrival alerts, trips, SOS and crash detection work. When you have stopped somewhere, the
-        app switches to a low-power mode and reports rarely. You can pause sharing or share only an
-        approximate area (about 750 metres), separately for each circle, unless a circle's admin has
-        turned pausing off. Either one changes what that circle sees, but the phone still sends your
-        location to your server, which keeps it as history. To stop the phone sending it at all,
-        turn off Share my location, which you can do at any time.
+        arrival alerts, trips, SOS and crash detection work. The app sends your location only when
+        your server asks for it, every few minutes, and every second while somebody in your circle
+        watches you on Live. When the phone's motion sensor says you have not moved, it sends the
+        last location again without switching location on. Nothing tracks you in between. You can
+        pause sharing or share only an approximate area (about 750 metres), separately for each
+        circle, unless a circle's admin has turned pausing off. Either one changes what that circle
+        sees, but the phone still sends your location to your server, which keeps it as history. To
+        stop the phone sending it at all, turn off Share my location, which you can do at any time.
       </p>
 
       <h2>Services the app talks to besides your server</h2>
@@ -681,7 +684,9 @@
           <strong>Notifications.</strong> What happens depends on how your server is set up. With
           Expo push, the phone registers with Expo's push service, and notifications travel from
           your server through Expo and then Apple Push Notification service or Firebase Cloud
-          Messaging. With ntfy, notifications go through an ntfy server your operator runs and are
+          Messaging. The phone registers even if you turn notifications off, because your server
+          also uses that route to ask the phone for its location, with a silent message that shows
+          nothing. With ntfy, notifications go through an ntfy server your operator runs and are
           shown by the ntfy app. On iPhone the ntfy app's wake-up signal still goes through Apple,
           and may go through ntfy's public server depending on how that ntfy server is set up. With
           neither, no notification is sent through any service. On Android, an app built with
@@ -722,17 +727,19 @@
       <h2>Permissions</h2>
       <p>
         Location, including background location. Motion and fitness (iPhone) or physical activity
-        (Android), so the app knows when you are still and can save battery. Notifications. The
-        camera, only when you scan an invite QR code. Your photos, only through the system picker,
-        which hands the app the one image you choose. On Android, an exemption from battery
-        optimisation so the phone does not stop sharing in the background. On iPhone, local network
-        access, which iOS asks about only when your server is on your home network. Hearth never
-        asks for your contacts, microphone, Bluetooth or advertising identifier.
+        (Android), so the app knows whether you have moved without using your location, and when a
+        drive starts for crash detection. Notifications. The camera, only when you scan an invite QR
+        code. Your photos, only through the system picker, which hands the app the one image you
+        choose. On Android, an exemption from battery optimisation so the phone does not stop
+        sharing in the background. On iPhone, local network access, which iOS asks about only when
+        your server is on your home network. Hearth never asks for your contacts, microphone,
+        Bluetooth or advertising identifier.
       </p>
       <p>
         Crash detection reads the accelerometer, gyroscope and barometer during a drive, when one of
-        your circles has turned it on. Those readings are worked through on the phone and are not
-        uploaded. Only the alert is, if a crash is detected and you don't cancel it.
+        your circles has turned it on, and the GPS for the length of the drive. Those readings and
+        locations are worked through on the phone and are not uploaded. Only the alert is, if a
+        crash is detected and you don't cancel it.
       </p>
 
       <h2>Your choices</h2>

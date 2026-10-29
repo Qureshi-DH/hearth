@@ -128,15 +128,19 @@ build, under 30 seconds each, and upload to YouTube as unlisted.
 The prominent disclosure must appear before the system prompt and name
 background use. Onboarding's location step does, in the words Google's
 reviewers look for. On Android it reads "Hearth collects location data to
-enable family location sharing, arrival alerts and crash detection even when
-the app is closed or not in use", and its button and the rest of the setup
+enable family location sharing, arrival alerts, Live location and crash
+detection even when the app is closed or not in use", and its button and the rest of the setup
 checklist say "Allow all the time", as Android's own screen does. The iPhone
 keeps "Always". The text is `permissions` in `apps/mobile/app/i18n/en.ts`.
 
 ### Foreground service, location (`FOREGROUND_SERVICE_LOCATION`)
 
-- Task: continuous location for a user-started family sharing session, which
-  the user can stop at any time from You, Location sharing.
+- Task: location for a user-started family sharing session, which the user
+  can stop at any time from You, Location sharing. The service runs for the
+  seconds one fix takes when the family's server asks, every few minutes, for
+  as long as a family member watches the user on Live, a fix a second, and for
+  a drive while a circle has crash alerts on, with the notification "Crash
+  detection is on for this drive". Nothing runs in between.
 - Video: turn sharing on, lock the phone, show a family member's view updating.
 
 ### Battery optimisation exemption (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`)

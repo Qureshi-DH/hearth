@@ -80,7 +80,8 @@ soon. Until they're out you build the app yourself. Read
   </tr>
 </table>
 
-- **Live map.** Everyone in your circle, with battery and how they're moving.
+- **Live map.** Everyone in your circle, checked every few minutes, with battery
+  and how they're moving.
 - **Places.** Hear when someone leaves home and gets to school, with how far they came.
   Choose what you hear per place and per person, and set quiet hours.
 - **Live drives.** Follow a drive as it happens, a fix a second while you watch.
@@ -227,17 +228,20 @@ with search, and the same pages are in [`docs/docs`](docs/docs) here.
 Waking a sleeping phone needs Apple's or Google's push service, so that last hop
 is the one part a self-hoster can't fully own. Pick a provider:
 
-| Provider         | Third party?        | Works on                     | Effort                  |
-| ---------------- | ------------------- | ---------------------------- | ----------------------- |
-| `none` (default) | No                  | Both, while the app is open  | None                    |
-| `ntfy`           | No, you host it     | Both, alerts only, in ntfy   | Low                     |
-| `expo`           | Yes, Expo relays it | Both, including silent wakes | High, you build the app |
-| `webpush`        | Browser vendor      | Browsers only, not the app   | Medium                  |
+| Provider         | Third party?        | Works on                         | Effort                  |
+| ---------------- | ------------------- | -------------------------------- | ----------------------- |
+| `none` (default) | No                  | Both, while the app is open      | None                    |
+| `ntfy`           | No, you host it     | Both, alerts only, in ntfy       | Low                     |
+| `expo`           | Yes, Expo relays it | Both, including the silent pings | High, you build the app |
+| `webpush`        | Browser vendor      | Browsers only, not the app       | Medium                  |
 
-Only `expo` wakes the app itself, and a lot rests on that: Live and a refresh on
-a parked Android phone, and the wake that revives a phone gone quiet. `ntfy`
-carries the alerts, but without `expo` those asks wait for the phone's own next
-report, up to a quarter of an hour.
+Only `expo` wakes the app itself, and since 1.3.4 most things rest on that. The
+server pings each phone for its location by silent push, every five minutes by
+default, and Live and a refresh go the same way. `ntfy` carries the alerts, but
+without `expo` the server can't ask a phone where it is while Hearth is
+closed, and nobody can watch it on Live then. It reports from its own
+background check, about every quarter of an hour on Android and less often on
+an iPhone.
 
 Every push to a build goes out under the Expo project, Firebase project and
 Apple push key it was built with, whichever server sends it. That's why the

@@ -1039,7 +1039,7 @@
                   Open Live on anybody who shares precisely with you, driving or standing still, and
                   their phone sends a fix a second, with speed and street, for as long as you keep
                   the page open. Within seconds of the last person watching leaving, it goes back to
-                  its usual pace.
+                  one fix every few minutes.
                 </p>
                 <ul class="ticks">
                   <li>Battery, walking or driving, and how old each fix is</li>
@@ -1149,7 +1149,8 @@
               </h3>
               <p>
                 Everyone's position with battery level, whether they're walking or driving, and how
-                long ago it arrived. Live over a websocket while the app is open.
+                long ago it arrived. Checked every few minutes, and second by second while you watch
+                someone on Live.
               </p>
             </article>
 
@@ -1623,9 +1624,10 @@
               outright.
             </li>
             <li>
-              <b>The GPS sleeps when you do</b>
-              GPS updates run while you are moving and stop once you park, which is most of the
-              battery story on a phone.
+              <b>The GPS stays off</b>
+              Your server asks each phone where it is every few minutes. A phone lying still answers
+              without turning its location on, and one that moved with a Wi-Fi grade fix. The GPS is
+              for Live, a check-in, an SOS, and a drive while crash alerts are on.
             </li>
             <li>
               <b>Read the code</b>
