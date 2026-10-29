@@ -113,6 +113,13 @@
       "when": 1793445028410,
       "tag": "0015_ping_interval",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793446755239,
+      "tag": "0016_sos_live_from",
+      "breakpoints": true
     }
   ]
 }

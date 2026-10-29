@@ -20,6 +20,14 @@ Notable changes to Hearth. The format is loosely
   of pings has gone by, and every three hours after a day, so a phone that
   was only flat comes back. "Stopped reporting" still waits for the same
   silence as before, and for two pings to go unanswered besides the newest.
+- An open SOS keeps the phone that raised it on Live for half an hour from
+  when it was raised or last pressed again, not for as long as it stays open.
+
+### Fixed
+
+- A phone could sit at a fix a second for days, uploading every one. An SOS
+  that nobody resolved, which is what a false crash alarm leaves behind, held
+  the phone that raised it on Live for as long as it stayed open.
 
 ## [1.3.3] - 2026-10-24
 

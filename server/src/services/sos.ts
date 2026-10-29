@@ -30,6 +30,15 @@ export function sosReason(body: { note?: string | null; reason?: SosReason } | n
  * GPS running at full tilt well after the person said they were safe.
  */
 export const SOS_LIVE_SECONDS = 2 * 60
+/**
+ * How long an open alert keeps its phone on Live by itself, from when it was
+ * raised or last pressed again. Long enough for the family to find the
+ * person. An alert nobody resolved, which is what a false crash alarm left
+ * behind, held the phone at a fix a second for days. After this the phone
+ * answers the ping, and Live is a viewer's to ask for or the person's to
+ * press for again.
+ */
+export const SOS_LIVE_FOR_MS = 30 * 60 * 1000
 
 /**
  * Fresh alarms per person in ten minutes. A press on an alert that is already
@@ -114,6 +123,19 @@ function raiseOnce(
           inArray(sosAlerts.circleId, targets),
         ),
       )
+    // A press on an alert that is already open is the person asking again,
+    // and holds their phone on Live afresh.
+    if (open.length > 0) {
+      await tx
+        .update(sosAlerts)
+        .set({ liveFrom: sql`now()` })
+        .where(
+          inArray(
+            sosAlerts.id,
+            open.map((row) => row.id),
+          ),
+        )
+    }
     const openByCircle = new Map(open.map((row) => [row.circleId, row]))
     const missing = targets.filter((circleId) => !openByCircle.has(circleId))
 
@@ -197,9 +219,10 @@ export function assignRecipients(
 /**
  * Until when the phone should be on Live. That is the window a family
  * member's watch holds, or a short one while the person has an alert open in
- * a circle they still share precisely with, whichever ends later. Read, never
- * written, so an SOS never moves the window a watch is measured against. A
- * circle they have turned down or left would throw the live fixes away.
+ * a circle they still share precisely with, for half an hour from when they
+ * raised it or last pressed SOS again, whichever ends later. Read, never written, so an SOS never moves the
+ * window a watch is measured against. A circle they have turned down or left
+ * would throw the live fixes away.
  */
 export async function liveUntil(
   db: Database,
@@ -209,10 +232,13 @@ export async function liveUntil(
   const [row] = await db
     .select({
       watchedUntil: userPresence.watchedUntil,
-      sos: sql<boolean>`exists (
-        select 1 from ${sosAlerts}
+      // As milliseconds, because a computed timestamp comes back from the
+      // driver as text rather than a Date.
+      sosLiveFromMs: sql<number | null>`(
+        select (extract(epoch from max(${sosAlerts.liveFrom})) * 1000)::float8 from ${sosAlerts}
         where ${sosAlerts.userId} = ${userPresence.userId}
           and ${sosAlerts.resolvedAt} is null
+          and ${sosAlerts.liveFrom} > ${new Date(now.getTime() - SOS_LIVE_FOR_MS).toISOString()}::timestamptz
           and ${sharesPreciselySql(sosAlerts.circleId, sosAlerts.userId)}
       )`,
     })
@@ -221,7 +247,12 @@ export async function liveUntil(
     .limit(1)
   const watched =
     row?.watchedUntil && row.watchedUntil.getTime() > now.getTime() ? row.watchedUntil : null
-  const sos = row?.sos ? new Date(now.getTime() + SOS_LIVE_SECONDS * 1000) : null
+  const sos =
+    row?.sosLiveFromMs != null
+      ? new Date(
+          Math.min(now.getTime() + SOS_LIVE_SECONDS * 1000, row.sosLiveFromMs + SOS_LIVE_FOR_MS),
+        )
+      : null
   if (!watched) return sos
   if (!sos) return watched
   return watched.getTime() > sos.getTime() ? watched : sos
@@ -229,7 +260,7 @@ export async function liveUntil(
 
 /**
  * Puts the raiser's phone on Live now rather than at its next upload, which
- * on a phone lying still may be a quarter of an hour off. A phone with its
+ * may be a ping away. A phone with its
  * control channel open has the ask within a second. One without it is the
  * phone in the raiser's hand, and its next upload reply carries the window.
  */

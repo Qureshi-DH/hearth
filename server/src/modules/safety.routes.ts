@@ -150,7 +150,8 @@ export const safetyRoutes: FastifyPluginAsyncZod = async (app) => {
           "and stays there, since an SOS from someone whose location is paused would be " +
           "useless. While an alert is open the sender's phone is held on live updates, a fix a " +
           "second, by its control channel and its upload replies, until shortly after it is " +
-          "resolved. Pressing again while it is open raises nothing and answers 200 with what " +
+          "resolved or for half an hour, whichever comes first. Pressing again while it is open " +
+          "raises nothing, holds the phone on Live for another half hour, and answers 200 with what " +
           "is already open, so a client may retry freely, and 201 means something new was " +
           "raised. The reply is the alert in this circle, with `alerts` holding one per circle.",
         params: circleIdParam,

@@ -171,6 +171,47 @@ describe("an open SOS keeps the raiser on Live", () => {
     expect(after.watchedUntil).toBeNull()
   })
 
+  it("lets her phone go after the alert's first half hour, even left open", async () => {
+    const { leila, circleId } = await household()
+    const raised = await raiseSos(leila.headers, circleId)
+    expect(raised.statusCode).toBe(201)
+    const id = (raised.json() as { id: string }).id
+
+    // A minute short of the half hour, the window runs only to its end.
+    await getDb().execute(
+      sql`update sos_alerts set started_at = now() - interval '29 minutes',
+          live_from = now() - interval '29 minutes' where id = ${id}::uuid`,
+    )
+    const late = await upload(leila.headers)
+    expect(late.seconds).toBeGreaterThan(30)
+    expect(late.seconds).toBeLessThanOrEqual(60)
+
+    // A false crash alarm nobody resolved held a phone on Live for days.
+    await getDb().execute(
+      sql`update sos_alerts set started_at = now() - interval '31 minutes',
+          live_from = now() - interval '31 minutes' where id = ${id}::uuid`,
+    )
+    const past = await upload(leila.headers)
+    expect(past.watchedUntil).toBeNull()
+  })
+
+  it("puts her back on Live when she presses again on an alert still open", async () => {
+    const { leila, circleId } = await household()
+    const raised = await raiseSos(leila.headers, circleId)
+    const id = (raised.json() as { id: string }).id
+    await getDb().execute(
+      sql`update sos_alerts set started_at = now() - interval '40 minutes',
+          live_from = now() - interval '40 minutes' where id = ${id}::uuid`,
+    )
+    expect((await upload(leila.headers)).watchedUntil).toBeNull()
+
+    const again = await raiseSos(leila.headers, circleId)
+    expect(again.statusCode).toBe(200)
+    const during = await upload(leila.headers)
+    expect(during.seconds).toBeGreaterThan(60)
+    expect(during.seconds).toBeLessThanOrEqual(120)
+  })
+
   it("asks her phone to go Live at once over its control channel", async () => {
     const { leila, circleId } = await household()
     await upload(leila.headers)

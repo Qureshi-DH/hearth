@@ -505,6 +505,11 @@ export const sosAlerts = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     note: text("note"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * When the alert last held its phone on Live: when it was raised, and
+     * again whenever the person presses SOS while it is still open.
+     */
+    liveFrom: timestamp("live_from", { withTimezone: true }).notNull().defaultNow(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     resolvedBy: uuid("resolved_by").references(() => users.id, { onDelete: "set null" }),
   },
