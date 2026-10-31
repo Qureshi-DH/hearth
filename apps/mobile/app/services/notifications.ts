@@ -40,15 +40,19 @@ Notifications.setNotificationHandler({
 /** Android channels map to the server's notification classes. */
 export async function setupChannels(): Promise<void> {
   if (Platform.OS !== "android") return
+  // There at runtime, but the import plugin cannot see an enum that
+  // expo-notifications declares with `export declare enum`.
+  // eslint-disable-next-line import/namespace
+  const { AndroidImportance } = Notifications
   await Notifications.setNotificationChannelAsync("default", {
     name: "Arrivals and updates",
-    importance: Notifications.AndroidImportance.DEFAULT,
+    importance: AndroidImportance.DEFAULT,
     lightColor: "#FF7A45",
   })
   await Notifications.setNotificationChannelAsync("alerts", {
     name: "Alerts",
     description: "Low battery, phone offline, location requests.",
-    importance: Notifications.AndroidImportance.HIGH,
+    importance: AndroidImportance.HIGH,
     vibrationPattern: [0, 200, 120, 200],
     lightColor: "#FFC470",
   })
@@ -59,7 +63,7 @@ export async function setupChannels(): Promise<void> {
     // The checklist asks for the access and calls this again once granted.
     description:
       "SOS and possible-crash alerts from your circle. Gets through Do Not Disturb once Hearth has Do Not Disturb access.",
-    importance: Notifications.AndroidImportance.MAX,
+    importance: AndroidImportance.MAX,
     bypassDnd: true,
     vibrationPattern: [0, 400, 200, 400, 200, 400],
     lightColor: "#FF5C7A",

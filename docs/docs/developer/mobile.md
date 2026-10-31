@@ -3,7 +3,7 @@ sidebar_position: 3
 title: Mobile app
 ---
 
-`apps/mobile` is an Expo SDK 55 / React Native 0.83 app bootstrapped with
+`apps/mobile` is an Expo SDK 58 / React Native 0.88 app bootstrapped with
 [Ignite](https://github.com/infinitered/ignite) 11 and then reshaped for Hearth.
 
 ## Running it
@@ -65,6 +65,11 @@ falls back to debug signing when they are missing, which is fine for trying
 the app and must not be given to anyone. `plugins/withAndroidReleaseManifest.ts`
 writes a release-only manifest that removes `SYSTEM_ALERT_WINDOW`, which React
 Native asks for so the dev menu can draw over other apps.
+
+R8 stays off for Android release builds (`enableMinifyInReleaseBuilds: false`),
+as it was before SDK 58 turned it on by default. With it on, WorkManager could
+no longer construct its database by reflection and the app closed at launch.
+Turning it on means checking every library that reflects, ours included.
 
 Push only fully works in a build you make yourself, with your own Expo project,
 Firebase project and Apple developer account. The store builds are waiting on
@@ -294,7 +299,7 @@ with a geofence round the parking spot, and the indicator was on all day.
    soonest and never while the app is open. It flushes the queue, re-reads the
    permission and the Location switch, and takes a fix only when the last one
    is older than two intervals, so a phone the pings are reaching does nothing
-   there. `patches/expo-background-task@55.0.22.patch` makes it an app refresh
+   there. `patches/expo-background-task@58.0.12.patch` makes it an app refresh
    task on iOS (`BGAppRefreshTaskRequest`) rather than a processing task,
    which iOS tends to hold for a phone that is idle and charging.
 6. Every upload reply carries the policy, and the tracker keeps its interval
@@ -555,9 +560,10 @@ than on a zero delay timer. React Native's networking events need no timer, but
 the polyfill resolved each answer on one, and One UI holds an app's timers back
 in the background, so a request the server had already answered never finished.
 
-`patches/expo-location@55.1.14.patch` remains for iOS (the one-shot manager's
-`allowsBackgroundLocationUpdates`) and for a service state on Android that the
-tracker no longer reads. Expo ships its modules to Android as prebuilt AARs,
+`patches/expo-location@58.0.20.patch` remains for iOS (the one-shot manager's
+`allowsBackgroundLocationUpdates`). Its Android half went with SDK 58, since
+Android's pings and Live run in Hearth's own service and never reach
+expo-location's. Expo ships its modules to Android as prebuilt AARs,
 so `apps/mobile/package.json` lists expo-location and expo-notifications under
 `expo.autolinking.android.buildFromSource`. Every patch in `patches/` is
 applied by `scripts/apply-patches.mjs` from the root `postinstall`, not by

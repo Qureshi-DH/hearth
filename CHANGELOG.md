@@ -52,6 +52,10 @@ when it is opened.
   the ping needs no alert permission.
 - An open SOS keeps the phone that raised it on Live for half an hour from
   when it was raised or last pressed again, not for as long as it stays open.
+- The app moves to Expo SDK 58 and React Native 0.88, and needs iOS 16.4 or
+  later, up from 16.0. An app built with Xcode 27 has to use the scene life
+  cycle or iOS 27 closes it as it opens, which is what an Xcode 27 build of
+  1.3.3 did.
 
 ### Removed
 

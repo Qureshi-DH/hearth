@@ -193,7 +193,7 @@ export const LiveScreen: FC<AppStackScreenProps<"Live">> = ({ navigation, route 
 
   useFocusEffect(
     useCallback(() => {
-      let state: AppStateStatus = AppState.currentState
+      let state = AppState.currentState as AppStateStatus
       const stopWatching = realtime.watchClosely()
       void ask(true, true)
       // Inactive is the screen still showing under Control Centre or a call,

@@ -328,7 +328,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
       // "inactive" for a control centre pull or a call banner, which is not
       // worth tearing the interval down and rebuilding it for.
       const sync = (state: AppStateStatus) => setMinuteTickerVisible(state !== "background")
-      sync(AppState.currentState)
+      sync(AppState.currentState as AppStateStatus)
       const subscription = AppState.addEventListener("change", sync)
       return () => {
         subscription.remove()

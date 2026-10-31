@@ -10,7 +10,11 @@ jest.doMock("react-native", () => {
     {
       Image: {
         ...ReactNative.Image,
-        resolveAssetSource: jest.fn((_source) => mockFile),
+        // expo-asset installs its transformer through this, as on the real one.
+        resolveAssetSource: Object.assign(
+          jest.fn((_source) => mockFile),
+          { setCustomSourceTransformer: jest.fn() },
+        ),
         getSize: jest.fn(
           (
             uri: string,
@@ -22,6 +26,23 @@ jest.doMock("react-native", () => {
     },
     ReactNative,
   )
+})
+
+// jest-expo stubs the asset registry at the path React Native kept it at
+// before 0.88, and 0.88 moved it, so every require of an image or a font, all
+// of which are module 1 in a test, went unregistered and an icon threw while
+// loading its font. This answers with the same stand-in jest-expo gives.
+ReactNative.AssetRegistry.getAssetByID = () => ({
+  __packager_asset: true,
+  fileSystemLocation: "/full/path/to/directory",
+  httpServerLocation: "/assets/full/path/to/directory",
+  scales: [1],
+  fileHashes: ["md5"],
+  name: "name",
+  type: "type",
+  hash: "md5",
+  width: 1,
+  height: 1,
 })
 
 jest.mock("i18next", () => ({

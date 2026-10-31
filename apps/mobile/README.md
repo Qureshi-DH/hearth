@@ -1,6 +1,6 @@
 # Hearth mobile
 
-The iOS / Android client for [Hearth](../../README.md), built with Expo SDK 55
+The iOS / Android client for [Hearth](../../README.md), built with Expo SDK 58
 on the Ignite boilerplate.
 
 ```bash

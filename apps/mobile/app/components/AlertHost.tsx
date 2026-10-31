@@ -127,7 +127,7 @@ export function AlertHost() {
 }
 
 const $backdrop: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
-  ...StyleSheet.absoluteFillObject,
+  ...StyleSheet.absoluteFill,
   backgroundColor: colors.overlay,
   alignItems: "center",
   justifyContent: "center",

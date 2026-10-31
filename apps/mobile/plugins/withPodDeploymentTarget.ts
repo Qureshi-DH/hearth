@@ -5,7 +5,7 @@ import { mergeContents } from "@expo/config-plugins/build/utils/generateCode"
  * The app's own deployment target, the one expo-build-properties sets in
  * app.json. Pods that still declare an older one are raised to it.
  */
-const DEPLOYMENT_TARGET = "16.0"
+const DEPLOYMENT_TARGET = "16.4"
 
 /**
  * Xcode 27 refuses to build a target older than iOS 15 rather than warning

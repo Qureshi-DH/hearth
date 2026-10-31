@@ -45,7 +45,7 @@ export const TripsScreen: FC<AppStackScreenProps<"Trips">> = ({ navigation, rout
           />
         )}
         ListEmptyComponent={
-          isLoading ? null : (
+          isLoading ? undefined : (
             <EmptyState
               headingTx="member:noTrips"
               content=""

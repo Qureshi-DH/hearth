@@ -72,7 +72,7 @@ export const PlacesScreen: FC<MainTabScreenProps<"Places">> = ({ navigation }) =
           />
         )}
         ListEmptyComponent={
-          isLoading || !circle ? null : (
+          isLoading || !circle ? undefined : (
             <EmptyState
               headingTx="places:empty"
               contentTx="places:emptyBody"

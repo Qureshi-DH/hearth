@@ -64,6 +64,18 @@ export default tseslint.config(
     },
   },
   {
+    // eslint-config-expo 58 brought the React Compiler's rules. The app was
+    // written before them and the compiler is not on, so what they flag is a
+    // change of its own, not part of the SDK upgrade.
+    rules: {
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/purity": "off",
+      "react-hooks/refs": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+      "react-hooks/immutability": "off",
+    },
+  },
+  {
     files: ["**/*.test.ts", "**/*.test.tsx", "test/**"],
     rules: { "@typescript-eslint/no-explicit-any": "off" },
   },

@@ -8,7 +8,7 @@ Hearth is a monorepo with three packages:
 ```text
 hearth/
 ├── server/            Fastify 5 + Drizzle + Postgres, the self-hosted API
-├── apps/mobile/       Expo SDK 55 / React Native, the iOS & Android app (Ignite-based)
+├── apps/mobile/       Expo SDK 58 / React Native, the iOS & Android app (Ignite-based)
 └── packages/shared/   Dependency-free TypeScript: API contract types, constants,
                     geo and speed math, and the phone's crash heuristic
 ```

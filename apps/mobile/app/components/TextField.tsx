@@ -14,6 +14,7 @@ import {
   StyleProp,
   // eslint-disable-next-line no-restricted-imports
   TextInput,
+  TextInputInstance,
   TextInputProps,
   TextStyle,
   TouchableOpacity,
@@ -71,7 +72,10 @@ export interface TextFieldProps extends Omit<TextInputProps, "ref"> {
 }
 
 /** @see https://docs.infinite.red/ignite-cli/boilerplate/app/components/TextField/ */
-export const TextField = forwardRef(function TextField(props: TextFieldProps, ref: Ref<TextInput>) {
+export const TextField = forwardRef(function TextField(
+  props: TextFieldProps,
+  ref: Ref<TextInputInstance>,
+) {
   const {
     labelTx,
     label,
@@ -94,7 +98,7 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
     secureTextEntry,
     ...TextInputProps
   } = props
-  const input = useRef<TextInput>(null)
+  const input = useRef<TextInputInstance>(null)
   const [revealed, setRevealed] = useState(false)
   // A typo on a phone keyboard is easy to make and impossible to see in a
   // hidden field, so every password field gets the toggle.
@@ -146,7 +150,7 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
     input.current?.focus()
   }
 
-  useImperativeHandle(ref, () => input.current as TextInput)
+  useImperativeHandle(ref, () => input.current as TextInputInstance)
 
   return (
     <TouchableOpacity

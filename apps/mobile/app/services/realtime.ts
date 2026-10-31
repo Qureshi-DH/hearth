@@ -367,7 +367,7 @@ function placeByTime(items: FeedEvent[], event: FeedEvent, morePages: boolean): 
 export function useRealtimeConnection() {
   const status = useAuthStore((state) => state.status)
   const userId = useAuthStore((state) => state.user?.id)
-  const appState = useRef<AppStateStatus>(AppState.currentState)
+  const appState = useRef(AppState.currentState as AppStateStatus)
 
   useEffect(() => {
     if (status !== "signed_in") {

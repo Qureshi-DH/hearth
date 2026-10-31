@@ -1,0 +1,29 @@
+diff --git a/ios/Providers/BaseLocationProvider.swift b/ios/Providers/BaseLocationProvider.swift
+index ae9135ae4ff6fa17b2468f833fbb7771d54305b3..4d79615c47f951283ccadc29ca94bc4ca097d3ef 100644
+--- a/ios/Providers/BaseLocationProvider.swift
++++ b/ios/Providers/BaseLocationProvider.swift
+@@ -9,9 +9,23 @@ internal class BaseLocationProvider: NSObject, CLLocationManagerDelegate {
+   @MainActor
+   init(options: LocationOptions) {
+     super.init()
+-    manager.allowsBackgroundLocationUpdates = false
++    // Hearth: a manager without this is one Core Location need not keep the
++    // app running to serve, so a one-shot fix asked for from the background
++    // could hang or never come, and every wake, park and watch answer is
++    // such a fix. Setting it is only legal with the location background
++    // mode declared and only useful with Always granted, so it is set
++    // exactly then and the stock behaviour stands otherwise.
++    manager.allowsBackgroundLocationUpdates = BaseLocationProvider.servesInBackground(manager)
+     manager.distanceFilter = options.distanceInterval
+     manager.desiredAccuracy = options.accuracy.toCLLocationAccuracy()
+     manager.delegate = self
+   }
++
++  private static func servesInBackground(_ manager: CLLocationManager) -> Bool {
++    guard let modes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String],
++      modes.contains("location") else {
++      return false
++    }
++    return manager.authorizationStatus == .authorizedAlways
++  }
+ }

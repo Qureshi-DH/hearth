@@ -26,7 +26,7 @@ The one recurring bill most people end up with is a domain name, and
 
 ## Does it work on iPhone and Android?
 
-Both. The app is Expo SDK 55 and React Native 0.83, and the same codebase builds
+Both. The app is Expo SDK 58 and React Native 0.88, and the same codebase builds
 for each.
 
 The store builds are built and tested and waiting on App Store and Play Store

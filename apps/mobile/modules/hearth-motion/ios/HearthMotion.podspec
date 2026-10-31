@@ -5,7 +5,7 @@ Pod::Spec.new do |s|
   s.description    = 'Reports what the phone is doing so Hearth can keep the GPS asleep.'
   s.author         = 'Hearth'
   s.homepage       = 'https://github.com/Qureshi-DH/hearth'
-  s.platforms      = { :ios => '16.0' }
+  s.platforms      = { :ios => '16.4' }
   s.source         = { git: 'https://github.com/Qureshi-DH/hearth' }
   s.static_framework = true
   s.license        = { :type => 'AGPL-3.0' }

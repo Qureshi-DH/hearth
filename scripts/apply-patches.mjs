@@ -32,7 +32,7 @@ try {
 }
 
 for (const file of readdirSync(patchesDir).filter((name) => name.endsWith(".patch"))) {
-  // "expo-location@55.1.14.patch", or "@scope+name@1.2.3.patch" as pnpm writes it.
+  // "expo-location@58.0.20.patch", or "@scope+name@1.2.3.patch" as pnpm writes it.
   const spec = file.slice(0, -".patch".length)
   const at = spec.lastIndexOf("@")
   const name = spec.slice(0, at).replace(/\+/g, "/")

@@ -13,7 +13,7 @@
   <a href="CHANGELOG.md"><img alt="Version 1.3.3" src="https://img.shields.io/badge/version-1.3.3-F5643A"></a>
   <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
   <a href="https://github.com/Qureshi-DH/hearth/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Qureshi-DH/hearth/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <img alt="Expo SDK 55" src="https://img.shields.io/badge/Expo-SDK%2055-000020?logo=expo">
+  <img alt="Expo SDK 58" src="https://img.shields.io/badge/Expo-SDK%2058-000020?logo=expo">
   <img alt="Node 22.12+" src="https://img.shields.io/badge/node-%E2%89%A522.12-5FA04E?logo=node.js&logoColor=white">
   <img alt="Postgres 14+" src="https://img.shields.io/badge/postgres-%E2%89%A514-336791?logo=postgresql&logoColor=white">
 </p>
@@ -193,7 +193,7 @@ TEST_DATABASE_URL=postgres://localhost:5432/hearth_test pnpm test
 
 ```text
 server/            Fastify 5, Drizzle, Postgres. The whole API.
-apps/mobile/       Expo SDK 55, React Native, based on Ignite.
+apps/mobile/       Expo SDK 58, React Native, based on Ignite.
 packages/shared/   Types, constants, geo maths and the crash heuristic.
                    No runtime dependencies.
 deploy/            Reverse-proxy examples.

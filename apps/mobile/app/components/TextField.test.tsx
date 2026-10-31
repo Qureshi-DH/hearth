@@ -1,6 +1,5 @@
 import { createRef, forwardRef, useImperativeHandle } from "react"
-// eslint-disable-next-line no-restricted-imports
-import { Platform, type TextInput, type TextInputProps } from "react-native"
+import { Platform, type TextInputInstance, type TextInputProps } from "react-native"
 import { fireEvent, render } from "@testing-library/react-native"
 
 import { TextField } from "./TextField"
@@ -14,9 +13,9 @@ const seen: TextInputProps[] = []
  * parent something with focus() on it, the way the real one hands back the
  * underlying native input.
  */
-const SpyInput = forwardRef<TextInput, TextInputProps>(function SpyInput(props, ref) {
+const SpyInput = forwardRef<TextInputInstance, TextInputProps>(function SpyInput(props, ref) {
   seen.push(props)
-  useImperativeHandle(ref, () => ({ focus: mockFocus }) as unknown as TextInput)
+  useImperativeHandle(ref, () => ({ focus: mockFocus }) as unknown as TextInputInstance)
   return null
 })
 
@@ -41,7 +40,7 @@ describe("TextField InputComponent", () => {
   })
 
   it("forwards the ref to the given input", () => {
-    const ref = createRef<TextInput>()
+    const ref = createRef<TextInputInstance>()
     const { getByText } = render(
       <ThemeProvider>
         <TextField
