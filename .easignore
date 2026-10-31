@@ -30,6 +30,11 @@ coverage/
 data/
 postgres-data/
 *.log
+# Database exports hold a family's real location history. This file replaces
+# .gitignore for EAS, so anything kept out of git has to be named here too.
+*.dump
+research_notes/
+reports/
 
 # OS / editors
 .DS_Store
