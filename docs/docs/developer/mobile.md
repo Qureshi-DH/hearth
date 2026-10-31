@@ -66,6 +66,15 @@ the app and must not be given to anyone. `plugins/withAndroidReleaseManifest.ts`
 writes a release-only manifest that removes `SYSTEM_ALERT_WINDOW`, which React
 Native asks for so the dev menu can draw over other apps.
 
+iOS 27 refuses to launch an app built with its SDK unless the app uses the
+scene life cycle, and SDK 58's template does, with React Native started when
+the scene connects. iOS wakes a closed Hearth in the background with no scene
+for a ping, background refresh or a location, so
+`plugins/withBackgroundReactHost.ts` starts the JavaScript host on its own when
+a launch still has no scene a second later. The scene draws on that host when
+it comes. A normal launch is left to the scene, whose launch options carry the
+link that opened the app.
+
 R8 stays off for Android release builds (`enableMinifyInReleaseBuilds: false`),
 as it was before SDK 58 turned it on by default. With it on, WorkManager could
 no longer construct its database by reflection and the app closed at launch.

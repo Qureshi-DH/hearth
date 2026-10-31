@@ -55,7 +55,9 @@ when it is opened.
 - The app moves to Expo SDK 58 and React Native 0.88, and needs iOS 16.4 or
   later, up from 16.0. An app built with Xcode 27 has to use the scene life
   cycle or iOS 27 closes it as it opens, which is what an Xcode 27 build of
-  1.3.3 did.
+  1.3.3 did. With scenes React Native starts when the screen appears, so when
+  iOS wakes a closed Hearth in the background for a ping it now starts the
+  JavaScript itself, as every launch did before.
 
 ### Removed
 

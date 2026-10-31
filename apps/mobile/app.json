@@ -139,7 +139,8 @@
     "@maplibre/maplibre-react-native",
     "./plugins/withAndroidReleaseSigning",
     "./plugins/withAndroidReleaseManifest",
-    "./plugins/withPodDeploymentTarget"
+    "./plugins/withPodDeploymentTarget",
+    "./plugins/withBackgroundReactHost"
   ],
   "experiments": {
     "tsconfigPaths": true
