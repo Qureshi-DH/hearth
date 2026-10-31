@@ -6,6 +6,8 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-10-31
+
 Phones no longer track all day. The server pings each phone on its
 circle's interval, five minutes unless a circle says otherwise, and a phone
 the motion sensor has had lying still since its last fix answers with that
@@ -1767,7 +1769,8 @@ security audit and there are no store builds yet.
   trusting the token
 - Push payloads never carry coordinates
 
-[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/Qureshi-DH/hearth/compare/v1.3.4...HEAD
+[1.3.4]: https://github.com/Qureshi-DH/hearth/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/Qureshi-DH/hearth/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/Qureshi-DH/hearth/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Qureshi-DH/hearth/compare/v1.3.0...v1.3.1
