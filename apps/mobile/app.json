@@ -2,7 +2,7 @@
   "name": "Hearth",
   "slug": "hearth",
   "scheme": "hearth",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "orientation": "portrait",
   "userInterfaceStyle": "automatic",
   "icon": "./assets/images/app-icon-all.png",
