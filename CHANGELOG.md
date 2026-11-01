@@ -6,6 +6,18 @@ Notable changes to Hearth. The format is loosely
 
 ## [Unreleased]
 
+### Fixed
+
+- On iOS a map could open with nobody on it while the sheet listed
+  everyone, until the app was restarted. Markers added before the map's
+  style had loaded were dropped, and with the members already cached they
+  usually were. Every map now waits for its style, and shows the markers
+  anyway if the style fails to load.
+- Tapping a face in a group on iOS selected the middle face of the group
+  rather than the one tapped, so the selection hopped around the group.
+- The selected member's card could show one person's name with the last
+  person's photo while the new photo loaded.
+
 ## [1.3.4] - 2026-10-31
 
 Phones no longer track all day. The server pings each phone on its

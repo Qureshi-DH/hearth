@@ -1,4 +1,4 @@
-import { AppState, BackHandler, StyleSheet } from "react-native"
+import { AppState, BackHandler, Platform, StyleSheet } from "react-native"
 import type { CircleMember, MemberPresence } from "@hearth/shared"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 import { act, fireEvent, render } from "@testing-library/react-native"
@@ -288,6 +288,17 @@ jest.mock("@react-navigation/native", () => {
 })
 
 const navigation = { navigate: jest.fn(), goBack: jest.fn() }
+
+// A marker tap reaches the screen differently on each platform, so the tests
+// that press one say which they are on rather than lean on the preset.
+let replacedOs: { restore: () => void } | null = null
+function onPlatform(os: "ios" | "android") {
+  replacedOs = jest.replaceProperty(Platform, "OS", os)
+}
+afterEach(() => {
+  replacedOs?.restore()
+  replacedOs = null
+})
 
 function mapTree(statusBar = 0) {
   return (
@@ -620,6 +631,7 @@ describe("tapping a member", () => {
   // Some Android phones deliver the tap through the map's own hit test and
   // never to the Pressable inside the marker.
   it("selects from the native marker press alone", async () => {
+    onPlatform("android")
     const { getAllByTestId, queryAllByTestId } = await renderMap()
     fireEvent.press(getAllByTestId("native-marker")[0]!)
     expect(mockSnapToIndex).toHaveBeenCalledWith(1)
@@ -627,7 +639,19 @@ describe("tapping a member", () => {
     expect(navigation.navigate).not.toHaveBeenCalled()
   })
 
+  // On iOS the face's own Pressable has already taken the tap, and the
+  // marker's press carries the marker's own position as its point, never
+  // where the finger landed, so reading a face from it picks the middle one.
+  it("leaves the tap to the face on iOS", async () => {
+    onPlatform("ios")
+    const { getAllByTestId, queryAllByTestId } = await renderMap()
+    fireEvent.press(getAllByTestId("native-marker")[0]!)
+    expect(queryAllByTestId("member-marker-halo")).toHaveLength(0)
+    expect(mockSnapToIndex).not.toHaveBeenCalled()
+  })
+
   it("counts one tap once when both the marker and the map report it", async () => {
+    onPlatform("android")
     const { getByTestId, getAllByTestId } = await renderMap()
     fireEvent.press(getByTestId("member-marker-ana"))
     fireEvent.press(getAllByTestId("native-marker")[0]!)
@@ -790,6 +814,7 @@ describe("people at the same place", () => {
   })
 
   it("works out which face a native tap landed on from where it landed", async () => {
+    onPlatform("android")
     mockPresence = [
       presenceFor("ana", 51),
       presenceFor("ben", 51),

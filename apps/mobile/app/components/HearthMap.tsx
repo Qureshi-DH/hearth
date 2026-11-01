@@ -1,4 +1,4 @@
-import { forwardRef, useMemo, type ReactNode, type Ref } from "react"
+import { forwardRef, useMemo, useState, type ReactNode, type Ref } from "react"
 import { StyleSheet, View, type StyleProp, type ViewStyle } from "react-native"
 import type { Place } from "@hearth/shared"
 import {
@@ -33,17 +33,35 @@ export interface HearthMapProps extends Omit<MapProps, "mapStyle" | "style"> {
  * and the ornaments stay consistent.
  */
 export const HearthMap = forwardRef<MapRef, HearthMapProps>(function HearthMap(
-  { style, cameraRef, initialCenter, initialZoom = 13, styleUrl, children, ...rest },
+  {
+    style,
+    cameraRef,
+    initialCenter,
+    initialZoom = 13,
+    styleUrl,
+    children,
+    onWillStartLoadingMap,
+    onDidFinishLoadingStyle,
+    onDidFailLoadingMap,
+    ...rest
+  },
   ref,
 ) {
   const { theme } = useAppTheme()
   const pickedStyleUrl = useMapStyleUrl()
+  const mapStyle = styleUrl ?? pickedStyleUrl
+  // iOS drops marker views added before the style has loaded, and a screen
+  // with its data cached renders its markers first, so the map came up with
+  // nobody on it. The children go in once this style is in and come out
+  // while another loads. A style that fails to load lets them in anyway, or
+  // a phone offline with no cached style would never show anyone.
+  const [loadedStyle, setLoadedStyle] = useState<string | null>(null)
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.surfaceElevated }, style]}>
       <Map
         ref={ref}
-        mapStyle={styleUrl ?? pickedStyleUrl}
+        mapStyle={mapStyle}
         style={StyleSheet.absoluteFill}
         attribution
         attributionPosition={{ bottom: 8, left: 8 }}
@@ -52,6 +70,18 @@ export const HearthMap = forwardRef<MapRef, HearthMapProps>(function HearthMap(
         touchPitch={false}
         androidView="texture"
         {...rest}
+        onWillStartLoadingMap={(event) => {
+          setLoadedStyle(null)
+          onWillStartLoadingMap?.(event)
+        }}
+        onDidFinishLoadingStyle={(event) => {
+          setLoadedStyle(mapStyle)
+          onDidFinishLoadingStyle?.(event)
+        }}
+        onDidFailLoadingMap={(event) => {
+          setLoadedStyle(mapStyle)
+          onDidFailLoadingMap?.(event)
+        }}
       >
         <Camera
           ref={cameraRef}
@@ -59,7 +89,7 @@ export const HearthMap = forwardRef<MapRef, HearthMapProps>(function HearthMap(
             initialCenter ? { center: initialCenter, zoom: initialZoom } : { zoom: initialZoom }
           }
         />
-        {children}
+        {loadedStyle === mapStyle ? children : null}
       </Map>
     </View>
   )

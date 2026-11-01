@@ -1,5 +1,6 @@
 import type { ServerInfo } from "@hearth/shared"
-import { render } from "@testing-library/react-native"
+import { View } from "react-native"
+import { act, render } from "@testing-library/react-native"
 
 import { HearthMap, TrailGapLayer, TrailLayer } from "./HearthMap"
 import { useSettingsStore } from "../stores/settings"
@@ -7,15 +8,18 @@ import { ThemeProvider } from "../theme/context"
 
 const mockSources: Array<{ id: string; data: any }> = []
 const mockMapStyles: string[] = []
+/** What HearthMap last handed the native map, load handlers included. */
+let mockMapProps: Record<string, any> = {}
 let mockServerInfo: Partial<ServerInfo> | null = null
 
 jest.mock("@maplibre/maplibre-react-native", () => {
   const react = require("react")
   const rn = require("react-native")
   return {
-    Map: ({ children, mapStyle }: { children?: unknown; mapStyle: string }) => {
-      mockMapStyles.push(mapStyle)
-      return react.createElement(rn.View, null, children)
+    Map: (props: { children?: unknown; mapStyle: string }) => {
+      mockMapStyles.push(props.mapStyle)
+      mockMapProps = props
+      return react.createElement(rn.View, null, props.children)
     },
     Camera: () => null,
     Layer: () => null,
@@ -80,6 +84,72 @@ describe("HearthMap", () => {
     )
 
     expect(mockMapStyles.at(-1)).toBe("https://tiles.example/dark")
+  })
+
+  describe("loading", () => {
+    const withMarker = (styleUrl?: string) => (
+      <ThemeProvider initialContext="light">
+        <HearthMap styleUrl={styleUrl}>
+          <View testID="marker" />
+        </HearthMap>
+      </ThemeProvider>
+    )
+    const load = (event: string) => act(() => mockMapProps[event]({ nativeEvent: null }))
+
+    // iOS drops marker views added before the style has loaded, and a screen
+    // with its data cached renders its markers first.
+    it("holds the markers back until the style has loaded", () => {
+      const { queryByTestId } = render(withMarker())
+      expect(queryByTestId("marker")).toBeNull()
+
+      load("onDidFinishLoadingStyle")
+      expect(queryByTestId("marker")).not.toBeNull()
+    })
+
+    it("takes them out while the style loads again, as on a theme change", () => {
+      const { queryByTestId } = render(withMarker())
+      load("onDidFinishLoadingStyle")
+
+      load("onWillStartLoadingMap")
+      expect(queryByTestId("marker")).toBeNull()
+      load("onDidFinishLoadingStyle")
+      expect(queryByTestId("marker")).not.toBeNull()
+    })
+
+    it("takes them out as soon as it is handed another style", () => {
+      const { queryByTestId, rerender } = render(withMarker())
+      load("onDidFinishLoadingStyle")
+
+      rerender(withMarker("https://tiles.example/dark"))
+      expect(queryByTestId("marker")).toBeNull()
+      load("onDidFinishLoadingStyle")
+      expect(queryByTestId("marker")).not.toBeNull()
+    })
+
+    // Offline with no cached style, or a bad style URL, the map would
+    // otherwise never show anyone.
+    it("lets them in when the style fails to load", () => {
+      const { queryByTestId } = render(withMarker())
+      load("onDidFailLoadingMap")
+      expect(queryByTestId("marker")).not.toBeNull()
+    })
+
+    it("still hands each load event to the screen", () => {
+      const handlers = {
+        onWillStartLoadingMap: jest.fn(),
+        onDidFinishLoadingStyle: jest.fn(),
+        onDidFailLoadingMap: jest.fn(),
+      }
+      render(
+        <ThemeProvider initialContext="light">
+          <HearthMap {...handlers} />
+        </ThemeProvider>,
+      )
+      load("onWillStartLoadingMap")
+      load("onDidFinishLoadingStyle")
+      load("onDidFailLoadingMap")
+      Object.values(handlers).forEach((handler) => expect(handler).toHaveBeenCalledTimes(1))
+    })
   })
 })
 

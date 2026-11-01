@@ -11,6 +11,7 @@ import {
 import {
   AppState,
   BackHandler,
+  Platform,
   Pressable,
   View,
   type AppStateStatus,
@@ -415,6 +416,12 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   // of faces it works out which one from where the touch landed.
   const pressMarker = useCallback(
     async (group: MarkerGroup, point?: [number, number]) => {
+      // On iOS the face's own Pressable has already taken the tap. The
+      // marker's press arrives as well, and its point is not where the
+      // finger landed: MLRNPointAnnotation's makeEventPayload converts the
+      // annotation's own coordinate to a screen point. Read here, the offset
+      // was always 0 and picked the middle face of a stack.
+      if (Platform.OS === "ios") return
       let userId = group.ids[0]!
       if (group.ids.length > 1 && point) {
         try {

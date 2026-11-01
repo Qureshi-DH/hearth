@@ -61,6 +61,9 @@ export function Avatar({ user, size = 44, ring = "none", style }: AvatarProps) {
       {avatarUri ? (
         <Image
           source={{ uri: avatarUri }}
+          // Without it a reused view keeps the last person's photo up while
+          // the next one loads, so a card can show one name with another face.
+          recyclingKey={avatarUri}
           style={{ width: inner, height: inner, borderRadius: inner / 2 }}
           contentFit="cover"
           transition={150}
