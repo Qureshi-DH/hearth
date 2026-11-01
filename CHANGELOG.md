@@ -73,6 +73,14 @@ when it is opened.
   native-stack package on its own to a release that needs a newer navigation
   core. The navigation packages are back on the versions 1.3.2 ran with, and
   are only updated together from now on.
+- On iOS the map could open with nobody on it while the sheet listed
+  everyone, until the app was restarted. Markers added before the map's
+  style had loaded were dropped, and with the members already cached they
+  usually were.
+- Tapping a face in a group on iOS could select whoever stood next to it,
+  so the selection hopped around the group.
+- The selected member's card could show one person's name with the last
+  person's photo while the new photo loaded.
 
 ## [1.3.3] - 2026-10-24
 

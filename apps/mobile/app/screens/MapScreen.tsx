@@ -11,6 +11,7 @@ import {
 import {
   AppState,
   BackHandler,
+  Platform,
   Pressable,
   View,
   type AppStateStatus,
@@ -415,6 +416,11 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
   // of faces it works out which one from where the touch landed.
   const pressMarker = useCallback(
     async (group: MarkerGroup, point?: [number, number]) => {
+      // On iOS the face's own Pressable takes the touch and the marker's
+      // press arrives as well. Its point does not reliably land on the same
+      // face, so the second delivery selected a neighbour and the selection
+      // hopped between the faces in a stack.
+      if (Platform.OS === "ios") return
       let userId = group.ids[0]!
       if (group.ids.length > 1 && point) {
         try {
@@ -530,7 +536,10 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
           clearSelection()
         }}
       >
-        {groups.map((group) => {
+        {/* iOS drops marker views added before the style has loaded, and on a
+            warm cache the members arrive first, so nobody showed until a
+            restart. */}
+        {(mapReady ? groups : []).map((group) => {
           const faces = group.ids.flatMap((userId): MarkerFace[] => {
             const member = members?.find((candidate) => candidate.userId === userId)
             const entry = presenceByUser.get(userId)
@@ -810,6 +819,7 @@ export const MapScreen: FC<MainTabScreenProps<"Map">> = ({ navigation }) => {
             }}
           >
             <MemberRow
+              key={selectedMember.userId}
               member={selectedMember}
               presence={presenceByUser.get(selectedMember.userId)}
               isSelf={selectedMember.userId === me?.id}

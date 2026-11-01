@@ -1,4 +1,4 @@
-import { AppState, BackHandler, StyleSheet } from "react-native"
+import { AppState, BackHandler, Platform, StyleSheet } from "react-native"
 import type { CircleMember, MemberPresence } from "@hearth/shared"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 import { act, fireEvent, render } from "@testing-library/react-native"
@@ -89,6 +89,9 @@ let mockSheetProps: Record<string, any> = {}
 const mockSnapToIndex = jest.fn()
 let mockMapPress: (() => void) | null = null
 let mockMapZoom: ((event: { nativeEvent: { zoom: number } }) => void) | null = null
+/** Off, the fake map stays loading until a test calls `mockFinishLoading`. */
+let mockMapLoads = true
+let mockFinishLoading: (() => void) | null = null
 const mockProject = jest.fn(async (_lngLat: [number, number]): Promise<[number, number]> => [0, 0])
 let mockActiveSos: Array<{ id: string; user: { id: string; displayName: string } }> = []
 
@@ -125,16 +128,24 @@ jest.mock("../components/HearthMap", () => {
         children,
         onPress,
         onRegionIsChanging,
+        onDidFinishLoadingMap,
       }: {
         children?: unknown
         onPress?: () => void
+        onDidFinishLoadingMap?: () => void
         onRegionIsChanging?: (event: { nativeEvent: { zoom: number } }) => void
       },
       ref: unknown,
     ) {
       mockMapPress = onPress ?? null
       mockMapZoom = onRegionIsChanging ?? null
+      mockFinishLoading = onDidFinishLoadingMap ?? null
       react.useImperativeHandle(ref, () => ({ project: mockProject }))
+      // A real map loads its style a moment after mounting, and the screen
+      // holds the markers back until it has.
+      react.useEffect(() => {
+        if (mockMapLoads) onDidFinishLoadingMap?.()
+      }, [])
       return react.createElement(rn.View, null, children)
     }),
     TrailLayer: () => null,
@@ -288,6 +299,16 @@ jest.mock("@react-navigation/native", () => {
 })
 
 const navigation = { navigate: jest.fn(), goBack: jest.fn() }
+
+// The marker's own press is an Android path, so those tests switch platform.
+let replacedOs: { restore: () => void } | null = null
+function asAndroid() {
+  replacedOs = jest.replaceProperty(Platform, "OS", "android")
+}
+afterEach(() => {
+  replacedOs?.restore()
+  replacedOs = null
+})
 
 function mapTree(statusBar = 0) {
   return (
@@ -586,6 +607,28 @@ describe("your own sharing switched off", () => {
   })
 })
 
+describe("opening the map", () => {
+  beforeEach(() => {
+    mockPresence = mockMembers.map((member, index) => presenceFor(member.userId, 51 + index))
+    mockFocused = true
+  })
+  afterEach(() => {
+    mockMapLoads = true
+  })
+
+  // iOS drops marker views added before the style has loaded, and with the
+  // members already cached they arrived first: the list had everyone and
+  // the map had no one until the app was restarted.
+  it("holds the markers back until the map has loaded", async () => {
+    mockMapLoads = false
+    const { queryAllByTestId } = await renderMap()
+    expect(queryAllByTestId("native-marker")).toHaveLength(0)
+
+    await act(async () => mockFinishLoading?.())
+    expect(queryAllByTestId("native-marker").length).toBeGreaterThan(0)
+  })
+})
+
 describe("tapping a member", () => {
   beforeEach(() => {
     mockPresence = mockMembers.map((member, index) => presenceFor(member.userId, 51 + index))
@@ -620,11 +663,21 @@ describe("tapping a member", () => {
   // Some Android phones deliver the tap through the map's own hit test and
   // never to the Pressable inside the marker.
   it("selects from the native marker press alone", async () => {
+    asAndroid()
     const { getAllByTestId, queryAllByTestId } = await renderMap()
     fireEvent.press(getAllByTestId("native-marker")[0]!)
     expect(mockSnapToIndex).toHaveBeenCalledWith(1)
     expect(queryAllByTestId("member-marker-halo")).toHaveLength(1)
     expect(navigation.navigate).not.toHaveBeenCalled()
+  })
+
+  // On iOS the face's own Pressable has already taken the tap, and the
+  // marker's point does not reliably land on the same face.
+  it("leaves the tap to the face on iOS", async () => {
+    const { getAllByTestId, queryAllByTestId } = await renderMap()
+    fireEvent.press(getAllByTestId("native-marker")[0]!)
+    expect(queryAllByTestId("member-marker-halo")).toHaveLength(0)
+    expect(mockSnapToIndex).not.toHaveBeenCalled()
   })
 
   it("counts one tap once when both the marker and the map report it", async () => {
@@ -790,6 +843,7 @@ describe("people at the same place", () => {
   })
 
   it("works out which face a native tap landed on from where it landed", async () => {
+    asAndroid()
     mockPresence = [
       presenceFor("ana", 51),
       presenceFor("ben", 51),
