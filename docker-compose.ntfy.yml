@@ -12,7 +12,7 @@
 
 services:
   ntfy:
-    image: binwiederhier/ntfy:v2.30.0
+    image: binwiederhier/ntfy:v2.34.0
     restart: unless-stopped
     command: serve
     environment:
