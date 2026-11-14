@@ -49,6 +49,40 @@ describe("configuration", () => {
     }
   })
 
+  it("takes its public address from the hosting platform when none is set", () => {
+    const platforms: [Record<string, string>, string][] = [
+      [{ RENDER_EXTERNAL_URL: "https://hearth-x1.onrender.com" }, "https://hearth-x1.onrender.com"],
+      [
+        { RAILWAY_PUBLIC_DOMAIN: "hearth-production.up.railway.app" },
+        "https://hearth-production.up.railway.app",
+      ],
+      [{ FLY_APP_NAME: "hearth-family" }, "https://hearth-family.fly.dev"],
+    ]
+    for (const [platform, expected] of platforms) {
+      const config = loadConfig({ DATABASE_URL: "postgres://localhost/hearth", ...platform })
+      expect(config.PUBLIC_URL).toBe(expected)
+      resetConfig()
+    }
+  })
+
+  it("keeps a public address that was set over the platform's own", () => {
+    const config = loadConfig({
+      DATABASE_URL: "postgres://localhost/hearth",
+      PUBLIC_URL: "https://hearth.example.com",
+      RENDER_EXTERNAL_URL: "https://hearth-x1.onrender.com",
+    })
+    expect(config.PUBLIC_URL).toBe("https://hearth.example.com")
+  })
+
+  it("falls back to the platform's address when PUBLIC_URL is left empty", () => {
+    const config = loadConfig({
+      DATABASE_URL: "postgres://localhost/hearth",
+      PUBLIC_URL: "",
+      FLY_APP_NAME: "hearth-family",
+    })
+    expect(config.PUBLIC_URL).toBe("https://hearth-family.fly.dev")
+  })
+
   it("reads an empty value as unset rather than as an empty string", () => {
     const config = loadConfig({ DATABASE_URL: "postgres://localhost/hearth", ADMIN_NAME: "" })
     expect(config.ADMIN_NAME).toBeUndefined()
