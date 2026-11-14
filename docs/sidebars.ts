@@ -17,7 +17,12 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Install",
       collapsed: false,
-      items: ["install/self-hosting", "install/remote-access", "install/push-notifications"],
+      items: [
+        "install/deploy",
+        "install/self-hosting",
+        "install/remote-access",
+        "install/push-notifications",
+      ],
     },
     "safety",
     "privacy",

@@ -1,0 +1,44 @@
+# Hearth on Fly.io. In an empty folder:
+#
+#   curl -fsSLO https://raw.githubusercontent.com/Qureshi-DH/hearth/main/deploy/fly/fly.toml
+#   fly launch --copy-config --no-deploy
+#   fly secrets set JWT_SECRET=$(openssl rand -hex 48) DATABASE_URL='postgres://…' \
+#     ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a long passphrase'
+#   fly deploy
+#
+# DATABASE_URL is any Postgres 14 or newer. With Fly's Managed Postgres, use
+# the direct connection string rather than the pooled one, because Hearth
+# prepares its statements and a pooler in transaction mode loses them.
+# The server reads its address from FLY_APP_NAME, https://<app>.fly.dev.
+
+app = "hearth"
+primary_region = "iad"
+
+[build]
+  image = "dhqureshi/hearth-api:latest"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "4000"
+  TRUST_PROXY = "true"
+  MIGRATE_ON_START = "true"
+
+# Always on: a stopped machine can't ask the phones where they are.
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/readyz"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

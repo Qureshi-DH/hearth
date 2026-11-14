@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!-- Hearth for Unraid. Hearth needs Postgres 14 or newer, so install a
+     Postgres container from Community Applications first, make a database and
+     a user for Hearth, and point DATABASE_URL at it. -->
+<Container version="2">
+  <Name>hearth</Name>
+  <Repository>dhqureshi/hearth-api:latest</Repository>
+  <Registry>https://hub.docker.com/r/dhqureshi/hearth-api</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Qureshi-DH/hearth/issues</Support>
+  <Project>https://github.com/Qureshi-DH/hearth</Project>
+  <ReadMe>https://qureshi-dh.github.io/hearth/docs/install/deploy/</ReadMe>
+  <Overview>Family location sharing you host yourself. A live map, arrival and departure alerts for places, SOS, check-ins and crash detection, for the Hearth iOS and Android app. No account with anyone, no analytics. Needs a Postgres database, and a reverse proxy with TLS before you invite people from outside your network.</Overview>
+  <Category>Network:Other Tools:</Category>
+  <WebUI>http://[IP]:[PORT:4000]</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/Qureshi-DH/hearth/main/deploy/unraid/hearth.xml</TemplateURL>
+  <Icon>https://qureshi-dh.github.io/hearth/apple-touch-icon.png</Icon>
+  <License>AGPL-3.0</License>
+  <Config Name="Port" Target="4000" Default="4000" Mode="tcp" Description="The API and the admin portal." Type="Port" Display="always" Required="true" Mask="false">4000</Config>
+  <Config Name="Public address" Target="PUBLIC_URL" Default="" Mode="" Description="Where phones reach Hearth, such as https://hearth.example.com behind your reverse proxy." Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="Database URL" Target="DATABASE_URL" Default="postgres://hearth:PASSWORD@192.168.1.10:5432/hearth" Mode="" Description="Postgres 14 or newer." Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="Admin email" Target="ADMIN_EMAIL" Default="" Mode="" Description="The admin account, created on the first start. It is the only way in." Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="Admin password" Target="ADMIN_PASSWORD" Default="" Mode="" Description="At least 10 characters. Only read on the first start." Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="Token secret" Target="JWT_SECRET" Default="" Mode="" Description="32 or more random characters. Generate with: openssl rand -hex 48" Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="Behind a reverse proxy" Target="TRUST_PROXY" Default="true" Mode="" Description="true when a reverse proxy terminates TLS in front of Hearth." Type="Variable" Display="always" Required="false" Mask="false">true</Config>
+  <Config Name="Who can sign up" Target="REGISTRATION_MODE" Default="invite|open|closed" Mode="" Description="invite: only with an invite code from a circle." Type="Variable" Display="advanced" Required="false" Mask="false">invite</Config>
+  <Config Name="Environment" Target="NODE_ENV" Default="production" Mode="" Description="" Type="Variable" Display="advanced-hide" Required="true" Mask="false">production</Config>
+</Container>

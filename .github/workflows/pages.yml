@@ -2,12 +2,13 @@ name: Pages
 
 # One site at https://qureshi-dh.github.io/hearth/: the landing page and the
 # privacy and account deletion pages the stores link to, from web/, with the
-# documentation from docs/ under /hearth/docs/.
+# documentation from docs/ under /hearth/docs/ and the install script at
+# /hearth/install.sh, so the one-line install has a short address.
 
 on:
   push:
     branches: [main]
-    paths: ["web/**", "docs/**", ".github/workflows/pages.yml"]
+    paths: ["web/**", "docs/**", "deploy/install.sh", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -48,6 +49,7 @@ jobs:
           mkdir -p _site
           cp -R web/. _site/
           cp -R docs/build _site/docs
+          cp deploy/install.sh _site/install.sh
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
