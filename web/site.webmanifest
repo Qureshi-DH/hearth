@@ -1,0 +1,22 @@
+{
+  "name": "Hearth",
+  "short_name": "Hearth",
+  "description": "Family location sharing you host yourself.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "browser",
+  "background_color": "#fbf7f2",
+  "theme_color": "#f5643a",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

@@ -90,3 +90,11 @@ are made from, are [Noto Emoji](https://github.com/googlefonts/noto-emoji)
 designs set on a coloured background. Copyright 2013 Google LLC. The project
 publishes its image resources under the Apache License 2.0, and the full text is
 in [store-assets/tools/avatars/LICENSE](store-assets/tools/avatars/LICENSE).
+
+## Space Grotesk
+
+The website serves a Latin subset of
+[Space Grotesk](https://github.com/floriankarsten/space-grotesk), the typeface
+the app uses, from `web/assets/fonts/`. It's under the SIL Open Font License
+1.1, copyright 2020 The Space Grotesk Project Authors, and the full licence sits
+next to the font files in `web/assets/fonts/OFL.txt`.

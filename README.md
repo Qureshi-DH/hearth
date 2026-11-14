@@ -5,23 +5,24 @@
 <h1 align="center">Hearth</h1>
 
 <p align="center">
-  <b>Family safety you host yourself.</b><br>
+  <b>Self-hosted family location sharing for iOS and Android.</b><br>
   Know where your family is. Nobody else does.
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img alt="Version 1.3.5" src="https://img.shields.io/badge/version-1.3.5-F5643A"></a>
+  <a href="CHANGELOG.md"><img alt="Latest version" src="https://img.shields.io/github/v/tag/Qureshi-DH/hearth?sort=semver&label=version&color=F5643A"></a>
   <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
   <a href="https://github.com/Qureshi-DH/hearth/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Qureshi-DH/hearth/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://hub.docker.com/r/dhqureshi/hearth-api"><img alt="Docker pulls" src="https://img.shields.io/docker/pulls/dhqureshi/hearth-api?logo=docker&logoColor=white"></a>
   <img alt="Expo SDK 58" src="https://img.shields.io/badge/Expo-SDK%2058-000020?logo=expo">
-  <img alt="Node 22.12+" src="https://img.shields.io/badge/node-%E2%89%A522.12-5FA04E?logo=node.js&logoColor=white">
   <img alt="Postgres 14+" src="https://img.shields.io/badge/postgres-%E2%89%A514-336791?logo=postgresql&logoColor=white">
 </p>
 
 <p align="center">
+  <a href="https://qureshi-dh.github.io/hearth/">Website</a> ·
+  <a href="#run-it">Run it</a> ·
+  <a href="docs/docs/install/deploy.md">Ways to deploy</a> ·
   <a href="docs/docs/overview/quick-start.md">Quick start</a> ·
-  <a href="docs/docs/install/self-hosting.md">Self-hosting</a> ·
-  <a href="docs/docs/developer/architecture.md">Architecture</a> ·
   <a href="docs/docs/privacy.md">Privacy</a> ·
   <a href="docs/docs/roadmap.md">Roadmap</a>
 </p>
@@ -37,9 +38,12 @@
   </picture>
 </p>
 
-Commercial family safety apps keep every position, arrival and drive on their
-own servers, under a privacy policy you don't control. Hearth runs on yours.
-No company account, no analytics, no ads, and nothing is sent to us.
+Hearth is an open source family safety app: a live map of everyone in the
+family, alerts when someone arrives at or leaves a place, SOS, check-ins, crash
+detection and trips. Commercial family locator apps keep every position,
+arrival and drive on their own servers, under a privacy policy you don't
+control. Hearth runs on yours. No company account, no analytics, no ads, and
+nothing is sent to us.
 
 It's two pieces: an API server that runs in Docker next to Postgres, and an iOS
 and Android app that talks to it. Apart from your server, the app reaches the
@@ -49,9 +53,12 @@ the app. Push goes through Expo if your server uses it, and an Android build
 with Firebase in it registers with Google for push when it starts. The
 [privacy page](docs/docs/privacy.md) has the details.
 
+If you'd use something like this, a star on the repository is how other
+families looking for one find it.
+
 ## Status
 
-1.2. The features below are built and tested, and I run it for my own family.
+1.3. The features below are built and tested, and I run it for my own family.
 It has not been through an independent security audit, and the Android build
 has had less real device testing than iOS. The iOS and Android apps are built
 and tested and waiting on App Store and Play Store review, so they're coming
@@ -94,15 +101,78 @@ soon. Until they're out you build the app yourself. Read
 How each of these works: [safety](docs/docs/safety.md), [privacy](docs/docs/privacy.md),
 [architecture](docs/docs/developer/architecture.md).
 
-## Try it
+### How it compares
 
-You need Docker and about five minutes. The server is published as
-`dhqureshi/hearth-api` for amd64 and arm64, so running Hearth needs no clone at
-all. The [self-hosting guide](docs/docs/install/self-hosting.md) has the compose file and the
-`.env` to paste.
+This compares the kind of app rather than any one brand, because their policies
+and price tiers change too often to pin down.
 
-From a clone, which builds the image from your working tree instead of pulling
-it:
+|                                   | Hearth             | Commercial family locator |
+| --------------------------------- | ------------------ | ------------------------- |
+| Where the location history lives  | Your server        | The company's servers     |
+| Account with a company            | None               | Required                  |
+| iPhones and Android in one family | Yes                | Yes                       |
+| Place alerts, SOS, check-ins      | Yes                | Yes                       |
+| Crash detection and trips         | Yes, free          | Often a paid tier         |
+| Analytics and ads                 | None               | Varies                    |
+| In the App Store and Play Store   | Not yet, in review | Yes                       |
+| Who runs the server               | You                | They do                   |
+| Source code                       | Open, AGPL-3.0     | Closed                    |
+
+## Run it
+
+The server is published as `dhqureshi/hearth-api` for amd64 and arm64, so none
+of these needs a clone. [Ways to deploy](docs/docs/install/deploy.md) goes
+through each one.
+
+**One command**, on any Linux machine with Docker. It asks for a domain, your
+email and a password, generates every other secret, and starts Hearth with
+Caddy getting the HTTPS certificate. Leave the domain empty to try it on your
+own network first. [Read the script](deploy/install.sh) before you pipe it into
+a shell.
+
+```bash
+curl -fsSL https://qureshi-dh.github.io/hearth/install.sh | sh
+```
+
+**One click**, on a host that runs the machine for you. The template creates
+the database and the secrets, and the server finds its own address. Whoever
+runs the machine can read what's on it, so pick a host you'd trust with the
+family's map.
+
+<p>
+  <a href="https://render.com/deploy?repo=https://github.com/Qureshi-DH/hearth">
+    <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="32">
+  </a>
+  <a href="https://cloud.digitalocean.com/apps/new?repo=https://github.com/Qureshi-DH/hearth/tree/main">
+    <img alt="Deploy to DigitalOcean" src="https://www.deploytodo.com/do-btn-blue.svg" height="32">
+  </a>
+</p>
+
+**Everything else:**
+
+| Platform                                                     | What's in the repository                                              |
+| ------------------------------------------------------------ | --------------------------------------------------------------------- |
+| [Docker Compose](docs/docs/install/deploy.md#docker-compose) | `deploy/compose/`, with an optional Caddy overlay for HTTPS           |
+| [Fly.io](docs/docs/install/deploy.md#flyio)                  | `deploy/fly/fly.toml`                                                 |
+| [Railway](docs/docs/install/deploy.md#railway)               | Four steps in the guide                                               |
+| [Coolify](docs/docs/install/deploy.md#coolify)               | `deploy/coolify/docker-compose.yml`, using Coolify's generated values |
+| [CapRover](docs/docs/install/deploy.md#caprover)             | `deploy/caprover/hearth.yml`, a one-click app template                |
+| [Portainer](docs/docs/install/deploy.md#portainer)           | `deploy/portainer/`, a stack and an App Template                      |
+| [Unraid](docs/docs/install/deploy.md#unraid)                 | `deploy/unraid/hearth.xml`                                            |
+| [Kubernetes](docs/docs/install/deploy.md#kubernetes)         | `deploy/kubernetes/`, Kustomize manifests                             |
+
+Set the admin before the first boot. It is created once, on an empty database,
+and everyone else needs an invite, so nobody who finds the URL can claim your
+server. A release build of the app won't talk to a plain HTTP server on the
+internet, so put TLS in front before you invite anyone. The
+[self-hosting guide](docs/docs/install/self-hosting.md) has Caddy, nginx and
+Traefik configs, backups, and running Hearth at a path on a domain you already
+use, like `lab.example.com/hearth`.
+
+### From a clone
+
+Working on the code, the `docker-compose.yml` at the root builds the image from
+your working tree instead of pulling it:
 
 ```bash
 git clone https://github.com/Qureshi-DH/hearth.git
@@ -124,24 +194,12 @@ S3_SECRET_ACCESS_KEY=$(openssl rand -hex 24)
 Compose refuses to start until the last two are set, so there is no default
 database password to forget about.
 
-Then:
-
 ```bash
 docker compose up -d
 curl localhost:4000/readyz     # {"ok":true}
 open http://localhost:4000     # the admin portal
 open http://localhost:4000/docs
 ```
-
-Set the admin before the first boot. It is created once, on an empty database,
-and everyone else needs an invite, so nobody who finds the URL can claim your
-server.
-
-A release build of the app won't talk to a plain HTTP server on the internet,
-so put a TLS proxy in front before you invite anyone.
-[docs/docs/install/self-hosting.md](docs/docs/install/self-hosting.md) has
-Caddy and nginx configs you can paste, and one for running Hearth at a path on
-a domain you already use, like `lab.example.com/hearth`.
 
 ## Build the app
 
@@ -196,7 +254,9 @@ server/            Fastify 5, Drizzle, Postgres. The whole API.
 apps/mobile/       Expo SDK 58, React Native, based on Ignite.
 packages/shared/   Types, constants, geo maths and the crash heuristic.
                    No runtime dependencies.
-deploy/            Reverse-proxy examples.
+deploy/            The install script, compose files, and templates for
+                   Render, DigitalOcean, Fly.io, Coolify, CapRover,
+                   Portainer, Unraid and Kubernetes.
 web/               The landing page, and the privacy and account deletion
                    pages the stores link to. Static, no build step.
 docs/              Everything below.

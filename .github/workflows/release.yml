@@ -1,0 +1,45 @@
+name: Release
+
+# Every version tag becomes a GitHub Release with its CHANGELOG section as the
+# notes. The repository page then shows the latest version, people watching
+# releases hear about it, and feeds that follow releases pick it up. Run it by
+# hand with an existing tag to publish, or rewrite, that tag's release.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to publish, such as v1.3.5
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          awk -v heading="## [$version]" '
+            index($0, heading) == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "CHANGELOG.md has no section for $version" >&2
+            exit 1
+          fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --title "Hearth $version" --notes-file notes.md
+          else
+            gh release create "$TAG" --title "Hearth $version" --notes-file notes.md --verify-tag
+          fi
