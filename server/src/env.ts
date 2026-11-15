@@ -235,15 +235,29 @@ export function defaultMapStyleUrl(styles: MapStyle[], scheme: MapStyle["scheme"
   return (styles.find((style) => style.scheme === scheme) ?? styles[0]!).url
 }
 
+/**
+ * The address a hosting platform gave this service. A one-click deploy cannot
+ * know it before the service exists, and without it every invite link would
+ * point at localhost. PUBLIC_URL, when set, always wins.
+ */
+function platformAddress(env: Record<string, string | undefined>): string | undefined {
+  if (env.RENDER_EXTERNAL_URL) return env.RENDER_EXTERNAL_URL
+  if (env.RAILWAY_PUBLIC_DOMAIN) return `https://${env.RAILWAY_PUBLIC_DOMAIN}`
+  if (env.FLY_APP_NAME) return `https://${env.FLY_APP_NAME}.fly.dev`
+  return undefined
+}
+
 let cached: AppConfig | null = null
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   // `ADMIN_NAME=` in a .env file, or an empty compose variable, means "not
   // set". Parsed as an empty string it fails validation and the server never
   // boots, which is the first thing a new self-hoster would meet.
-  const parsed = schema.safeParse(
-    Object.fromEntries(Object.entries(source).filter(([, value]) => value !== "")),
+  const set: Record<string, string | undefined> = Object.fromEntries(
+    Object.entries(source).filter(([, value]) => value !== ""),
   )
+  set.PUBLIC_URL ??= platformAddress(set)
+  const parsed = schema.safeParse(set)
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((issue) => `  - ${issue.path.join(".") || "(root)"}: ${issue.message}`)

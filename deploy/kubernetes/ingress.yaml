@@ -1,0 +1,25 @@
+# Set the host in both places. With cert-manager, uncomment the annotation
+# and name your ClusterIssuer. Any ingress controller that passes websocket
+# upgrades through works. ingress-nginx and Traefik do by default.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hearth
+  # annotations:
+  #   cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  rules:
+    - host: hearth.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: hearth
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - hearth.example.com
+      secretName: hearth-tls

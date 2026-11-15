@@ -1,0 +1,44 @@
+# Deploy to Render: https://render.com/deploy?repo=https://github.com/Qureshi-DH/hearth
+#
+# Runs the published image next to a Render Postgres database. Render
+# generates the token secret and asks for ADMIN_EMAIL and ADMIN_PASSWORD when
+# the Blueprint is created. The server reads its own address from
+# RENDER_EXTERNAL_URL, so PUBLIC_URL only needs setting for a custom domain.
+#
+# Neither plan is free. A free web service sleeps when nobody calls it, and a
+# sleeping server can't ask the phones where they are.
+
+services:
+  - type: web
+    name: hearth
+    runtime: image
+    image:
+      url: docker.io/dhqureshi/hearth-api:latest
+    plan: 0.5c-512mb
+    healthCheckPath: /readyz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hearth-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: TRUST_PROXY
+        value: "true"
+      - key: MIGRATE_ON_START
+        value: "true"
+      - key: REGISTRATION_MODE
+        value: invite
+
+databases:
+  - name: hearth-db
+    plan: 0.1c-256mb
+    postgresMajorVersion: "16"
+    databaseName: hearth
+    user: hearth

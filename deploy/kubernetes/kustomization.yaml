@@ -1,0 +1,33 @@
+# Hearth on Kubernetes: the API, a Postgres StatefulSet and an Ingress.
+#
+#   cp hearth.env.example hearth.env      # fill in every value
+#   # set your host in ingress.yaml
+#   kubectl apply -k deploy/kubernetes
+#
+# One API replica. A second needs Redis for the realtime fan-out, see
+# REDIS_URL in .env.example. Profile pictures are off unless S3_ENDPOINT
+# points at S3 compatible storage, and avatars fall back to initials.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: hearth
+
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - api.yaml
+  - ingress.yaml
+
+secretGenerator:
+  - name: hearth
+    envs:
+      - hearth.env
+
+images:
+  - name: dhqureshi/hearth-api
+    newTag: latest
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: hearth

@@ -1,0 +1,57 @@
+{
+  "version": "2",
+  "templates": [
+    {
+      "type": 3,
+      "title": "Hearth",
+      "description": "Family location sharing you host yourself. Live map, place alerts, SOS and crash detection for iOS and Android.",
+      "note": "Put a reverse proxy with TLS in front before you invite anyone, because the app refuses a plain HTTP server on the internet. Guide: https://qureshi-dh.github.io/hearth/docs/install/self-hosting/",
+      "categories": ["Family", "Location", "Privacy"],
+      "platform": "linux",
+      "logo": "https://qureshi-dh.github.io/hearth/apple-touch-icon.png",
+      "repository": {
+        "url": "https://github.com/Qureshi-DH/hearth",
+        "stackfile": "deploy/portainer/docker-compose.yml"
+      },
+      "env": [
+        {
+          "name": "PUBLIC_URL",
+          "label": "Public address",
+          "description": "Where phones will reach Hearth, such as https://hearth.example.com"
+        },
+        {
+          "name": "ADMIN_EMAIL",
+          "label": "Your email",
+          "description": "The admin account, created on the first start"
+        },
+        {
+          "name": "ADMIN_PASSWORD",
+          "label": "Admin password",
+          "description": "At least 10 characters. Only read on the first start"
+        },
+        {
+          "name": "JWT_SECRET",
+          "label": "Token secret",
+          "description": "32 or more random characters, from openssl rand -hex 48"
+        },
+        {
+          "name": "POSTGRES_PASSWORD",
+          "label": "Database password",
+          "description": "Letters and digits only, from openssl rand -hex 24"
+        },
+        {
+          "name": "TRUST_PROXY",
+          "label": "Behind a reverse proxy",
+          "default": "true",
+          "description": "true once a proxy on this machine terminates TLS"
+        },
+        {
+          "name": "HEARTH_BIND",
+          "label": "Listen address",
+          "default": "127.0.0.1",
+          "description": "127.0.0.1 when the proxy runs on the host itself. A proxy in another container should join this stack's network and reach api:4000 instead. 0.0.0.0 opens it to the LAN"
+        }
+      ]
+    }
+  ]
+}

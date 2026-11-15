@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The landing page and the two store pages. The documentation has its own
+     sitemap, which Docusaurus writes to /hearth/docs/sitemap.xml. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://qureshi-dh.github.io/hearth/</loc>
+  </url>
+  <url>
+    <loc>https://qureshi-dh.github.io/hearth/privacy.html</loc>
+  </url>
+  <url>
+    <loc>https://qureshi-dh.github.io/hearth/delete-account.html</loc>
+  </url>
+</urlset>

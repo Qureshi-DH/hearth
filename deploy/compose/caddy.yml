@@ -1,0 +1,31 @@
+# Adds Caddy in front of the API, which gets and renews the TLS certificate
+# for HEARTH_DOMAIN on its own. The domain's DNS has to point at this machine
+# and ports 80 and 443 have to reach it before the first start.
+#
+# Use it next to docker-compose.yml by putting this in .env, so every plain
+# `docker compose` command picks up both files:
+#
+#   COMPOSE_FILE=docker-compose.yml:caddy.yml
+#   HEARTH_DOMAIN=hearth.example.com
+#   PUBLIC_URL=https://hearth.example.com
+#   TRUST_PROXY=true
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    command: caddy reverse-proxy --from ${HEARTH_DOMAIN:?set HEARTH_DOMAIN in .env} --to api:4000
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

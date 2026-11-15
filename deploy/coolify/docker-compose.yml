@@ -1,0 +1,51 @@
+# documentation: https://qureshi-dh.github.io/hearth/docs/install/deploy/
+# slogan: Family location sharing you host yourself.
+# category: productivity
+# tags: family,location,gps,maps,privacy,safety
+# port: 4000
+#
+# In Coolify: New resource, Docker Compose Empty, paste this file, deploy.
+# Coolify makes up the database password, the token secret and your admin
+# password (shown under Environment Variables), and gives the API a domain.
+# Set ADMIN_EMAIL there before the first deploy.
+
+services:
+  api:
+    image: dhqureshi/hearth-api:latest
+    environment:
+      - SERVICE_URL_API_4000
+      - PUBLIC_URL=${SERVICE_URL_API_4000}
+      - NODE_ENV=production
+      - TRUST_PROXY=true
+      - MIGRATE_ON_START=true
+      - DATABASE_URL=postgres://${SERVICE_USER_POSTGRES}:${SERVICE_PASSWORD_POSTGRES}@db:5432/hearth
+      - JWT_SECRET=${SERVICE_PASSWORD_64_JWT}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - ADMIN_PASSWORD=${SERVICE_PASSWORD_ADMIN}
+      - REGISTRATION_MODE=invite
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4000/readyz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=${SERVICE_USER_POSTGRES}
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES}
+      - POSTGRES_DB=hearth
+    volumes:
+      - hearth-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d hearth"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  hearth-postgres:

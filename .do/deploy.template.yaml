@@ -1,0 +1,48 @@
+# Deploy to DigitalOcean:
+# https://cloud.digitalocean.com/apps/new?repo=https://github.com/Qureshi-DH/hearth/tree/main
+#
+# The published image and a development database. DigitalOcean asks for the
+# values left empty below before it creates the app. JWT_SECRET wants 32 or
+# more random characters, such as the output of `openssl rand -hex 48`.
+
+spec:
+  name: hearth
+  services:
+    - name: api
+      image:
+        registry_type: DOCKER_HUB
+        registry: dhqureshi
+        repository: hearth-api
+        tag: latest
+      http_port: 4000
+      instance_count: 1
+      health_check:
+        http_path: /readyz
+        initial_delay_seconds: 20
+        period_seconds: 30
+      envs:
+        - key: NODE_ENV
+          value: production
+        - key: PORT
+          value: "4000"
+        # Built from parts so the URL asks for TLS whether or not the bound
+        # DATABASE_URL does. DigitalOcean's databases refuse plain connections.
+        - key: DATABASE_URL
+          scope: RUN_TIME
+          value: postgresql://${db.USERNAME}:${db.PASSWORD}@${db.HOSTNAME}:${db.PORT}/${db.DATABASE}?sslmode=require
+        - key: PUBLIC_URL
+          scope: RUN_TIME
+          value: ${APP_URL}
+        - key: TRUST_PROXY
+          value: "true"
+        - key: MIGRATE_ON_START
+          value: "true"
+        - key: JWT_SECRET
+          type: SECRET
+        - key: ADMIN_EMAIL
+        - key: ADMIN_PASSWORD
+          type: SECRET
+  databases:
+    - name: db
+      engine: PG
+      version: "16"

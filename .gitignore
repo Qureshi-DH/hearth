@@ -48,3 +48,6 @@ build-*.ipa
 
 # Local editor and assistant configuration.
 .claude/
+
+# Kubernetes secrets, made from hearth.env.example
+deploy/kubernetes/hearth.env

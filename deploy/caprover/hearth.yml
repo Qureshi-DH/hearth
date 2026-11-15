@@ -1,0 +1,73 @@
+# CapRover one-click app. In CapRover: Apps, One-Click Apps/Databases, pick
+# ">> TEMPLATE <<" at the end of the list, paste this file and fill in the form.
+captainVersion: 4
+services:
+  $$cap_appname-db:
+    image: postgres:16-alpine
+    volumes:
+      - $$cap_appname-db-data:/var/lib/postgresql/data
+    restart: always
+    environment:
+      POSTGRES_USER: hearth
+      POSTGRES_PASSWORD: $$cap_db_password
+      POSTGRES_DB: hearth
+    caproverExtra:
+      notExposeAsWebApp: "true"
+
+  $$cap_appname:
+    image: dhqureshi/hearth-api:$$cap_hearth_version
+    restart: always
+    depends_on:
+      - $$cap_appname-db
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://hearth:$$cap_db_password@srv-captain--$$cap_appname-db:5432/hearth
+      PUBLIC_URL: https://$$cap_appname.$$cap_root_domain
+      TRUST_PROXY: "true"
+      MIGRATE_ON_START: "true"
+      JWT_SECRET: $$cap_jwt_secret
+      ADMIN_EMAIL: $$cap_admin_email
+      ADMIN_PASSWORD: $$cap_admin_password
+      REGISTRATION_MODE: invite
+    caproverExtra:
+      containerHttpPort: "4000"
+      websocketSupport: "true"
+
+caproverOneClickApp:
+  variables:
+    - id: $$cap_hearth_version
+      label: Hearth version
+      defaultValue: latest
+      description: The tag of dhqureshi/hearth-api to run.
+      validRegex: /^[A-Za-z0-9._-]+$/
+    - id: $$cap_admin_email
+      label: Your email
+      description: The admin account. It's created on the first start and it's the only way in.
+      validRegex: /^\S+@\S+\.\S+$/
+    - id: $$cap_admin_password
+      label: Admin password
+      description: At least 10 characters. Only read on the first start, so change it from the app afterwards.
+      validRegex: /^.{10,}$/
+    - id: $$cap_db_password
+      label: Database password
+      defaultValue: $$cap_gen_random_hex(24)
+      description: Letters and digits only, because it goes into a connection URL.
+      validRegex: /^[A-Za-z0-9]{16,}$/
+    - id: $$cap_jwt_secret
+      label: Token signing secret
+      defaultValue: $$cap_gen_random_hex(48)
+      description: Signs sign-in tokens. Keep the generated value.
+      validRegex: /^.{32,}$/
+  instructions:
+    start: >-
+      Hearth is family location sharing you host yourself. This deploys the API
+      and a Postgres database. Profile pictures stay off unless you point
+      S3_ENDPOINT at S3 compatible storage later, and avatars show initials.
+    end: >-
+      Hearth is starting. Open the app's settings in CapRover, turn on HTTPS
+      and "Force HTTPS", then type https://$$cap_appname.$$cap_root_domain into
+      the Hearth app and sign in with the email and password you chose.
+  displayName: Hearth
+  isOfficial: false
+  description: Family location sharing you host yourself. Live map, place alerts, SOS and crash detection for iOS and Android.
+  documentation: https://qureshi-dh.github.io/hearth/docs/install/deploy/

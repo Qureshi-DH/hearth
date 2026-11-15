@@ -3,22 +3,35 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hearth</title>
+    <!-- GitHub Pages can't send headers, so the policy rides in the page. Every
+         asset is this site's own, and nothing loads from anywhere else. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
+    />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>Hearth: self-hosted family location sharing, free and open source</title>
     <meta
       name="description"
-      content="Family location sharing you host yourself. Open-source family safety where the map, the history and the alerts live on your server."
+      content="Open-source family safety app you host yourself. Live map, place alerts, SOS and crash detection for iOS and Android, on your own server. No account, no tracking."
     />
-    <meta name="theme-color" content="#F5643A" />
+    <link rel="canonical" href="https://qureshi-dh.github.io/hearth/" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="theme-color" content="#fbf7f2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#131114" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="favicon.ico" sizes="48x48" />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="manifest" href="site.webmanifest" />
+    <link rel="sitemap" type="application/xml" href="sitemap.xml" />
 
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Hearth" />
     <meta property="og:title" content="Hearth: family location sharing you host yourself" />
     <meta
       property="og:description"
       content="Open-source family safety. The map, the history and the alerts live on your server, not somebody else's."
     />
-    <meta property="og:type" content="website" />
     <meta property="og:url" content="https://qureshi-dh.github.io/hearth/" />
     <meta property="og:image" content="https://qureshi-dh.github.io/hearth/og.jpg" />
     <meta property="og:image:width" content="1200" />
@@ -28,864 +41,151 @@
       content="Three phones showing Hearth's family map, a live drive and a member's page"
     />
     <meta name="twitter:card" content="summary_large_image" />
-
-    <style>
-      /* Palette is the app's own, so the site and the product agree. The
-         neutrals are pulled warm toward the ember rather than left grey. */
-      :root {
-        --ember: #f5643a;
-        --ember-soft: #ff8a5c;
-        --rose: #f04a6a;
-
-        --ground: #fbf7f2;
-        --raised: #ffffff;
-        --sunken: #f2ece4;
-        --ink: #1e1714;
-        --ink-soft: #6b6058;
-        --rule: #e4dacd;
-        --accent: #c9451f;
-        --on-accent: #ffffff;
-        --lift: 0 1px 2px rgba(30, 23, 20, 0.05), 0 18px 40px -20px rgba(30, 23, 20, 0.28);
-      }
-
-      @media (prefers-color-scheme: dark) {
-        :root:not([data-theme="light"]) {
-          --ground: #131114;
-          --raised: #1c191d;
-          --sunken: #232025;
-          --ink: #f5efe9;
-          --ink-soft: #a89c92;
-          --rule: #322d33;
-          --accent: #ff9a70;
-          --on-accent: #1e1714;
-          --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 18px 40px -20px rgba(0, 0, 0, 0.7);
-        }
-      }
-
-      :root[data-theme="dark"] {
-        --ground: #131114;
-        --raised: #1c191d;
-        --sunken: #232025;
-        --ink: #f5efe9;
-        --ink-soft: #a89c92;
-        --rule: #322d33;
-        --accent: #ff9a70;
-        --on-accent: #1e1714;
-        --lift: 0 1px 2px rgba(0, 0, 0, 0.5), 0 18px 40px -20px rgba(0, 0, 0, 0.7);
-      }
-
-      *,
-      *::before,
-      *::after {
-        box-sizing: border-box;
-      }
-
-      html {
-        scroll-behavior: smooth;
-      }
-
-      main {
-        overflow-x: clip;
-      }
-
-      /* No webfont is fetched. This page tells visitors no third party sits in
-         the path, and a font CDN would be the very first request it made. */
-      body {
-        margin: 0;
-        background: var(--ground);
-        color: var(--ink);
-        font:
-          400 18px/1.7 "Source Serif 4",
-          Georgia,
-          "Times New Roman",
-          serif;
-        -webkit-font-smoothing: antialiased;
-      }
-
-      h1,
-      h2,
-      h3,
-      .ui {
-        font-family: "Space Grotesk", "Helvetica Neue", Arial, sans-serif;
-        letter-spacing: -0.02em;
-        text-wrap: balance;
-        margin: 0;
-      }
-
-      a {
-        color: var(--accent);
-        text-underline-offset: 3px;
-      }
-
-      :focus-visible {
-        outline: 3px solid var(--accent);
-        outline-offset: 3px;
-        border-radius: 4px;
-      }
-
-      .wrap {
-        width: 100%;
-        max-width: 1080px;
-        margin-inline: auto;
-        padding-inline: 26px;
-      }
-
-      .prose {
-        max-width: 64ch;
-      }
-
-      /* ---------- masthead ---------- */
-      header {
-        border-bottom: 1px solid var(--rule);
-        background: var(--ground);
-      }
-
-      .nav {
-        display: flex;
-        align-items: center;
-        gap: 26px;
-        height: 72px;
-      }
-
-      .brand {
-        display: flex;
-        align-items: center;
-        gap: 11px;
-        font-family: "Space Grotesk", sans-serif;
-        font-weight: 700;
-        font-size: 21px;
-        letter-spacing: -0.03em;
-        color: var(--ink);
-        text-decoration: none;
-        margin-right: auto;
-      }
-
-      .mark {
-        width: 32px;
-        height: 32px;
-        border-radius: 10px;
-        background: linear-gradient(140deg, var(--ember-soft), var(--rose));
-        display: grid;
-        place-items: center;
-        color: #fff;
-        flex: none;
-      }
-
-      .mark svg {
-        width: 19px;
-        height: 19px;
-      }
-
-      .nav a.link {
-        font-family: "Space Grotesk", sans-serif;
-        font-size: 15px;
-        font-weight: 500;
-        color: var(--ink-soft);
-        text-decoration: none;
-        transition: color 180ms ease;
-      }
-
-      .nav a.link:hover {
-        color: var(--ink);
-      }
-
-      @media (max-width: 760px) {
-        .nav a.link {
-          display: none;
-        }
-      }
-
-      /* ---------- buttons ---------- */
-      .btn {
-        font-family: "Space Grotesk", sans-serif;
-        display: inline-flex;
-        align-items: center;
-        gap: 9px;
-        min-height: 48px;
-        padding: 0 22px;
-        border-radius: 12px;
-        font-weight: 500;
-        font-size: 16px;
-        text-decoration: none;
-        cursor: pointer;
-        border: 1px solid transparent;
-        transition:
-          transform 180ms ease,
-          background 180ms ease,
-          border-color 180ms ease,
-          color 180ms ease;
-      }
-
-      .btn svg {
-        width: 18px;
-        height: 18px;
-      }
-
-      .btn-solid {
-        background: var(--ink);
-        color: var(--ground);
-      }
-
-      .btn-solid:hover {
-        transform: translateY(-2px);
-      }
-
-      .btn-line {
-        border-color: var(--rule);
-        color: var(--ink);
-      }
-
-      .btn-line:hover {
-        border-color: var(--accent);
-        color: var(--accent);
-      }
-
-      /* ---------- hero ---------- */
-      .hero {
-        padding: 76px 26px 84px;
-        display: grid;
-        gap: 56px;
-        align-items: center;
-      }
-
-      @media (min-width: 980px) {
-        .hero {
-          grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-          padding-top: 84px;
-        }
-      }
-
-      .kicker {
-        font-family: "Space Grotesk", sans-serif;
-        display: inline-flex;
-        align-items: center;
-        gap: 9px;
-        font-size: 12.5px;
-        font-weight: 500;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--ink-soft);
-      }
-
-      .kicker .pip {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: var(--ember);
-        flex: none;
-      }
-
-      .hero h1 {
-        font-size: clamp(40px, 5.6vw, 66px);
-        line-height: 1.04;
-        font-weight: 700;
-        margin: 24px 0 0;
-        max-width: 14ch;
-      }
-
-      .hero h1 em {
-        font-style: normal;
-        background: linear-gradient(100deg, var(--ember), var(--rose));
-        -webkit-background-clip: text;
-        background-clip: text;
-        color: transparent;
-      }
-
-      .lede {
-        font-size: 20px;
-        color: var(--ink-soft);
-        margin: 22px 0 0;
-      }
-
-      .actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-top: 34px;
-      }
-
-      .aside {
-        font-family: "Space Grotesk", sans-serif;
-        font-size: 14px;
-        color: var(--ink-soft);
-        margin-top: 18px;
-      }
-
-      /* ---------- sections ---------- */
-      section {
-        padding: 76px 0;
-        border-top: 1px solid var(--rule);
-      }
-
-      .eyebrow {
-        font-family: "Space Grotesk", sans-serif;
-        font-size: 12.5px;
-        font-weight: 500;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--accent);
-        margin: 0 0 14px;
-      }
-
-      h2 {
-        font-size: clamp(30px, 4.2vw, 42px);
-        font-weight: 700;
-      }
-
-      .sub {
-        color: var(--ink-soft);
-        margin: 16px 0 0;
-      }
-
-      /* Features are a list with hairlines, not a grid of identical cards:
-         border and shadow are saved for the two blocks that really are
-         separate objects. */
-      .features {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: 0 46px;
-        margin-top: 50px;
-      }
-
-      .feature {
-        padding: 30px 0;
-        border-top: 1px solid var(--rule);
-      }
-
-      .feature h3 {
-        font-size: 20px;
-        font-weight: 700;
-        margin: 0 0 8px;
-        display: flex;
-        align-items: center;
-        gap: 11px;
-      }
-
-      .feature h3 svg {
-        width: 21px;
-        height: 21px;
-        color: var(--accent);
-        flex: none;
-      }
-
-      .feature p {
-        margin: 0;
-        color: var(--ink-soft);
-        font-size: 17px;
-      }
-
-      /* ---------- promises ---------- */
-      .promises {
-        list-style: none;
-        padding: 0;
-        margin: 44px 0 0;
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
-        gap: 26px 46px;
-      }
-
-      .promises li {
-        color: var(--ink-soft);
-      }
-
-      .promises b {
-        font-family: "Space Grotesk", sans-serif;
-        display: block;
-        color: var(--ink);
-        font-size: 16px;
-        font-weight: 500;
-        letter-spacing: -0.01em;
-        margin-bottom: 5px;
-      }
-
-      /* ---------- self-host ---------- */
-      .panel {
-        background: var(--raised);
-        border: 1px solid var(--rule);
-        border-radius: 18px;
-        box-shadow: var(--lift);
-        padding: 30px;
-        margin-top: 44px;
-      }
-
-      .steps {
-        counter-reset: step;
-        list-style: none;
-        padding: 0;
-        margin: 0;
-        display: grid;
-        gap: 20px;
-      }
-
-      .steps li {
-        counter-increment: step;
-        display: flex;
-        gap: 16px;
-        align-items: flex-start;
-        color: var(--ink-soft);
-      }
-
-      .steps li::before {
-        font-family: "Space Grotesk", sans-serif;
-        content: counter(step);
-        flex: none;
-        width: 27px;
-        height: 27px;
-        border-radius: 8px;
-        background: var(--sunken);
-        color: var(--accent);
-        display: grid;
-        place-items: center;
-        font-weight: 500;
-        font-size: 14px;
-        margin-top: 2px;
-      }
-
-      .steps code,
-      p code {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 0.88em;
-        background: var(--sunken);
-        padding: 1px 6px;
-        border-radius: 5px;
-      }
-
-      pre {
-        background: var(--sunken);
-        border: 1px solid var(--rule);
-        border-radius: 12px;
-        padding: 20px;
-        overflow-x: auto;
-        margin: 26px 0 0;
-        font:
-          400 14.5px/1.75 ui-monospace,
-          SFMono-Regular,
-          Menlo,
-          monospace;
-        color: var(--ink);
-      }
-
-      /* ---------- alpha ---------- */
-      .alpha {
-        margin-top: 40px;
-        padding-top: 26px;
-        border-top: 2px solid var(--ember);
-      }
-
-      .alpha h3 {
-        font-size: 19px;
-        font-weight: 700;
-        margin-bottom: 10px;
-      }
-
-      .alpha p {
-        margin: 0;
-        color: var(--ink-soft);
-      }
-
-      /* ---------- phones ----------
-         The screenshots are the app's own, captured from a release build
-         against a made-up family. The frame is drawn here so one image
-         serves both themes. --pw is the phone's width and everything else
-         in the frame scales from it. */
-      .phone {
-        --pw: 240px;
-        width: var(--pw);
-        flex: none;
-        padding: calc(var(--pw) * 0.028);
-        border-radius: calc(var(--pw) * 0.155);
-        background: #141012;
-        box-shadow:
-          inset 0 0 0 3px #2a2224,
-          0 30px 60px -28px rgba(40, 20, 10, 0.45),
-          0 10px 22px -12px rgba(40, 20, 10, 0.3);
-      }
-
-      .phone img {
-        display: block;
-        width: 100%;
-        height: auto;
-        border-radius: calc(var(--pw) * 0.127);
-      }
-
-      @media (prefers-color-scheme: dark) {
-        :root:not([data-theme="light"]) .phone {
-          box-shadow:
-            inset 0 0 0 3px #2a2224,
-            0 0 0 1px rgba(255, 255, 255, 0.07),
-            0 30px 60px -24px rgba(0, 0, 0, 0.8);
-        }
-      }
-
-      :root[data-theme="dark"] .phone {
-        box-shadow:
-          inset 0 0 0 3px #2a2224,
-          0 0 0 1px rgba(255, 255, 255, 0.07),
-          0 30px 60px -24px rgba(0, 0, 0, 0.8);
-      }
-
-      .stage {
-        position: relative;
-        display: flex;
-        justify-content: center;
-        align-items: flex-start;
-        padding: 12px 0 20px;
-      }
-
-      .stage::before {
-        content: "";
-        position: absolute;
-        inset: -6% -4%;
-        border-radius: 50%;
-        background: radial-gradient(
-          closest-side,
-          color-mix(in srgb, var(--ember-soft) 34%, transparent),
-          color-mix(in srgb, var(--rose) 12%, transparent) 62%,
-          transparent
-        );
-        pointer-events: none;
-      }
-
-      .stage .phone {
-        --pw: 200px;
-        position: relative;
-      }
-
-      .stage .front {
-        --pw: 236px;
-        z-index: 2;
-      }
-
-      .stage .side {
-        margin-top: 56px;
-        z-index: 1;
-      }
-
-      .stage .left {
-        margin-right: -84px;
-        transform: rotate(-6deg);
-      }
-
-      .stage .right {
-        margin-left: -84px;
-        transform: rotate(6deg);
-      }
-
-      @media (max-width: 979px) {
-        .stage .side {
-          display: none;
-        }
-        .stage .front {
-          --pw: min(280px, 72vw);
-        }
-      }
-
-      /* ---------- tour ---------- */
-      .spots {
-        display: grid;
-        gap: 88px;
-        margin-top: 60px;
-      }
-
-      .spot {
-        display: grid;
-        gap: 34px;
-        align-items: center;
-      }
-
-      @media (min-width: 860px) {
-        .spot {
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-          gap: 72px;
-        }
-        .spot.flip .spot-media {
-          order: 2;
-        }
-      }
-
-      .spot-media {
-        position: relative;
-        display: flex;
-        justify-content: center;
-        align-items: flex-start;
-        padding: 40px 16px;
-        border-radius: 28px;
-        background:
-          radial-gradient(
-            120% 90% at 50% 0%,
-            color-mix(in srgb, var(--ember-soft) 16%, transparent),
-            transparent 70%
-          ),
-          var(--sunken);
-      }
-
-      .spot-media .phone {
-        --pw: min(250px, 62vw);
-      }
-
-      .spot-media.pair .phone {
-        --pw: min(220px, 40vw);
-      }
-
-      .spot-media.pair .phone + .phone {
-        margin-left: calc(var(--pw) * -0.22);
-        margin-top: 56px;
-      }
-
-      .spot-copy h3 {
-        font-size: clamp(26px, 3.2vw, 34px);
-        line-height: 1.12;
-        font-weight: 700;
-      }
-
-      .spot-copy p {
-        color: var(--ink-soft);
-        margin: 16px 0 0;
-      }
-
-      .ticks {
-        list-style: none;
-        padding: 0;
-        margin: 22px 0 0;
-        display: grid;
-        gap: 10px;
-      }
-
-      .ticks li {
-        font-family: "Space Grotesk", sans-serif;
-        font-size: 16px;
-        display: flex;
-        gap: 11px;
-        align-items: baseline;
-      }
-
-      .ticks li::before {
-        content: "";
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: linear-gradient(140deg, var(--ember-soft), var(--rose));
-        flex: none;
-        transform: translateY(-1px);
-      }
-
-      /* ---------- gallery ---------- */
-      #screens {
-        padding-bottom: 60px;
-      }
-
-      .gallery-head {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: flex-end;
-        justify-content: space-between;
-        gap: 20px;
-      }
-
-      .strip-nav {
-        display: flex;
-        gap: 10px;
-      }
-
-      .round {
-        width: 46px;
-        height: 46px;
-        border-radius: 50%;
-        border: 1px solid var(--rule);
-        background: var(--raised);
-        color: var(--ink);
-        display: grid;
-        place-items: center;
-        cursor: pointer;
-        transition:
-          border-color 180ms ease,
-          color 180ms ease;
-      }
-
-      .round:hover {
-        border-color: var(--accent);
-        color: var(--accent);
-      }
-
-      .round svg {
-        width: 20px;
-        height: 20px;
-      }
-
-      /* Full bleed, but the first phone lines up with the text above it. The
-         percentages are of the strip's own width, which is the page's. */
-      .strip {
-        --edge: max(26px, calc((100% - 1080px) / 2 + 26px));
-        list-style: none;
-        margin: 40px 0 0;
-        padding: 14px var(--edge) 30px;
-        display: flex;
-        gap: 28px;
-        overflow-x: auto;
-        scroll-snap-type: x mandatory;
-        scroll-padding-inline: var(--edge);
-        scrollbar-width: thin;
-        scrollbar-color: var(--rule) transparent;
-      }
-
-      .strip li {
-        flex: none;
-        scroll-snap-align: start;
-      }
-
-      .shot {
-        display: block;
-        color: var(--ink);
-        text-decoration: none;
-      }
-
-      .shot .phone {
-        --pw: 212px;
-        transition: transform 220ms ease;
-      }
-
-      .shot:hover .phone,
-      .shot:focus-visible .phone {
-        transform: translateY(-6px);
-      }
-
-      .shot:focus-visible {
-        outline: none;
-      }
-
-      .shot:focus-visible .phone {
-        outline: 3px solid var(--accent);
-        outline-offset: 4px;
-      }
-
-      .cap {
-        display: block;
-        width: 212px;
-        margin-top: 16px;
-        text-align: center;
-        font-family: "Space Grotesk", sans-serif;
-        font-size: 15px;
-        color: var(--ink-soft);
-      }
-
-      .viewer {
-        border: 0;
-        padding: 0;
-        margin: 0;
-        width: 100%;
-        height: 100%;
-        max-width: none;
-        max-height: none;
-        background: transparent;
-        color: #f5efe9;
-      }
-
-      .viewer::backdrop {
-        background: rgba(19, 17, 20, 0.9);
-        backdrop-filter: blur(10px);
-      }
-
-      .viewer-inner {
-        height: 100%;
-        display: grid;
-        grid-template-columns: auto auto auto;
-        justify-content: center;
-        align-items: center;
-        gap: 28px;
-        padding: 24px;
-      }
-
-      .viewer figure {
-        margin: 0;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 16px;
-      }
-
-      .viewer .phone {
-        --pw: min(380px, 78vw, calc((100vh - 130px) * 0.44));
-      }
-
-      .viewer figcaption {
-        font-family: "Space Grotesk", sans-serif;
-        font-size: 17px;
-      }
-
-      .viewer .round {
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 255, 255, 0.18);
-        color: #f5efe9;
-      }
-
-      .viewer .close {
-        position: fixed;
-        top: 18px;
-        right: 18px;
-      }
-
-      @media (max-width: 640px) {
-        .viewer-inner {
-          grid-template-columns: auto auto;
-          grid-template-areas: "shot shot" "prev next";
-          align-content: center;
-          gap: 18px;
-        }
-        .viewer figure {
-          grid-area: shot;
-        }
-        .viewer [data-step="-1"] {
-          grid-area: prev;
-          justify-self: end;
-        }
-        .viewer [data-step="1"] {
-          grid-area: next;
-          justify-self: start;
-        }
-        .viewer .phone {
-          --pw: min(300px, 76vw, calc((100vh - 200px) * 0.44));
-        }
-      }
-
-      /* ---------- footer ---------- */
-      footer {
-        border-top: 1px solid var(--rule);
-        padding: 40px 0 56px;
-      }
-
-      .foot {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 14px;
-        align-items: baseline;
-        justify-content: space-between;
-        color: var(--ink-soft);
-        font-size: 16px;
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        html {
-          scroll-behavior: auto;
-        }
-        *,
-        *::before,
-        *::after {
-          animation-duration: 0.01ms !important;
-          transition-duration: 0.01ms !important;
-        }
-      }
-      .foot-links {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px 20px;
-      }
-    </style>
+    <meta name="twitter:title" content="Hearth: family location sharing you host yourself" />
+    <meta
+      name="twitter:description"
+      content="Open-source family safety. The map, the history and the alerts live on your server, not somebody else's."
+    />
+    <meta name="twitter:image" content="https://qureshi-dh.github.io/hearth/og.jpg" />
+
+    <link
+      rel="preload"
+      href="assets/fonts/space-grotesk-700.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="assets/site.css" />
+    <script src="assets/theme.js"></script>
+    <script src="assets/site.js" defer></script>
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://qureshi-dh.github.io/hearth/#website",
+            "name": "Hearth",
+            "url": "https://qureshi-dh.github.io/hearth/",
+            "description": "Family location sharing you host yourself."
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://qureshi-dh.github.io/hearth/#app",
+            "name": "Hearth",
+            "url": "https://qureshi-dh.github.io/hearth/",
+            "description": "Open-source family safety app you host yourself: a live map, arrival and departure alerts for places, SOS, check-ins, crash detection and trips, for iOS and Android, on your own server.",
+            "applicationCategory": "LifestyleApplication",
+            "operatingSystem": "iOS, Android, Linux (Docker)",
+            "isAccessibleForFree": true,
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+            "image": "https://qureshi-dh.github.io/hearth/og.jpg",
+            "screenshot": "https://qureshi-dh.github.io/hearth/screens/map-880.webp",
+            "featureList": [
+              "Live family map with battery and motion",
+              "Arrival and departure alerts for places",
+              "SOS and check-ins",
+              "Crash detection",
+              "Trips with distance and top speed",
+              "Precise, approximate or paused sharing per circle",
+              "Export, erase or delete your data",
+              "Self-hosted with Docker, no account with the project"
+            ],
+            "downloadUrl": "https://hub.docker.com/r/dhqureshi/hearth-api"
+          },
+          {
+            "@type": "SoftwareSourceCode",
+            "@id": "https://qureshi-dh.github.io/hearth/#source",
+            "name": "Hearth",
+            "codeRepository": "https://github.com/Qureshi-DH/hearth",
+            "programmingLanguage": ["TypeScript"],
+            "runtimePlatform": "Node.js",
+            "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+            "targetProduct": { "@id": "https://qureshi-dh.github.io/hearth/#app" }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://qureshi-dh.github.io/hearth/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Do I need an account with you?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. There is no Hearth company server and no account with anyone. You run the server, you create the admin account on it, and everyone else joins with an invite you send from the app."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Where is my family's location stored?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "In the Postgres database on your server, and nowhere else. Each circle chooses how many days of history to keep, up to a ceiling you set on the server, and anyone can export or erase their own history from the app."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Do I need to be technical to run it?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "A little. If you can point a domain at a machine and paste one command, the install script does the rest. A one-click host like Render or DigitalOcean skips the machine altogether, for a monthly fee."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is the app in the App Store and Play Store?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Not yet. Both builds are in review. Until they are out you build the app yourself, which the quick start walks through."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does it work without push notifications?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, with a catch. Alerts can go through ntfy, which you host yourself. Only Expo push can wake the app, though, so without it a closed app reports from its own background check, about every quarter of an hour on Android and less often on an iPhone, instead of when the server asks."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I use it on a one-click host?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. The Render and DigitalOcean buttons set everything up, and Fly.io, Railway, Coolify, CapRover, Portainer, Unraid and Kubernetes have templates. Whoever runs the machine can read what is on it, so your family's history sits with the host you pick. Free plans that sleep don't work, because the server has to be awake to ask phones where they are."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What does it cost?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Hearth is free and open source under the AGPL-3.0. The only cost is the server: a Raspberry Pi you already own, or the smallest VPS you can rent."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How is it different from commercial family locator apps?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "It does the same job: a live map, place alerts, SOS, crash detection and driving. The difference is where the data lives. Theirs sits on their servers under their privacy policy. Yours sits on a server you run, with no analytics, no ads and nobody in the middle."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
 
   <body>
-    <header>
+    <a class="skip" href="#main">Skip to the content</a>
+
+    <header class="site-header">
       <nav class="wrap nav" aria-label="Main">
-        <a class="brand" href="#top">
+        <a class="brand" href="./" aria-label="Hearth home">
           <span class="mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd">
               <path
@@ -895,35 +195,93 @@
           </span>
           Hearth
         </a>
-        <a class="link" href="#tour">Tour</a>
-        <a class="link" href="#features">Features</a>
-        <a class="link" href="#privacy">Privacy</a>
-        <a class="link" href="#self-host">Self-host</a>
-        <a class="link" href="docs/">Docs</a>
-        <a class="btn btn-line" href="https://github.com/Qureshi-DH/hearth">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path
-              d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7 0-.7 0-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5Z"
-            />
-          </svg>
-          GitHub
-        </a>
+        <div class="nav-links" id="nav-links">
+          <a href="#tour">Tour</a>
+          <a href="#features">Features</a>
+          <a href="#privacy">Privacy</a>
+          <a href="#deploy">Deploy</a>
+          <a href="#faq">FAQ</a>
+          <a href="docs/">Docs</a>
+        </div>
+        <div class="nav-tools">
+          <a
+            class="btn btn-line btn-small star-btn"
+            href="https://github.com/Qureshi-DH/hearth"
+            aria-label="Star on GitHub"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path
+                d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7 0-.7 0-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5Z"
+              />
+            </svg>
+            <span>Star on GitHub</span>
+          </a>
+          <button class="icon-btn theme-btn" type="button" aria-label="Switch the theme">
+            <svg
+              class="moon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              aria-hidden="true"
+            >
+              <path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z" stroke-linejoin="round" />
+            </svg>
+            <svg
+              class="sun"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+          <button
+            class="icon-btn menu-btn"
+            type="button"
+            aria-expanded="false"
+            aria-controls="nav-links"
+            aria-label="Menu"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.9"
+              aria-hidden="true"
+            >
+              <path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
       </nav>
     </header>
 
-    <main id="top">
-      <!-- hero -->
+    <main id="main">
       <div class="hero wrap">
         <div class="hero-copy">
-          <span class="kicker"><span class="pip" aria-hidden="true"></span> 1.3 · AGPL-3.0</span>
-          <h1>Know where your family is. <em>Nobody else does.</em></h1>
+          <a class="release" href="https://github.com/Qureshi-DH/hearth/blob/main/CHANGELOG.md">
+            <span class="pip" aria-hidden="true"></span>
+            Version 1.3 is out. See what changed
+          </a>
+          <h1>
+            Know where your family is.
+            <span class="after">Nobody else does.</span>
+          </h1>
           <p class="lede prose">
-            Every commercial family safety app keeps your positions on its own servers, under a
-            privacy policy you do not control and they can change. Hearth has no servers. It runs on
-            yours, and there is nobody on the other end to sell anything to.
+            Hearth is a family safety app you run on your own server. Commercial ones keep your
+            positions on theirs, under a privacy policy you don't control and they can change.
+            Hearth has no servers of its own, and there is nobody on the other end to sell anything
+            to.
           </p>
           <div class="actions">
-            <a class="btn btn-solid" href="#self-host">
+            <a class="btn btn-solid" href="#deploy">
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
@@ -934,30 +292,60 @@
                 <rect x="3" y="5" width="18" height="12" rx="2" />
                 <path d="M8 21h8M12 17v4" stroke-linecap="round" />
               </svg>
-              Self-host it
+              Run your own server
             </a>
-            <a class="btn btn-line" href="docs/overview/quick-start/#4-build-the-app">
+            <a class="btn btn-line" href="#tour">Take the tour</a>
+          </div>
+          <ul class="facts" aria-label="At a glance">
+            <li>
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                stroke-width="1.8"
+                stroke-width="2.2"
                 aria-hidden="true"
               >
-                <path
-                  d="M12 3v11m0 0 4-4m-4 4-4-4"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
+                <path d="m5 12.5 4.5 4.5L19 7.5" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
-              Get the app
-            </a>
-          </div>
-          <p class="aside">
-            Coming soon to the App Store and Play Store. The apps are built, tested and in review,
-            so for now you build it yourself.
-          </p>
+              No account with us
+            </li>
+            <li>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                aria-hidden="true"
+              >
+                <path d="m5 12.5 4.5 4.5L19 7.5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              No analytics or ads
+            </li>
+            <li>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                aria-hidden="true"
+              >
+                <path d="m5 12.5 4.5 4.5L19 7.5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              iOS and Android
+            </li>
+            <li>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                aria-hidden="true"
+              >
+                <path d="m5 12.5 4.5 4.5L19 7.5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              AGPL-3.0
+            </li>
+          </ul>
         </div>
 
         <div class="stage">
@@ -976,6 +364,7 @@
           <div class="phone front">
             <picture>
               <source
+                data-dark
                 media="(prefers-color-scheme: dark)"
                 srcset="screens/map-dark-440.webp 440w, screens/map-dark-880.webp 880w"
                 sizes="(max-width: 979px) 72vw, 236px"
@@ -1004,18 +393,41 @@
               decoding="async"
             />
           </div>
+
+          <ol class="feed" aria-label="Entries from a family's feed">
+            <li class="on">
+              <span class="who maya" aria-hidden="true">M</span>
+              <span><b>Maya arrived at School</b><small>8:01 am, 2.4 km from Home</small></span>
+            </li>
+            <li>
+              <span class="who david" aria-hidden="true">D</span>
+              <span><b>David is driving</b><small>46 km/h on Harrison Street</small></span>
+            </li>
+            <li>
+              <span class="who leo" aria-hidden="true">L</span>
+              <span><b>Leo checked in at Grandma's</b><small>"Got here safely"</small></span>
+            </li>
+            <li>
+              <span class="who david" aria-hidden="true">D</span>
+              <span><b>David arrived at Work</b><small>8:34 am, a 19 minute drive</small></span>
+            </li>
+            <li>
+              <span class="who maya" aria-hidden="true">M</span>
+              <span><b>Maya's battery is low</b><small>12%, at School</small></span>
+            </li>
+          </ol>
         </div>
       </div>
 
-      <!-- tour -->
       <section id="tour">
         <div class="wrap">
-          <p class="eyebrow">Inside the app</p>
-          <h2>A map your family will actually open.</h2>
-          <p class="sub prose">
-            Every picture on this page is the app itself: a release build, running against a server
-            with a made-up family on it.
-          </p>
+          <div class="head">
+            <h2>A map your family will actually open.</h2>
+            <p class="sub prose">
+              Every picture on this page is the app itself: a release build, running against a
+              server with a made-up family on it.
+            </p>
+          </div>
 
           <div class="spots">
             <div class="spot">
@@ -1123,14 +535,14 @@
         </div>
       </section>
 
-      <!-- features -->
       <section id="features">
         <div class="wrap">
-          <p class="eyebrow">What it does</p>
-          <h2>Everything a family safety app should do.</h2>
-          <p class="sub prose">
-            None of it phones home. Every feature below runs against the server you control.
-          </p>
+          <div class="head">
+            <h2>Everything a family safety app should do.</h2>
+            <p class="sub prose">
+              None of it phones home. Every feature below runs against the server you control.
+            </p>
+          </div>
 
           <div class="features">
             <article class="feature">
@@ -1268,13 +680,9 @@
         </div>
       </section>
 
-      <!-- gallery -->
-      <section id="screens">
+      <section id="screens" aria-label="Screens from the app">
         <div class="wrap gallery-head">
-          <div>
-            <p class="eyebrow">Every screen</p>
-            <h2>Have a look around.</h2>
-          </div>
+          <h2>Have a look around.</h2>
           <div class="strip-nav">
             <button class="round" type="button" data-dir="-1" aria-label="Scroll back">
               <svg
@@ -1590,17 +998,17 @@
         </button>
       </dialog>
 
-      <!-- privacy -->
       <section id="privacy">
         <div class="wrap">
-          <p class="eyebrow">Why bother</p>
-          <h2>Your data stays home.</h2>
-          <p class="sub prose">
-            A family safety app is only as private as whoever runs it. There is no company running
-            Hearth, no account with us, and no analytics, ad network or crash reporter anywhere in
-            the app. When you stop running the server, the data is gone, because it was only ever
-            yours.
-          </p>
+          <div class="head">
+            <h2>Your data stays home.</h2>
+            <p class="sub prose">
+              A family safety app is only as private as whoever runs it. There is no company running
+              Hearth, no account with us, and no analytics, ad network or crash reporter anywhere in
+              the app. When you stop running the server, the data is gone, because it was only ever
+              yours.
+            </p>
+          </div>
 
           <ul class="promises">
             <li>
@@ -1635,145 +1043,457 @@
               changes open too.
             </li>
           </ul>
+
+          <div class="why">
+            <p>
+              In January 2025 the FTC finalized orders against two data brokers, Gravy Analytics and
+              Mobilewalla, for selling location data that traced people from their phones to health
+              clinics and places of worship.
+              <a
+                href="https://www.ftc.gov/news-events/news/press-releases/2025/01/ftc-finalizes-order-prohibiting-gravy-analytics-venntel-selling-sensitive-location-data"
+                rel="noreferrer"
+                >Read the FTC's announcement</a
+              >.
+            </p>
+            <p>
+              <b>A family map is that data in finer detail</b>, down to where your children sleep
+              and go to school. Hearth keeps it on a machine you own.
+            </p>
+          </div>
         </div>
       </section>
 
-      <!-- self-host -->
-      <section id="self-host">
+      <section id="deploy">
         <div class="wrap">
-          <p class="eyebrow">Self-host</p>
-          <h2>One compose file and a hostname.</h2>
-          <p class="sub prose">
-            Postgres and MinIO come with it, migrations run on first boot, and the bucket creates
-            itself. The server is a published image, so upgrading is a pull, not a rebuild. If you
-            already run anything behind a reverse proxy, this will feel familiar.
-          </p>
-
-          <div class="panel">
-            <ol class="steps">
-              <li>
-                <span
-                  >Make a folder, add <code>docker-compose.yml</code> and <code>.env</code>, and set
-                  <code>JWT_SECRET</code>, <code>PUBLIC_URL</code>, <code>ADMIN_EMAIL</code>,
-                  <code>ADMIN_PASSWORD</code> and the database and storage passwords.</span
-                >
-              </li>
-              <li>
-                <span
-                  >Bring it up. Your administrator account is created on that first boot, and it is
-                  the only way in, so nobody can claim a server you have not signed into.</span
-                >
-              </li>
-              <li>
-                <span
-                  >Put TLS in front, open the app, type your server address and sign in. Everyone
-                  else joins with an invite code you send them.</span
-                >
-              </li>
-            </ol>
-
-            <pre><code>services:
-  api:
-    image: dhqureshi/hearth-api:latest
-    env_file: [.env]
-    ports: ["127.0.0.1:4000:4000"]
-    depends_on: [db, minio]</code></pre>
+          <div class="head">
+            <h2>Running in five minutes, wherever you like.</h2>
+            <p class="sub prose">
+              The server is one Docker image for amd64 and arm64, with Postgres beside it.
+              Migrations run on the first start and your admin account is created then, so nobody
+              who finds the address can claim it before you. A Raspberry Pi 4 or the smallest VPS
+              you can rent is plenty for a family.
+            </p>
           </div>
 
-          <div class="actions">
-            <a class="btn btn-solid" href="docs/install/self-hosting/">Self-hosting guide</a>
-            <a class="btn btn-line" href="https://hub.docker.com/r/dhqureshi/hearth-api"
-              >Docker image</a
-            >
-          </div>
+          <div class="tabs">
+            <div class="tablist" aria-label="Ways to run Hearth">
+              <button type="button" data-panel="deploy-script">One command</button>
+              <button type="button" data-panel="deploy-compose">Docker Compose</button>
+              <button type="button" data-panel="deploy-cloud">One-click cloud</button>
+              <button type="button" data-panel="deploy-homelab">Homelab and Kubernetes</button>
+            </div>
 
-          <div class="alpha prose">
-            <h3>Where anything goes besides your server</h3>
-            <p style="margin-bottom: 22px">
-              Map tiles are fetched from a public tile server by default, which sees roughly what
-              part of the world you are looking at. Point that setting at your own tiles and even
-              that stops. Street names come from the phone's own maps service, Apple's or Google's,
-              which is sent each spot it names. They are on by default, and one switch in the app
-              turns them off. And if you turn on push through a hosted relay, notification payloads
-              go through it, which is why the default is no push at all rather than a convenient
-              default that quietly costs you something. An Android build that includes Firebase for
-              push also registers the phone with Google when it starts.
-            </p>
-            <h3>What 1.3 means</h3>
-            <p>
-              The features above are built and tested, and it runs a real family. It has not been
-              through a security audit, and Android has had less device testing than iOS. The store
-              builds are still in review, and they won't carry the maintainer's own push keys, so
-              push only fully works in a build you make yourself. Read SECURITY.md before you point
-              it at the internet.
-            </p>
+            <div class="panel" id="deploy-script">
+              <h3>One command on any Linux machine with Docker</h3>
+              <p>
+                It asks for a domain, your email and a password, makes up every other secret, and
+                starts Hearth with Caddy getting the HTTPS certificate. Leave the domain empty to
+                try it on your own network first.
+              </p>
+              <div class="cmd">
+                <pre><code>curl -fsSL https://qureshi-dh.github.io/hearth/install.sh | sh</code></pre>
+                <button
+                  class="copy"
+                  type="button"
+                  data-copy="curl -fsSL https://qureshi-dh.github.io/hearth/install.sh | sh"
+                  hidden
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    aria-hidden="true"
+                  >
+                    <rect x="8" y="8" width="12" height="12" rx="2.5" />
+                    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                  </svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <p class="note">
+                Piping a script into a shell means trusting it, so
+                <a href="https://github.com/Qureshi-DH/hearth/blob/main/deploy/install.sh"
+                  >read it first</a
+                >. It writes two files into <code>./hearth</code> and runs
+                <code>docker compose up</code>, nothing else.
+              </p>
+            </div>
+
+            <div class="panel" id="deploy-compose">
+              <h3>Docker Compose, no clone needed</h3>
+              <p>
+                Download the compose file and the example settings, fill in six values, and start
+                it. Put any reverse proxy in front for HTTPS: the guide has Caddy, nginx and Traefik
+                configs to paste.
+              </p>
+              <div class="cmd">
+                <pre><code>mkdir hearth && cd hearth
+curl -fsSLO https://raw.githubusercontent.com/Qureshi-DH/hearth/main/deploy/compose/docker-compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/Qureshi-DH/hearth/main/.env.example
+<span class="muted"># set JWT_SECRET, PUBLIC_URL, ADMIN_EMAIL, ADMIN_PASSWORD,
+# POSTGRES_PASSWORD and S3_SECRET_ACCESS_KEY in .env</span>
+docker compose up -d</code></pre>
+                <button
+                  class="copy"
+                  type="button"
+                  data-copy="mkdir hearth &amp;&amp; cd hearth
+curl -fsSLO https://raw.githubusercontent.com/Qureshi-DH/hearth/main/deploy/compose/docker-compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/Qureshi-DH/hearth/main/.env.example"
+                  hidden
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    aria-hidden="true"
+                  >
+                    <rect x="8" y="8" width="12" height="12" rx="2.5" />
+                    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                  </svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <div class="actions">
+                <a class="btn btn-solid" href="docs/install/self-hosting/">Self-hosting guide</a>
+                <a class="btn btn-line" href="https://hub.docker.com/r/dhqureshi/hearth-api"
+                  >Docker image</a
+                >
+              </div>
+            </div>
+
+            <div class="panel" id="deploy-cloud">
+              <h3>One click on a cloud host</h3>
+              <p>
+                Render and DigitalOcean open with Hearth's template filled in, database included,
+                and ask only for what you have to choose yourself. Fly.io and Railway take a few
+                steps more. On all four the server picks up the address the host gives it, so
+                invites work from the first start.
+              </p>
+              <ul class="hosts">
+                <li>
+                  <a
+                    class="host"
+                    href="https://render.com/deploy?repo=https://github.com/Qureshi-DH/hearth"
+                  >
+                    <b>Render</b>
+                    <span
+                      >The API and a managed Postgres from one Blueprint. Render makes up the
+                      secrets.</span
+                    >
+                    <span class="go">Deploy to Render</span>
+                  </a>
+                </li>
+                <li>
+                  <a
+                    class="host"
+                    href="https://cloud.digitalocean.com/apps/new?repo=https://github.com/Qureshi-DH/hearth/tree/main"
+                  >
+                    <b>DigitalOcean</b>
+                    <span>An App Platform app with a development database beside it.</span>
+                    <span class="go">Deploy to DigitalOcean</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="host" href="docs/install/deploy/#flyio">
+                    <b>Fly.io</b>
+                    <span>A ready fly.toml. Bring any Postgres and run fly launch.</span>
+                    <span class="go">Read the Fly.io steps</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="host" href="docs/install/deploy/#railway">
+                    <b>Railway</b>
+                    <span>The image and a Railway Postgres, set up in four steps.</span>
+                    <span class="go">Read the Railway steps</span>
+                  </a>
+                </li>
+              </ul>
+              <p class="note">
+                A rented server is one the host can read, so your family's map sits with the
+                provider you pick. Free plans that put the server to sleep don't work either: Hearth
+                has to be awake to ask the phones where they are.
+              </p>
+            </div>
+
+            <div class="panel" id="deploy-homelab">
+              <h3>The platform you already run</h3>
+              <p>
+                Templates for the self-hosting platforms people already have at home. Each one runs
+                the same image and Postgres, and the deploy guide walks through it.
+              </p>
+              <ul class="hosts">
+                <li>
+                  <a class="host" href="docs/install/deploy/#coolify">
+                    <b>Coolify</b>
+                    <span>Paste one compose file. Coolify makes the passwords and the domain.</span>
+                    <span class="go">Use with Coolify</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="host" href="docs/install/deploy/#caprover">
+                    <b>CapRover</b>
+                    <span>A one-click app template with a form for your email and password.</span>
+                    <span class="go">Use with CapRover</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="host" href="docs/install/deploy/#portainer">
+                    <b>Portainer</b>
+                    <span>A stack straight from this repository, or an App Template.</span>
+                    <span class="go">Use with Portainer</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="host" href="docs/install/deploy/#unraid">
+                    <b>Unraid</b>
+                    <span>A Community Applications template, next to the Postgres you run.</span>
+                    <span class="go">Use with Unraid</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="host" href="docs/install/deploy/#kubernetes">
+                    <b>Kubernetes</b>
+                    <span>Kustomize manifests for the API, Postgres and an Ingress.</span>
+                    <span class="go">Use with Kubernetes</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="host" href="docs/install/deploy/#any-other-container-host">
+                    <b>Anything else</b>
+                    <span
+                      >Any host that keeps a container running, with the settings it needs.</span
+                    >
+                    <span class="go">See what it needs</span>
+                  </a>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="today">
+        <div class="wrap">
+          <div class="head">
+            <h2>What you can run today, and what's next.</h2>
+          </div>
+          <div class="paths">
+            <div class="now">
+              <span class="status"><span class="pip" aria-hidden="true"></span> Available now</span>
+              <h3>Your own server and the app</h3>
+              <p>
+                The server is ready to run. The iOS and Android app is built, tested and in store
+                review, and until it's out you build it yourself.
+              </p>
+              <ul class="ticks">
+                <li>Postgres 14 or newer</li>
+                <li>Admin portal and API docs built in</li>
+                <li>Push through ntfy, Expo, or nothing</li>
+                <li>Export, erase or delete from the app</li>
+                <li>Runs on a Raspberry Pi 4</li>
+                <li>English only, for now</li>
+              </ul>
+              <div class="actions">
+                <a class="btn btn-solid" href="docs/overview/quick-start/">Quick start</a>
+                <a class="btn btn-line" href="docs/overview/quick-start/#4-build-the-app"
+                  >Build the app</a
+                >
+              </div>
+            </div>
+            <div class="later">
+              <span class="status">On the roadmap</span>
+              <ul class="next">
+                <li>
+                  <b>App Store and Play Store</b>
+                  <span>Both builds are in review.</span>
+                </li>
+                <li>
+                  <b>Push for the store builds</b>
+                  <span
+                    >A small Hearth relay in front of Expo, so a store build can be woken by any
+                    server. It needs funding for the developer accounts.</span
+                  >
+                </li>
+                <li>
+                  <b>A web client</b>
+                  <span>The map and the feed on a desktop, on the same API.</span>
+                </li>
+                <li>
+                  <b>More languages</b>
+                  <span>The app is ready for translations and waiting for translators.</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="faq">
+        <div class="wrap">
+          <div class="head">
+            <h2>Questions people ask first.</h2>
+          </div>
+          <div class="faq">
+            <details open>
+              <summary>Do I need an account with you?</summary>
+              <div class="answer">
+                <p>
+                  No. There is no Hearth company server and no account with anyone. You run the
+                  server, you create the admin account on it, and everyone else joins with an invite
+                  you send from the app.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>Where is my family's location stored?</summary>
+              <div class="answer">
+                <p>
+                  In the Postgres database on your server, and nowhere else. Each circle chooses how
+                  many days of history to keep, up to a ceiling you set on the server, and anyone
+                  can export or erase their own history from the app.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>Do I need to be technical to run it?</summary>
+              <div class="answer">
+                <p>
+                  A little. If you can point a domain at a machine and paste one command, the
+                  install script does the rest. A one-click host like Render or DigitalOcean skips
+                  the machine altogether, for a monthly fee.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>Is the app in the App Store and Play Store?</summary>
+              <div class="answer">
+                <p>
+                  Not yet. Both builds are in review. Until they are out you build the app yourself,
+                  which the quick start walks through.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>Does it work without push notifications?</summary>
+              <div class="answer">
+                <p>
+                  Yes, with a catch. Alerts can go through ntfy, which you host yourself. Only Expo
+                  push can wake the app, though, so without it a closed app reports from its own
+                  background check, about every quarter of an hour on Android and less often on an
+                  iPhone, instead of when the server asks.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>Can I use it on a one-click host?</summary>
+              <div class="answer">
+                <p>
+                  Yes. The Render and DigitalOcean buttons set everything up, and Fly.io, Railway,
+                  Coolify, CapRover, Portainer, Unraid and Kubernetes have templates. Whoever runs
+                  the machine can read what is on it, so your family's history sits with the host
+                  you pick. Free plans that sleep don't work, because the server has to be awake to
+                  ask phones where they are.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>What does it cost?</summary>
+              <div class="answer">
+                <p>
+                  Hearth is free and open source under the AGPL-3.0. The only cost is the server: a
+                  Raspberry Pi you already own, or the smallest VPS you can rent.
+                </p>
+              </div>
+            </details>
+            <details>
+              <summary>How is it different from commercial family locator apps?</summary>
+              <div class="answer">
+                <p>
+                  It does the same job: a live map, place alerts, SOS, crash detection and driving.
+                  The difference is where the data lives. Theirs sits on their servers under their
+                  privacy policy. Yours sits on a server you run, with no analytics, no ads and
+                  nobody in the middle.
+                </p>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section id="support">
+        <div class="wrap">
+          <div class="support">
+            <div>
+              <h2>Like it? Help another family find it.</h2>
+              <p>
+                Hearth is a small open source project with no marketing budget. A star on GitHub is
+                how people searching for a private family locator come across it, and a bug report
+                from your setup is worth more than you'd think.
+              </p>
+            </div>
+            <div class="actions">
+              <a class="btn btn-solid" href="https://github.com/Qureshi-DH/hearth">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path
+                    d="m12 2.8 2.8 5.8 6.4.9-4.6 4.5 1.1 6.4L12 17.4l-5.7 3 1.1-6.4L2.8 9.5l6.4-.9Z"
+                  />
+                </svg>
+                Star on GitHub
+              </a>
+              <a class="btn btn-line" href="https://github.com/Qureshi-DH/hearth/issues/new/choose"
+                >Report a bug</a
+              >
+            </div>
           </div>
         </div>
       </section>
     </main>
 
-    <footer>
+    <footer class="site-footer">
       <div class="wrap foot">
-        <span>Built because the alternative was renting out my family's map.</span>
-        <span class="foot-links"
-          ><a href="docs/">Docs</a>
-          <a href="privacy.html">Privacy</a>
+        <div class="foot-brand">
+          <a class="brand" href="./">
+            <span class="mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd">
+                <path
+                  d="M12 2c.6 3.2-1.2 4.6-2.6 6C7.6 9.6 6 11.3 6 14a6 6 0 0 0 12 0c0-2.5-1.2-4.3-2.6-6C13.7 6 12.6 4.4 12 2Zm0 8.6c1.2 1.4 2 2.4 2 3.6a2 2 0 1 1-4 0c0-1.2.8-2.2 2-3.6Z"
+                />
+              </svg>
+            </span>
+            Hearth
+          </a>
+          <p>Built because the alternative was renting out my family's map.</p>
+        </div>
+        <div class="foot-col">
+          <h2>Run it</h2>
+          <a href="docs/overview/quick-start/">Quick start</a>
+          <a href="docs/install/deploy/">Ways to deploy</a>
+          <a href="docs/install/self-hosting/">Self-hosting guide</a>
+          <a href="docs/install/push-notifications/">Push notifications</a>
+          <a href="docs/faq/">FAQ</a>
+        </div>
+        <div class="foot-col">
+          <h2>Project</h2>
+          <a href="https://github.com/Qureshi-DH/hearth">Source code</a>
+          <a href="https://github.com/Qureshi-DH/hearth/issues">Issues</a>
+          <a href="https://github.com/Qureshi-DH/hearth/blob/main/CHANGELOG.md">Changelog</a>
+          <a href="docs/roadmap/">Roadmap</a>
+          <a href="https://github.com/Qureshi-DH/hearth/blob/main/CONTRIBUTING.md">Contributing</a>
+        </div>
+        <div class="foot-col">
+          <h2>Trust</h2>
+          <a href="docs/privacy/">How your data is handled</a>
+          <a href="https://github.com/Qureshi-DH/hearth/blob/main/SECURITY.md">Security</a>
+          <a href="privacy.html">App privacy policy</a>
           <a href="delete-account.html">Delete your account</a>
-          <a href="https://github.com/Qureshi-DH/hearth">github.com/Qureshi-DH/hearth</a></span
-        >
+        </div>
+      </div>
+      <div class="wrap foot-bottom">
+        <span>Free and open source under the AGPL-3.0.</span>
+        <span>This site sets no cookies and loads nothing from anywhere else.</span>
       </div>
     </footer>
-
-    <script>
-      // The strip scrolls without this, and each screen is a link to its own
-      // image, so all this adds is the buttons and a viewer that stays on the page.
-      ;(() => {
-        const strip = document.querySelector(".strip")
-        const viewer = document.querySelector(".viewer")
-        if (!strip || !viewer || typeof viewer.showModal !== "function") return
-        const shots = [...strip.querySelectorAll(".shot")]
-        const image = viewer.querySelector("img")
-        const caption = viewer.querySelector("figcaption")
-        const motion = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"
-        let index = 0
-
-        for (const button of document.querySelectorAll("[data-dir]")) {
-          button.addEventListener("click", () => {
-            const step = Number(button.dataset.dir) * strip.clientWidth * 0.8
-            strip.scrollBy({ left: step, behavior: motion })
-          })
-        }
-
-        const show = (next) => {
-          index = (next + shots.length) % shots.length
-          const shot = shots[index]
-          image.src = shot.getAttribute("href")
-          image.alt = shot.querySelector("img").alt
-          caption.textContent = shot.dataset.caption
-        }
-
-        shots.forEach((shot, i) => {
-          shot.addEventListener("click", (event) => {
-            event.preventDefault()
-            show(i)
-            viewer.showModal()
-          })
-        })
-
-        for (const button of viewer.querySelectorAll("[data-step]")) {
-          button.addEventListener("click", () => show(index + Number(button.dataset.step)))
-        }
-        viewer.querySelector(".close").addEventListener("click", () => viewer.close())
-        viewer.addEventListener("click", (event) => {
-          if (event.target === viewer || event.target.classList.contains("viewer-inner")) {
-            viewer.close()
-          }
-        })
-        viewer.addEventListener("keydown", (event) => {
-          if (event.key === "ArrowLeft") show(index - 1)
-          if (event.key === "ArrowRight") show(index + 1)
-        })
-      })()
-    </script>
   </body>
 </html>

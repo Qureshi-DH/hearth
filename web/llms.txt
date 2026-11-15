@@ -1,0 +1,52 @@
+# Hearth
+
+> Family location sharing you host yourself. Free and open source under the
+> AGPL-3.0 (github.com/Qureshi-DH/hearth). An iOS and Android app talks to an
+> API server you run with Docker next to Postgres. There is no Hearth company
+> server, no account with the project, no analytics and no ads.
+
+Hearth is for families who want what commercial family locator apps do,
+without their positions living on a company's servers. It shows everyone in a
+circle on a live map, tells the family when somebody arrives at or leaves a
+place, raises an SOS, detects crashes, and records trips.
+
+Status: the server is ready to run. The iOS and Android apps are built and in
+App Store and Play Store review, and until they are out people build the app
+themselves. It has not had an independent security audit.
+
+## Start here
+
+- [Homepage](https://qureshi-dh.github.io/hearth/): what it is, screenshots, FAQ
+- [Ways to deploy](https://qureshi-dh.github.io/hearth/docs/install/deploy/):
+  the one-command installer, Docker Compose, Render, DigitalOcean, Fly.io,
+  Railway, Coolify, CapRover, Portainer, Unraid and Kubernetes
+- [Quick start](https://qureshi-dh.github.io/hearth/docs/overview/quick-start/):
+  from nothing to one phone on the map
+- [Self-hosting guide](https://qureshi-dh.github.io/hearth/docs/install/self-hosting/):
+  TLS, backups, upgrades
+- [Privacy](https://qureshi-dh.github.io/hearth/docs/privacy/): what is stored,
+  for how long, and who can see it
+- [README](https://github.com/Qureshi-DH/hearth#readme)
+- [Changelog](https://github.com/Qureshi-DH/hearth/blob/main/CHANGELOG.md)
+- [Security policy](https://github.com/Qureshi-DH/hearth/blob/main/SECURITY.md)
+
+## What it does
+
+- Live map of everyone in a circle, with battery and whether they are walking
+  or driving. The server asks each phone where it is every few minutes, and Live
+  follows one person a fix a second while somebody watches.
+- Places: arrival and departure alerts per place and per person, with quiet hours
+- SOS that reaches the whole circle, and one-tap check-ins
+- Optional crash detection from the phone's own sensors. It asks first, and
+  only silence raises the alarm
+- Trips with distance, duration and top speed
+- Sharing set per circle: precise, approximate (a 750 metre grid) or paused
+- Export your data, erase your history, or delete your account from the app
+
+## Install
+
+One command on a Linux machine with Docker:
+`curl -fsSL https://qureshi-dh.github.io/hearth/install.sh | sh`
+
+Container image: `dhqureshi/hearth-api` on Docker Hub, amd64 and arm64.
+Needs Postgres 14 or newer.

@@ -7,6 +7,11 @@ Hearth runs as three containers behind any reverse proxy that can terminate
 TLS: the API, Postgres, and MinIO for profile pictures. A Raspberry Pi 4 or the
 smallest VPS you can rent is plenty for a family.
 
+This page sets it up by hand, which is the way to understand every piece. For
+an install script that does all of it in one command, a one-click cloud host,
+or a template for Coolify, CapRover, Portainer, Unraid or Kubernetes, see
+[ways to deploy](deploy.md).
+
 ## Requirements
 
 - Docker Engine 24+ with Compose v2 (`docker compose version`)
@@ -29,7 +34,9 @@ detection takes on a drive stay on the phone.
 
 The server is published as a Docker image, `dhqureshi/hearth-api`, built for
 amd64 and arm64. You do not need the repository to run Hearth. Make a folder,
-put this in `docker-compose.yml`, and put a `.env` beside it:
+put this in `docker-compose.yml`, and put a `.env` beside it. It's a shorter
+version of `deploy/compose/docker-compose.yml` in the repository, which you can
+download instead.
 
 ```yaml
 name: hearth
